@@ -315,6 +315,10 @@ export default function App() {
     setTrades(prev => prev.filter(t => t.id !== id));
   };
 
+  const updateTrade = (id: string, updates: Partial<TradeRecord>) => {
+    setTrades(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+  };
+
   const resetAll = () => {
     if (window.confirm("确定要清空所有数据吗？此操作无法撤销。")) {
       setTrades([]);
@@ -650,7 +654,7 @@ export default function App() {
                <History size={16} />
                <h3 className="font-medium text-sm">成交记录</h3>
             </div>
-            <TradeList trades={trades} onDelete={deleteTrade} />
+            <TradeList trades={trades} onDelete={deleteTrade} onUpdate={updateTrade} />
           </div>
 
           {/* 5. AI Analysis (Left) */}
