@@ -38,6 +38,9 @@ jobs:
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v3
+        with:
+          # 尝试自动启用 Pages（当仓库未启用 Pages 时有用）
+          enablement: true
 
       - name: Upload artifact
         # 使用 v4 以避免依赖已弃用的 artifact actions v3
