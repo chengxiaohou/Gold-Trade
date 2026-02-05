@@ -1,0 +1,5 @@
+{
+  "name": "黄金交易",
+  "description": "A professional gold trading calculator to estimate average cost (position cost) changes before placing buy/sell orders. Includes AI-powered trade analysis.",
+  "requestFramePermissions": []
+}
