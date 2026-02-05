@@ -30,6 +30,8 @@ View your app in AI Studio: https://ai.studio/apps/drive/1izNp2BctmdlxgRVkAIVEic
    - 前端不应包含敏感密钥（例如 `GEMINI_API_KEY`）。若需要调用第三方私有 API，请实现一个后端代理或 serverless 函数来保护密钥。
    - 如果你需要自定义域名，请到仓库的 GitHub Pages 设置中配置自定义域。
 
+**自动部署说明**：目前 workflow 会在 `main` 与 `Action-Test` 分支有 push 时触发部署；你也可以在 Actions 页面使用 "Run workflow" 手动触发并选择想要的分支。
+
 ---
 
 如果你同意，我可以帮你：

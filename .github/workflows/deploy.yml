@@ -4,7 +4,13 @@ on:
   push:
     branches:
       - main
+      - Action-Test
   workflow_dispatch:
+    inputs:
+      ref:
+        description: '分支或 ref，用于手动触发（默认: Action-Test）'
+        required: false
+        default: 'Action-Test'
 
 jobs:
   build-and-deploy:
