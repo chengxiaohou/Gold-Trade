@@ -10,18 +10,19 @@ import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecor
 
 export default function App() {
   // --- State ---
+  
+  // 1. Trades History (Already persisted)
   const [trades, setTrades] = useState<TradeRecord[]>(() => {
-    // Attempt to load trades from localStorage on initial render
     const saved = localStorage.getItem('gold_trades_local');
     return saved ? JSON.parse(saved) : [];
   });
   
   const [isDragging, setIsDragging] = useState(false);
   
-  // Inputs for the NEXT trade
-  const [inputs, setInputs] = useState({
-    price: '',
-    grams: ''
+  // 2. Inputs Draft (Newly persisted)
+  const [inputs, setInputs] = useState(() => {
+    const saved = localStorage.getItem('gold_inputs_draft');
+    return saved ? JSON.parse(saved) : { price: '', grams: '' };
   });
 
   const [aiState, setAiState] = useState<AIAnalysisState>({
@@ -38,14 +39,31 @@ export default function App() {
     return saved ? JSON.parse(saved) : { token: '', gistId: '' };
   });
 
-  // We default to simulating a BUY for the UI
-  const [previewType, setPreviewType] = useState<OrderType>('BUY');
+  // 3. Preview Type (Newly persisted)
+  const [previewType, setPreviewType] = useState<OrderType>(() => {
+    const saved = localStorage.getItem('gold_preview_type');
+    return (saved === 'SELL') ? 'SELL' : 'BUY';
+  });
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- Effect: Auto-save locally ---
+  // --- Effects: Auto-save locally ---
+  
+  // Save Trades
   useEffect(() => {
     localStorage.setItem('gold_trades_local', JSON.stringify(trades));
   }, [trades]);
+
+  // Save Draft Inputs
+  useEffect(() => {
+    localStorage.setItem('gold_inputs_draft', JSON.stringify(inputs));
+  }, [inputs]);
+
+  // Save Preview Type Preference
+  useEffect(() => {
+    localStorage.setItem('gold_preview_type', previewType);
+  }, [previewType]);
+
 
   // --- Handlers ---
   const handleInputChange = (field: keyof typeof inputs, value: string) => {
