@@ -151,7 +151,19 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   const DEFAULT_ORDER: ColumnKey[] = ['type', 'price', 'grams', 'tradeTotal', 'historicalAvg', 'holdingTotal', 'avgChange'];
   const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(() => {
     const saved = localStorage.getItem('gold_trade_list_column_order');
-    if (saved) return (JSON.parse(saved) as ColumnKey[]).filter(k => DEFAULT_ORDER.includes(k));
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as ColumnKey[];
+        // 1. Keep saved items that are still valid columns
+        const validSaved = parsed.filter(k => DEFAULT_ORDER.includes(k));
+        // 2. Find any new columns that are in DEFAULT but not in saved
+        const missing = DEFAULT_ORDER.filter(k => !validSaved.includes(k));
+        // 3. Merge: Saved order first, then append new columns
+        return [...validSaved, ...missing];
+      } catch (e) {
+        return DEFAULT_ORDER;
+      }
+    }
     return DEFAULT_ORDER;
   });
 
