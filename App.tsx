@@ -106,8 +106,14 @@ export default function App() {
   };
 
   const handleCloudDownload = async () => {
-    if (!githubConfig.token || !githubConfig.gistId) {
-      alert("请先配置 GitHub Token 和 Gist ID");
+    if (!githubConfig.token) {
+      alert("请先配置 GitHub Token");
+      setIsSettingsOpen(true);
+      return;
+    }
+
+    if (!githubConfig.gistId) {
+      alert("无法下载：未检测到 Gist ID。\n\n• 如果您是首次使用，请先点击「上传」按钮来创建新备份。\n• 如果您要恢复已有数据，请在设置中填入您的 Gist ID。");
       setIsSettingsOpen(true);
       return;
     }
@@ -420,10 +426,8 @@ export default function App() {
 
           {/* 2. New Order Input (Left) */}
           <div className="lg:col-span-8 bg-app-card border border-brand-yellow rounded-xl p-5 shadow-md relative overflow-hidden">
-             {/* Thinner border accent */}
-             <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-brand-yellow"></div>
              
-             <div className="flex justify-between items-center mb-4 pl-2">
+             <div className="flex justify-between items-center mb-4">
                <div className="flex items-center gap-2">
                  <Plus size={18} className="text-slate-900 bg-brand-yellow p-0.5 rounded-sm"/>
                  {/* Renamed Title */}
@@ -431,7 +435,7 @@ export default function App() {
                </div>
              </div>
 
-             <div className="grid grid-cols-2 gap-3 mb-4 pl-2">
+             <div className="grid grid-cols-2 gap-3 mb-4">
                <InputGroup 
                   label="挂单价格 (元/克)"
                   value={inputs.price}
@@ -446,7 +450,7 @@ export default function App() {
                 />
              </div>
 
-             <div className="grid grid-cols-2 gap-3 pl-2">
+             <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => setPreviewType('BUY')}
                   className={`relative group py-3 rounded-lg border transition-all duration-200 flex items-center justify-center gap-2 font-bold text-sm
