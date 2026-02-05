@@ -22,8 +22,8 @@ export const InputGroup: React.FC<InputGroupProps> = ({
   unit
 }) => {
   return (
-    <div className="flex flex-col space-y-2 w-full">
-      <label className="text-xs text-slate-400 font-medium ml-1">{label}</label>
+    <div className="flex flex-col space-y-1.5 w-full">
+      <label className="text-[10px] text-slate-400 font-medium ml-1 truncate">{label}</label>
       <div className="relative flex items-center">
         {/* Input container matching the screenshot style: Dark bg, rounded, inner shadow feel */}
         <input
@@ -32,7 +32,7 @@ export const InputGroup: React.FC<InputGroupProps> = ({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className="w-full bg-app-input border border-app-border text-slate-100 rounded-lg py-3 px-4 focus:outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all font-mono text-lg placeholder-slate-700"
+          className="w-full bg-app-input border border-app-border text-slate-100 rounded-lg py-2.5 px-3 focus:outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all font-mono text-base placeholder-slate-700"
         />
         
         {/* Right side controls/units */}

@@ -1,3 +1,4 @@
+
 export type OrderType = 'BUY' | 'SELL';
 
 export interface TradeRecord {
@@ -32,4 +33,9 @@ export interface AIAnalysisState {
   loading: boolean;
   result: string | null;
   error: string | null;
+}
+
+export interface GithubConfig {
+  token: string;
+  gistId: string;
 }
