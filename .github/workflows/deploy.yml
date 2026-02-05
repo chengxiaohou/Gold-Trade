@@ -33,7 +33,8 @@ jobs:
       - name: Build
         env:
           # 自动将库名作为 base，例如 "/Gold-Trade/"
-          VITE_BASE: '/${{ github.repository.name }}/'
+          # 使用 github.event.repository.name 来获取仓库名以避免 github.repository.name 在某些上下文中为空导致 base 为 "//"
+          VITE_BASE: '/${{ github.event.repository.name }}/'
         run: npm run build
 
       - name: Configure GitHub Pages
