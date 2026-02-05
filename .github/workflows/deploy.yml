@@ -40,9 +40,11 @@ jobs:
         uses: actions/configure-pages@v3
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v1
+        # 使用 v4 以避免依赖已弃用的 artifact actions v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: ./dist
 
       - name: Deploy to GitHub Pages
-        uses: actions/deploy-pages@v1
+        # 使用最新稳定的 v4 版 deploy-pages
+        uses: actions/deploy-pages@v4
