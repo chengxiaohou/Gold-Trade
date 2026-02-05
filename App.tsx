@@ -189,7 +189,11 @@ export default function App() {
   // --- Drag & Drop Handlers ---
   const onDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(true);
+    // CRITICAL FIX: Only activate overlay if dragging files
+    // Internal element drags (like table columns) won't have 'Files' type usually
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDragging(true);
+    }
   };
 
   const onDragLeave = (e: React.DragEvent) => {
@@ -200,11 +204,15 @@ export default function App() {
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file && file.type === "application/json") {
-      processFile(file);
-    } else if (file) {
-      alert("请拖入 JSON 格式的文件");
+    
+    // Only process if it is actually a file
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      if (file.type === "application/json" || file.name.endsWith('.json')) {
+        processFile(file);
+      } else {
+        alert("请拖入 JSON 格式的文件");
+      }
     }
   };
 
@@ -344,7 +352,7 @@ export default function App() {
 
       {/* Drag Overlay */}
       {isDragging && (
-        <div className="absolute inset-0 bg-brand-yellow/10 backdrop-blur-sm z-50 flex items-center justify-center border-4 border-dashed border-brand-yellow m-4 rounded-3xl">
+        <div className="absolute inset-0 bg-brand-yellow/10 backdrop-blur-sm z-50 flex items-center justify-center border-4 border-dashed border-brand-yellow m-4 rounded-3xl pointer-events-none">
           <div className="text-center">
             <FileJson size={64} className="mx-auto text-brand-yellow mb-4" />
             <h3 className="text-2xl font-bold text-white">松开以导入数据</h3>
