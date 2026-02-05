@@ -19,10 +19,15 @@ export const CostChart: React.FC<CostChartProps> = ({ currentAvg, newAvg, orderT
   let isBetter = false;
   let diff = 0;
   
+  // Percent calculation (Signed)
+  // (New - Old) / Old
+  const percentChange = currentAvg > 0 ? ((newAvg - currentAvg) / currentAvg) * 100 : 0;
+  
   if (orderType === 'BUY') {
     isBetter = newAvg < currentAvg;
-    diff = currentAvg - newAvg;
+    diff = currentAvg - newAvg; // Positive diff implies cost went down (Better)
   } else {
+    // For Sell, comparing Price vs Cost
     isBetter = newAvg > currentAvg;
     diff = newAvg - currentAvg;
   }
@@ -47,8 +52,8 @@ export const CostChart: React.FC<CostChartProps> = ({ currentAvg, newAvg, orderT
         </div>
         <div className="text-right">
            <span className="text-xs text-slate-400 block">影响幅度</span>
-           <span className="text-xs font-mono text-slate-500">
-             {currentAvg > 0 ? ((Math.abs(diff)/currentAvg)*100).toFixed(2) : '0.00'}%
+           <span className={`text-xs font-mono font-bold ${diffColor}`}>
+             {percentChange > 0 ? '+' : ''}{percentChange.toFixed(2)}%
            </span>
         </div>
       </div>
