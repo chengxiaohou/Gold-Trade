@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { TradeRecord } from '../types';
-import { Trash2, Edit2, X } from 'lucide-react';
+import { Trash2, Edit2, X, Minus, Plus } from 'lucide-react';
 
 interface TradeListProps {
   trades: TradeRecord[];
@@ -57,6 +57,21 @@ const EditBubble: React.FC<EditBubbleProps> = ({ trade, onUpdate, onClose, posit
       onUpdate(trade.id, { grams: num });
     }
   };
+
+  const adjustValue = (
+    setter: React.Dispatch<React.SetStateAction<string>>,
+    field: 'price' | 'grams',
+    currentStr: string,
+    delta: number
+  ) => {
+    const current = parseFloat(currentStr) || 0;
+    const newVal = Math.max(0, current + delta);
+    // Round to avoid floating point errors (e.g. 10.1 + 10 = 20.0999999)
+    const safeVal = parseFloat(newVal.toFixed(4));
+    
+    setter(safeVal.toString());
+    onUpdate(trade.id, { [field]: safeVal });
+  };
   
   // Calculate bubble positioning style
   const style: React.CSSProperties = {
@@ -71,34 +86,67 @@ const EditBubble: React.FC<EditBubbleProps> = ({ trade, onUpdate, onClose, posit
         className="fixed z-[9999] bg-[#1e2333] border border-brand-yellow/30 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl p-4 w-60 animate-in fade-in zoom-in-95 duration-200"
         style={style}
       >
-        <div className="flex justify-between items-center mb-3 pb-2 border-b border-white/5">
+        <div className="flex justify-between items-center mb-4 pb-2 border-b border-white/5">
           <h4 className="text-xs font-bold text-brand-yellow uppercase tracking-wider">编辑交易</h4>
           <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
             <X size={14} />
           </button>
         </div>
         
-        <div className="space-y-3">
-          <div className="space-y-1">
+        <div className="space-y-4">
+          <div className="space-y-1.5">
              <label className="text-[10px] text-slate-400">成交价格 (元/克)</label>
-             <input
-               type="text"
-               value={priceStr}
-               onChange={handlePriceChange}
-               className="w-full bg-[#11131f] border border-app-border rounded px-2 py-1.5 text-sm text-white font-mono focus:border-brand-yellow focus:outline-none focus:ring-1 focus:ring-brand-yellow/50"
-             />
+             <div className="flex items-center gap-1.5">
+                <button 
+                  type="button"
+                  onClick={() => adjustValue(setPriceStr, 'price', priceStr, -10)}
+                  className="w-8 h-8 flex-none flex items-center justify-center bg-[#2a3044] hover:bg-[#3b455e] text-slate-200 rounded text-[10px] font-bold transition-colors active:scale-95 touch-manipulation"
+                >
+                  -10
+                </button>
+                <input
+                  type="text"
+                  value={priceStr}
+                  onChange={handlePriceChange}
+                  className="w-full min-w-0 bg-[#11131f] border border-app-border rounded px-2 h-8 text-sm text-white font-mono text-center focus:border-brand-yellow focus:outline-none focus:ring-1 focus:ring-brand-yellow/50"
+                />
+                <button 
+                  type="button"
+                  onClick={() => adjustValue(setPriceStr, 'price', priceStr, 10)}
+                  className="w-8 h-8 flex-none flex items-center justify-center bg-[#2a3044] hover:bg-[#3b455e] text-slate-200 rounded text-[10px] font-bold transition-colors active:scale-95 touch-manipulation"
+                >
+                  +10
+                </button>
+             </div>
           </div>
-          <div className="space-y-1">
+
+          <div className="space-y-1.5">
              <label className="text-[10px] text-slate-400">交易数量 (克)</label>
-             <input
-               type="text"
-               value={gramsStr}
-               onChange={handleGramsChange}
-               className="w-full bg-[#11131f] border border-app-border rounded px-2 py-1.5 text-sm text-white font-mono focus:border-brand-yellow focus:outline-none focus:ring-1 focus:ring-brand-yellow/50"
-             />
+             <div className="flex items-center gap-1.5">
+                <button 
+                  type="button"
+                  onClick={() => adjustValue(setGramsStr, 'grams', gramsStr, -1)}
+                  className="w-8 h-8 flex-none flex items-center justify-center bg-[#2a3044] hover:bg-[#3b455e] text-slate-200 rounded transition-colors active:scale-95 touch-manipulation"
+                >
+                  <Minus size={14} />
+                </button>
+                <input
+                  type="text"
+                  value={gramsStr}
+                  onChange={handleGramsChange}
+                  className="w-full min-w-0 bg-[#11131f] border border-app-border rounded px-2 h-8 text-sm text-white font-mono text-center focus:border-brand-yellow focus:outline-none focus:ring-1 focus:ring-brand-yellow/50"
+                />
+                <button 
+                  type="button"
+                  onClick={() => adjustValue(setGramsStr, 'grams', gramsStr, 1)}
+                  className="w-8 h-8 flex-none flex items-center justify-center bg-[#2a3044] hover:bg-[#3b455e] text-slate-200 rounded transition-colors active:scale-95 touch-manipulation"
+                >
+                  <Plus size={14} />
+                </button>
+             </div>
           </div>
           
-          <div className="pt-1 flex justify-between items-center text-xs">
+          <div className="pt-2 flex justify-between items-center text-xs border-t border-white/5 mt-2">
              <span className="text-slate-500">小计:</span>
              <span className="text-slate-300 font-mono">
                ¥ {fmt((parseFloat(priceStr) || 0) * (parseFloat(gramsStr) || 0))}
@@ -148,9 +196,11 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   };
 
   // 2. State & Persistence
-  const DEFAULT_ORDER: ColumnKey[] = ['type', 'price', 'grams', 'tradeTotal', 'historicalAvg', 'holdingTotal', 'avgChange'];
+  // Default order updated: holdingTotal before historicalAvg
+  const DEFAULT_ORDER: ColumnKey[] = ['type', 'price', 'grams', 'tradeTotal', 'holdingTotal', 'historicalAvg', 'avgChange'];
   const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(() => {
-    const saved = localStorage.getItem('gold_trade_list_column_order');
+    // Changed key to v2 to force update default order for existing users
+    const saved = localStorage.getItem('gold_trade_list_column_order_v2');
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as ColumnKey[];
@@ -179,7 +229,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   const currentHoverIdxRef = useRef<number | null>(null);
 
   useEffect(() => {
-    localStorage.setItem('gold_trade_list_column_order', JSON.stringify(columnOrder));
+    localStorage.setItem('gold_trade_list_column_order_v2', JSON.stringify(columnOrder));
   }, [columnOrder]);
 
   // 4. Pointer Handlers (Drag & Drop)
@@ -364,7 +414,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                   </th>
                 );
               })}
-              <th className="px-4 py-4 text-right sticky right-0 bg-app-bg border-l border-app-border shadow-[-8px_0_10px_-5px_rgba(0,0,0,0.5)]">操作</th>
+              <th className="px-4 py-4 text-center sticky right-0 bg-app-bg border-l border-app-border shadow-[-8px_0_10px_-5px_rgba(0,0,0,0.5)]">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-app-border">
@@ -378,8 +428,8 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                     {COLUMN_DEFS[colKey].render(trade as any)}
                   </td>
                 ))}
-                <td className="px-4 py-3 text-right sticky right-0 bg-app-card group-hover:bg-[#232940] transition-colors border-l border-app-border shadow-[-8px_0_10px_-5px_rgba(0,0,0,0.5)]">
-                  <div className="flex justify-end gap-1">
+                <td className="px-4 py-3 text-center sticky right-0 bg-app-card group-hover:bg-[#232940] transition-colors border-l border-app-border shadow-[-8px_0_10px_-5px_rgba(0,0,0,0.5)]">
+                  <div className="flex justify-center gap-1">
                     <button 
                       onClick={(e) => handleEditClick(e, trade.id)} 
                       className={`p-1 transition-colors ${editState?.id === trade.id ? 'text-brand-yellow' : 'text-slate-500 hover:text-brand-yellow'}`}
