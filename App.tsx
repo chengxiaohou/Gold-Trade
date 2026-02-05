@@ -8,6 +8,8 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig } from './types';
 
+const APP_VERSION = 'v1.1.0';
+
 export default function App() {
   // --- State ---
   
@@ -386,9 +388,12 @@ export default function App() {
                   <path d="M12 6c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6z" opacity="0.5"/>
                 </svg>
               </div>
-              <h1 className="text-3xl font-bold text-white tracking-wide">
-                <span className="text-brand-yellow">黄金交易</span> 成本预估
-              </h1>
+              <div className="flex items-baseline gap-3">
+                <h1 className="text-3xl font-bold text-white tracking-wide">
+                  <span className="text-brand-yellow">黄金交易</span> 成本预估
+                </h1>
+                <span className="text-[10px] text-slate-600 font-mono select-all hover:text-slate-500 transition-colors cursor-default">{APP_VERSION}</span>
+              </div>
             </div>
             <p className="text-slate-500 text-sm max-w-2xl">
               记录每笔买卖，自动计算持仓均价。输入新订单可预览成本变化。
