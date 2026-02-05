@@ -1,0 +1,46 @@
+name: Merge main → action-test
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: merge-main-action-test
+  cancel-in-progress: true
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (fetch all)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Ensure action-test exists
+        run: |
+          git fetch origin action-test || true
+          if git rev-parse --verify origin/action-test >/dev/null 2>&1; then
+            git checkout action-test
+            git reset --hard origin/action-test
+          else
+            git checkout -b action-test
+          fi
+
+      - name: Merge main into action-test
+        run: |
+          git fetch origin main
+          git merge --no-edit origin/main || (git merge --abort && echo "Merge conflict" && exit 1)
+
+      - name: Push merged branch
+        run: git push origin action-test
