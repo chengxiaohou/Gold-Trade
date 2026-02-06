@@ -8,7 +8,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig } from './types';
 
-const APP_VERSION = 'v1.1.0';
+const APP_VERSION = 'v1.3.0';
 
 export default function App() {
   // --- State ---
@@ -385,7 +385,7 @@ export default function App() {
               <div className="text-brand-yellow">
                 <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8">
                   <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm0 10c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"/>
-                  <path d="M12 6c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6z" opacity="0.5"/>
+                  <path d="M12 6c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-2.69-6-6-6z" opacity="0.5"/>
                 </svg>
               </div>
               <div className="flex items-baseline gap-3">
@@ -402,46 +402,14 @@ export default function App() {
         </header>
 
         {/* Main Content Grid 
-            Mobile Order: Stats -> Input -> Preview -> History -> AI
+            Mobile Order: Input -> Preview -> Stats -> History -> AI
             Desktop Order: 
-              Left Col: Stats, Input, History, AI
+              Left Col: Input, Stats, History, AI
               Right Col: Preview
         */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6 items-start">
           
-          {/* 1. Current Position Summary (Left) */}
-          <div className="lg:col-span-8 bg-app-card border border-app-border rounded-xl p-6 shadow-sm">
-            <div className="flex items-center gap-2 mb-4">
-               <Wallet size={18} className="text-brand-yellow"/>
-               <h2 className="text-brand-yellow font-bold text-lg">当前持仓详情</h2>
-               <span className="text-xs text-slate-500 ml-auto">基于成交记录自动计算</span>
-            </div>
-            
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-app-bg p-3 rounded-lg border border-app-border">
-                <span className="text-xs text-slate-500 block mb-1">平均成本</span>
-                <div className="text-xl font-bold text-white font-mono">{currentPosition.avgCost.toFixed(2)}</div>
-              </div>
-              <div className="bg-app-bg p-3 rounded-lg border border-app-border">
-                <span className="text-xs text-slate-500 block mb-1">持仓数量 (克)</span>
-                <div className="text-xl font-bold text-white font-mono">{currentPosition.grams.toFixed(2)}</div>
-              </div>
-              <div className="bg-app-bg p-3 rounded-lg border border-app-border">
-                <span className="text-xs text-slate-500 block mb-1">持仓市值 (估)</span>
-                <div className="text-xl font-bold text-slate-300 font-mono">
-                  {currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                </div>
-              </div>
-              <div className={`bg-app-bg p-3 rounded-lg border ${currentPosition.realizedPnL >= 0 ? 'border-brand-green/30' : 'border-brand-red/30'}`}>
-                <span className="text-xs text-slate-500 block mb-1">已实现盈亏</span>
-                <div className={`text-xl font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-green' : 'text-brand-red'}`}>
-                  {currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toFixed(2)}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 2. New Order Input (Left) */}
+          {/* 1. New Order Input (Left) */}
           <div className="lg:col-span-8 bg-app-card border border-brand-yellow rounded-xl p-5 shadow-md relative overflow-hidden">
              
              <div className="flex justify-between items-center mb-4">
@@ -494,8 +462,8 @@ export default function App() {
              </div>
           </div>
 
-          {/* 3. Preview Section (Right on Desktop, After Input on Mobile) */}
-          {/* Using grid placement to force it to the right on desktop while keeping DOM order for mobile */}
+          {/* 2. Preview Section (Moved Here for Mobile Order) */}
+          {/* Desktop: Forced to column 9, row 1 */}
           <div className="lg:col-span-4 lg:col-start-9 lg:row-start-1 lg:row-span-10 lg:sticky lg:top-6 space-y-4">
             <div className="bg-app-card border border-brand-yellow rounded-xl overflow-hidden shadow-lg">
               <div className="bg-brand-yellow px-6 py-4 flex items-center justify-between">
@@ -650,6 +618,38 @@ export default function App() {
                   >
                     <RefreshCcw size={16} />
                 </button>
+            </div>
+          </div>
+
+          {/* 3. Current Position Summary (Moved below Preview) */}
+          <div className="lg:col-span-8 bg-app-card border border-app-border rounded-xl p-6 shadow-sm">
+            <div className="flex items-center gap-2 mb-4">
+               <Wallet size={18} className="text-brand-yellow"/>
+               <h2 className="text-brand-yellow font-bold text-lg">当前持仓详情</h2>
+               <span className="text-xs text-slate-500 ml-auto">基于成交记录自动计算</span>
+            </div>
+            
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-app-bg p-3 rounded-lg border border-app-border">
+                <span className="text-xs text-slate-500 block mb-1">平均成本</span>
+                <div className="text-xl font-bold text-white font-mono">{currentPosition.avgCost.toFixed(2)}</div>
+              </div>
+              <div className="bg-app-bg p-3 rounded-lg border border-app-border">
+                <span className="text-xs text-slate-500 block mb-1">持仓数量 (克)</span>
+                <div className="text-xl font-bold text-white font-mono">{currentPosition.grams.toFixed(2)}</div>
+              </div>
+              <div className="bg-app-bg p-3 rounded-lg border border-app-border">
+                <span className="text-xs text-slate-500 block mb-1">持仓市值 (估)</span>
+                <div className="text-xl font-bold text-slate-300 font-mono">
+                  {currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                </div>
+              </div>
+              <div className={`bg-app-bg p-3 rounded-lg border ${currentPosition.realizedPnL >= 0 ? 'border-brand-green/30' : 'border-brand-red/30'}`}>
+                <span className="text-xs text-slate-500 block mb-1">已实现盈亏</span>
+                <div className={`text-xl font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-green' : 'text-brand-red'}`}>
+                  {currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toFixed(2)}
+                </div>
+              </div>
             </div>
           </div>
 
