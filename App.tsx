@@ -376,7 +376,7 @@ export default function App() {
         accept=".json"
       />
 
-      <div className="max-w-6xl w-full pb-12">
+      <div className="max-w-[1400px] w-full pb-12">
         
         {/* Top Header */}
         <header className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
@@ -487,7 +487,8 @@ export default function App() {
                    </div>
                    {currentPosition.grams > 0 && inputs.grams && previewType === 'BUY' ? (
                      <div className="flex items-center gap-2 mt-2">
-                        <span className={`text-sm font-bold ${simulation.costDifference < 0 ? 'text-brand-green' : 'text-brand-red'}`}>
+                        {/* Cost Change: Up = Red, Down = Green */}
+                        <span className={`text-sm font-bold ${simulation.costDifference > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                           {simulation.costDifference > 0 ? '+' : ''}{simulation.costDifference.toFixed(2)}%
                         </span>
                         <span className="text-xs text-slate-500">
@@ -528,7 +529,8 @@ export default function App() {
                    {previewType === 'SELL' && simulation.projectedPnL !== undefined && (
                      <div className="flex justify-between items-center border-t border-app-border pt-3">
                         <span className="text-slate-400 text-sm">预计本次盈亏</span>
-                        <span className={`font-mono font-bold ${simulation.projectedPnL >= 0 ? 'text-brand-green' : 'text-brand-red'}`}>
+                        {/* PnL: Profit (>=0) Red, Loss (<0) Green */}
+                        <span className={`font-mono font-bold ${simulation.projectedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                           {simulation.projectedPnL >= 0 ? '+' : ''}{simulation.projectedPnL.toFixed(2)}
                         </span>
                      </div>
@@ -644,9 +646,10 @@ export default function App() {
                   {currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                 </div>
               </div>
-              <div className={`bg-app-bg p-3 rounded-lg border ${currentPosition.realizedPnL >= 0 ? 'border-brand-green/30' : 'border-brand-red/30'}`}>
+              <div className={`bg-app-bg p-3 rounded-lg border ${currentPosition.realizedPnL >= 0 ? 'border-brand-red/30' : 'border-brand-green/30'}`}>
                 <span className="text-xs text-slate-500 block mb-1">已实现盈亏</span>
-                <div className={`text-xl font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-green' : 'text-brand-red'}`}>
+                {/* Realized PnL: Profit (Red), Loss (Green) */}
+                <div className={`text-xl font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                   {currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toFixed(2)}
                 </div>
               </div>
