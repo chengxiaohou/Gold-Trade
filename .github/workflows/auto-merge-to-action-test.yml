@@ -27,7 +27,7 @@ jobs:
           git fetch origin
           
           # Check if action-test branch exists remotely
-          if git ls-remote --heads origin action-test | grep action-test; then
+          if git ls-remote --heads origin action-test | grep -q "refs/heads/action-test$"; then
             echo "Branch 'action-test' exists, checking out..."
             git checkout action-test
             git pull origin action-test
@@ -36,9 +36,16 @@ jobs:
             git checkout -b action-test
           fi
           
-          # Merge main into action-test
+          # Merge main into action-test with error handling
           echo "Merging main into action-test..."
-          git merge origin/main -m "Auto-merge main to action-test"
+          if ! git merge origin/main -m "Auto-merge main to action-test"; then
+            echo "❌ Merge failed due to conflicts!"
+            echo "Manual intervention is required to resolve conflicts."
+            echo "Please resolve conflicts manually and push to action-test branch."
+            exit 1
+          fi
           
           # Push the changes
+          echo "✅ Merge successful, pushing to action-test..."
           git push origin action-test
+          echo "✅ Auto-merge completed successfully!"
