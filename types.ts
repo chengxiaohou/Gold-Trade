@@ -7,6 +7,7 @@ export interface TradeRecord {
   grams: number;
   price: number;
   timestamp: number;
+  tag?: string; // New: User defined tag for filtering or categorization
   isDisabled?: boolean; // New: If true, this trade is ignored in calculations
 }
 
@@ -44,4 +45,5 @@ export interface GithubConfig {
 export interface AppSettings {
   priceStep: number;
   gramsStep: number;
+  tagColors: Record<string, string>; // Maps tag text to a color key (e.g., "short_term" -> "red")
 }

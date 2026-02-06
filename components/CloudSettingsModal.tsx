@@ -61,7 +61,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     
     const newAppSettings: AppSettings = {
         priceStep: newPriceStep,
-        gramsStep: newGramsStep
+        gramsStep: newGramsStep,
+        tagColors: appSettings.tagColors // Preserve existing tag colors
     };
 
     // If Cloud tab is not active and no changes to cloud config, just save app settings
