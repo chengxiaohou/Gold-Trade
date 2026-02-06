@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { RefreshCcw, BrainCircuit, Calculator, Wallet, Plus, History, TrendingUp, CheckCircle2, Download, Upload, FileJson, Cloud, CloudUpload, CloudDownload, Settings } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Calculator, Wallet, Plus, History, TrendingUp, CheckCircle2, Download, Upload, FileJson, Cloud, CloudUpload, CloudDownload, Settings, Target } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
@@ -8,7 +8,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig } from './types';
 
-const APP_VERSION = 'v1.3.0';
+const APP_VERSION = 'v1.3.1';
 
 export default function App() {
   // --- State ---
@@ -27,6 +27,12 @@ export default function App() {
     return saved ? JSON.parse(saved) : { price: '', grams: '' };
   });
 
+  // 3. Market Price for Floating PnL (Persisted)
+  const [marketPrice, setMarketPrice] = useState(() => {
+    const saved = localStorage.getItem('gold_market_price');
+    return saved || '';
+  });
+
   const [aiState, setAiState] = useState<AIAnalysisState>({
     loading: false,
     result: null,
@@ -41,7 +47,7 @@ export default function App() {
     return saved ? JSON.parse(saved) : { token: '', gistId: '' };
   });
 
-  // 3. Preview Type (Newly persisted)
+  // 4. Preview Type (Newly persisted)
   const [previewType, setPreviewType] = useState<OrderType>(() => {
     const saved = localStorage.getItem('gold_preview_type');
     return (saved === 'SELL') ? 'SELL' : 'BUY';
@@ -61,6 +67,11 @@ export default function App() {
     localStorage.setItem('gold_inputs_draft', JSON.stringify(inputs));
   }, [inputs]);
 
+  // Save Market Price
+  useEffect(() => {
+    localStorage.setItem('gold_market_price', marketPrice);
+  }, [marketPrice]);
+
   // Save Preview Type Preference
   useEffect(() => {
     localStorage.setItem('gold_preview_type', previewType);
@@ -71,6 +82,11 @@ export default function App() {
   const handleInputChange = (field: keyof typeof inputs, value: string) => {
     if (!/^\d*\.?\d*$/.test(value)) return;
     setInputs(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleMarketPriceChange = (value: string) => {
+    if (!/^\d*\.?\d*$/.test(value)) return;
+    setMarketPrice(value);
   };
 
   // --- Cloud Sync Handlers ---
@@ -252,6 +268,13 @@ export default function App() {
     return { grams, avgCost, totalCost, realizedPnL };
   }, [trades]);
 
+  // --- Floating PnL Calculation ---
+  const floatingPnL = useMemo(() => {
+    const market = parseFloat(marketPrice) || 0;
+    if (market <= 0 || currentPosition.grams <= 0) return 0;
+    return (market - currentPosition.avgCost) * currentPosition.grams;
+  }, [marketPrice, currentPosition]);
+
   // --- Simulation: "What if" for the inputs ---
   const getSimulation = (type: OrderType): SimulationResult => {
     const price = parseFloat(inputs.price) || 0;
@@ -309,6 +332,10 @@ export default function App() {
     };
 
     setTrades(prev => [...prev, newTrade]);
+    
+    // Auto-sync market price with execution price
+    setMarketPrice(inputs.price);
+    
     setInputs({ price: '', grams: '' }); // Clear inputs
     setAiState({ loading: false, result: null, error: null });
   };
@@ -325,6 +352,7 @@ export default function App() {
     if (window.confirm("确定要清空所有数据吗？此操作无法撤销。")) {
       setTrades([]);
       setInputs({ price: '', grams: '' });
+      setMarketPrice('');
       setAiState({ loading: false, result: null, error: null });
       setPreviewType('BUY');
     }
@@ -623,15 +651,32 @@ export default function App() {
             </div>
           </div>
 
-          {/* 3. Current Position Summary (Moved below Preview) */}
+          {/* 3. Current Position Summary (Updated with PnL) */}
           <div className="lg:col-span-8 bg-app-card border border-app-border rounded-xl p-6 shadow-sm">
-            <div className="flex items-center gap-2 mb-4">
-               <Wallet size={18} className="text-brand-yellow"/>
-               <h2 className="text-brand-yellow font-bold text-lg">当前持仓详情</h2>
-               <span className="text-xs text-slate-500 ml-auto">基于成交记录自动计算</span>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-4 justify-between">
+               <div className="flex items-center gap-2">
+                  <Wallet size={18} className="text-brand-yellow"/>
+                  <h2 className="text-brand-yellow font-bold text-lg">当前持仓详情</h2>
+               </div>
+               
+               {/* Market Price Input */}
+               <div className="flex items-center gap-2 bg-app-bg px-3 py-1.5 rounded-lg border border-app-border border-l-4 border-l-brand-yellow/50">
+                  <span className="text-xs text-slate-400 whitespace-nowrap flex items-center gap-1">
+                     <Target size={12} />
+                     参考市价
+                  </span>
+                  <input 
+                    type="number" 
+                    value={marketPrice}
+                    onChange={(e) => handleMarketPriceChange(e.target.value)}
+                    placeholder="0.00"
+                    className="w-20 bg-transparent text-right font-mono font-bold text-white focus:outline-none placeholder-slate-700 text-sm"
+                  />
+                  <span className="text-xs text-slate-500">元/克</span>
+               </div>
             </div>
             
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
               <div className="bg-app-bg p-3 rounded-lg border border-app-border">
                 <span className="text-xs text-slate-500 block mb-1">平均成本</span>
                 <div className="text-xl font-bold text-white font-mono">{currentPosition.avgCost.toFixed(2)}</div>
@@ -641,11 +686,29 @@ export default function App() {
                 <div className="text-xl font-bold text-white font-mono">{currentPosition.grams.toFixed(2)}</div>
               </div>
               <div className="bg-app-bg p-3 rounded-lg border border-app-border">
-                <span className="text-xs text-slate-500 block mb-1">持仓市值 (估)</span>
+                <span className="text-xs text-slate-500 block mb-1">持仓总投入</span>
                 <div className="text-xl font-bold text-slate-300 font-mono">
                   {currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                 </div>
               </div>
+
+              {/* NEW: Floating PnL based on Market Price Input */}
+              <div className={`bg-app-bg p-3 rounded-lg border ${floatingPnL >= 0 ? 'border-brand-red/30 bg-brand-red/5' : 'border-brand-green/30 bg-brand-green/5'}`}>
+                <span className="text-xs text-slate-500 block mb-1 flex justify-between">
+                   <span>浮动盈亏</span>
+                   {marketPrice && <span className="text-[10px] opacity-60">@ {marketPrice}</span>}
+                </span>
+                <div className={`text-xl font-bold font-mono ${floatingPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                  {marketPrice ? (
+                    <>
+                      {floatingPnL > 0 ? '+' : ''}{floatingPnL.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                    </>
+                  ) : (
+                    <span className="text-slate-600 text-base font-normal">--</span>
+                  )}
+                </div>
+              </div>
+
               <div className={`bg-app-bg p-3 rounded-lg border ${currentPosition.realizedPnL >= 0 ? 'border-brand-red/30' : 'border-brand-green/30'}`}>
                 <span className="text-xs text-slate-500 block mb-1">已实现盈亏</span>
                 {/* Realized PnL: Profit (Red), Loss (Green) */}
