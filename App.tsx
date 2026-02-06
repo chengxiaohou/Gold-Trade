@@ -1,6 +1,5 @@
-
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
@@ -10,15 +9,6 @@ import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
 const APP_VERSION = 'v1.7.0';
-
-// Custom Icon: Stack of Coins
-const CoinStackIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
-  <svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size} className={className}>
-    <path d="M12 3c-4.42 0-8 1.79-8 4s3.58 4 8 4 8-1.79 8-4-3.58-4-8-4z" />
-    <path d="M4 9v4c0 2.21 3.58 4 8 4s8-1.79 8-4V9c0 2.21-3.58 4-8 4s-8-1.79-8-4z" opacity="0.75" />
-    <path d="M4 15v4c0 2.21 3.58 4 8 4s8-1.79 8-4v-4c0 2.21-3.58 4-8 4s-8-1.79-8-4z" opacity="0.5" />
-  </svg>
-);
 
 export default function App() {
   // --- Theme State ---
@@ -543,19 +533,14 @@ export default function App() {
         <header className="mb-6 flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-3 mb-2">
-              <div className="text-brand-yellow">
-                <CoinStackIcon size={32} />
-              </div>
               <div className="flex items-baseline gap-3">
-                <h1 className="text-3xl font-bold text-app-text tracking-wide">
-                  <span className="text-brand-yellow">黄金交易模拟器</span>
+                <h1 className="text-3xl font-bold text-app-subtext tracking-wide">
+                  黄金交易模拟器
                 </h1>
                 <span className="text-[10px] text-app-subtext font-mono select-all hover:text-app-text transition-colors cursor-default">{APP_VERSION}</span>
               </div>
             </div>
-            <p className="text-app-subtext text-sm max-w-2xl">
-              记录每笔买卖，自动计算持仓均价。
-            </p>
+            {/* Description removed */}
           </div>
           
           <button
@@ -698,15 +683,15 @@ export default function App() {
                 <TrendingUp size={16} />
                 <h3 className="font-medium text-sm">挂单模拟预估</h3>
               </div>
-              <div className={`bg-app-card border rounded-xl overflow-hidden shadow-2xl transition-all duration-300 ${previewType === 'BUY' ? 'border-brand-redDim shadow-brand-redDim/20' : 'border-brand-greenDim shadow-brand-greenDim/20'}`}>
+              <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-2xl transition-all duration-300">
                 
-                <div className="grid grid-cols-2 p-1.5 bg-app-bg border-b border-app-border">
+                <div className="grid grid-cols-2 p-1.5">
                   <button 
                     onClick={() => setPreviewType('BUY')}
                     className={`py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${
                       previewType === 'BUY' 
                         ? 'bg-brand-red text-white shadow-lg shadow-brand-red/20' 
-                        : 'text-app-subtext hover:text-app-text'
+                        : 'bg-app-input text-app-subtext hover:text-app-text hover:bg-app-input/80'
                     }`}
                   >
                     <TrendingUp size={16} />
@@ -717,10 +702,10 @@ export default function App() {
                     className={`py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${
                       previewType === 'SELL' 
                         ? 'bg-brand-green text-white shadow-lg shadow-brand-green/20' 
-                        : 'text-app-subtext hover:text-app-text'
+                        : 'bg-app-input text-app-subtext hover:text-app-text hover:bg-app-input/80'
                     }`}
                   >
-                    <TrendingUp size={16} className="rotate-180" />
+                    <TrendingDown size={16} />
                     卖出
                   </button>
                 </div>
@@ -742,12 +727,6 @@ export default function App() {
                         placeholder="0.00"
                         step={appSettings.gramsStep}
                       />
-                  </div>
-
-                  <div className="flex items-center justify-center py-1">
-                    <div className="flex flex-col items-center">
-                       <ChevronDown size={18} className="text-app-subtext/40 animate-pulse" />
-                    </div>
                   </div>
 
                   <div className="bg-app-input/30 rounded-xl p-4 border border-app-border space-y-3">
@@ -784,7 +763,7 @@ export default function App() {
                       </div>
                       
                       {/* Divider */}
-                      <div className="h-px bg-app-border/50 w-full" />
+                      <div className="h-px bg-white/5 w-full" />
 
                       {/* Bottom Row: Grid */}
                       <div className="grid grid-cols-2 gap-x-4 gap-y-2">
