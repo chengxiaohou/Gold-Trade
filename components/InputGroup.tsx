@@ -57,7 +57,7 @@ export const InputGroup: React.FC<InputGroupProps> = ({
 
   return (
     <div className="flex flex-col space-y-1.5 w-full group/input">
-      <label className="text-[10px] text-slate-400 font-medium ml-1 truncate">{label}</label>
+      <label className="text-[10px] text-app-subtext font-medium ml-1 truncate">{label}</label>
       <div className="relative flex items-center">
         {/* 
            Using 'appearance-none' and custom CSS to hide default spin buttons 
@@ -80,7 +80,7 @@ export const InputGroup: React.FC<InputGroupProps> = ({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className="no-spinners w-full bg-app-input border border-app-border text-slate-100 rounded-lg py-2.5 pl-3 pr-8 focus:outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all font-mono text-base placeholder-slate-700"
+          className="no-spinners w-full bg-app-input border border-app-border text-app-text rounded-lg py-2.5 pl-3 pr-8 focus:outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all font-mono text-base placeholder-app-subtext/50"
         />
         
         {/* Custom Spin Controls (Visible on Hover of group or Focus) */}
@@ -88,7 +88,7 @@ export const InputGroup: React.FC<InputGroupProps> = ({
            <button 
              type="button"
              onClick={() => updateValue(step)}
-             className="flex-1 flex items-center justify-center bg-white/5 hover:bg-brand-yellow/20 rounded-sm text-slate-400 hover:text-brand-yellow transition-colors"
+             className="flex-1 flex items-center justify-center bg-app-text/5 hover:bg-brand-yellow/20 rounded-sm text-app-subtext hover:text-brand-yellow transition-colors"
              tabIndex={-1}
            >
              <ChevronUp size={10} strokeWidth={3} />
@@ -96,7 +96,7 @@ export const InputGroup: React.FC<InputGroupProps> = ({
            <button 
              type="button"
              onClick={() => updateValue(-step)}
-             className="flex-1 flex items-center justify-center bg-white/5 hover:bg-brand-yellow/20 rounded-sm text-slate-400 hover:text-brand-yellow transition-colors"
+             className="flex-1 flex items-center justify-center bg-app-text/5 hover:bg-brand-yellow/20 rounded-sm text-app-subtext hover:text-brand-yellow transition-colors"
              tabIndex={-1}
            >
              <ChevronDown size={10} strokeWidth={3} />
@@ -106,7 +106,7 @@ export const InputGroup: React.FC<InputGroupProps> = ({
         {/* Unit Label (if provided) - Pushed left by controls */}
         {unit && (
           <div className="absolute right-8 inset-y-0 flex items-center pointer-events-none">
-             <span className="text-slate-500 text-xs font-bold">{unit}</span>
+             <span className="text-app-subtext text-xs font-bold">{unit}</span>
           </div>
         )}
       </div>
