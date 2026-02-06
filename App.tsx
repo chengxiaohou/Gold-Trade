@@ -9,7 +9,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.6.0';
+const APP_VERSION = 'v1.7.0';
 
 // Custom Icon: Stack of Coins
 const CoinStackIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
@@ -69,7 +69,13 @@ export default function App() {
   // 4. Global App Settings (New)
   const [appSettings, setAppSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem('gold_app_settings');
-    return saved ? JSON.parse(saved) : { priceStep: 5, gramsStep: 1 };
+    // Migration: Add tagColors if missing
+    const parsed = saved ? JSON.parse(saved) : {};
+    return {
+      priceStep: parsed.priceStep || 5,
+      gramsStep: parsed.gramsStep || 1,
+      tagColors: parsed.tagColors || {}
+    };
   });
 
   const [aiState, setAiState] = useState<AIAnalysisState>({
@@ -160,6 +166,10 @@ export default function App() {
     // Save App Settings
     setAppSettings(newAppSettings);
     // Persistence handled by useEffect
+  };
+  
+  const handleSettingsUpdate = (updates: Partial<AppSettings>) => {
+    setAppSettings(prev => ({ ...prev, ...updates }));
   };
 
   const handleCloudUpload = async () => {
@@ -646,7 +656,13 @@ export default function App() {
                   <History size={16} />
                   <h3 className="font-medium text-sm">成交记录</h3>
                </div>
-               <TradeList trades={trades} onDelete={deleteTrade} onUpdate={updateTrade} settings={appSettings} />
+               <TradeList 
+                  trades={trades} 
+                  onDelete={deleteTrade} 
+                  onUpdate={updateTrade} 
+                  settings={appSettings} 
+                  onSettingsChange={handleSettingsUpdate}
+               />
              </div>
 
              <div className="bg-app-card border border-app-border rounded-xl p-4 transition-colors duration-300">
