@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { TradeRecord, AppSettings } from '../types';
-import { Trash2, Edit2, X, Minus, Plus, ArrowUp, ArrowDown, GripHorizontal, Eye, EyeOff, ChevronUp, ChevronDown } from 'lucide-react';
+import { Trash2, Edit2, X, GripHorizontal, Eye, EyeOff, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react';
 
 interface TradeListProps {
   trades: TradeRecord[];
@@ -30,6 +30,13 @@ interface EditBubbleProps {
 }
 
 const EditBubble: React.FC<EditBubbleProps> = ({ trade, onUpdate, onClose, initialPosition, settings }) => {
+  // Snapshot initial state for Reset functionality
+  const initialSnapshot = useRef({
+    price: trade.price,
+    grams: trade.grams,
+    type: trade.type
+  });
+
   // Local state for inputs
   const [priceStr, setPriceStr] = useState(trade.price.toString());
   const [gramsStr, setGramsStr] = useState(trade.grams.toString());
@@ -45,6 +52,20 @@ const EditBubble: React.FC<EditBubbleProps> = ({ trade, onUpdate, onClose, initi
   // Input refs for wheel support
   const priceInputRef = useRef<HTMLInputElement>(null);
   const gramsInputRef = useRef<HTMLInputElement>(null);
+
+  // --- Reset Handler ---
+  const handleReset = () => {
+    const init = initialSnapshot.current;
+    // 1. Restore global state
+    onUpdate(trade.id, {
+      price: init.price,
+      grams: init.grams,
+      type: init.type
+    });
+    // 2. Restore local inputs
+    setPriceStr(init.price.toString());
+    setGramsStr(init.grams.toString());
+  };
 
   // --- Ultra-Fast Drag Handlers (Pointer Capture) ---
 
@@ -197,13 +218,24 @@ const EditBubble: React.FC<EditBubbleProps> = ({ trade, onUpdate, onClose, initi
             <GripHorizontal size={16} className="opacity-80"/>
             <h4 className="text-sm font-bold tracking-wider">编辑交易</h4>
           </div>
-          <button 
-            onClick={onClose} 
-            onPointerDown={(e) => e.stopPropagation()}
-            className="text-slate-500 hover:text-white transition-colors bg-white/5 hover:bg-white/10 rounded p-1"
-          >
-            <X size={16} />
-          </button>
+          
+          <div className="flex items-center gap-1">
+            <button 
+              onClick={handleReset}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="text-slate-500 hover:text-brand-yellow transition-colors bg-white/5 hover:bg-white/10 rounded p-1 mr-1"
+              title="撤销更改"
+            >
+              <RotateCcw size={14} />
+            </button>
+            <button 
+              onClick={onClose} 
+              onPointerDown={(e) => e.stopPropagation()}
+              className="text-slate-500 hover:text-white transition-colors bg-white/5 hover:bg-white/10 rounded p-1"
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
         
         <div className="p-5 space-y-5 bg-[#1e2333]">
@@ -589,11 +621,11 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                   </th>
                 );
               })}
-              <th className="px-1 py-3 text-center sticky right-0 bg-app-bg border-l border-app-border shadow-lg w-[75px]">
+              <th className="px-1 py-3 text-center sticky right-0 bg-app-bg border-l border-app-border shadow-lg w-[90px]">
                  <button 
                    onClick={() => setSortDesc(!sortDesc)}
                    className={`
-                     flex items-center justify-center gap-0.5 w-full py-1.5 rounded-md transition-all text-[11px] font-bold border
+                     flex items-center justify-center gap-1 w-full py-1.5 rounded-md transition-all text-[11px] font-bold border
                      ${sortDesc 
                         ? 'bg-brand-green/10 text-brand-green border-brand-green/20 hover:bg-brand-green/20' 
                         : 'bg-indigo-500/10 text-indigo-300 border-indigo-500/20 hover:bg-indigo-500/20'
@@ -601,8 +633,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                    `}
                    title="切换时间排序"
                  >
-                   {sortDesc ? <ArrowDown size={12} /> : <ArrowUp size={12} />}
-                   <span>{sortDesc ? "最新" : "最早"}</span>
+                   <span>{sortDesc ? "最新→最早" : "最早→最新"}</span>
                  </button>
               </th>
             </tr>
@@ -630,18 +661,18 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                 <td className="px-1 py-3 text-center sticky right-0 bg-app-card group-hover:bg-[#232940] border-l border-app-border shadow-lg">
                   <div className="flex justify-center gap-1">
                     <button 
-                      onClick={() => onUpdate(trade.id, { isDisabled: !trade.isDisabled })}
-                      className={`p-1 transition-colors ${trade.isDisabled ? 'text-slate-600 hover:text-slate-400' : 'text-slate-500 hover:text-indigo-400'}`}
-                      title={trade.isDisabled ? "恢复生效" : "暂时失效"}
-                    >
-                      {trade.isDisabled ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
-                    <button 
                       onClick={(e) => handleEditClick(e, trade.id)} 
                       className={`p-1 transition-colors ${editState?.id === trade.id ? 'text-brand-yellow' : 'text-slate-500 hover:text-brand-yellow'}`}
                       title="编辑"
                     >
                       <Edit2 size={14} />
+                    </button>
+                    <button 
+                      onClick={() => onUpdate(trade.id, { isDisabled: !trade.isDisabled })}
+                      className={`p-1 transition-colors ${trade.isDisabled ? 'text-slate-600 hover:text-slate-400' : 'text-slate-500 hover:text-indigo-400'}`}
+                      title={trade.isDisabled ? "恢复生效" : "暂时失效"}
+                    >
+                      {trade.isDisabled ? <EyeOff size={14} /> : <Eye size={14} />}
                     </button>
                     <button onClick={() => onDelete(trade.id)} className="text-slate-500 hover:text-red-400 transition-colors p-1" title="删除">
                       <Trash2 size={14} />
@@ -665,4 +696,4 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
       )}
     </>
   );
-};
+}

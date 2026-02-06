@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { RefreshCcw, BrainCircuit, Calculator, Wallet, Plus, History, TrendingUp, CheckCircle2, Download, Upload, FileJson, Cloud, CloudUpload, CloudDownload, Settings, Target, ArrowRight } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Calculator, Wallet, Plus, History, TrendingUp, CheckCircle2, Download, Upload, FileJson, Cloud, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
@@ -9,6 +9,15 @@ import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
 const APP_VERSION = 'v1.6.0';
+
+// Custom Icon: Stack of Coins
+const CoinStackIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size} className={className}>
+    <path d="M12 3c-4.42 0-8 1.79-8 4s3.58 4 8 4 8-1.79 8-4-3.58-4-8-4z" />
+    <path d="M4 9v4c0 2.21 3.58 4 8 4s8-1.79 8-4V9c0 2.21-3.58 4-8 4s-8-1.79-8-4z" opacity="0.75" />
+    <path d="M4 15v4c0 2.21 3.58 4 8 4s8-1.79 8-4v-4c0 2.21-3.58 4-8 4s-8-1.79-8-4z" opacity="0.5" />
+  </svg>
+);
 
 export default function App() {
   // --- State ---
@@ -60,6 +69,7 @@ export default function App() {
   });
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const marketPriceInputRef = useRef<HTMLInputElement>(null);
 
   // --- Effects: Auto-save locally ---
   
@@ -94,6 +104,28 @@ export default function App() {
     if (!/^\d*\.?\d*$/.test(value)) return;
     setMarketPrice(value);
   };
+
+  const updateMarketPrice = (delta: number) => {
+    const currentVal = parseFloat(marketPrice) || 0;
+    const nextVal = Math.max(0, currentVal + delta);
+    const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(2);
+    handleMarketPriceChange(nextStr);
+  };
+
+  // Wheel listener for Market Price
+  useEffect(() => {
+    const el = marketPriceInputRef.current;
+    if (!el) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const direction = e.deltaY > 0 ? -1 : 1;
+      updateMarketPrice(direction * appSettings.priceStep);
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [marketPrice, appSettings.priceStep]);
 
   // --- Cloud & Settings Handlers ---
   const handleSaveSettings = (newGithubConfig: GithubConfig, newAppSettings: AppSettings) => {
@@ -377,6 +409,16 @@ export default function App() {
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
+      <style>{`
+          .no-spinners::-webkit-inner-spin-button,
+          .no-spinners::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+          }
+          .no-spinners {
+            -moz-appearance: textfield;
+          }
+      `}</style>
       <CloudSettingsModal 
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)}
@@ -409,10 +451,7 @@ export default function App() {
           <div>
             <div className="flex items-center gap-3 mb-2">
               <div className="text-brand-yellow">
-                <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8">
-                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm0 10c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"/>
-                  <path d="M12 6c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-2.69-6-6-6z" opacity="0.5"/>
-                </svg>
+                <CoinStackIcon size={32} />
               </div>
               <div className="flex items-baseline gap-3">
                 <h1 className="text-3xl font-bold text-white tracking-wide">
@@ -422,7 +461,7 @@ export default function App() {
               </div>
             </div>
             <p className="text-slate-500 text-sm max-w-2xl">
-              记录每笔买卖，自动计算持仓均价。输入新订单可预览成本变化。
+              记录每笔买卖，自动计算持仓均价。
             </p>
           </div>
         </header>
@@ -438,20 +477,42 @@ export default function App() {
                       <h2 className="text-brand-yellow font-bold text-lg">当前持仓详情</h2>
                    </div>
                    
-                   <div className="flex items-center gap-2 bg-app-bg px-3 py-1.5 rounded-lg border border-app-border border-l-4 border-l-brand-yellow/50">
-                      <span className="text-xs text-slate-400 whitespace-nowrap flex items-center gap-1">
-                         <Target size={12} />
-                         参考市价
-                      </span>
-                      <input 
-                        type="number" 
-                        value={marketPrice}
-                        onChange={(e) => handleMarketPriceChange(e.target.value)}
-                        placeholder="0.00"
-                        className="w-20 bg-transparent text-right font-mono font-bold text-white focus:outline-none placeholder-slate-700 text-sm"
-                      />
-                      <span className="text-xs text-slate-500">元/克</span>
+                   <div className="flex items-stretch bg-[#131620] rounded-lg border border-app-border shadow-inner group focus-within:border-brand-yellow/60 focus-within:ring-1 focus-within:ring-brand-yellow/20 transition-all overflow-hidden h-10 w-full sm:w-auto">
+                      
+                      <div className="flex items-center gap-2 px-3 bg-black/20 border-r border-white/5 shrink-0">
+                         <span className="text-sm font-bold text-slate-300 select-none whitespace-nowrap">参考市价</span>
+                      </div>
+
+                      <div className="relative flex items-center justify-end px-2 sm:px-0 bg-transparent min-w-[120px]">
+                          <input 
+                            ref={marketPriceInputRef}
+                            type="number" 
+                            value={marketPrice}
+                            onChange={(e) => handleMarketPriceChange(e.target.value)}
+                            placeholder="0.00"
+                            className="no-spinners w-24 bg-transparent border-none text-right font-mono text-lg font-bold text-slate-200 placeholder-slate-700 focus:outline-none focus:text-white px-0 py-1"
+                          />
+                          <span className="text-[10px] text-slate-500 font-bold select-none ml-1 mr-2 pt-1 whitespace-nowrap">元/克</span>
+                      </div>
+
+                      <div className="flex flex-col border-l border-white/5 bg-black/20 h-full self-stretch shrink-0">
+                         <button 
+                           onClick={() => updateMarketPrice(appSettings.priceStep)}
+                           className="flex-1 px-1.5 hover:bg-white/10 text-slate-500 hover:text-brand-yellow transition-colors active:bg-brand-yellow/20"
+                           tabIndex={-1}
+                         >
+                           <ChevronUp size={10} strokeWidth={3} />
+                         </button>
+                         <button 
+                           onClick={() => updateMarketPrice(-appSettings.priceStep)}
+                           className="flex-1 px-1.5 hover:bg-white/10 text-slate-500 hover:text-brand-yellow transition-colors active:bg-brand-yellow/20 border-t border-white/5"
+                           tabIndex={-1}
+                         >
+                           <ChevronDown size={10} strokeWidth={3} />
+                         </button>
+                      </div>
                    </div>
+
                 </div>
                 
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
@@ -470,6 +531,15 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Realized PnL (Swapped Position: Now 4th) */}
+                  <div className={`bg-app-bg p-3 rounded-lg border ${currentPosition.realizedPnL >= 0 ? 'border-brand-red/30' : 'border-brand-green/30'}`}>
+                    <span className="text-xs text-slate-500 block mb-1">已实现盈亏</span>
+                    <div className={`text-xl font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                      {currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toFixed(2)}
+                    </div>
+                  </div>
+
+                  {/* Floating PnL (Swapped Position: Now 5th) */}
                   <div className={`bg-app-bg p-3 rounded-lg border ${floatingPnL >= 0 ? 'border-brand-red/30 bg-brand-red/5' : 'border-brand-green/30 bg-brand-green/5'}`}>
                     <span className="text-xs text-slate-500 block mb-1 flex justify-between">
                        <span>浮动盈亏</span>
@@ -483,13 +553,6 @@ export default function App() {
                       ) : (
                         <span className="text-slate-600 text-base font-normal">--</span>
                       )}
-                    </div>
-                  </div>
-
-                  <div className={`bg-app-bg p-3 rounded-lg border ${currentPosition.realizedPnL >= 0 ? 'border-brand-red/30' : 'border-brand-green/30'}`}>
-                    <span className="text-xs text-slate-500 block mb-1">已实现盈亏</span>
-                    <div className={`text-xl font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                      {currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toFixed(2)}
                     </div>
                   </div>
                 </div>
