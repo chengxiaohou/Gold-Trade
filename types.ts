@@ -7,6 +7,7 @@ export interface TradeRecord {
   grams: number;
   price: number;
   timestamp: number;
+  isDisabled?: boolean; // New: If true, this trade is ignored in calculations
 }
 
 export interface HoldingState {
@@ -38,4 +39,9 @@ export interface AIAnalysisState {
 export interface GithubConfig {
   token: string;
   gistId: string;
+}
+
+export interface AppSettings {
+  priceStep: number;
+  gramsStep: number;
 }

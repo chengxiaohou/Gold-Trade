@@ -1,12 +1,13 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { TradeRecord } from '../types';
-import { Trash2, Edit2, X, Minus, Plus, ArrowUp, ArrowDown, GripHorizontal } from 'lucide-react';
+import { TradeRecord, AppSettings } from '../types';
+import { Trash2, Edit2, X, Minus, Plus, ArrowUp, ArrowDown, GripHorizontal, Eye, EyeOff, ChevronUp, ChevronDown } from 'lucide-react';
 
 interface TradeListProps {
   trades: TradeRecord[];
   onDelete: (id: string) => void;
   onUpdate: (id: string, updates: Partial<TradeRecord>) => void;
+  settings: AppSettings;
 }
 
 // Removed 'type' from sortable keys as it will be fixed
@@ -25,9 +26,10 @@ interface EditBubbleProps {
   onUpdate: (id: string, updates: Partial<TradeRecord>) => void;
   onClose: () => void;
   initialPosition: { top: number, left: number };
+  settings: AppSettings;
 }
 
-const EditBubble: React.FC<EditBubbleProps> = ({ trade, onUpdate, onClose, initialPosition }) => {
+const EditBubble: React.FC<EditBubbleProps> = ({ trade, onUpdate, onClose, initialPosition, settings }) => {
   // Local state for inputs
   const [priceStr, setPriceStr] = useState(trade.price.toString());
   const [gramsStr, setGramsStr] = useState(trade.grams.toString());
@@ -39,6 +41,10 @@ const EditBubble: React.FC<EditBubbleProps> = ({ trade, onUpdate, onClose, initi
   const bubbleRef = useRef<HTMLDivElement>(null);
   const dragOffset = useRef({ x: 0, y: 0 });
   const isDragging = useRef(false);
+  
+  // Input refs for wheel support
+  const priceInputRef = useRef<HTMLInputElement>(null);
+  const gramsInputRef = useRef<HTMLInputElement>(null);
 
   // --- Ultra-Fast Drag Handlers (Pointer Capture) ---
 
@@ -125,18 +131,59 @@ const EditBubble: React.FC<EditBubbleProps> = ({ trade, onUpdate, onClose, initi
   ) => {
     const current = parseFloat(currentStr) || 0;
     const newVal = Math.max(0, current + delta);
-    const safeVal = parseFloat(newVal.toFixed(4));
+    // Use slightly higher precision for internal updates to avoid floating point drift
+    const safeVal = Math.round(newVal * 1000) / 1000;
     setter(safeVal.toString());
     onUpdate(trade.id, { [field]: safeVal });
   };
+
+  // Attach Wheel Listeners
+  useEffect(() => {
+    const attachWheel = (
+      ref: React.RefObject<HTMLInputElement>, 
+      setter: React.Dispatch<React.SetStateAction<string>>,
+      field: 'price' | 'grams',
+      currentVal: string,
+      step: number
+    ) => {
+      const el = ref.current;
+      if (!el) return;
+
+      const handleWheel = (e: WheelEvent) => {
+        e.preventDefault();
+        const direction = e.deltaY > 0 ? -1 : 1;
+        adjustValue(setter, field, currentVal, direction * step);
+      };
+
+      el.addEventListener('wheel', handleWheel, { passive: false });
+      return () => el.removeEventListener('wheel', handleWheel);
+    };
+
+    const cleanupPrice = attachWheel(priceInputRef, setPriceStr, 'price', priceStr, settings.priceStep);
+    const cleanupGrams = attachWheel(gramsInputRef, setGramsStr, 'grams', gramsStr, settings.gramsStep);
+
+    return () => {
+      cleanupPrice?.();
+      cleanupGrams?.();
+    };
+  }, [priceStr, gramsStr, onUpdate, trade.id, settings]); // Re-bind when values or settings change
   
   return createPortal(
     <>
+      <style>{`
+          .no-spinners::-webkit-inner-spin-button,
+          .no-spinners::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+          }
+          .no-spinners {
+            -moz-appearance: textfield;
+          }
+      `}</style>
       <div className="fixed inset-0 z-[9998]" onClick={onClose} />
       <div 
         ref={bubbleRef}
         className="fixed z-[9999] bg-[#1e2333] border border-brand-yellow/30 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl w-72 flex flex-col overflow-hidden"
-        // Use inline styles for position to work with the direct DOM manipulation
         style={{ top: position.top, left: position.left }}
       >
         {/* Draggable Header */}
@@ -152,7 +199,6 @@ const EditBubble: React.FC<EditBubbleProps> = ({ trade, onUpdate, onClose, initi
           </div>
           <button 
             onClick={onClose} 
-            // Stop propagation to prevent drag start when clicking close
             onPointerDown={(e) => e.stopPropagation()}
             className="text-slate-500 hover:text-white transition-colors bg-white/5 hover:bg-white/10 rounded p-1"
           >
@@ -190,52 +236,62 @@ const EditBubble: React.FC<EditBubbleProps> = ({ trade, onUpdate, onClose, initi
           <div className="space-y-2">
              <label className="text-xs text-slate-400">成交价格 (元/克)</label>
              <div className="flex items-center gap-2">
-                <button 
-                  type="button"
-                  onClick={() => adjustValue(setPriceStr, 'price', priceStr, -5)}
-                  className="w-10 h-10 flex-none flex items-center justify-center bg-[#2a3044] hover:bg-[#3b455e] text-slate-200 rounded-lg text-xs font-bold transition-colors active:scale-95 touch-manipulation"
-                >
-                  -5
-                </button>
-                <input
-                  type="text"
-                  value={priceStr}
-                  onChange={handlePriceChange}
-                  className="w-full min-w-0 bg-[#11131f] border border-app-border rounded-lg px-2 h-10 text-base text-white font-mono text-center focus:border-brand-yellow focus:outline-none focus:ring-1 focus:ring-brand-yellow/50"
-                />
-                <button 
-                  type="button"
-                  onClick={() => adjustValue(setPriceStr, 'price', priceStr, 5)}
-                  className="w-10 h-10 flex-none flex items-center justify-center bg-[#2a3044] hover:bg-[#3b455e] text-slate-200 rounded-lg text-xs font-bold transition-colors active:scale-95 touch-manipulation"
-                >
-                  +5
-                </button>
+                <div className="relative w-full group/input">
+                  <input
+                    ref={priceInputRef}
+                    type="text"
+                    value={priceStr}
+                    onChange={handlePriceChange}
+                    className="no-spinners w-full min-w-0 bg-app-input border border-app-border rounded-lg pl-3 pr-8 h-10 text-base text-white font-mono focus:border-brand-yellow focus:outline-none focus:ring-1 focus:ring-brand-yellow/50 transition-all text-center"
+                  />
+                  <div className="absolute right-1 inset-y-1 flex flex-col justify-center gap-0.5 w-5 opacity-50 group-hover/input:opacity-100 transition-opacity">
+                     <button 
+                       type="button"
+                       onClick={() => adjustValue(setPriceStr, 'price', priceStr, settings.priceStep)}
+                       className="flex-1 flex items-center justify-center bg-white/5 hover:bg-brand-yellow/20 rounded-sm text-slate-400 hover:text-brand-yellow transition-colors"
+                     >
+                       <ChevronUp size={10} strokeWidth={3} />
+                     </button>
+                     <button 
+                       type="button"
+                       onClick={() => adjustValue(setPriceStr, 'price', priceStr, -settings.priceStep)}
+                       className="flex-1 flex items-center justify-center bg-white/5 hover:bg-brand-yellow/20 rounded-sm text-slate-400 hover:text-brand-yellow transition-colors"
+                     >
+                       <ChevronDown size={10} strokeWidth={3} />
+                     </button>
+                  </div>
+                </div>
              </div>
           </div>
 
           <div className="space-y-2">
              <label className="text-xs text-slate-400">交易数量 (克)</label>
              <div className="flex items-center gap-2">
-                <button 
-                  type="button"
-                  onClick={() => adjustValue(setGramsStr, 'grams', gramsStr, -1)}
-                  className="w-10 h-10 flex-none flex items-center justify-center bg-[#2a3044] hover:bg-[#3b455e] text-slate-200 rounded-lg transition-colors active:scale-95 touch-manipulation"
-                >
-                  <Minus size={16} />
-                </button>
-                <input
-                  type="text"
-                  value={gramsStr}
-                  onChange={handleGramsChange}
-                  className="w-full min-w-0 bg-[#11131f] border border-app-border rounded-lg px-2 h-10 text-base text-white font-mono text-center focus:border-brand-yellow focus:outline-none focus:ring-1 focus:ring-brand-yellow/50"
-                />
-                <button 
-                  type="button"
-                  onClick={() => adjustValue(setGramsStr, 'grams', gramsStr, 1)}
-                  className="w-10 h-10 flex-none flex items-center justify-center bg-[#2a3044] hover:bg-[#3b455e] text-slate-200 rounded-lg transition-colors active:scale-95 touch-manipulation"
-                >
-                  <Plus size={16} />
-                </button>
+                <div className="relative w-full group/input">
+                  <input
+                    ref={gramsInputRef}
+                    type="text"
+                    value={gramsStr}
+                    onChange={handleGramsChange}
+                    className="no-spinners w-full min-w-0 bg-app-input border border-app-border rounded-lg pl-3 pr-8 h-10 text-base text-white font-mono focus:border-brand-yellow focus:outline-none focus:ring-1 focus:ring-brand-yellow/50 transition-all text-center"
+                  />
+                  <div className="absolute right-1 inset-y-1 flex flex-col justify-center gap-0.5 w-5 opacity-50 group-hover/input:opacity-100 transition-opacity">
+                     <button 
+                       type="button"
+                       onClick={() => adjustValue(setGramsStr, 'grams', gramsStr, settings.gramsStep)}
+                       className="flex-1 flex items-center justify-center bg-white/5 hover:bg-brand-yellow/20 rounded-sm text-slate-400 hover:text-brand-yellow transition-colors"
+                     >
+                       <ChevronUp size={10} strokeWidth={3} />
+                     </button>
+                     <button 
+                       type="button"
+                       onClick={() => adjustValue(setGramsStr, 'grams', gramsStr, -settings.gramsStep)}
+                       className="flex-1 flex items-center justify-center bg-white/5 hover:bg-brand-yellow/20 rounded-sm text-slate-400 hover:text-brand-yellow transition-colors"
+                     >
+                       <ChevronDown size={10} strokeWidth={3} />
+                     </button>
+                  </div>
+                </div>
              </div>
           </div>
           
@@ -252,7 +308,7 @@ const EditBubble: React.FC<EditBubbleProps> = ({ trade, onUpdate, onClose, initi
   );
 };
 
-export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate }) => {
+export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate, settings }) => {
   // 0. Sort State (Persisted)
   const [sortDesc, setSortDesc] = useState(() => {
     const saved = localStorage.getItem('gold_trade_sort_desc');
@@ -268,6 +324,11 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     let runningGrams = 0;
     let runningTotalCost = 0;
     return trades.map(trade => {
+      // Logic for disabled trades: Don't update running calculations
+      if (trade.isDisabled) {
+         return { ...trade, historicalAvg: 0, avgChange: 0, holdingTotal: 0 };
+      }
+
       const avgBefore = runningGrams > 0 ? runningTotalCost / runningGrams : 0;
       if (trade.type === 'BUY') {
         runningTotalCost += trade.price * trade.grams;
@@ -291,24 +352,29 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   }, [tradesWithHistory, sortDesc]);
 
   const COLUMN_DEFS: Record<ColumnKey, ColumnDef> = {
-    // Type is now handled manually
     price: { id: 'price', label: '价格', render: (t) => <span className="font-mono text-slate-200">{t.price.toFixed(2)}</span> },
     grams: { id: 'grams', label: '数量', render: (t) => <span className="font-mono text-slate-200">{t.grams.toFixed(2)}</span> },
     tradeTotal: { id: 'tradeTotal', label: '交易额', render: (t) => <span className="font-mono text-slate-300">{fmt(t.price * t.grams)}</span> },
-    historicalAvg: { id: 'historicalAvg', label: '持仓均价', render: (t) => <span className="font-mono text-brand-yellow/90 font-medium">{t.historicalAvg > 0 ? t.historicalAvg.toFixed(2) : '-'}</span> },
-    holdingTotal: { id: 'holdingTotal', label: '持仓总额', render: (t) => <span className="font-mono text-slate-400 text-xs">{t.holdingTotal > 0 ? fmt(t.holdingTotal) : '-'}</span> },
+    historicalAvg: { id: 'historicalAvg', label: '持仓均价', render: (t) => 
+       t.isDisabled 
+       ? <span className="text-slate-600 select-none">-</span> 
+       : <span className="font-mono text-brand-yellow/90 font-medium">{t.historicalAvg > 0 ? t.historicalAvg.toFixed(2) : '-'}</span> 
+    },
+    holdingTotal: { id: 'holdingTotal', label: '持仓总额', render: (t) => 
+       t.isDisabled 
+       ? <span className="text-slate-600 select-none">-</span> 
+       : <span className="font-mono text-slate-400 text-xs">{t.holdingTotal > 0 ? fmt(t.holdingTotal) : '-'}</span> 
+    },
     avgChange: { id: 'avgChange', label: '成本浮动', render: (t) => {
-      if (Math.abs(t.avgChange) < 0.001) return <span className="text-slate-600">-</span>;
-      // Red for Up, Green for Down
+      if (t.isDisabled || Math.abs(t.avgChange) < 0.001) return <span className="text-slate-600">-</span>;
       return <span className={`font-mono font-medium text-xs ${t.avgChange > 0 ? 'text-brand-red' : 'text-brand-green'}`}>{t.avgChange > 0 ? '+' : ''}{t.avgChange.toFixed(2)}%</span>;
     }}
   };
 
   // 2. State & Persistence
-  // Removed 'type' from default order
   const DEFAULT_ORDER: ColumnKey[] = ['price', 'grams', 'tradeTotal', 'holdingTotal', 'historicalAvg', 'avgChange'];
   const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(() => {
-    const saved = localStorage.getItem('gold_trade_list_column_order_v3'); // Bumped version
+    const saved = localStorage.getItem('gold_trade_list_column_order_v3');
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as ColumnKey[];
@@ -325,7 +391,6 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   const [activeId, setActiveId] = useState<ColumnKey | null>(null);
   const [editState, setEditState] = useState<{ id: string, top: number, left: number } | null>(null);
 
-  // 3. Performance Refs
   const containerRef = useRef<HTMLDivElement>(null);
   const colRects = useRef<Map<string, { left: number, width: number }>>(new Map());
   const startXRef = useRef(0);
@@ -335,35 +400,24 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     localStorage.setItem('gold_trade_list_column_order_v3', JSON.stringify(columnOrder));
   }, [columnOrder]);
 
-  // NEW: Manual Shift+Wheel Handler for Horizontal Scroll
-  // DEPENDENCY ADDED: [trades.length] ensures this runs when data appears
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
     const handleWheel = (e: WheelEvent) => {
-      // Check if Shift is pressed for horizontal scrolling behavior
       if (e.shiftKey) {
-        // Prevent browser back/forward navigation or default page scroll if captured
         e.preventDefault();
-        // Translate vertical delta (mouse wheel) to horizontal scroll
         el.scrollLeft += e.deltaY;
       }
     };
 
-    // Passive: false is required to use preventDefault()
     el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [trades.length]);
 
-    return () => {
-      el.removeEventListener('wheel', handleWheel);
-    };
-  }, [trades.length]); // Re-attach when trades change (e.g. initial load)
-
-  // 4. Pointer Handlers (Drag & Drop)
   const onPointerDown = (e: React.PointerEvent, id: ColumnKey) => {
     if (e.button !== 0) return;
     
-    // Cache positions
     const rects = new Map();
     columnOrder.forEach(key => {
       const el = containerRef.current?.querySelector(`[data-col="${key}"]`);
@@ -447,7 +501,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   const handleEditClick = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
-    const width = 256; // 64 * 4 (w-64)
+    const width = 256; 
     let left = rect.right - width;
     let top = rect.bottom + 8;
     if (left < 10) left = 10;
@@ -508,7 +562,6 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
         <table className="w-full text-sm text-left border-collapse min-w-[750px]">
           <thead className="text-xs text-slate-400 uppercase bg-app-bg border-b border-app-border">
             <tr className={activeId ? `drag-col-${activeId}` : ''}>
-              {/* FIXED TYPE COLUMN - COMPACT & OPTIMIZED SHADOW */}
               <th className="p-0 text-center sticky left-0 z-20 bg-app-bg border-b border-r border-app-border w-[40px] shadow-lg">
                  <span className="font-bold">方向</span>
               </th>
@@ -536,7 +589,6 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                   </th>
                 );
               })}
-              {/* Sort Button Header - COMPACT & OPTIMIZED SHADOW */}
               <th className="px-1 py-3 text-center sticky right-0 bg-app-bg border-l border-app-border shadow-lg w-[75px]">
                  <button 
                    onClick={() => setSortDesc(!sortDesc)}
@@ -557,9 +609,10 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
           </thead>
           <tbody className="divide-y divide-app-border">
             {displayTrades.map((trade) => (
-              /* REMOVED transition-colors for scroll performance */
-              <tr key={trade.id} className={`${activeId ? `drag-col-${activeId}` : ''} hover:bg-app-border/30 group`}>
-                {/* FIXED TYPE CELL - COMPACT & OPTIMIZED SHADOW */}
+              <tr 
+                key={trade.id} 
+                className={`${activeId ? `drag-col-${activeId}` : ''} hover:bg-app-border/30 group ${trade.isDisabled ? 'opacity-40 grayscale decoration-slate-500' : ''}`}
+              >
                 <td className="p-0 py-3 text-center sticky left-0 z-20 bg-app-card group-hover:bg-[#232940] border-r border-app-border shadow-lg">
                    <span className={`inline-flex items-center justify-center w-6 h-6 rounded text-xs font-bold mx-auto ${trade.type === 'BUY' ? 'bg-brand-red/10 text-brand-red' : 'bg-brand-green/10 text-brand-green'}`}>
                      {trade.type === 'BUY' ? '买' : '卖'}
@@ -574,9 +627,15 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                     {COLUMN_DEFS[colKey].render(trade as any)}
                   </td>
                 ))}
-                {/* Actions Cell - COMPACT & OPTIMIZED SHADOW */}
                 <td className="px-1 py-3 text-center sticky right-0 bg-app-card group-hover:bg-[#232940] border-l border-app-border shadow-lg">
                   <div className="flex justify-center gap-1">
+                    <button 
+                      onClick={() => onUpdate(trade.id, { isDisabled: !trade.isDisabled })}
+                      className={`p-1 transition-colors ${trade.isDisabled ? 'text-slate-600 hover:text-slate-400' : 'text-slate-500 hover:text-indigo-400'}`}
+                      title={trade.isDisabled ? "恢复生效" : "暂时失效"}
+                    >
+                      {trade.isDisabled ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
                     <button 
                       onClick={(e) => handleEditClick(e, trade.id)} 
                       className={`p-1 transition-colors ${editState?.id === trade.id ? 'text-brand-yellow' : 'text-slate-500 hover:text-brand-yellow'}`}
@@ -601,6 +660,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
           onUpdate={onUpdate} 
           onClose={() => setEditState(null)} 
           initialPosition={{ top: editState.top, left: editState.left }}
+          settings={settings}
         />
       )}
     </>

@@ -1,57 +1,78 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Github, ExternalLink, Activity, CheckCircle2 } from 'lucide-react';
-import { GithubConfig } from '../types';
+import { X, Github, ExternalLink, Activity, CheckCircle2, Sliders, Cloud } from 'lucide-react';
+import { GithubConfig, AppSettings } from '../types';
 import { validateConnection } from '../services/githubService';
 
 interface CloudSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  config: GithubConfig;
-  onSave: (config: GithubConfig) => void;
+  githubConfig: GithubConfig;
+  appSettings: AppSettings;
+  onSave: (githubConfig: GithubConfig, appSettings: AppSettings) => void;
 }
 
 export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   isOpen,
   onClose,
-  config,
+  githubConfig,
+  appSettings,
   onSave,
 }) => {
-  const [token, setToken] = useState(config.token);
-  const [gistId, setGistId] = useState(config.gistId);
+  // Config States
+  const [token, setToken] = useState(githubConfig.token);
+  const [gistId, setGistId] = useState(githubConfig.gistId);
+  const [priceStep, setPriceStep] = useState(appSettings.priceStep.toString());
+  const [gramsStep, setGramsStep] = useState(appSettings.gramsStep.toString());
+
+  const [activeTab, setActiveTab] = useState<'general' | 'cloud'>('general');
   const [isVerifying, setIsVerifying] = useState(false);
   const [logState, setLogState] = useState<{ type: 'success' | 'error', lines: string[] } | null>(null);
   
-  // Track previous open state to only reset when opening
   const wasOpenRef = useRef(isOpen);
 
-  // Sync internal state ONLY when the modal opens
   useEffect(() => {
-    // Check if transitioning from closed (false) to open (true)
     if (isOpen && !wasOpenRef.current) {
-      setToken(config.token);
-      setGistId(config.gistId);
+      setToken(githubConfig.token);
+      setGistId(githubConfig.gistId);
+      setPriceStep(appSettings.priceStep.toString());
+      setGramsStep(appSettings.gramsStep.toString());
       setIsVerifying(false);
       setLogState(null);
     }
     wasOpenRef.current = isOpen;
-  }, [isOpen, config]);
+  }, [isOpen, githubConfig, appSettings]);
 
   const handleSave = async (e: React.FormEvent | React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-
-    // Reset log
     setLogState(null);
 
+    // Prepare App Settings
+    const newPriceStep = parseFloat(priceStep);
+    const newGramsStep = parseFloat(gramsStep);
+    
+    if (isNaN(newPriceStep) || newPriceStep <= 0 || isNaN(newGramsStep) || newGramsStep <= 0) {
+       setLogState({
+        type: 'error',
+        lines: ["⚠️ 步长必须为有效的正数"]
+       });
+       return;
+    }
+    
+    const newAppSettings: AppSettings = {
+        priceStep: newPriceStep,
+        gramsStep: newGramsStep
+    };
+
+    // If Cloud tab is not active and no changes to cloud config, just save app settings
     const cleanToken = token.trim();
     const cleanGistId = gistId.trim();
 
     if (!cleanToken) {
-      setLogState({
-        type: 'error',
-        lines: ["⚠️ 请填写 Personal Access Token (PAT)"]
-      });
-      return;
+       // Just save local settings if no token provided (assuming user doesn't want cloud)
+       onSave({ token: '', gistId: '' }, newAppSettings);
+       onClose();
+       return;
     }
 
     setIsVerifying(true);
@@ -59,12 +80,11 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     try {
       const username = await validateConnection(cleanToken, cleanGistId || undefined);
       
-      // Update parent state
-      onSave({ token: cleanToken, gistId: cleanGistId });
+      const newGithubConfig = { token: cleanToken, gistId: cleanGistId };
+      onSave(newGithubConfig, newAppSettings);
       
       const isNewGist = !cleanGistId;
 
-      // Show success log (This will now persist because useEffect won't reset it)
       setLogState({
         type: 'success',
         lines: [
@@ -74,9 +94,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
             ? `[Gist] 暂无 ID (将在首次上传时自动创建)`
             : `[Gist] 已验证现有 Gist ID`,
           `--------------------------------`,
-          isNewGist
-            ? `✅ 配置成功！请点击主界面的「上传」按钮来创建云端备份。`
-            : `✅ 配置成功！现在可以进行上传或下载操作了。`
+          `✅ 设置已保存！`
         ]
       });
 
@@ -118,8 +136,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         {/* Header */}
         <div className="bg-brand-yellow/10 p-4 border-b border-brand-yellow/20 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-2 text-brand-yellow">
-            <Github size={20} />
-            <h3 className="font-bold text-lg">GitHub Gist 同步配置</h3>
+            <Sliders size={20} />
+            <h3 className="font-bold text-lg">系统设置</h3>
           </div>
           <button 
             type="button"
@@ -131,59 +149,108 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
           </button>
         </div>
 
+        {/* Tab Nav */}
+        <div className="flex border-b border-app-border">
+          <button 
+             onClick={() => setActiveTab('general')}
+             className={`flex-1 py-3 text-sm font-bold transition-colors border-b-2 ${activeTab === 'general' ? 'border-brand-yellow text-white bg-white/5' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+          >
+            通用设置
+          </button>
+          <button 
+             onClick={() => setActiveTab('cloud')}
+             className={`flex-1 py-3 text-sm font-bold transition-colors border-b-2 ${activeTab === 'cloud' ? 'border-brand-yellow text-white bg-white/5' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+          >
+             <span className="flex items-center justify-center gap-2">
+               <Cloud size={14} /> 云端同步
+             </span>
+          </button>
+        </div>
+
         {/* Body - Scrollable */}
         <div className="p-6 overflow-y-auto">
-          <form className="space-y-5">
+          <form className="space-y-6">
             
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300 block">
-                Personal Access Token (PAT) <span className="text-red-400">*</span>
-              </label>
-              <input 
-                type="text" 
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="ghp_xxxxxxxxxxxx"
-                disabled={isVerifying}
-                className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-white focus:border-brand-yellow focus:ring-1 focus:ring-brand-yellow outline-none transition-all font-mono text-sm disabled:opacity-50"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck="false"
-              />
-              <p className="text-xs text-slate-500 leading-relaxed">
-                需要拥有 <code>gist</code> 权限的 Token。
-                <a 
-                  href="https://github.com/settings/tokens/new?scopes=gist&description=GoldCostPro" 
-                  target="_blank" 
-                  rel="noreferrer"
-                  className="text-brand-yellow hover:underline ml-1 inline-flex items-center gap-0.5"
-                >
-                  点击生成 <ExternalLink size={10} />
-                </a>
-              </p>
-            </div>
+            {/* Tab: General */}
+            {activeTab === 'general' && (
+              <div className="space-y-4 animate-in fade-in slide-in-from-left-4 duration-200">
+                 <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-300 block">
+                      价格调整步长 (元/克)
+                    </label>
+                    <input 
+                      type="number" 
+                      value={priceStep}
+                      onChange={(e) => setPriceStep(e.target.value)}
+                      className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-white focus:border-brand-yellow focus:ring-1 focus:ring-brand-yellow outline-none transition-all font-mono text-sm"
+                    />
+                    <p className="text-xs text-slate-500">控制鼠标滚轮或箭头按钮点击时的增减数值。</p>
+                 </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300 block">
-                Gist ID (可选)
-              </label>
-              <input 
-                type="text" 
-                value={gistId}
-                onChange={(e) => setGistId(e.target.value)}
-                placeholder="首次保存自动生成"
-                disabled={isVerifying}
-                className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-white focus:border-brand-yellow focus:ring-1 focus:ring-brand-yellow outline-none transition-all font-mono text-sm disabled:opacity-50"
-                autoCapitalize="none"
-                autoCorrect="off"
-              />
-              <p className="text-xs text-slate-500">
-                • 首次使用：留空，点击保存后去点「上传」。<br/>
-                • 恢复数据：填入已有的 Gist ID。
-              </p>
-            </div>
+                 <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-300 block">
+                      数量调整步长 (克)
+                    </label>
+                    <input 
+                      type="number" 
+                      value={gramsStep}
+                      onChange={(e) => setGramsStep(e.target.value)}
+                      className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-white focus:border-brand-yellow focus:ring-1 focus:ring-brand-yellow outline-none transition-all font-mono text-sm"
+                    />
+                 </div>
+              </div>
+            )}
 
-            {/* Log Display Area */}
+            {/* Tab: Cloud */}
+            {activeTab === 'cloud' && (
+              <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-200">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300 block">
+                    Personal Access Token (PAT)
+                  </label>
+                  <input 
+                    type="text" 
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    placeholder="ghp_xxxxxxxxxxxx"
+                    disabled={isVerifying}
+                    className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-white focus:border-brand-yellow focus:ring-1 focus:ring-brand-yellow outline-none transition-all font-mono text-sm disabled:opacity-50"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck="false"
+                  />
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    需要拥有 <code>gist</code> 权限的 Token。
+                    <a 
+                      href="https://github.com/settings/tokens/new?scopes=gist&description=GoldCostPro" 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="text-brand-yellow hover:underline ml-1 inline-flex items-center gap-0.5"
+                    >
+                      点击生成 <ExternalLink size={10} />
+                    </a>
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-300 block">
+                    Gist ID (可选)
+                  </label>
+                  <input 
+                    type="text" 
+                    value={gistId}
+                    onChange={(e) => setGistId(e.target.value)}
+                    placeholder="首次保存自动生成"
+                    disabled={isVerifying}
+                    className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-white focus:border-brand-yellow focus:ring-1 focus:ring-brand-yellow outline-none transition-all font-mono text-sm disabled:opacity-50"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Log Display Area (Global) */}
             {logState && (
               <div className={`rounded-lg p-3 text-xs font-mono border animate-in fade-in slide-in-from-top-2 ${
                 logState.type === 'success' 
@@ -226,8 +293,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                     </>
                   ) : (
                     <>
-                      <Activity size={18} />
-                      验证并保存
+                      <CheckCircle2 size={18} />
+                      保存设置
                     </>
                   )}
                 </button>
