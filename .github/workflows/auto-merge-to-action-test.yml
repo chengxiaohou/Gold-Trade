@@ -1,0 +1,44 @@
+name: Auto-merge main to action-test
+
+# Trigger this workflow when code is pushed to the main branch
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for all branches
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge main to action-test
+        run: |
+          # Fetch the latest changes
+          git fetch origin
+          
+          # Check if action-test branch exists remotely
+          if git ls-remote --heads origin action-test | grep action-test; then
+            echo "Branch 'action-test' exists, checking out..."
+            git checkout action-test
+            git pull origin action-test
+          else
+            echo "Branch 'action-test' does not exist, creating..."
+            git checkout -b action-test
+          fi
+          
+          # Merge main into action-test
+          echo "Merging main into action-test..."
+          git merge origin/main -m "Auto-merge main to action-test"
+          
+          # Push the changes
+          git push origin action-test
