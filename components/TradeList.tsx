@@ -592,7 +592,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
             }
           `}</style>
 
-          <table className="w-full text-sm text-left border-collapse min-w-[750px]">
+          <table className="w-full text-sm text-left border-collapse min-w-[550px]">
             <thead className="text-xs text-app-subtext uppercase bg-app-bg border-b border-app-border">
               <tr className={activeId ? `drag-col-${activeId}` : ''}>
                 <th className="p-0 text-center sticky left-0 z-20 bg-app-bg border-b border-r border-app-border w-[40px] shadow-lg">
@@ -611,7 +611,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                       onPointerUp={onPointerUp}
                       onPointerCancel={onPointerUp}
                       className={`
-                        px-4 py-4 cursor-grab active:cursor-grabbing select-none relative touch-none
+                        px-2 py-3 md:px-4 md:py-4 cursor-grab active:cursor-grabbing select-none relative touch-none
                         ${isDragging ? 'dragging-cell text-brand-yellow font-bold' : ''}
                       `}
                     >
@@ -622,7 +622,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                     </th>
                   );
                 })}
-                <th className="px-1 py-3 text-center sticky right-0 bg-app-bg border-l border-app-border shadow-lg w-[90px]">
+                <th className="px-1 py-3 md:py-4 text-center sticky right-0 bg-app-bg border-l border-app-border shadow-lg w-[90px]">
                    <button 
                      onClick={() => setSortDesc(!sortDesc)}
                      className={`
@@ -645,7 +645,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                   key={trade.id} 
                   className={`${activeId ? `drag-col-${activeId}` : ''} hover:bg-app-hover group transition-colors ${trade.isDisabled ? 'opacity-40 grayscale decoration-app-subtext' : ''}`}
                 >
-                  <td className="p-0 py-3 text-center sticky left-0 z-20 bg-app-card group-hover:bg-app-hover border-r border-app-border shadow-lg transition-colors">
+                  <td className="p-0 py-2.5 md:py-3 text-center sticky left-0 z-20 bg-app-card group-hover:bg-app-hover border-r border-app-border shadow-lg transition-colors">
                      <span className={`inline-flex items-center justify-center w-6 h-6 rounded text-xs font-bold mx-auto ${trade.type === 'BUY' ? 'bg-brand-red/10 text-brand-red' : 'bg-brand-green/10 text-brand-green'}`}>
                        {trade.type === 'BUY' ? '买' : '卖'}
                      </span>
@@ -654,12 +654,12 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                   {columnOrder.map((colKey) => (
                     <td 
                       key={colKey} 
-                      className={`px-4 py-3 whitespace-nowrap ${activeId === colKey ? 'dragging-cell' : ''}`}
+                      className={`px-2 py-2.5 md:px-4 md:py-3 whitespace-nowrap ${activeId === colKey ? 'dragging-cell' : ''}`}
                     >
                       {COLUMN_DEFS[colKey].render(trade as any)}
                     </td>
                   ))}
-                  <td className="px-1 py-3 text-center sticky right-0 bg-app-card group-hover:bg-app-hover border-l border-app-border shadow-lg transition-colors">
+                  <td className="px-1 py-2.5 md:py-3 text-center sticky right-0 bg-app-card group-hover:bg-app-hover border-l border-app-border shadow-lg transition-colors">
                     <div className="flex justify-center gap-1">
                       <button 
                         onClick={(e) => handleEditClick(e, trade.id)} 
