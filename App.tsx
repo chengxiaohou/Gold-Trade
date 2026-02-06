@@ -426,6 +426,65 @@ export default function App() {
     setAiState({ loading: false, result: resultText, error: null });
   };
 
+  // --- Reusable Button Group Component (for Desktop sidebar and Mobile bottom) ---
+  const ActionButtons = () => (
+    <div className="grid grid-cols-6 gap-1 lg:gap-2">
+        <button 
+            onClick={() => setIsSettingsOpen(true)}
+            className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors"
+            title="设置"
+          >
+            <Settings size={16} />
+        </button>
+        
+        <button 
+            onClick={handleCloudDownload}
+            className="flex items-center justify-center bg-app-card border border-app-border text-indigo-400 py-2.5 rounded-md hover:text-indigo-300 hover:border-indigo-500 transition-colors"
+            title="从云端下载"
+          >
+            <CloudDownload size={16} />
+        </button>
+
+        <button 
+            onClick={handleCloudUpload}
+            disabled={isSyncing}
+            className="flex items-center justify-center bg-app-card border border-app-border text-brand-yellow py-2.5 rounded-md hover:bg-brand-yellow/10 hover:border-brand-yellow transition-colors"
+            title="上传到云端"
+          >
+             {isSyncing ? (
+               <div className="w-4 h-4 border-2 border-brand-yellow border-t-transparent rounded-full animate-spin"></div>
+             ) : (
+               <CloudUpload size={16} />
+             )}
+        </button>
+
+        <button 
+            onClick={handleImportClick} 
+            className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors"
+            title="导入数据"
+          >
+            <Upload size={16} />
+        </button>
+
+        <button 
+            onClick={handleExport}
+            disabled={trades.length === 0}
+            className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors disabled:opacity-50"
+            title="导出数据"
+          >
+            <Download size={16} />
+        </button>
+
+        <button 
+            onClick={resetAll} 
+            className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-red-400 hover:border-red-400 transition-colors"
+            title="重置"
+          >
+            <RefreshCcw size={16} />
+        </button>
+    </div>
+  );
+
   return (
     <div 
       className="min-h-screen bg-app-bg text-app-text font-sans p-4 md:p-8 flex justify-center relative transition-colors duration-300"
@@ -469,7 +528,7 @@ export default function App() {
         accept=".json"
       />
 
-      <div className="max-w-[1400px] w-full pb-12">
+      <div className="max-w-[1400px] w-full pb-12 flex flex-col">
         
         <header className="mb-6 flex items-start justify-between gap-4">
           <div>
@@ -557,7 +616,7 @@ export default function App() {
                             value={marketPrice}
                             onChange={(e) => handleMarketPriceChange(e.target.value)}
                             placeholder="0.00"
-                            className="no-spinners text-xl font-bold text-app-text font-mono bg-transparent border-none p-0 w-full focus:outline-none placeholder-app-subtext/30"
+                            className="no-spinners text-xl font-bold text-brand-yellow font-mono bg-transparent border-none p-0 w-full focus:outline-none placeholder-app-subtext/30"
                           />
                           <div className="flex flex-col gap-0.5 ml-2">
                              <button 
@@ -628,31 +687,31 @@ export default function App() {
                 <div className="grid grid-cols-2 p-1.5 bg-app-bg border-b border-app-border">
                   <button 
                     onClick={() => setPreviewType('BUY')}
-                    className={`py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+                    className={`py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${
                       previewType === 'BUY' 
                         ? 'bg-brand-red text-white shadow-lg shadow-brand-red/20' 
                         : 'text-app-subtext hover:text-app-text'
                     }`}
                   >
                     <TrendingUp size={16} />
-                    买入挂单
+                    买入
                   </button>
                   <button 
                     onClick={() => setPreviewType('SELL')}
-                    className={`py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+                    className={`py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${
                       previewType === 'SELL' 
                         ? 'bg-brand-green text-white shadow-lg shadow-brand-green/20' 
                         : 'text-app-subtext hover:text-app-text'
                     }`}
                   >
                     <TrendingUp size={16} className="rotate-180" />
-                    卖出挂单
+                    卖出
                   </button>
                 </div>
 
-                <div className="p-5 flex flex-col gap-6">
+                <div className="p-4 flex flex-col gap-3">
                   
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-2">
                     <InputGroup 
                         label="价格 (元/克)"
                         value={inputs.price}
@@ -669,22 +728,22 @@ export default function App() {
                       />
                   </div>
 
-                  <div className="relative h-px bg-app-border flex items-center justify-center my-4">
-                    <div className="bg-app-card px-2 text-app-subtext">
-                      <ArrowRight size={14} className="rotate-90" />
+                  <div className="flex items-center justify-center py-1">
+                    <div className="flex flex-col items-center">
+                       <ChevronDown size={18} className="text-app-subtext/40 animate-pulse" />
                     </div>
                   </div>
 
-                  <div className="bg-app-input/30 rounded-xl p-5 border border-app-border space-y-5">
+                  <div className="bg-app-input/30 rounded-xl p-4 border border-app-border space-y-3">
                       {/* Top Row: Avg Cost & Change */}
                       <div className="flex justify-between items-start">
                           <div>
-                            <span className="text-[10px] font-bold text-app-subtext uppercase tracking-wider block mb-1.5">成交后均价预估</span>
-                            <div className="flex items-baseline gap-2">
+                            <span className="text-[10px] font-bold text-app-subtext uppercase tracking-wider block mb-1">成交后均价预估</span>
+                            <div className="flex items-baseline gap-1.5">
                               <span className="text-3xl font-bold text-app-text tracking-tight font-mono">
                                   {simulation.newAvgCost.toFixed(2)}
                               </span>
-                              <span className="text-xs text-app-subtext font-bold">CNY</span>
+                              <span className="text-[10px] text-app-subtext font-bold">CNY</span>
                             </div>
                           </div>
 
@@ -692,15 +751,15 @@ export default function App() {
                           <div className="text-right">
                             {currentPosition.grams > 0 && inputs.grams && previewType === 'BUY' ? (
                               <>
-                                  <span className="text-[10px] font-bold text-app-subtext uppercase tracking-wider block mb-1.5">成本浮动</span>
-                                  <div className={`text-sm font-bold font-mono px-2 py-1 rounded-md border ${simulation.costDifference > 0 ? 'bg-brand-red/10 text-brand-red border-brand-red/20' : 'bg-brand-green/10 text-brand-green border-brand-green/20'} inline-flex items-center`}>
+                                  <span className="text-[10px] font-bold text-app-subtext uppercase tracking-wider block mb-1">成本浮动</span>
+                                  <div className={`text-xs font-bold font-mono px-1.5 py-0.5 rounded border ${simulation.costDifference > 0 ? 'bg-brand-red/10 text-brand-red border-brand-red/20' : 'bg-brand-green/10 text-brand-green border-brand-green/20'} inline-flex items-center`}>
                                     {simulation.costDifference > 0 ? '+' : ''}{simulation.costDifference.toFixed(2)}%
                                   </div>
                               </>
                             ) : previewType === 'SELL' ? (
                               <>
-                                  <span className="text-[10px] font-bold text-app-subtext uppercase tracking-wider block mb-1.5">持仓成本</span>
-                                  <span className="text-sm font-bold text-app-subtext font-mono inline-block py-1">不变</span>
+                                  <span className="text-[10px] font-bold text-app-subtext uppercase tracking-wider block mb-1">持仓成本</span>
+                                  <span className="text-xs font-bold text-app-subtext font-mono inline-block">不变</span>
                               </>
                             ) : (
                               <span className="text-app-subtext text-xs py-1 block">-</span>
@@ -712,16 +771,16 @@ export default function App() {
                       <div className="h-px bg-app-border/50 w-full" />
 
                       {/* Bottom Row: Grid */}
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                         <div>
-                            <p className="text-app-subtext text-[10px] mb-1 font-medium">预计总持仓</p>
+                            <p className="text-app-subtext text-[10px] mb-0.5 font-medium">预计总持仓</p>
                             <div className="flex items-baseline gap-1">
                               <span className="text-lg font-bold text-app-text font-mono">{simulation.newTotalGrams.toFixed(2)}</span>
                               <span className="text-[10px] text-app-subtext">g</span>
                             </div>
                         </div>
                         <div className="text-right">
-                            <p className="text-app-subtext text-[10px] mb-1 font-medium">本次交易额</p>
+                            <p className="text-app-subtext text-[10px] mb-0.5 font-medium">本次交易额</p>
                             <div className="flex items-baseline gap-1 justify-end">
                               <span className="text-lg font-bold text-app-text font-mono">
                                 {((parseFloat(inputs.price)||0) * (parseFloat(inputs.grams)||0)).toLocaleString('zh-CN', {maximumFractionDigits:0})}
@@ -731,7 +790,7 @@ export default function App() {
                         </div>
                         
                         {previewType === 'SELL' && simulation.projectedPnL !== undefined && (
-                          <div className="col-span-2 border-t border-app-border/50 pt-3 mt-1 flex justify-between items-center">
+                          <div className="col-span-2 border-t border-app-border/50 pt-2 flex justify-between items-center">
                               <span className="text-app-subtext text-[10px] font-bold">预计本次盈亏</span>
                               <span className={`font-mono font-bold text-sm ${simulation.projectedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                                 {simulation.projectedPnL >= 0 ? '+' : ''}{simulation.projectedPnL.toFixed(2)}
@@ -752,76 +811,30 @@ export default function App() {
                   <button
                     onClick={executeTrade}
                     disabled={!inputs.price || !inputs.grams}
-                    className={`w-full py-4 rounded-lg font-bold text-lg flex items-center justify-center gap-2 transition-all transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-lg 
+                    className={`w-full py-2.5 rounded-lg font-semibold text-base flex items-center justify-center gap-2 transition-all transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-md mt-2
                       ${previewType === 'BUY' 
-                        ? 'bg-brand-red text-white hover:bg-red-500 shadow-brand-red/20' 
-                        : 'bg-brand-green text-white hover:bg-green-500 shadow-brand-green/20'
+                        ? 'bg-brand-red text-white hover:bg-red-500 shadow-brand-red/10' 
+                        : 'bg-brand-green text-white hover:bg-green-500 shadow-brand-green/10'
                       }`}
                   >
-                    <CheckCircle2 size={20} />
-                    {previewType === 'BUY' ? '确认买入' : '确认卖出'}
+                    <CheckCircle2 size={16} />
+                    确认成交
                   </button>
 
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-6 gap-1 lg:gap-2">
-                <button 
-                    onClick={() => setIsSettingsOpen(true)}
-                    className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors"
-                    title="设置"
-                  >
-                    <Settings size={16} />
-                </button>
-                
-                <button 
-                    onClick={handleCloudDownload}
-                    className="flex items-center justify-center bg-app-card border border-app-border text-indigo-400 py-2.5 rounded-md hover:text-indigo-300 hover:border-indigo-500 transition-colors"
-                    title="从云端下载"
-                  >
-                    <CloudDownload size={16} />
-                </button>
-
-                <button 
-                    onClick={handleCloudUpload}
-                    disabled={isSyncing}
-                    className="flex items-center justify-center bg-app-card border border-app-border text-brand-yellow py-2.5 rounded-md hover:bg-brand-yellow/10 hover:border-brand-yellow transition-colors"
-                    title="上传到云端"
-                  >
-                     {isSyncing ? (
-                       <div className="w-4 h-4 border-2 border-brand-yellow border-t-transparent rounded-full animate-spin"></div>
-                     ) : (
-                       <CloudUpload size={16} />
-                     )}
-                </button>
-
-                <button 
-                    onClick={handleImportClick} 
-                    className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors"
-                    title="导入数据"
-                  >
-                    <Upload size={16} />
-                </button>
-
-                <button 
-                    onClick={handleExport}
-                    disabled={trades.length === 0}
-                    className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors disabled:opacity-50"
-                    title="导出数据"
-                  >
-                    <Download size={16} />
-                </button>
-
-                <button 
-                    onClick={resetAll} 
-                    className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-red-400 hover:border-red-400 transition-colors"
-                    title="重置"
-                  >
-                    <RefreshCcw size={16} />
-                </button>
+            {/* Desktop Only Buttons Row */}
+            <div className="hidden lg:block">
+               <ActionButtons />
             </div>
           </div>
+        </div>
+
+        {/* Mobile Only Buttons Row - Fixed at bottom layout flow */}
+        <div className="lg:hidden mt-2 order-3">
+           <ActionButtons />
         </div>
 
       </div>
