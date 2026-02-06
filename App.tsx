@@ -1,19 +1,19 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { RefreshCcw, BrainCircuit, Calculator, Wallet, Plus, History, TrendingUp, CheckCircle2, Download, Upload, FileJson, Cloud, CloudUpload, CloudDownload, Settings, Target } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Calculator, Wallet, Plus, History, TrendingUp, CheckCircle2, Download, Upload, FileJson, Cloud, CloudUpload, CloudDownload, Settings, Target, ArrowRight } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
 import { CloudSettingsModal } from './components/CloudSettingsModal';
 import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
-import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig } from './types';
+import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.3.1';
+const APP_VERSION = 'v1.6.0';
 
 export default function App() {
   // --- State ---
   
-  // 1. Trades History (Already persisted)
+  // 1. Trades History
   const [trades, setTrades] = useState<TradeRecord[]>(() => {
     const saved = localStorage.getItem('gold_trades_local');
     return saved ? JSON.parse(saved) : [];
@@ -21,16 +21,22 @@ export default function App() {
   
   const [isDragging, setIsDragging] = useState(false);
   
-  // 2. Inputs Draft (Newly persisted)
+  // 2. Inputs Draft
   const [inputs, setInputs] = useState(() => {
     const saved = localStorage.getItem('gold_inputs_draft');
     return saved ? JSON.parse(saved) : { price: '', grams: '' };
   });
 
-  // 3. Market Price for Floating PnL (Persisted)
+  // 3. Market Price
   const [marketPrice, setMarketPrice] = useState(() => {
     const saved = localStorage.getItem('gold_market_price');
     return saved || '';
+  });
+
+  // 4. Global App Settings (New)
+  const [appSettings, setAppSettings] = useState<AppSettings>(() => {
+    const saved = localStorage.getItem('gold_app_settings');
+    return saved ? JSON.parse(saved) : { priceStep: 5, gramsStep: 1 };
   });
 
   const [aiState, setAiState] = useState<AIAnalysisState>({
@@ -47,7 +53,7 @@ export default function App() {
     return saved ? JSON.parse(saved) : { token: '', gistId: '' };
   });
 
-  // 4. Preview Type (Newly persisted)
+  // 5. Preview Type
   const [previewType, setPreviewType] = useState<OrderType>(() => {
     const saved = localStorage.getItem('gold_preview_type');
     return (saved === 'SELL') ? 'SELL' : 'BUY';
@@ -57,25 +63,25 @@ export default function App() {
 
   // --- Effects: Auto-save locally ---
   
-  // Save Trades
   useEffect(() => {
     localStorage.setItem('gold_trades_local', JSON.stringify(trades));
   }, [trades]);
 
-  // Save Draft Inputs
   useEffect(() => {
     localStorage.setItem('gold_inputs_draft', JSON.stringify(inputs));
   }, [inputs]);
 
-  // Save Market Price
   useEffect(() => {
     localStorage.setItem('gold_market_price', marketPrice);
   }, [marketPrice]);
 
-  // Save Preview Type Preference
   useEffect(() => {
     localStorage.setItem('gold_preview_type', previewType);
   }, [previewType]);
+
+  useEffect(() => {
+    localStorage.setItem('gold_app_settings', JSON.stringify(appSettings));
+  }, [appSettings]);
 
 
   // --- Handlers ---
@@ -89,10 +95,15 @@ export default function App() {
     setMarketPrice(value);
   };
 
-  // --- Cloud Sync Handlers ---
-  const handleSaveConfig = (newConfig: GithubConfig) => {
-    setGithubConfig(newConfig);
-    localStorage.setItem('gold_github_config', JSON.stringify(newConfig));
+  // --- Cloud & Settings Handlers ---
+  const handleSaveSettings = (newGithubConfig: GithubConfig, newAppSettings: AppSettings) => {
+    // Save Github Config
+    setGithubConfig(newGithubConfig);
+    localStorage.setItem('gold_github_config', JSON.stringify(newGithubConfig));
+    
+    // Save App Settings
+    setAppSettings(newAppSettings);
+    // Persistence handled by useEffect
   };
 
   const handleCloudUpload = async () => {
@@ -109,10 +120,10 @@ export default function App() {
     try {
       const newGistId = await saveToGist(githubConfig.token, trades, githubConfig.gistId || undefined);
       
-      // If we got a new ID (first save), update config
       if (newGistId && newGistId !== githubConfig.gistId) {
         const newConfig = { ...githubConfig, gistId: newGistId };
-        handleSaveConfig(newConfig);
+        setGithubConfig(newConfig);
+        localStorage.setItem('gold_github_config', JSON.stringify(newConfig));
       }
       
       alert(`云端同步成功！${!githubConfig.gistId ? '已创建新的 Gist 备份。' : ''}`);
@@ -180,7 +191,6 @@ export default function App() {
         if (typeof result === 'string') {
           const importedTrades = JSON.parse(result);
           if (Array.isArray(importedTrades)) {
-            // Basic validation
             const isValid = importedTrades.every(t => t.id && t.type && typeof t.price === 'number');
             if (isValid) {
               setTrades(importedTrades);
@@ -200,15 +210,12 @@ export default function App() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) processFile(file);
-    // Reset input so same file can be selected again
     e.target.value = '';
   };
 
   // --- Drag & Drop Handlers ---
   const onDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-    // CRITICAL FIX: Only activate overlay if dragging files
-    // Internal element drags (like table columns) won't have 'Files' type usually
     if (e.dataTransfer.types.includes('Files')) {
       setIsDragging(true);
     }
@@ -223,7 +230,6 @@ export default function App() {
     e.preventDefault();
     setIsDragging(false);
     
-    // Only process if it is actually a file
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
       if (file.type === "application/json" || file.name.endsWith('.json')) {
@@ -234,30 +240,29 @@ export default function App() {
     }
   };
 
-  // --- Core Calculation: Derived Holdings from History ---
+  // --- Core Calculation ---
   const currentPosition: HoldingState = useMemo(() => {
     let grams = 0;
     let totalCost = 0;
     let realizedPnL = 0;
 
     trades.forEach(t => {
+      if (t.isDisabled) return;
+
       const tradeValue = t.grams * t.price;
       if (t.type === 'BUY') {
         grams += t.grams;
         totalCost += tradeValue;
       } else {
-        // Sell logic: Reduces quantity, does not change avg cost of remaining items
-        // But we need to track realized PnL
         const currentAvg = grams > 0 ? totalCost / grams : 0;
         const costBasis = t.grams * currentAvg;
         
         grams = Math.max(0, grams - t.grams);
-        totalCost -= costBasis; // Reduce the cost pool
+        totalCost -= costBasis; 
         realizedPnL += (tradeValue - costBasis);
       }
     });
 
-    // Floating point cleanup
     if (grams < 0.0001) {
       grams = 0;
       totalCost = 0;
@@ -268,14 +273,12 @@ export default function App() {
     return { grams, avgCost, totalCost, realizedPnL };
   }, [trades]);
 
-  // --- Floating PnL Calculation ---
   const floatingPnL = useMemo(() => {
     const market = parseFloat(marketPrice) || 0;
     if (market <= 0 || currentPosition.grams <= 0) return 0;
     return (market - currentPosition.avgCost) * currentPosition.grams;
   }, [marketPrice, currentPosition]);
 
-  // --- Simulation: "What if" for the inputs ---
   const getSimulation = (type: OrderType): SimulationResult => {
     const price = parseFloat(inputs.price) || 0;
     const grams = parseFloat(inputs.grams) || 0;
@@ -288,7 +291,6 @@ export default function App() {
       newTotalGrams = currentPosition.grams + grams;
       newTotalCost = currentPosition.totalCost + (price * grams);
     } else {
-      // Sell Simulation
       newTotalGrams = Math.max(0, currentPosition.grams - grams);
       const costBasis = grams * currentPosition.avgCost;
       newTotalCost = currentPosition.totalCost - costBasis;
@@ -328,15 +330,13 @@ export default function App() {
       type,
       price,
       grams,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      isDisabled: false
     };
 
     setTrades(prev => [...prev, newTrade]);
-    
-    // Auto-sync market price with execution price
     setMarketPrice(inputs.price);
-    
-    setInputs({ price: '', grams: '' }); // Clear inputs
+    setInputs({ price: '', grams: '' }); 
     setAiState({ loading: false, result: null, error: null });
   };
 
@@ -380,11 +380,11 @@ export default function App() {
       <CloudSettingsModal 
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)}
-        config={githubConfig}
-        onSave={handleSaveConfig}
+        githubConfig={githubConfig}
+        appSettings={appSettings}
+        onSave={handleSaveSettings}
       />
 
-      {/* Drag Overlay */}
       {isDragging && (
         <div className="absolute inset-0 bg-brand-yellow/10 backdrop-blur-sm z-50 flex items-center justify-center border-4 border-dashed border-brand-yellow m-4 rounded-3xl pointer-events-none">
           <div className="text-center">
@@ -395,7 +395,6 @@ export default function App() {
         </div>
       )}
 
-      {/* File Input for Import (Hidden) */}
       <input 
         type="file" 
         ref={fileInputRef} 
@@ -406,7 +405,6 @@ export default function App() {
 
       <div className="max-w-[1400px] w-full pb-12">
         
-        {/* Top Header */}
         <header className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
             <div className="flex items-center gap-3 mb-2">
@@ -429,176 +427,241 @@ export default function App() {
           </div>
         </header>
 
-        {/* Main Content Grid 
-            Mobile Order: Input -> Preview -> Stats -> History -> AI
-            Desktop Order: 
-              Left Col: Input, Stats, History, AI
-              Right Col: Preview
-        */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6 items-start">
           
-          {/* 1. New Order Input (Left) */}
-          <div className="lg:col-span-8 bg-app-card border border-brand-yellow rounded-xl p-5 shadow-md relative overflow-hidden">
+          <div className="lg:col-span-8 flex flex-col gap-6 order-2 lg:order-1">
              
-             <div className="flex justify-between items-center mb-4">
-               <div className="flex items-center gap-2">
-                 <Plus size={18} className="text-slate-900 bg-brand-yellow p-0.5 rounded-sm"/>
-                 {/* Renamed Title */}
-                 <h2 className="text-white font-bold text-lg">挂单</h2>
+             <div className="bg-app-card border border-app-border rounded-xl p-6 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-4 justify-between">
+                   <div className="flex items-center gap-2">
+                      <Wallet size={18} className="text-brand-yellow"/>
+                      <h2 className="text-brand-yellow font-bold text-lg">当前持仓详情</h2>
+                   </div>
+                   
+                   <div className="flex items-center gap-2 bg-app-bg px-3 py-1.5 rounded-lg border border-app-border border-l-4 border-l-brand-yellow/50">
+                      <span className="text-xs text-slate-400 whitespace-nowrap flex items-center gap-1">
+                         <Target size={12} />
+                         参考市价
+                      </span>
+                      <input 
+                        type="number" 
+                        value={marketPrice}
+                        onChange={(e) => handleMarketPriceChange(e.target.value)}
+                        placeholder="0.00"
+                        className="w-20 bg-transparent text-right font-mono font-bold text-white focus:outline-none placeholder-slate-700 text-sm"
+                      />
+                      <span className="text-xs text-slate-500">元/克</span>
+                   </div>
+                </div>
+                
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                  <div className="bg-app-bg p-3 rounded-lg border border-app-border">
+                    <span className="text-xs text-slate-500 block mb-1">平均成本</span>
+                    <div className="text-xl font-bold text-white font-mono">{currentPosition.avgCost.toFixed(2)}</div>
+                  </div>
+                  <div className="bg-app-bg p-3 rounded-lg border border-app-border">
+                    <span className="text-xs text-slate-500 block mb-1">持仓数量 (克)</span>
+                    <div className="text-xl font-bold text-white font-mono">{currentPosition.grams.toFixed(2)}</div>
+                  </div>
+                  <div className="bg-app-bg p-3 rounded-lg border border-app-border">
+                    <span className="text-xs text-slate-500 block mb-1">持仓总投入</span>
+                    <div className="text-xl font-bold text-slate-300 font-mono">
+                      {currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                    </div>
+                  </div>
+
+                  <div className={`bg-app-bg p-3 rounded-lg border ${floatingPnL >= 0 ? 'border-brand-red/30 bg-brand-red/5' : 'border-brand-green/30 bg-brand-green/5'}`}>
+                    <span className="text-xs text-slate-500 block mb-1 flex justify-between">
+                       <span>浮动盈亏</span>
+                       {marketPrice && <span className="text-[10px] opacity-60">@ {marketPrice}</span>}
+                    </span>
+                    <div className={`text-xl font-bold font-mono ${floatingPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                      {marketPrice ? (
+                        <>
+                          {floatingPnL > 0 ? '+' : ''}{floatingPnL.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                        </>
+                      ) : (
+                        <span className="text-slate-600 text-base font-normal">--</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className={`bg-app-bg p-3 rounded-lg border ${currentPosition.realizedPnL >= 0 ? 'border-brand-red/30' : 'border-brand-green/30'}`}>
+                    <span className="text-xs text-slate-500 block mb-1">已实现盈亏</span>
+                    <div className={`text-xl font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                      {currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+             </div>
+
+             <div className="space-y-3">
+               <div className="flex items-center gap-2 text-slate-400 pl-1">
+                  <History size={16} />
+                  <h3 className="font-medium text-sm">成交记录</h3>
                </div>
+               <TradeList trades={trades} onDelete={deleteTrade} onUpdate={updateTrade} settings={appSettings} />
              </div>
 
-             <div className="grid grid-cols-2 gap-3 mb-4">
-               <InputGroup 
-                  label="挂单价格 (元/克)"
-                  value={inputs.price}
-                  onChange={(v) => handleInputChange('price', v)}
-                  placeholder="0.00"
-                />
-                <InputGroup 
-                  label="挂单数量 (克)"
-                  value={inputs.grams}
-                  onChange={(v) => handleInputChange('grams', v)}
-                  placeholder="0.00"
-                />
-             </div>
-
-             <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => setPreviewType('BUY')}
-                  className={`relative group py-3 rounded-lg border transition-all duration-200 flex items-center justify-center gap-2 font-bold text-sm
-                    ${previewType === 'BUY'
-                      ? 'bg-brand-red text-white border-brand-red shadow-lg shadow-brand-red/20 scale-[1.02]'
-                      : 'bg-app-bg border-app-border text-slate-400 hover:border-slate-500'
-                    }`}
-                >
-                   <TrendingUp size={16} />
-                   买入预估
-                </button>
-
-                <button
-                  onClick={() => setPreviewType('SELL')}
-                  className={`relative group py-3 rounded-lg border transition-all duration-200 flex items-center justify-center gap-2 font-bold text-sm
-                    ${previewType === 'SELL'
-                      ? 'bg-brand-green text-white border-brand-green shadow-lg shadow-brand-green/20 scale-[1.02]'
-                      : 'bg-app-bg border-app-border text-slate-400 hover:border-slate-500'
-                    }`}
-                >
-                   <TrendingUp size={16} className="rotate-180" />
-                   卖出预估
-                </button>
+             <div className="bg-app-card border border-app-border rounded-xl p-4">
+                <div className="flex items-center justify-between mb-2">
+                   <h3 className="text-slate-300 font-medium flex items-center gap-2">
+                     <BrainCircuit size={16} className="text-indigo-400"/>
+                     智能分析 (预览)
+                   </h3>
+                   <button 
+                     onClick={handleAIAnalysis}
+                     disabled={aiState.loading || !inputs.grams || !inputs.price}
+                     className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded transition-colors disabled:opacity-50"
+                   >
+                     {aiState.loading ? "分析中..." : "Gemini 深度分析"}
+                   </button>
+                </div>
+                
+                {aiState.result ? (
+                  <div className="text-sm text-slate-300 leading-relaxed bg-app-input p-3 rounded-lg border border-app-border whitespace-pre-wrap">
+                    {aiState.result}
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-500 italic">
+                    在右侧面板输入价格和数量后，点击分析按钮获取基于当前持仓的操作建议。
+                  </div>
+                )}
              </div>
           </div>
 
-          {/* 2. Preview Section (Moved Here for Mobile Order) */}
-          {/* Desktop: Forced to column 9, row 1 */}
-          <div className="lg:col-span-4 lg:col-start-9 lg:row-start-1 lg:row-span-10 lg:sticky lg:top-6 space-y-4">
-            <div className="bg-app-card border border-brand-yellow rounded-xl overflow-hidden shadow-lg">
-              <div className="bg-brand-yellow px-6 py-4 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Calculator className="text-slate-900" size={20} />
-                  <h2 className="text-slate-900 font-bold text-lg">
-                    {previewType === 'BUY' ? '买入后预估' : '卖出后预估'}
-                  </h2>
-                </div>
+          <div className="lg:col-span-4 lg:col-start-9 order-1 lg:order-2 lg:sticky lg:top-6 space-y-4">
+            <div className={`bg-app-card border rounded-xl overflow-hidden shadow-2xl transition-all duration-300 ${previewType === 'BUY' ? 'border-brand-red/50 shadow-brand-red/5' : 'border-brand-green/50 shadow-brand-green/5'}`}>
+              
+              <div className="grid grid-cols-2 p-1.5 bg-app-bg border-b border-app-border">
+                <button 
+                  onClick={() => setPreviewType('BUY')}
+                  className={`py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+                    previewType === 'BUY' 
+                      ? 'bg-brand-red text-white shadow-lg shadow-brand-red/20' 
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  <TrendingUp size={16} />
+                  买入挂单
+                </button>
+                <button 
+                  onClick={() => setPreviewType('SELL')}
+                  className={`py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+                    previewType === 'SELL' 
+                      ? 'bg-brand-green text-white shadow-lg shadow-brand-green/20' 
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  <TrendingUp size={16} className="rotate-180" />
+                  卖出挂单
+                </button>
               </div>
 
-              <div className="p-6 space-y-8 flex-1 flex flex-col">
-                {/* Main Metric */}
+              <div className="p-5 flex flex-col gap-6">
+                
+                <div className="grid grid-cols-2 gap-3">
+                  <InputGroup 
+                      label="价格 (元/克)"
+                      value={inputs.price}
+                      onChange={(v) => handleInputChange('price', v)}
+                      placeholder="0.00"
+                      step={appSettings.priceStep}
+                    />
+                    <InputGroup 
+                      label="数量 (克)"
+                      value={inputs.grams}
+                      onChange={(v) => handleInputChange('grams', v)}
+                      placeholder="0.00"
+                      step={appSettings.gramsStep}
+                    />
+                </div>
+
+                <div className="relative h-px bg-app-border flex items-center justify-center">
+                   <div className="bg-app-card px-2 text-slate-500">
+                     <ArrowRight size={14} className="rotate-90" />
+                   </div>
+                </div>
+
                 <div>
-                   <p className="text-slate-400 text-sm mb-1">成交后平均成本</p>
+                   <p className="text-slate-400 text-xs mb-1 uppercase tracking-wider font-bold">成交后均价预估</p>
                    <div className="flex items-baseline gap-2">
-                     <span className="text-4xl lg:text-5xl font-bold text-white tracking-tight">
+                     <span className="text-4xl font-bold text-white tracking-tight">
                         {simulation.newAvgCost.toFixed(2)}
                      </span>
                      <span className="text-slate-500 font-medium">CNY</span>
                    </div>
                    {currentPosition.grams > 0 && inputs.grams && previewType === 'BUY' ? (
                      <div className="flex items-center gap-2 mt-2">
-                        {/* Cost Change: Up = Red, Down = Green */}
                         <span className={`text-sm font-bold ${simulation.costDifference > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                           {simulation.costDifference > 0 ? '+' : ''}{simulation.costDifference.toFixed(2)}%
                         </span>
                         <span className="text-xs text-slate-500">
-                          (较当前持仓成本 {simulation.costDifference < 0 ? '下降' : '上升'})
+                          (成本 {simulation.costDifference < 0 ? '下降' : '上升'})
                         </span>
                      </div>
                    ) : previewType === 'SELL' && (
-                     <p className="text-xs text-slate-500 mt-2">卖出不影响剩余持仓成本</p>
+                     <p className="text-xs text-slate-500 mt-2">卖出操作不影响剩余持仓成本</p>
                    )}
                 </div>
 
-                {/* Secondary Metrics */}
-                <div className="grid grid-cols-2 gap-6">
+                <div className="grid grid-cols-2 gap-4 bg-app-input rounded-lg p-3 border border-app-border">
                    <div>
-                      <p className="text-slate-400 text-sm mb-1">预计总持仓</p>
+                      <p className="text-slate-400 text-[10px] mb-0.5">预计总持仓</p>
                       <div className="flex items-baseline gap-1">
-                         <span className="text-2xl font-bold text-white">{simulation.newTotalGrams.toFixed(2)}</span>
-                         <span className="text-xs text-slate-500">克</span>
+                         <span className="text-lg font-bold text-white">{simulation.newTotalGrams.toFixed(2)}</span>
+                         <span className="text-[10px] text-slate-500">g</span>
                       </div>
                    </div>
-                   <div>
-                      <p className="text-slate-400 text-sm mb-1">本次交易额</p>
-                      <div className="flex items-baseline gap-1">
-                         <span className="text-2xl font-bold text-white">
+                   <div className="text-right">
+                      <p className="text-slate-400 text-[10px] mb-0.5">本次交易额</p>
+                      <div className="flex items-baseline gap-1 justify-end">
+                         <span className="text-lg font-bold text-slate-200">
                            {((parseFloat(inputs.price)||0) * (parseFloat(inputs.grams)||0)).toLocaleString('zh-CN', {maximumFractionDigits:0})}
                          </span>
-                         <span className="text-xs text-slate-500">¥</span>
+                         <span className="text-[10px] text-slate-500">¥</span>
                       </div>
                    </div>
-                </div>
-
-                {/* Financial List */}
-                <div className="bg-app-input rounded-lg p-4 space-y-3">
-                   <div className="flex justify-between items-center">
-                      <span className="text-slate-400 text-sm">持仓总投入 (估)</span>
-                      <span className="text-white font-mono">¥ {simulation.totalInvestment.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}</span>
-                   </div>
+                   
                    {previewType === 'SELL' && simulation.projectedPnL !== undefined && (
-                     <div className="flex justify-between items-center border-t border-app-border pt-3">
-                        <span className="text-slate-400 text-sm">预计本次盈亏</span>
-                        {/* PnL: Profit (>=0) Red, Loss (<0) Green */}
-                        <span className={`font-mono font-bold ${simulation.projectedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                     <div className="col-span-2 border-t border-white/5 pt-2 mt-1 flex justify-between items-center">
+                        <span className="text-slate-400 text-[10px]">预计本次盈亏</span>
+                        <span className={`font-mono font-bold text-sm ${simulation.projectedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                           {simulation.projectedPnL >= 0 ? '+' : ''}{simulation.projectedPnL.toFixed(2)}
                         </span>
                      </div>
                    )}
                 </div>
 
-                {/* Chart */}
                 {inputs.grams && inputs.price && (
-                  <div className="pt-2">
-                    <p className="text-xs text-slate-500 mb-3 flex justify-between">
-                      <span>{previewType === 'BUY' ? '成本变化对比' : '盈亏参考'}</span>
-                    </p>
-                    <CostChart 
-                      currentAvg={currentPosition.avgCost} 
-                      newAvg={previewType === 'BUY' ? simulation.newAvgCost : parseFloat(inputs.price)} 
-                      orderType={previewType} 
-                    />
-                  </div>
+                  <CostChart 
+                    currentAvg={currentPosition.avgCost} 
+                    newAvg={previewType === 'BUY' ? simulation.newAvgCost : parseFloat(inputs.price)} 
+                    orderType={previewType} 
+                  />
                 )}
                 
-                {/* Execute Button */}
-                <div className="pt-4 mt-auto">
-                   <button
-                    onClick={executeTrade}
-                    disabled={!inputs.price || !inputs.grams}
-                    className="w-full py-3.5 rounded-lg font-bold text-lg flex items-center justify-center gap-2 transition-all transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed bg-brand-yellow text-slate-900 hover:bg-[#fdd835] shadow-lg shadow-brand-yellow/20"
-                   >
-                     <CheckCircle2 size={20} />
-                     成交
-                   </button>
-                </div>
+                <button
+                  onClick={executeTrade}
+                  disabled={!inputs.price || !inputs.grams}
+                  className={`w-full py-4 rounded-lg font-bold text-lg flex items-center justify-center gap-2 transition-all transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-lg 
+                    ${previewType === 'BUY' 
+                      ? 'bg-brand-red text-white hover:bg-red-500 shadow-brand-red/20' 
+                      : 'bg-brand-green text-white hover:bg-green-500 shadow-brand-green/20'
+                    }`}
+                >
+                   <CheckCircle2 size={20} />
+                   {previewType === 'BUY' ? '确认买入' : '确认卖出'}
+                </button>
+
               </div>
             </div>
 
-            {/* Action Buttons Toolbar */}
             <div className="grid grid-cols-6 gap-1 lg:gap-2">
                 <button 
                     onClick={() => setIsSettingsOpen(true)}
                     className="flex items-center justify-center bg-app-card border border-app-border text-slate-400 py-2.5 rounded-md hover:text-white hover:border-slate-500 transition-colors"
-                    title="云端配置"
+                    title="设置"
                   >
                     <Settings size={16} />
                 </button>
@@ -650,111 +713,6 @@ export default function App() {
                 </button>
             </div>
           </div>
-
-          {/* 3. Current Position Summary (Updated with PnL) */}
-          <div className="lg:col-span-8 bg-app-card border border-app-border rounded-xl p-6 shadow-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-4 justify-between">
-               <div className="flex items-center gap-2">
-                  <Wallet size={18} className="text-brand-yellow"/>
-                  <h2 className="text-brand-yellow font-bold text-lg">当前持仓详情</h2>
-               </div>
-               
-               {/* Market Price Input */}
-               <div className="flex items-center gap-2 bg-app-bg px-3 py-1.5 rounded-lg border border-app-border border-l-4 border-l-brand-yellow/50">
-                  <span className="text-xs text-slate-400 whitespace-nowrap flex items-center gap-1">
-                     <Target size={12} />
-                     参考市价
-                  </span>
-                  <input 
-                    type="number" 
-                    value={marketPrice}
-                    onChange={(e) => handleMarketPriceChange(e.target.value)}
-                    placeholder="0.00"
-                    className="w-20 bg-transparent text-right font-mono font-bold text-white focus:outline-none placeholder-slate-700 text-sm"
-                  />
-                  <span className="text-xs text-slate-500">元/克</span>
-               </div>
-            </div>
-            
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-              <div className="bg-app-bg p-3 rounded-lg border border-app-border">
-                <span className="text-xs text-slate-500 block mb-1">平均成本</span>
-                <div className="text-xl font-bold text-white font-mono">{currentPosition.avgCost.toFixed(2)}</div>
-              </div>
-              <div className="bg-app-bg p-3 rounded-lg border border-app-border">
-                <span className="text-xs text-slate-500 block mb-1">持仓数量 (克)</span>
-                <div className="text-xl font-bold text-white font-mono">{currentPosition.grams.toFixed(2)}</div>
-              </div>
-              <div className="bg-app-bg p-3 rounded-lg border border-app-border">
-                <span className="text-xs text-slate-500 block mb-1">持仓总投入</span>
-                <div className="text-xl font-bold text-slate-300 font-mono">
-                  {currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                </div>
-              </div>
-
-              {/* NEW: Floating PnL based on Market Price Input */}
-              <div className={`bg-app-bg p-3 rounded-lg border ${floatingPnL >= 0 ? 'border-brand-red/30 bg-brand-red/5' : 'border-brand-green/30 bg-brand-green/5'}`}>
-                <span className="text-xs text-slate-500 block mb-1 flex justify-between">
-                   <span>浮动盈亏</span>
-                   {marketPrice && <span className="text-[10px] opacity-60">@ {marketPrice}</span>}
-                </span>
-                <div className={`text-xl font-bold font-mono ${floatingPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                  {marketPrice ? (
-                    <>
-                      {floatingPnL > 0 ? '+' : ''}{floatingPnL.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                    </>
-                  ) : (
-                    <span className="text-slate-600 text-base font-normal">--</span>
-                  )}
-                </div>
-              </div>
-
-              <div className={`bg-app-bg p-3 rounded-lg border ${currentPosition.realizedPnL >= 0 ? 'border-brand-red/30' : 'border-brand-green/30'}`}>
-                <span className="text-xs text-slate-500 block mb-1">已实现盈亏</span>
-                {/* Realized PnL: Profit (Red), Loss (Green) */}
-                <div className={`text-xl font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                  {currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toFixed(2)}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 4. Trade History (Left) */}
-          <div className="lg:col-span-8 space-y-3 pt-2">
-            <div className="flex items-center gap-2 text-slate-400 pl-1">
-               <History size={16} />
-               <h3 className="font-medium text-sm">成交记录</h3>
-            </div>
-            <TradeList trades={trades} onDelete={deleteTrade} onUpdate={updateTrade} />
-          </div>
-
-          {/* 5. AI Analysis (Left) */}
-          <div className="lg:col-span-8 bg-app-card border border-app-border rounded-xl p-4">
-             <div className="flex items-center justify-between mb-2">
-                <h3 className="text-slate-300 font-medium flex items-center gap-2">
-                  <BrainCircuit size={16} className="text-indigo-400"/>
-                  智能分析 (预览)
-                </h3>
-                <button 
-                  onClick={handleAIAnalysis}
-                  disabled={aiState.loading || !inputs.grams || !inputs.price}
-                  className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded transition-colors disabled:opacity-50"
-                >
-                  {aiState.loading ? "分析中..." : "Gemini 深度分析"}
-                </button>
-             </div>
-             
-             {aiState.result ? (
-               <div className="text-sm text-slate-300 leading-relaxed bg-app-input p-3 rounded-lg border border-app-border whitespace-pre-wrap">
-                 {aiState.result}
-               </div>
-             ) : (
-               <div className="text-xs text-slate-500 italic">
-                 输入价格和数量后，点击分析按钮获取基于当前持仓的操作建议。
-               </div>
-             )}
-          </div>
-
         </div>
 
       </div>
