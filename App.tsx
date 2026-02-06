@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
@@ -478,7 +479,7 @@ export default function App() {
               </div>
               <div className="flex items-baseline gap-3">
                 <h1 className="text-3xl font-bold text-app-text tracking-wide">
-                  <span className="text-brand-yellow">黄金交易</span>
+                  <span className="text-brand-yellow">黄金交易模拟器</span>
                 </h1>
                 <span className="text-[10px] text-app-subtext font-mono select-all hover:text-app-text transition-colors cursor-default">{APP_VERSION}</span>
               </div>
@@ -508,45 +509,7 @@ export default function App() {
                 </div>
 
                 <div className="bg-app-card border border-app-border rounded-xl p-6 shadow-sm transition-colors duration-300">
-                  <div className="flex justify-end mb-4">
-                     <div className="flex items-stretch bg-app-input rounded-lg border border-app-border shadow-inner group focus-within:border-brand-yellow/60 focus-within:ring-1 focus-within:ring-brand-yellow/20 transition-all overflow-hidden h-10 w-full sm:w-auto">
-                        
-                        <div className="flex items-center gap-2 px-3 bg-app-text/5 border-r border-app-border shrink-0">
-                           <span className="text-sm font-bold text-app-subtext select-none whitespace-nowrap">参考市价</span>
-                        </div>
-
-                        <div className="relative flex items-center justify-end px-2 sm:px-0 bg-transparent min-w-[120px]">
-                            <input 
-                              ref={marketPriceInputRef}
-                              type="number" 
-                              value={marketPrice}
-                              onChange={(e) => handleMarketPriceChange(e.target.value)}
-                              placeholder="0.00"
-                              className="no-spinners w-24 bg-transparent border-none text-right font-mono text-lg font-bold text-app-text placeholder-app-subtext focus:outline-none px-0 py-1"
-                            />
-                            <span className="text-[10px] text-app-subtext font-bold select-none ml-1 mr-2 pt-1 whitespace-nowrap">元/克</span>
-                        </div>
-
-                        <div className="flex flex-col border-l border-app-border bg-app-text/5 h-full self-stretch shrink-0">
-                           <button 
-                             onClick={() => updateMarketPrice(appSettings.priceStep)}
-                             className="flex-1 px-1.5 hover:bg-app-text/10 text-app-subtext hover:text-brand-yellow transition-colors active:bg-brand-yellow/20"
-                             tabIndex={-1}
-                           >
-                             <ChevronUp size={10} strokeWidth={3} />
-                           </button>
-                           <button 
-                             onClick={() => updateMarketPrice(-appSettings.priceStep)}
-                             className="flex-1 px-1.5 hover:bg-app-text/10 text-app-subtext hover:text-brand-yellow transition-colors active:bg-brand-yellow/20 border-t border-app-border"
-                             tabIndex={-1}
-                           >
-                             <ChevronDown size={10} strokeWidth={3} />
-                           </button>
-                        </div>
-                     </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-4">
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border">
                       <span className="text-xs text-app-subtext block mb-1">平均成本</span>
                       <div className="text-xl font-bold text-app-text font-mono">{currentPosition.avgCost.toFixed(2)}</div>
@@ -562,7 +525,6 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Realized PnL (Swapped Position: Now 4th) */}
                     <div className={`bg-app-bg p-3 rounded-lg border ${currentPosition.realizedPnL >= 0 ? 'border-brand-redDim' : 'border-brand-greenDim'}`}>
                       <span className="text-xs text-app-subtext block mb-1">已实现盈亏</span>
                       <div className={`text-xl font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
@@ -570,11 +532,9 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Floating PnL (Swapped Position: Now 5th) */}
                     <div className={`bg-app-bg p-3 rounded-lg border ${floatingPnL >= 0 ? 'border-brand-redDim bg-brand-redDim/20' : 'border-brand-greenDim bg-brand-greenDim/20'}`}>
                       <span className="text-xs text-app-subtext block mb-1 flex justify-between">
                          <span>浮动盈亏</span>
-                         {marketPrice && <span className="text-[10px] opacity-60">@ {marketPrice}</span>}
                       </span>
                       <div className={`text-xl font-bold font-mono ${floatingPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                         {marketPrice ? (
@@ -586,6 +546,38 @@ export default function App() {
                         )}
                       </div>
                     </div>
+
+                    {/* Market Price Input as a Card */}
+                    <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 transition-colors focus-within:border-brand-yellow focus-within:ring-1 focus-within:ring-brand-yellow/20">
+                       <span className="text-xs text-app-subtext block mb-1">参考市价 (元/克)</span>
+                       <div className="flex items-center">
+                          <input 
+                            ref={marketPriceInputRef}
+                            type="number" 
+                            value={marketPrice}
+                            onChange={(e) => handleMarketPriceChange(e.target.value)}
+                            placeholder="0.00"
+                            className="no-spinners text-xl font-bold text-app-text font-mono bg-transparent border-none p-0 w-full focus:outline-none placeholder-app-subtext/30"
+                          />
+                          <div className="flex flex-col gap-0.5 ml-2">
+                             <button 
+                               onClick={() => updateMarketPrice(appSettings.priceStep)}
+                               className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5 transition-colors"
+                               tabIndex={-1}
+                             >
+                               <ChevronUp size={10} strokeWidth={3} />
+                             </button>
+                             <button 
+                               onClick={() => updateMarketPrice(-appSettings.priceStep)}
+                               className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5 transition-colors"
+                               tabIndex={-1}
+                             >
+                               <ChevronDown size={10} strokeWidth={3} />
+                             </button>
+                          </div>
+                       </div>
+                    </div>
+
                   </div>
                </div>
              </div>
@@ -626,145 +618,151 @@ export default function App() {
           </div>
 
           <div className="lg:col-span-4 lg:col-start-9 order-1 lg:order-2 lg:sticky lg:top-6 space-y-4">
-            <div className={`bg-app-card border rounded-xl overflow-hidden shadow-2xl transition-all duration-300 ${previewType === 'BUY' ? 'border-brand-redDim shadow-brand-redDim/20' : 'border-brand-greenDim shadow-brand-greenDim/20'}`}>
-              
-              <div className="grid grid-cols-2 p-1.5 bg-app-bg border-b border-app-border">
-                <button 
-                  onClick={() => setPreviewType('BUY')}
-                  className={`py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${
-                    previewType === 'BUY' 
-                      ? 'bg-brand-red text-white shadow-lg shadow-brand-red/20' 
-                      : 'text-app-subtext hover:text-app-text'
-                  }`}
-                >
-                  <TrendingUp size={16} />
-                  买入挂单
-                </button>
-                <button 
-                  onClick={() => setPreviewType('SELL')}
-                  className={`py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${
-                    previewType === 'SELL' 
-                      ? 'bg-brand-green text-white shadow-lg shadow-brand-green/20' 
-                      : 'text-app-subtext hover:text-app-text'
-                  }`}
-                >
-                  <TrendingUp size={16} className="rotate-180" />
-                  卖出挂单
-                </button>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-app-subtext pl-1">
+                <TrendingUp size={16} />
+                <h3 className="font-medium text-sm">挂单模拟预估</h3>
               </div>
-
-              <div className="p-5 flex flex-col gap-6">
+              <div className={`bg-app-card border rounded-xl overflow-hidden shadow-2xl transition-all duration-300 ${previewType === 'BUY' ? 'border-brand-redDim shadow-brand-redDim/20' : 'border-brand-greenDim shadow-brand-greenDim/20'}`}>
                 
-                <div className="grid grid-cols-2 gap-3">
-                  <InputGroup 
-                      label="价格 (元/克)"
-                      value={inputs.price}
-                      onChange={(v) => handleInputChange('price', v)}
-                      placeholder="0.00"
-                      step={appSettings.priceStep}
-                    />
-                    <InputGroup 
-                      label="数量 (克)"
-                      value={inputs.grams}
-                      onChange={(v) => handleInputChange('grams', v)}
-                      placeholder="0.00"
-                      step={appSettings.gramsStep}
-                    />
-                </div>
-
-                <div className="relative h-px bg-app-border flex items-center justify-center my-4">
-                   <div className="bg-app-card px-2 text-app-subtext">
-                     <ArrowRight size={14} className="rotate-90" />
-                   </div>
-                </div>
-
-                <div className="bg-app-input/30 rounded-xl p-5 border border-app-border space-y-5">
-                    {/* Top Row: Avg Cost & Change */}
-                    <div className="flex justify-between items-start">
-                        <div>
-                           <span className="text-[10px] font-bold text-app-subtext uppercase tracking-wider block mb-1.5">成交后均价预估</span>
-                           <div className="flex items-baseline gap-2">
-                             <span className="text-3xl font-bold text-app-text tracking-tight font-mono">
-                                {simulation.newAvgCost.toFixed(2)}
-                             </span>
-                             <span className="text-xs text-app-subtext font-bold">CNY</span>
-                           </div>
-                        </div>
-
-                        {/* Right Top: Cost Change Badge */}
-                         <div className="text-right">
-                           {currentPosition.grams > 0 && inputs.grams && previewType === 'BUY' ? (
-                             <>
-                                <span className="text-[10px] font-bold text-app-subtext uppercase tracking-wider block mb-1.5">成本浮动</span>
-                                <div className={`text-sm font-bold font-mono px-2 py-1 rounded-md border ${simulation.costDifference > 0 ? 'bg-brand-red/10 text-brand-red border-brand-red/20' : 'bg-brand-green/10 text-brand-green border-brand-green/20'} inline-flex items-center`}>
-                                  {simulation.costDifference > 0 ? '+' : ''}{simulation.costDifference.toFixed(2)}%
-                                </div>
-                             </>
-                           ) : previewType === 'SELL' ? (
-                             <>
-                                <span className="text-[10px] font-bold text-app-subtext uppercase tracking-wider block mb-1.5">持仓成本</span>
-                                <span className="text-sm font-bold text-app-subtext font-mono inline-block py-1">不变</span>
-                             </>
-                           ) : (
-                             <span className="text-app-subtext text-xs py-1 block">-</span>
-                           )}
-                        </div>
-                    </div>
-                    
-                    {/* Divider */}
-                    <div className="h-px bg-app-border/50 w-full" />
-
-                    {/* Bottom Row: Grid */}
-                    <div className="grid grid-cols-2 gap-4">
-                       <div>
-                          <p className="text-app-subtext text-[10px] mb-1 font-medium">预计总持仓</p>
-                          <div className="flex items-baseline gap-1">
-                             <span className="text-lg font-bold text-app-text font-mono">{simulation.newTotalGrams.toFixed(2)}</span>
-                             <span className="text-[10px] text-app-subtext">g</span>
-                          </div>
-                       </div>
-                       <div className="text-right">
-                          <p className="text-app-subtext text-[10px] mb-1 font-medium">本次交易额</p>
-                          <div className="flex items-baseline gap-1 justify-end">
-                             <span className="text-lg font-bold text-app-text font-mono">
-                               {((parseFloat(inputs.price)||0) * (parseFloat(inputs.grams)||0)).toLocaleString('zh-CN', {maximumFractionDigits:0})}
-                             </span>
-                             <span className="text-[10px] text-app-subtext">¥</span>
-                          </div>
-                       </div>
-                       
-                       {previewType === 'SELL' && simulation.projectedPnL !== undefined && (
-                         <div className="col-span-2 border-t border-app-border/50 pt-3 mt-1 flex justify-between items-center">
-                            <span className="text-app-subtext text-[10px] font-bold">预计本次盈亏</span>
-                            <span className={`font-mono font-bold text-sm ${simulation.projectedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                              {simulation.projectedPnL >= 0 ? '+' : ''}{simulation.projectedPnL.toFixed(2)}
-                            </span>
-                         </div>
-                       )}
-                    </div>
-                </div>
-
-                {inputs.grams && inputs.price && (
-                  <CostChart 
-                    currentAvg={currentPosition.avgCost} 
-                    newAvg={previewType === 'BUY' ? simulation.newAvgCost : parseFloat(inputs.price)} 
-                    orderType={previewType} 
-                  />
-                )}
-                
-                <button
-                  onClick={executeTrade}
-                  disabled={!inputs.price || !inputs.grams}
-                  className={`w-full py-4 rounded-lg font-bold text-lg flex items-center justify-center gap-2 transition-all transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-lg 
-                    ${previewType === 'BUY' 
-                      ? 'bg-brand-red text-white hover:bg-red-500 shadow-brand-red/20' 
-                      : 'bg-brand-green text-white hover:bg-green-500 shadow-brand-green/20'
+                <div className="grid grid-cols-2 p-1.5 bg-app-bg border-b border-app-border">
+                  <button 
+                    onClick={() => setPreviewType('BUY')}
+                    className={`py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+                      previewType === 'BUY' 
+                        ? 'bg-brand-red text-white shadow-lg shadow-brand-red/20' 
+                        : 'text-app-subtext hover:text-app-text'
                     }`}
-                >
-                   <CheckCircle2 size={20} />
-                   {previewType === 'BUY' ? '确认买入' : '确认卖出'}
-                </button>
+                  >
+                    <TrendingUp size={16} />
+                    买入挂单
+                  </button>
+                  <button 
+                    onClick={() => setPreviewType('SELL')}
+                    className={`py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+                      previewType === 'SELL' 
+                        ? 'bg-brand-green text-white shadow-lg shadow-brand-green/20' 
+                        : 'text-app-subtext hover:text-app-text'
+                    }`}
+                  >
+                    <TrendingUp size={16} className="rotate-180" />
+                    卖出挂单
+                  </button>
+                </div>
 
+                <div className="p-5 flex flex-col gap-6">
+                  
+                  <div className="grid grid-cols-2 gap-3">
+                    <InputGroup 
+                        label="价格 (元/克)"
+                        value={inputs.price}
+                        onChange={(v) => handleInputChange('price', v)}
+                        placeholder="0.00"
+                        step={appSettings.priceStep}
+                      />
+                      <InputGroup 
+                        label="数量 (克)"
+                        value={inputs.grams}
+                        onChange={(v) => handleInputChange('grams', v)}
+                        placeholder="0.00"
+                        step={appSettings.gramsStep}
+                      />
+                  </div>
+
+                  <div className="relative h-px bg-app-border flex items-center justify-center my-4">
+                    <div className="bg-app-card px-2 text-app-subtext">
+                      <ArrowRight size={14} className="rotate-90" />
+                    </div>
+                  </div>
+
+                  <div className="bg-app-input/30 rounded-xl p-5 border border-app-border space-y-5">
+                      {/* Top Row: Avg Cost & Change */}
+                      <div className="flex justify-between items-start">
+                          <div>
+                            <span className="text-[10px] font-bold text-app-subtext uppercase tracking-wider block mb-1.5">成交后均价预估</span>
+                            <div className="flex items-baseline gap-2">
+                              <span className="text-3xl font-bold text-app-text tracking-tight font-mono">
+                                  {simulation.newAvgCost.toFixed(2)}
+                              </span>
+                              <span className="text-xs text-app-subtext font-bold">CNY</span>
+                            </div>
+                          </div>
+
+                          {/* Right Top: Cost Change Badge */}
+                          <div className="text-right">
+                            {currentPosition.grams > 0 && inputs.grams && previewType === 'BUY' ? (
+                              <>
+                                  <span className="text-[10px] font-bold text-app-subtext uppercase tracking-wider block mb-1.5">成本浮动</span>
+                                  <div className={`text-sm font-bold font-mono px-2 py-1 rounded-md border ${simulation.costDifference > 0 ? 'bg-brand-red/10 text-brand-red border-brand-red/20' : 'bg-brand-green/10 text-brand-green border-brand-green/20'} inline-flex items-center`}>
+                                    {simulation.costDifference > 0 ? '+' : ''}{simulation.costDifference.toFixed(2)}%
+                                  </div>
+                              </>
+                            ) : previewType === 'SELL' ? (
+                              <>
+                                  <span className="text-[10px] font-bold text-app-subtext uppercase tracking-wider block mb-1.5">持仓成本</span>
+                                  <span className="text-sm font-bold text-app-subtext font-mono inline-block py-1">不变</span>
+                              </>
+                            ) : (
+                              <span className="text-app-subtext text-xs py-1 block">-</span>
+                            )}
+                          </div>
+                      </div>
+                      
+                      {/* Divider */}
+                      <div className="h-px bg-app-border/50 w-full" />
+
+                      {/* Bottom Row: Grid */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <p className="text-app-subtext text-[10px] mb-1 font-medium">预计总持仓</p>
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-lg font-bold text-app-text font-mono">{simulation.newTotalGrams.toFixed(2)}</span>
+                              <span className="text-[10px] text-app-subtext">g</span>
+                            </div>
+                        </div>
+                        <div className="text-right">
+                            <p className="text-app-subtext text-[10px] mb-1 font-medium">本次交易额</p>
+                            <div className="flex items-baseline gap-1 justify-end">
+                              <span className="text-lg font-bold text-app-text font-mono">
+                                {((parseFloat(inputs.price)||0) * (parseFloat(inputs.grams)||0)).toLocaleString('zh-CN', {maximumFractionDigits:0})}
+                              </span>
+                              <span className="text-[10px] text-app-subtext">¥</span>
+                            </div>
+                        </div>
+                        
+                        {previewType === 'SELL' && simulation.projectedPnL !== undefined && (
+                          <div className="col-span-2 border-t border-app-border/50 pt-3 mt-1 flex justify-between items-center">
+                              <span className="text-app-subtext text-[10px] font-bold">预计本次盈亏</span>
+                              <span className={`font-mono font-bold text-sm ${simulation.projectedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                                {simulation.projectedPnL >= 0 ? '+' : ''}{simulation.projectedPnL.toFixed(2)}
+                              </span>
+                          </div>
+                        )}
+                      </div>
+                  </div>
+
+                  {inputs.grams && inputs.price && (
+                    <CostChart 
+                      currentAvg={currentPosition.avgCost} 
+                      newAvg={previewType === 'BUY' ? simulation.newAvgCost : parseFloat(inputs.price)} 
+                      orderType={previewType} 
+                    />
+                  )}
+                  
+                  <button
+                    onClick={executeTrade}
+                    disabled={!inputs.price || !inputs.grams}
+                    className={`w-full py-4 rounded-lg font-bold text-lg flex items-center justify-center gap-2 transition-all transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-lg 
+                      ${previewType === 'BUY' 
+                        ? 'bg-brand-red text-white hover:bg-red-500 shadow-brand-red/20' 
+                        : 'bg-brand-green text-white hover:bg-green-500 shadow-brand-green/20'
+                      }`}
+                  >
+                    <CheckCircle2 size={20} />
+                    {previewType === 'BUY' ? '确认买入' : '确认卖出'}
+                  </button>
+
+                </div>
               </div>
             </div>
 
