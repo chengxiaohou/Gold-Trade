@@ -15,8 +15,6 @@ export const CostChart: React.FC<CostChartProps> = ({ currentAvg, newAvg, orderT
   const currentPercent = (currentAvg / scaleMax) * 100;
   const newPercent = (newAvg / scaleMax) * 100;
 
-  // Analysis
-  let isBetter = false;
   let diff = 0;
   
   // Percent calculation (Signed)
@@ -24,18 +22,22 @@ export const CostChart: React.FC<CostChartProps> = ({ currentAvg, newAvg, orderT
   const percentChange = currentAvg > 0 ? ((newAvg - currentAvg) / currentAvg) * 100 : 0;
   
   if (orderType === 'BUY') {
-    isBetter = newAvg < currentAvg;
-    diff = currentAvg - newAvg; // Positive diff implies cost went down (Better)
+    // Buy affects Avg Cost
+    diff = newAvg - currentAvg;
   } else {
-    // For Sell, comparing Price vs Cost
-    isBetter = newAvg > currentAvg;
+    // Sell compares Price to Cost
     diff = newAvg - currentAvg;
   }
 
-  // Bar Colors
+  // Color Logic: Red for Up/Rise, Green for Down/Fall
+  // For BUY: Cost Up (Red), Cost Down (Green)
+  // For SELL: Price > Cost (Red/Profitish), Price < Cost (Green/Lossish)
+  // General Rule: Value Higher = Red, Value Lower = Green
+  const isUp = newAvg > currentAvg;
+  
   const currentBarColor = 'bg-slate-600';
-  const newBarColor = isBetter ? 'bg-brand-green' : 'bg-brand-red';
-  const diffColor = isBetter ? 'text-brand-green' : 'text-brand-red';
+  const newBarColor = isUp ? 'bg-brand-red' : 'bg-brand-green';
+  const diffColor = isUp ? 'text-brand-red' : 'text-brand-green';
 
   const fmt = (n: number) => n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -47,7 +49,7 @@ export const CostChart: React.FC<CostChartProps> = ({ currentAvg, newAvg, orderT
         <div className="flex flex-col">
            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">差异金额</span>
            <span className={`text-xl font-bold ${diffColor}`}>
-             {diff > 0 ? (orderType === 'BUY' ? '-' : '+') : (orderType === 'BUY' ? '+' : '')}{fmt(Math.abs(diff))}
+             {diff > 0 ? '+' : ''}{fmt(diff)}
            </span>
         </div>
         <div className="text-right">
