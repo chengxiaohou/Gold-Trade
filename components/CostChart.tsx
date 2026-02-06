@@ -1,3 +1,4 @@
+
 import React from 'react';
 
 interface CostChartProps {
@@ -42,18 +43,18 @@ export const CostChart: React.FC<CostChartProps> = ({ currentAvg, newAvg, orderT
   const fmt = (n: number) => n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
-    <div className="w-full mt-2 select-none bg-app-input border border-app-border rounded-lg p-4">
+    <div className="w-full mt-1 select-none bg-app-input border border-app-border rounded-lg p-3">
       
       {/* Visual Header */}
-      <div className="flex justify-between items-end mb-4">
+      <div className="flex justify-between items-end mb-2">
         <div className="flex flex-col">
            <span className="text-[10px] uppercase tracking-wider text-app-subtext font-bold">差异金额</span>
-           <span className={`text-xl font-bold ${diffColor}`}>
+           <span className={`text-lg font-bold ${diffColor}`}>
              {diff > 0 ? '+' : ''}{fmt(diff)}
            </span>
         </div>
         <div className="text-right">
-           <span className="text-xs text-app-subtext block">影响幅度</span>
+           <span className="text-[10px] text-app-subtext block uppercase tracking-wider font-bold">影响幅度</span>
            <span className={`text-xs font-mono font-bold ${diffColor}`}>
              {percentChange > 0 ? '+' : ''}{percentChange.toFixed(2)}%
            </span>
@@ -61,15 +62,15 @@ export const CostChart: React.FC<CostChartProps> = ({ currentAvg, newAvg, orderT
       </div>
 
       {/* Bars Container */}
-      <div className="relative space-y-5">
+      <div className="relative space-y-4">
         
         {/* Current Cost Bar */}
         <div className="relative group">
-          <div className="flex justify-between text-xs mb-1">
+          <div className="flex justify-between text-[10px] mb-0.5">
              <span className="text-app-subtext">当前成本</span>
              <span className="text-app-text font-mono">{fmt(currentAvg)}</span>
           </div>
-          <div className="h-2 w-full bg-app-border rounded-full overflow-hidden">
+          <div className="h-1.5 w-full bg-app-border rounded-full overflow-hidden">
              <div 
                className={`h-full ${currentBarColor} rounded-full transition-all duration-500`}
                style={{ width: `${currentPercent}%` }}
@@ -77,20 +78,20 @@ export const CostChart: React.FC<CostChartProps> = ({ currentAvg, newAvg, orderT
           </div>
           {/* Reference Line Down */}
           <div 
-             className="absolute top-5 h-8 border-r border-dashed border-app-subtext/40 z-0"
+             className="absolute top-4 h-6 border-r border-dashed border-app-subtext/40 z-0"
              style={{ left: `${currentPercent}%` }}
           ></div>
         </div>
 
         {/* New Cost / Price Bar */}
         <div className="relative">
-          <div className="flex justify-between text-xs mb-1">
+          <div className="flex justify-between text-[10px] mb-0.5">
              <span className="text-app-subtext">{orderType === 'BUY' ? '预估成本' : '成交价格'}</span>
              <span className={`font-mono font-bold ${diffColor}`}>{fmt(newAvg)}</span>
           </div>
-          <div className="h-2 w-full bg-app-border rounded-full overflow-hidden relative z-10">
+          <div className="h-1.5 w-full bg-app-border rounded-full overflow-hidden relative z-10">
              <div 
-               className={`h-full ${newBarColor} rounded-full transition-all duration-500 shadow-[0_0_10px_rgba(0,0,0,0.3)]`}
+               className={`h-full ${newBarColor} rounded-full transition-all duration-500 shadow-[0_0_8px_rgba(0,0,0,0.3)]`}
                style={{ width: `${newPercent}%` }}
              ></div>
           </div>
