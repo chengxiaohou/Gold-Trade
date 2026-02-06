@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" style="color-scheme: dark;">
+<html lang="zh-CN" class="dark" style="color-scheme: dark;">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8,6 +8,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <script>
       tailwind.config = {
+        darkMode: 'class',
         theme: {
           extend: {
             fontFamily: {
@@ -15,17 +16,20 @@
             },
             colors: {
               app: {
-                bg: '#11131f', // Deep dark navy
-                card: '#1c2133', // Slightly lighter navy
-                input: '#151926', // Input background
-                border: '#2a3044', // Borders
+                bg: 'var(--app-bg)',
+                card: 'var(--app-card)',
+                input: 'var(--app-input)',
+                border: 'var(--app-border)',
+                text: 'var(--app-text)',
+                subtext: 'var(--app-subtext)',
+                hover: 'var(--row-hover-bg)',
               },
               brand: {
-                yellow: '#fec007', // The bright yellow/gold
+                yellow: 'var(--brand-yellow)',
                 red: '#ef4444',
-                redDim: '#451a1a',
+                redDim: 'var(--brand-red-dim)',
                 green: '#10b981',
-                greenDim: '#132f25',
+                greenDim: 'var(--brand-green-dim)',
               }
             }
           },
@@ -33,23 +37,66 @@
       }
     </script>
     <style>
-      body {
-        background-color: #11131f;
-        color: #e2e8f0;
+      :root {
+        /* Light Mode Defaults */
+        --app-bg: #f8fafc;
+        --app-card: #ffffff;
+        --app-input: #f1f5f9;
+        --app-border: #e2e8f0;
+        --app-text: #0f172a;
+        --app-subtext: #64748b;
+        --row-hover-bg: #f1f5f9;
+        
+        --brand-yellow: #d97706; /* Darker amber for contrast on white */
+        --brand-red-dim: #fee2e2;
+        --brand-green-dim: #d1fae5;
+        
+        --drag-bg: rgba(255, 255, 255, 0.95);
+        --scrollbar-track: #f1f5f9;
+        --scrollbar-thumb: #cbd5e1;
+        --scrollbar-thumb-hover: #94a3b8;
       }
-      /* Custom scrollbar for dark theme */
+
+      .dark {
+        /* Dark Mode Defaults */
+        --app-bg: #11131f;
+        --app-card: #1c2133;
+        --app-input: #151926;
+        --app-border: #2a3044;
+        --app-text: #e2e8f0;
+        --app-subtext: #94a3b8;
+        --row-hover-bg: #232940;
+
+        --brand-yellow: #fec007;
+        --brand-red-dim: #451a1a;
+        --brand-green-dim: #132f25;
+
+        --drag-bg: rgba(45, 54, 85, 0.95);
+        --scrollbar-track: #11131f;
+        --scrollbar-thumb: #2a3044;
+        --scrollbar-thumb-hover: #3b455e;
+      }
+
+      body {
+        background-color: var(--app-bg);
+        color: var(--app-text);
+        transition: background-color 0.3s, color 0.3s;
+      }
+      
+      /* Custom scrollbar using vars */
       ::-webkit-scrollbar {
         width: 8px;
+        height: 8px;
       }
       ::-webkit-scrollbar-track {
-        background: #11131f; 
+        background: var(--scrollbar-track); 
       }
       ::-webkit-scrollbar-thumb {
-        background: #2a3044; 
+        background: var(--scrollbar-thumb); 
         border-radius: 4px;
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: #3b455e; 
+        background: var(--scrollbar-thumb-hover); 
       }
     </style>
   <script type="importmap">
