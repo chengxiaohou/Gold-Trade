@@ -8,7 +8,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.7.2';
+const APP_VERSION = 'v1.7.3';
 
 export default function App() {
   // --- Theme State ---
@@ -82,9 +82,10 @@ export default function App() {
     return saved ? JSON.parse(saved) : { token: '', gistId: '' };
   });
 
-  // Export Modal State
+  // Modal States
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportFileName, setExportFileName] = useState('');
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // 5. Preview Type
   const [previewType, setPreviewType] = useState<OrderType>(() => {
@@ -476,14 +477,19 @@ export default function App() {
     setTrades(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
   };
 
-  const resetAll = () => {
-    if (window.confirm("确定要清空所有数据吗？此操作无法撤销。")) {
-      setTrades([]);
-      setInputs({ price: '', grams: '' });
-      setMarketPrice('');
-      setAiState({ loading: false, result: null, error: null });
-      setPreviewType('BUY');
-    }
+  // Open Reset Modal
+  const requestReset = () => {
+    setShowResetConfirm(true);
+  };
+
+  // Execute Reset
+  const confirmReset = () => {
+    setTrades([]);
+    setInputs({ price: '', grams: '' });
+    setMarketPrice('');
+    setAiState({ loading: false, result: null, error: null });
+    setPreviewType('BUY');
+    setShowResetConfirm(false);
   };
 
   const handleAIAnalysis = async () => {
@@ -498,8 +504,8 @@ export default function App() {
     setAiState({ loading: false, result: resultText, error: null });
   };
 
-  // --- Reusable Button Group Component (for Desktop sidebar and Mobile bottom) ---
-  const ActionButtons = () => (
+  // --- Render Functions (Fixed: No longer defining components inside components) ---
+  const renderActionButtons = () => (
     <div className="grid grid-cols-6 gap-1 lg:gap-2">
         <button 
             onClick={() => setIsSettingsOpen(true)}
@@ -548,7 +554,7 @@ export default function App() {
         </button>
 
         <button 
-            onClick={resetAll} 
+            onClick={requestReset} 
             className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-red-400 hover:border-red-400 transition-colors"
             title="重置"
           >
@@ -631,6 +637,46 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Confirmation Modal */}
+      {showResetConfirm && (
+        <div 
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setShowResetConfirm(false)}
+        >
+          <div 
+            className="bg-app-card border border-app-border rounded-xl w-full max-w-sm shadow-2xl relative p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+             <div className="flex justify-between items-center">
+               <h3 className="text-lg font-bold text-app-text">确认重置</h3>
+                <button onClick={() => setShowResetConfirm(false)} className="text-app-subtext hover:text-app-text transition-colors">
+                  <X size={20} />
+                </button>
+             </div>
+             
+             <p className="text-app-subtext text-sm leading-relaxed">
+               确定要清空所有交易记录和临时输入吗？<br/>
+               <span className="text-brand-red font-bold">此操作无法撤销。</span>
+             </p>
+
+             <div className="flex gap-2 pt-2">
+                <button 
+                  onClick={() => setShowResetConfirm(false)}
+                  className="flex-1 py-2.5 rounded-lg border border-app-border text-app-subtext hover:bg-app-input hover:text-app-text transition-colors font-medium text-sm"
+                >
+                  取消
+                </button>
+                <button 
+                  onClick={confirmReset}
+                  className="flex-1 py-2.5 rounded-lg bg-brand-red text-white hover:bg-red-500 transition-colors font-bold text-sm"
+                >
+                  确认重置
+                </button>
+              </div>
           </div>
         </div>
       )}
@@ -947,14 +993,14 @@ export default function App() {
 
             {/* Desktop Only Buttons Row */}
             <div className="hidden lg:block">
-               <ActionButtons />
+               {renderActionButtons()}
             </div>
           </div>
         </div>
 
         {/* Mobile Only Buttons Row - Fixed at bottom layout flow */}
         <div className="lg:hidden mt-2 order-3">
-           <ActionButtons />
+           {renderActionButtons()}
         </div>
 
       </div>
