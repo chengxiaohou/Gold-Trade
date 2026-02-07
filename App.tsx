@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
@@ -8,7 +8,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.7.1';
+const APP_VERSION = 'v1.7.2';
 
 export default function App() {
   // --- Theme State ---
@@ -81,6 +81,10 @@ export default function App() {
     const saved = localStorage.getItem('gold_github_config');
     return saved ? JSON.parse(saved) : { token: '', gistId: '' };
   });
+
+  // Export Modal State
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFileName, setExportFileName] = useState('');
 
   // 5. Preview Type
   const [previewType, setPreviewType] = useState<OrderType>(() => {
@@ -237,8 +241,23 @@ export default function App() {
   };
 
   // --- Data Persistence Handlers ---
-  const handleExport = () => {
-    // UPDATED: Now exports an object containing both trades and settings
+
+  // 1. Trigger: Open Modal with default name
+  const handleExportClick = () => {
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    // Format: gold-trades-YYYYMMDD_HHmm
+    const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+    
+    setExportFileName(`gold-trades-${timestamp}`);
+    setShowExportModal(true);
+  };
+
+  // 2. Action: Perform Export
+  const confirmExport = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!exportFileName.trim()) return;
+
     const exportData = {
       version: 1,
       timestamp: Date.now(),
@@ -251,10 +270,19 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `gold-trades-${new Date().toISOString().slice(0, 10)}.json`;
+    
+    // Ensure extension
+    let fileName = exportFileName.trim();
+    if (!fileName.toLowerCase().endsWith('.json')) {
+      fileName += '.json';
+    }
+    
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    
+    setShowExportModal(false);
   };
 
   const handleImportClick = () => {
@@ -511,7 +539,7 @@ export default function App() {
         </button>
 
         <button 
-            onClick={handleExport}
+            onClick={handleExportClick}
             disabled={trades.length === 0}
             className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors disabled:opacity-50"
             title="导出数据"
@@ -553,6 +581,59 @@ export default function App() {
         appSettings={appSettings}
         onSave={handleSaveSettings}
       />
+
+      {/* Export Filename Modal */}
+      {showExportModal && (
+        <div 
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setShowExportModal(false)}
+        >
+          <div 
+            className="bg-app-card border border-app-border rounded-xl w-full max-w-sm shadow-2xl relative p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-bold text-app-text">导出数据</h3>
+              <button onClick={() => setShowExportModal(false)} className="text-app-subtext hover:text-app-text transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <form onSubmit={confirmExport} className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm text-app-subtext font-medium">文件名称</label>
+                <div className="flex items-center relative">
+                  <input 
+                    type="text" 
+                    value={exportFileName}
+                    onChange={(e) => setExportFileName(e.target.value)}
+                    className="w-full bg-app-input border border-app-border rounded-lg pl-3 pr-14 py-2 text-app-text focus:border-brand-yellow focus:ring-1 focus:ring-brand-yellow outline-none transition-all font-mono text-sm"
+                    autoFocus
+                  />
+                  <span className="absolute right-3 text-app-subtext text-xs pointer-events-none">.json</span>
+                </div>
+              </div>
+              
+              <div className="flex gap-2 pt-2">
+                <button 
+                  type="button"
+                  onClick={() => setShowExportModal(false)}
+                  className="flex-1 py-2.5 rounded-lg border border-app-border text-app-subtext hover:bg-app-input hover:text-app-text transition-colors font-medium text-sm"
+                >
+                  取消
+                </button>
+                <button 
+                  type="submit"
+                  disabled={!exportFileName.trim()}
+                  className="flex-1 py-2.5 rounded-lg bg-brand-yellow text-slate-900 hover:bg-[#fdd835] transition-colors font-bold text-sm disabled:opacity-50"
+                >
+                  确认导出
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {isDragging && (
         <div className="absolute inset-0 bg-brand-yellow/10 backdrop-blur-sm z-50 flex items-center justify-center border-4 border-dashed border-brand-yellow m-4 rounded-3xl pointer-events-none">
