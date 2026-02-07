@@ -537,7 +537,7 @@ export default function App() {
                 <h1 className="text-3xl font-bold text-app-subtext tracking-wide">
                   黄金交易模拟器
                 </h1>
-                <span className="text-[10px] text-app-subtext font-mono select-all hover:text-app-text transition-colors cursor-default">{APP_VERSION}</span>
+                <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text transition-colors cursor-default ml-1">{APP_VERSION}</span>
               </div>
             </div>
             {/* Description removed */}
@@ -681,7 +681,7 @@ export default function App() {
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-app-subtext pl-1">
                 <TrendingUp size={16} />
-                <h3 className="font-medium text-sm">挂单模拟预估</h3>
+                <h3 className="font-medium text-sm">模拟交易</h3>
               </div>
               <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-2xl transition-all duration-300">
                 
@@ -785,8 +785,8 @@ export default function App() {
                         </div>
                         
                         {previewType === 'SELL' && simulation.projectedPnL !== undefined && (
-                          <div className="col-span-2 border-t border-app-border/50 pt-2 flex justify-between items-center">
-                              <span className="text-app-subtext text-[10px] font-bold">预计本次盈亏</span>
+                          <div className="col-span-2 border-t border-white/[0.03] pt-2 flex justify-between items-center">
+                              <span className="text-app-subtext text-[10px] font-bold">预计本次盈亏：</span>
                               <span className={`font-mono font-bold text-sm ${simulation.projectedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                                 {simulation.projectedPnL >= 0 ? '+' : ''}{simulation.projectedPnL.toFixed(2)}
                               </span>
@@ -813,7 +813,7 @@ export default function App() {
                       }`}
                   >
                     <CheckCircle2 size={16} />
-                    确认成交
+                    成交
                   </button>
 
                 </div>
