@@ -8,7 +8,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.7.4';
+const APP_VERSION = 'v1.7.6';
 
 export default function App() {
   // --- Theme State ---
@@ -445,7 +445,7 @@ export default function App() {
 
   const renderActionButtons = () => (
     <div className="relative">
-      {/* Cloud Confirmation Popover - Refined to be more compact */}
+      {/* Cloud Confirmation Popover */}
       {cloudConfirm && (
         <div 
           className="absolute bottom-full mb-3 z-[100] animate-in fade-in zoom-in slide-in-from-bottom-2 duration-200 pointer-events-none"
@@ -482,7 +482,6 @@ export default function App() {
                    确定
                  </button>
               </div>
-              {/* Triangle Arrow - Precisely pointed */}
               <div 
                 className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-app-card border-r border-b border-app-border rotate-45"
               ></div>
@@ -534,7 +533,7 @@ export default function App() {
               className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors"
               title="导入数据"
             >
-              <Upload size={16} />
+              <Download size={16} />
           </button>
 
           <button 
@@ -543,7 +542,7 @@ export default function App() {
               className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors disabled:opacity-50"
               title="导出数据"
             >
-              <Download size={16} />
+              <Upload size={16} />
           </button>
 
           <button 

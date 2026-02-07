@@ -1,7 +1,8 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { TradeRecord, AppSettings } from '../types';
-import { Trash2, Edit2, X, GripHorizontal, Eye, EyeOff, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react';
+import { Trash2, Edit2, X, GripHorizontal, Eye, EyeOff, RotateCcw } from 'lucide-react';
+import { InputGroup } from './InputGroup';
 
 interface TradeListProps {
   trades: TradeRecord[];
@@ -23,7 +24,6 @@ interface ColumnDef {
 const fmt = (n: number) => n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // --- Color Palette for Tags ---
-// Removed 'cyan', and 'orange' as requested. Added 'gray' back.
 const TAG_PALETTE = [
   { key: 'indigo', label: '默认', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20', hover: 'hover:border-indigo-500/50' },
   { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20', hover: 'hover:border-gray-500/50' },
@@ -34,8 +34,6 @@ const TAG_PALETTE = [
   { key: 'pink', label: '粉色', bg: 'bg-pink-500/10', text: 'text-pink-500', border: 'border-pink-500/20', hover: 'hover:border-pink-500/50' },
 ];
 
-// Special neutral style for empty/undefined tags (replaces the old 'slate' option for the "-" state)
-// Updated text color to gray-500 for better visibility as "light gray" instead of "white"
 const EMPTY_STYLE = { 
   bg: 'bg-white/5', 
   text: 'text-gray-500', 
@@ -61,7 +59,6 @@ interface EditBubbleProps {
 const EditBubble: React.FC<EditBubbleProps> = ({ 
   trade, availableTags, onUpdate, onClose, initialPosition, settings, mode, onTagColorChange 
 }) => {
-  // Snapshot initial state for Reset functionality
   const initialSnapshot = useRef({
     price: trade.price,
     grams: trade.grams,
@@ -69,45 +66,33 @@ const EditBubble: React.FC<EditBubbleProps> = ({
     tag: trade.tag || ''
   });
 
-  // Local state for inputs
   const [priceStr, setPriceStr] = useState(trade.price.toString());
   const [gramsStr, setGramsStr] = useState(trade.grams.toString());
   const [tagStr, setTagStr] = useState(trade.tag || '');
   
-  // Tag Color State (Derived from settings but applied locally for preview)
   const currentTagColorKey = settings.tagColors?.[tagStr] || 'indigo';
-
-  // We keep track of position in state to preserve it across re-renders (like typing)
   const [position, setPosition] = useState(initialPosition);
   
-  // Refs for logic
   const bubbleRef = useRef<HTMLDivElement>(null);
   const dragOffset = useRef({ x: 0, y: 0 });
   const isDragging = useRef(false);
-  
-  // Input refs for wheel support
-  const priceInputRef = useRef<HTMLInputElement>(null);
-  const gramsInputRef = useRef<HTMLInputElement>(null);
 
-  // --- Reset Handler ---
   const handleReset = () => {
     const init = initialSnapshot.current;
     if (mode === 'full') {
       onUpdate(trade.id, {
         price: init.price,
         grams: init.grams,
-        type: init.type,
-        tag: init.tag
+        type: init.type
       });
       setPriceStr(init.price.toString());
       setGramsStr(init.grams.toString());
     } else {
       onUpdate(trade.id, { tag: init.tag });
+      setTagStr(init.tag);
     }
-    setTagStr(init.tag);
   };
 
-  // --- Drag Handlers (Common) ---
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!bubbleRef.current) return;
     e.preventDefault();
@@ -140,20 +125,6 @@ const EditBubble: React.FC<EditBubbleProps> = ({
     bubbleRef.current.style.transition = '';
   };
 
-  // Handle Updates
-  const adjustValue = (
-    setter: React.Dispatch<React.SetStateAction<string>>,
-    field: 'price' | 'grams',
-    currentStr: string,
-    delta: number
-  ) => {
-    const current = parseFloat(currentStr) || 0;
-    const newVal = Math.max(0, current + delta);
-    const safeVal = Math.round(newVal * 1000) / 1000;
-    setter(safeVal.toString());
-    onUpdate(trade.id, { [field]: safeVal });
-  };
-
   const handleTagChange = (val: string) => {
     setTagStr(val);
     onUpdate(trade.id, { tag: val });
@@ -165,53 +136,16 @@ const EditBubble: React.FC<EditBubbleProps> = ({
      }
   };
 
-  // Attach Wheel Listeners
-  useEffect(() => {
-    if (mode === 'tag') return; // No wheel needed in tag mode
-
-    const attachWheel = (
-      ref: React.RefObject<HTMLInputElement>, 
-      setter: React.Dispatch<React.SetStateAction<string>>,
-      field: 'price' | 'grams',
-      currentVal: string,
-      step: number
-    ) => {
-      const el = ref.current;
-      if (!el) return;
-      const handleWheel = (e: WheelEvent) => {
-        e.preventDefault();
-        const direction = e.deltaY > 0 ? -1 : 1;
-        adjustValue(setter, field, currentVal, direction * step);
-      };
-      el.addEventListener('wheel', handleWheel, { passive: false });
-      return () => el.removeEventListener('wheel', handleWheel);
-    };
-
-    const cleanupPrice = attachWheel(priceInputRef, setPriceStr, 'price', priceStr, settings.priceStep);
-    const cleanupGrams = attachWheel(gramsInputRef, setGramsStr, 'grams', gramsStr, settings.gramsStep);
-
-    return () => { cleanupPrice?.(); cleanupGrams?.(); };
-  }, [priceStr, gramsStr, onUpdate, trade.id, settings, mode]);
-
-  // Determine current style for preview: 
-  // If empty tag -> EMPTY_STYLE
-  // If has tag -> lookup in palette (fallback to indigo)
   const currentStyle = tagStr ? getTagStyle(currentTagColorKey) : EMPTY_STYLE;
 
   return createPortal(
     <>
-      <style>{`
-          .no-spinners::-webkit-inner-spin-button,
-          .no-spinners::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-          .no-spinners { -moz-appearance: textfield; }
-      `}</style>
       <div className="fixed inset-0 z-[9998]" onClick={onClose} />
       <div 
         ref={bubbleRef}
         className="fixed z-[9999] bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl w-72 flex flex-col overflow-hidden text-app-text"
         style={{ top: position.top, left: position.left }}
       >
-        {/* Header - subtler border */}
         <div 
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -238,98 +172,105 @@ const EditBubble: React.FC<EditBubbleProps> = ({
           </div>
         </div>
         
-        <div className="p-5 space-y-5 bg-app-card max-h-[80vh] overflow-y-auto custom-scrollbar">
+        <div className="p-5 space-y-4 bg-app-card max-h-[80vh] overflow-y-auto custom-scrollbar">
           
-          {mode === 'full' && (
+          {mode === 'full' ? (
             <>
-              <div className="space-y-2">
-                 <label className="text-xs text-app-subtext">交易方向</label>
-                 <div className="grid grid-cols-2 gap-3">
-                    <button onClick={() => onUpdate(trade.id, { type: 'BUY' })} className={`h-10 text-sm font-bold rounded-lg border transition-all ${trade.type === 'BUY' ? 'bg-brand-red text-white border-brand-red' : 'bg-app-bg border-white/5 text-app-subtext'}`}>买入</button>
-                    <button onClick={() => onUpdate(trade.id, { type: 'SELL' })} className={`h-10 text-sm font-bold rounded-lg border transition-all ${trade.type === 'SELL' ? 'bg-brand-green text-white border-brand-green' : 'bg-app-bg border-white/5 text-app-subtext'}`}>卖出</button>
+              <div className="space-y-1.5">
+                 <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">交易方向</label>
+                 <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => onUpdate(trade.id, { type: 'BUY' })} className={`h-11 text-sm font-bold rounded-lg border transition-all ${trade.type === 'BUY' ? 'bg-brand-red text-white border-brand-red shadow-sm' : 'bg-app-bg border-white/5 text-app-subtext'}`}>买入</button>
+                    <button onClick={() => onUpdate(trade.id, { type: 'SELL' })} className={`h-11 text-sm font-bold rounded-lg border transition-all ${trade.type === 'SELL' ? 'bg-brand-green text-white border-brand-green shadow-sm' : 'bg-app-bg border-white/5 text-app-subtext'}`}>卖出</button>
                  </div>
               </div>
-              <div className="space-y-2">
-                 <label className="text-xs text-app-subtext">成交价格</label>
-                 <div className="relative w-full group/input">
-                    <input ref={priceInputRef} type="text" value={priceStr} onChange={(e) => {setPriceStr(e.target.value); const v=parseFloat(e.target.value); if(!isNaN(v)) onUpdate(trade.id, {price:v})}} className="no-spinners w-full bg-app-input border border-white/5 rounded-lg pl-3 pr-8 h-10 text-app-text font-mono text-center focus:border-brand-yellow focus:outline-none" />
-                    <div className="absolute right-1 inset-y-1 flex flex-col justify-center gap-0.5 w-5 opacity-50 group-hover/input:opacity-100"><button onClick={() => adjustValue(setPriceStr, 'price', priceStr, settings.priceStep)} className="flex-1 flex items-center justify-center bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow"><ChevronUp size={10} /></button><button onClick={() => adjustValue(setPriceStr, 'price', priceStr, -settings.priceStep)} className="flex-1 flex items-center justify-center bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow"><ChevronDown size={10} /></button></div>
-                 </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <InputGroup 
+                  label="成交价格" 
+                  value={priceStr} 
+                  onChange={(val) => {
+                    setPriceStr(val);
+                    const v = parseFloat(val);
+                    if (!isNaN(v)) onUpdate(trade.id, { price: v });
+                  }} 
+                  step={settings.priceStep} 
+                />
+                <InputGroup 
+                  label="数量" 
+                  value={gramsStr} 
+                  onChange={(val) => {
+                    setGramsStr(val);
+                    const v = parseFloat(val);
+                    if (!isNaN(v)) onUpdate(trade.id, { grams: v });
+                  }} 
+                  step={settings.gramsStep} 
+                />
               </div>
-              <div className="space-y-2">
-                 <label className="text-xs text-app-subtext">数量</label>
-                 <div className="relative w-full group/input">
-                    <input ref={gramsInputRef} type="text" value={gramsStr} onChange={(e) => {setGramsStr(e.target.value); const v=parseFloat(e.target.value); if(!isNaN(v)) onUpdate(trade.id, {grams:v})}} className="no-spinners w-full bg-app-input border border-white/5 rounded-lg pl-3 pr-8 h-10 text-app-text font-mono text-center focus:border-brand-yellow focus:outline-none" />
-                    <div className="absolute right-1 inset-y-1 flex flex-col justify-center gap-0.5 w-5 opacity-50 group-hover/input:opacity-100"><button onClick={() => adjustValue(setGramsStr, 'grams', gramsStr, settings.gramsStep)} className="flex-1 flex items-center justify-center bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow"><ChevronUp size={10} /></button><button onClick={() => adjustValue(setGramsStr, 'grams', gramsStr, -settings.gramsStep)} className="flex-1 flex items-center justify-center bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow"><ChevronDown size={10} /></button></div>
-                 </div>
+
+              <div className="pt-3 flex justify-between items-center text-xs border-t border-white/5 mt-1">
+                 <span className="text-app-subtext font-medium">交易额预览:</span>
+                 <span className="text-app-text font-mono font-bold">
+                   ¥ {fmt((parseFloat(priceStr) || 0) * (parseFloat(gramsStr) || 0))}
+                 </span>
               </div>
             </>
-          )}
-          
-          <div className="space-y-2">
-             <label className="text-xs text-app-subtext">标签 (Tag)</label>
-             <div className="relative">
-                <input
-                  type="text"
-                  value={tagStr}
-                  onChange={(e) => handleTagChange(e.target.value)}
-                  placeholder="如: 短线, 止盈..."
-                  className="w-full bg-app-input border border-white/5 rounded-lg pl-3 pr-3 h-10 text-sm text-gray-400 placeholder-app-subtext/50 focus:border-brand-yellow focus:outline-none focus:ring-1 focus:ring-brand-yellow/50 transition-all"
-                />
-             </div>
-             
-             {/* Tag Preview & Color Picker */}
-             <div className="pt-2 animate-in fade-in slide-in-from-top-1">
-                 <div className="flex items-center gap-2 mb-2">
-                   <div className="text-[10px] text-app-subtext">预览:</div>
-                   <span className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[22px] border ${currentStyle.bg} ${currentStyle.text} ${currentStyle.border}`}>
-                     {tagStr || '-'}
-                   </span>
+          ) : (
+            <div className="space-y-5">
+              <div className="space-y-2">
+                 <label className="text-xs text-app-subtext font-medium">标签 (Tag)</label>
+                 <div className="relative">
+                    <input
+                      type="text"
+                      value={tagStr}
+                      onChange={(e) => handleTagChange(e.target.value)}
+                      placeholder="如: 短线, 止盈..."
+                      className="w-full bg-app-input border border-white/5 rounded-lg pl-3 pr-3 h-11 text-sm text-gray-400 placeholder-app-subtext/50 focus:border-brand-yellow focus:outline-none focus:ring-1 focus:ring-brand-yellow/50 transition-all"
+                    />
                  </div>
                  
-                 <div className="flex flex-wrap gap-2">
-                   {TAG_PALETTE.map((p) => (
-                     <button
-                       key={p.key}
-                       onClick={() => handleColorSelect(p.key)}
-                       className={`w-6 h-6 rounded-full border transition-all flex items-center justify-center ${p.bg} ${p.border} ${
-                         currentTagColorKey === p.key ? 'opacity-100 scale-100' : 'hover:scale-105 opacity-60 hover:opacity-100'
-                       }`}
-                       title={p.label}
-                     >
-                       {currentTagColorKey === p.key && <div className={`w-2 h-2 rounded-full ${p.text} bg-current shadow-sm`} />}
-                     </button>
-                   ))}
+                 <div className="pt-2 animate-in fade-in slide-in-from-top-1">
+                     <div className="flex items-center gap-2 mb-2">
+                       <div className="text-[10px] text-app-subtext">预览:</div>
+                       <span className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[22px] border ${currentStyle.bg} ${currentStyle.text} ${currentStyle.border}`}>
+                         {tagStr || '-'}
+                       </span>
+                     </div>
+                     
+                     <div className="flex flex-wrap gap-2">
+                       {TAG_PALETTE.map((p) => (
+                         <button
+                           key={p.key}
+                           onClick={() => handleColorSelect(p.key)}
+                           className={`w-6 h-6 rounded-full border transition-all flex items-center justify-center ${p.bg} ${p.border} ${
+                             currentTagColorKey === p.key ? 'opacity-100 scale-100' : 'hover:scale-105 opacity-60 hover:opacity-100'
+                           }`}
+                           title={p.label}
+                         >
+                           {currentTagColorKey === p.key && <div className={`w-2 h-2 rounded-full ${p.text} bg-current shadow-sm`} />}
+                         </button>
+                       ))}
+                     </div>
                  </div>
-             </div>
 
-             {availableTags.length > 0 && (
-                <div className="flex flex-wrap gap-2 pt-2 border-t border-white/5 mt-2">
-                   {availableTags.filter(t => t !== tagStr).map(tag => {
-                      // Fallback logic for list items: if color is missing/deleted, use default
-                      const savedColorKey = settings.tagColors?.[tag];
-                      const style = getTagStyle(savedColorKey);
-                      return (
-                        <button
-                          key={tag}
-                          type="button"
-                          onClick={() => handleTagChange(tag)}
-                          className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[22px] border transition-all ${style.bg} ${style.border} ${style.text} hover:opacity-80`}
-                        >
-                          {tag}
-                        </button>
-                      );
-                   })}
-                </div>
-             )}
-          </div>
-          
-          {mode === 'full' && (
-            <div className="pt-3 flex justify-between items-center text-sm border-t border-white/5 mt-2">
-               <span className="text-app-subtext">小计:</span>
-               <span className="text-app-text font-mono font-bold tracking-wide">
-                 ¥ {fmt((parseFloat(priceStr) || 0) * (parseFloat(gramsStr) || 0))}
-               </span>
+                 {availableTags.length > 0 && (
+                    <div className="flex flex-wrap gap-2 pt-2 border-t border-white/5 mt-2">
+                       {availableTags.filter(t => t !== tagStr).map(tag => {
+                          const savedColorKey = settings.tagColors?.[tag];
+                          const style = getTagStyle(savedColorKey);
+                          return (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() => handleTagChange(tag)}
+                              className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[22px] border transition-all ${style.bg} ${style.border} ${style.text} hover:opacity-80`}
+                            >
+                              {tag}
+                            </button>
+                          );
+                       })}
+                    </div>
+                 )}
+              </div>
             </div>
           )}
         </div>
@@ -359,10 +300,9 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   const handleEditClick = (e: React.MouseEvent, id: string, mode: 'full' | 'tag') => {
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
-    const width = 256; 
+    const width = 288; 
     let left = rect.right - width;
     if (mode === 'tag') {
-        // Position relative to tag column better
         left = rect.left;
     } else {
         left = rect.right - width;
@@ -372,8 +312,11 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     
     if (left < 10) left = 10;
     if (left + width > window.innerWidth) left = window.innerWidth - width - 10;
-    if (top + 280 > window.innerHeight) {
-        top = rect.top - (mode === 'tag' ? 240 : 350); // Adjust height estimate based on mode
+    
+    // Approximate height check to prevent overflow
+    const bubbleHeight = mode === 'full' ? 240 : 280;
+    if (top + bubbleHeight > window.innerHeight) {
+        top = rect.top - bubbleHeight - 8; 
     }
     setEditState({ id, top, left, mode });
   };
@@ -420,14 +363,11 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   const COLUMN_DEFS: Record<ColumnKey, ColumnDef> = {
     tag: { id: 'tag', label: '标签', render: (t) => {
        const displayTag = t.tag || '-';
-       
-       // Use Empty Style if no tag, otherwise lookup
        let style = EMPTY_STYLE;
        if (t.tag) {
            const colorKey = settings.tagColors?.[t.tag];
            style = getTagStyle(colorKey);
        }
-       
        return (
          <div 
            onClick={(e) => handleEditClick(e, t.id, 'tag')}
@@ -455,7 +395,6 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     }}
   };
 
-  // State & Persistence
   const DEFAULT_ORDER: ColumnKey[] = ['tag', 'price', 'grams', 'tradeTotal', 'holdingTotal', 'historicalAvg', 'avgChange'];
   const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(() => {
     const saved = localStorage.getItem('gold_trade_list_column_order_v3');
@@ -474,7 +413,6 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     localStorage.setItem('gold_trade_list_column_order_v3', JSON.stringify(columnOrder));
   }, [columnOrder]);
 
-  // Drag & Scroll logic omitted for brevity as it remains same, just ensuring references are intact
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -589,7 +527,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                 </th>
               </tr>
             </thead>
-            <tbody className="">
+            <tbody>
               {displayTrades.map((trade) => (
                 <tr key={trade.id} className={`${activeId ? `drag-col-${activeId}` : ''} hover:bg-app-hover group transition-colors ${trade.isDisabled ? 'opacity-40 grayscale decoration-app-subtext' : ''}`}>
                   <td className="p-0 py-2.5 md:py-3 text-center sticky left-0 z-20 bg-app-card group-hover:bg-app-hover border-r border-b border-app-border shadow-lg transition-colors w-[40px] min-w-[40px] max-w-[40px]">
