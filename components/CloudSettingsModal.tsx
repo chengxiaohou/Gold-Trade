@@ -9,6 +9,7 @@ interface CloudSettingsModalProps {
   githubConfig: GithubConfig;
   appSettings: AppSettings;
   onSave: (githubConfig: GithubConfig, appSettings: AppSettings) => void;
+  initialTab?: 'general' | 'cloud';
 }
 
 export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
@@ -17,6 +18,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   githubConfig,
   appSettings,
   onSave,
+  initialTab = 'general',
 }) => {
   // Config States
   const [token, setToken] = useState(githubConfig.token);
@@ -24,7 +26,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [priceStep, setPriceStep] = useState(appSettings.priceStep.toString());
   const [gramsStep, setGramsStep] = useState(appSettings.gramsStep.toString());
 
-  const [activeTab, setActiveTab] = useState<'general' | 'cloud'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'cloud'>(initialTab);
   const [isVerifying, setIsVerifying] = useState(false);
   const [logState, setLogState] = useState<{ type: 'success' | 'error', lines: string[] } | null>(null);
   
@@ -38,9 +40,11 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       setGramsStep(appSettings.gramsStep.toString());
       setIsVerifying(false);
       setLogState(null);
+      // Automatically switch to the requested tab when opening
+      setActiveTab(initialTab);
     }
     wasOpenRef.current = isOpen;
-  }, [isOpen, githubConfig, appSettings]);
+  }, [isOpen, githubConfig, appSettings, initialTab]);
 
   const handleSave = async (e: React.FormEvent | React.MouseEvent) => {
     e.preventDefault();
@@ -134,9 +138,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         className="bg-app-card border border-app-border rounded-xl w-full max-w-md shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]"
         onClick={(e) => e.stopPropagation()} 
       >
-        {/* Header */}
-        <div className="bg-brand-yellow/10 p-4 border-b border-brand-yellow/20 flex justify-between items-center shrink-0">
-          <div className="flex items-center gap-2 text-brand-yellow">
+        {/* Header - Indigo theme */}
+        <div className="bg-indigo-500/10 p-4 border-b border-app-border flex justify-between items-center shrink-0">
+          <div className="flex items-center gap-2 text-indigo-400">
             <Sliders size={20} />
             <h3 className="font-bold text-lg">系统设置</h3>
           </div>
@@ -150,21 +154,27 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
           </button>
         </div>
 
-        {/* Tab Nav */}
-        <div className="flex border-b border-app-border">
+        {/* Tab Nav - Indigo theme */}
+        <div className="flex border-b border-app-border relative">
           <button 
              onClick={() => setActiveTab('general')}
-             className={`flex-1 py-3 text-sm font-bold transition-colors border-b-2 ${activeTab === 'general' ? 'border-brand-yellow text-app-text bg-app-text/5' : 'border-transparent text-app-subtext hover:text-app-text'}`}
+             className={`flex-1 py-3 text-sm font-bold transition-colors relative ${activeTab === 'general' ? 'text-indigo-400 bg-indigo-500/5' : 'text-app-subtext hover:text-app-text'}`}
           >
             通用设置
+            {activeTab === 'general' && (
+              <div className="absolute inset-x-0 -bottom-[1px] h-0.5 bg-indigo-500 animate-in fade-in duration-200" />
+            )}
           </button>
           <button 
              onClick={() => setActiveTab('cloud')}
-             className={`flex-1 py-3 text-sm font-bold transition-colors border-b-2 ${activeTab === 'cloud' ? 'border-brand-yellow text-app-text bg-app-text/5' : 'border-transparent text-app-subtext hover:text-app-text'}`}
+             className={`flex-1 py-3 text-sm font-bold transition-colors relative ${activeTab === 'cloud' ? 'text-indigo-400 bg-indigo-500/5' : 'text-app-subtext hover:text-app-text'}`}
           >
              <span className="flex items-center justify-center gap-2">
                <Cloud size={14} /> 云端同步
              </span>
+             {activeTab === 'cloud' && (
+              <div className="absolute inset-x-0 -bottom-[1px] h-0.5 bg-indigo-500 animate-in fade-in duration-200" />
+            )}
           </button>
         </div>
 
@@ -183,7 +193,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       type="number" 
                       value={priceStep}
                       onChange={(e) => setPriceStep(e.target.value)}
-                      className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-brand-yellow focus:ring-1 focus:ring-brand-yellow outline-none transition-all font-mono text-sm"
+                      className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-mono text-sm"
                     />
                     <p className="text-xs text-app-subtext">控制鼠标滚轮或箭头按钮点击时的增减数值。</p>
                  </div>
@@ -196,7 +206,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       type="number" 
                       value={gramsStep}
                       onChange={(e) => setGramsStep(e.target.value)}
-                      className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-brand-yellow focus:ring-1 focus:ring-brand-yellow outline-none transition-all font-mono text-sm"
+                      className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-mono text-sm"
                     />
                  </div>
               </div>
@@ -215,7 +225,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                     onChange={(e) => setToken(e.target.value)}
                     placeholder="ghp_xxxxxxxxxxxx"
                     disabled={isVerifying}
-                    className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-brand-yellow focus:ring-1 focus:ring-brand-yellow outline-none transition-all font-mono text-sm disabled:opacity-50"
+                    className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-mono text-sm disabled:opacity-50"
                     autoCapitalize="none"
                     autoCorrect="off"
                     spellCheck="false"
@@ -226,7 +236,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       href="https://github.com/settings/tokens/new?scopes=gist&description=GoldCostPro" 
                       target="_blank" 
                       rel="noreferrer"
-                      className="text-brand-yellow hover:underline ml-1 inline-flex items-center gap-0.5"
+                      className="text-indigo-400 hover:underline ml-1 inline-flex items-center gap-0.5"
                     >
                       点击生成 <ExternalLink size={10} />
                     </a>
@@ -243,7 +253,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                     onChange={(e) => setGistId(e.target.value)}
                     placeholder="首次保存自动生成"
                     disabled={isVerifying}
-                    className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-brand-yellow focus:ring-1 focus:ring-brand-yellow outline-none transition-all font-mono text-sm disabled:opacity-50"
+                    className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-mono text-sm disabled:opacity-50"
                     autoCapitalize="none"
                     autoCorrect="off"
                   />
@@ -284,7 +294,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                   className={`w-full font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-2 touch-manipulation
                     ${isVerifying 
                       ? 'bg-slate-700 text-slate-400 cursor-wait' 
-                      : 'bg-brand-yellow text-slate-900 hover:bg-[#fdd835]'
+                      : 'bg-indigo-600 text-white hover:bg-indigo-500'
                     }`}
                 >
                   {isVerifying ? (
