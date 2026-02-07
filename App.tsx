@@ -535,7 +535,7 @@ export default function App() {
             <div className="flex items-center gap-3 mb-2">
               <div className="flex items-baseline gap-3">
                 <h1 className="text-3xl font-bold text-app-subtext tracking-wide">
-                  黄金交易模拟器
+                  黄金交易模拟
                 </h1>
                 <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text transition-colors cursor-default ml-1">{APP_VERSION}</span>
               </div>
