@@ -566,39 +566,39 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
             .drag-active th:last-child, .drag-active td:last-child { transform: none !important; z-index: 100; }
           `}</style>
 
-          <table className="w-full text-sm text-left border-collapse min-w-[550px]">
-            <thead className="text-xs text-app-subtext uppercase bg-app-bg border-b border-app-border">
+          <table className="w-full text-sm text-left border-separate border-spacing-0 min-w-[550px]">
+            <thead className="text-xs text-app-subtext uppercase bg-app-bg">
               <tr className={activeId ? `drag-col-${activeId}` : ''}>
-                <th className="p-0 text-center sticky left-0 z-20 bg-app-bg border-b border-r border-app-border w-[40px] shadow-lg">
+                <th className="p-0 text-center sticky left-0 z-20 bg-app-bg border-b border-r border-app-border w-[40px] min-w-[40px] max-w-[40px] shadow-lg">
                    <span className="font-bold">方向</span>
                 </th>
                 {columnOrder.map((colKey) => {
                   const col = COLUMN_DEFS[colKey];
                   const isDragging = activeId === colKey;
                   return (
-                    <th key={colKey} data-col={colKey} onPointerDown={(e) => onPointerDown(e, colKey)} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} className={`px-2 py-3 md:px-4 md:py-4 cursor-grab active:cursor-grabbing select-none relative touch-none ${isDragging ? 'dragging-cell text-brand-yellow font-bold' : ''}`}>
+                    <th key={colKey} data-col={colKey} onPointerDown={(e) => onPointerDown(e, colKey)} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} className={`px-2 py-3 md:px-4 md:py-4 border-b border-app-border cursor-grab active:cursor-grabbing select-none relative touch-none ${isDragging ? 'dragging-cell text-brand-yellow font-bold' : ''}`}>
                       <div className="flex items-center gap-1.5 pointer-events-none"><span className="whitespace-nowrap">{col.label}</span></div>
                       {isDragging && <div className="absolute inset-x-0 -bottom-[1px] h-0.5 bg-brand-yellow" />}
                     </th>
                   );
                 })}
-                <th className="px-1 py-3 md:py-4 text-center sticky right-0 bg-app-bg border-l border-app-border shadow-lg w-[90px]">
+                <th className="px-1 py-3 md:py-4 text-center sticky right-0 z-20 bg-app-bg border-l border-b border-app-border shadow-lg w-[90px]">
                    <button onClick={() => setSortDesc(!sortDesc)} className={`flex items-center justify-center gap-1 w-full py-1.5 rounded-md transition-all text-[11px] font-bold border ${sortDesc ? 'bg-brand-green/10 text-brand-green border-brand-green/20 hover:bg-brand-green/20' : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20'}`} title="切换时间排序">
                      <span>{sortDesc ? "最新→最早" : "最早→最新"}</span>
                    </button>
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-app-border">
+            <tbody className="">
               {displayTrades.map((trade) => (
                 <tr key={trade.id} className={`${activeId ? `drag-col-${activeId}` : ''} hover:bg-app-hover group transition-colors ${trade.isDisabled ? 'opacity-40 grayscale decoration-app-subtext' : ''}`}>
-                  <td className="p-0 py-2.5 md:py-3 text-center sticky left-0 z-20 bg-app-card group-hover:bg-app-hover border-r border-app-border shadow-lg transition-colors">
+                  <td className="p-0 py-2.5 md:py-3 text-center sticky left-0 z-20 bg-app-card group-hover:bg-app-hover border-r border-b border-app-border shadow-lg transition-colors w-[40px] min-w-[40px] max-w-[40px]">
                      <span className={`inline-flex items-center justify-center w-6 h-6 rounded text-xs font-bold mx-auto ${trade.type === 'BUY' ? 'bg-brand-red/10 text-brand-red' : 'bg-brand-green/10 text-brand-green'}`}>{trade.type === 'BUY' ? '买' : '卖'}</span>
                   </td>
                   {columnOrder.map((colKey) => (
-                    <td key={colKey} className={`px-2 py-2.5 md:px-4 md:py-3 whitespace-nowrap ${activeId === colKey ? 'dragging-cell' : ''}`}>{COLUMN_DEFS[colKey].render(trade as any)}</td>
+                    <td key={colKey} className={`px-2 py-2.5 md:px-4 md:py-3 whitespace-nowrap border-b border-app-border ${activeId === colKey ? 'dragging-cell' : ''}`}>{COLUMN_DEFS[colKey].render(trade as any)}</td>
                   ))}
-                  <td className="px-1 py-2.5 md:py-3 text-center sticky right-0 bg-app-card group-hover:bg-app-hover border-l border-app-border shadow-lg transition-colors">
+                  <td className="px-1 py-2.5 md:py-3 text-center sticky right-0 z-20 bg-app-card group-hover:bg-app-hover border-l border-b border-app-border shadow-lg transition-colors">
                     <div className="flex justify-center gap-1">
                       <button onClick={(e) => handleEditClick(e, trade.id, 'full')} className={`p-1 transition-colors ${editState?.id === trade.id && editState.mode === 'full' ? 'text-brand-yellow' : 'text-app-subtext hover:text-brand-yellow'}`} title="编辑">
                         <Edit2 size={14} />
