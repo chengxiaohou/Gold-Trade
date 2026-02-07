@@ -8,7 +8,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.7.0';
+const APP_VERSION = 'v1.7.1';
 
 export default function App() {
   // --- Theme State ---
@@ -174,7 +174,12 @@ export default function App() {
 
     setIsSyncing(true);
     try {
-      const newGistId = await saveToGist(githubConfig.token, trades, githubConfig.gistId || undefined);
+      // Changed: Pass an object containing both trades and settings
+      const newGistId = await saveToGist(
+        githubConfig.token, 
+        { trades, settings: appSettings }, 
+        githubConfig.gistId || undefined
+      );
       
       if (newGistId && newGistId !== githubConfig.gistId) {
         const newConfig = { ...githubConfig, gistId: newGistId };
@@ -209,10 +214,20 @@ export default function App() {
 
     setIsSyncing(true);
     try {
-      const cloudTrades = await loadFromGist(githubConfig.token, githubConfig.gistId);
-      if (cloudTrades) {
-        setTrades(cloudTrades);
-        alert(`成功从云端加载 ${cloudTrades.length} 条记录`);
+      const result = await loadFromGist(githubConfig.token, githubConfig.gistId);
+      if (result) {
+        setTrades(result.trades);
+        
+        // Sync Settings (Tag Colors) if available
+        if (result.settings) {
+          setAppSettings(prev => ({
+            ...prev,
+            ...result.settings
+          }));
+        }
+        
+        const hasSettings = !!result.settings;
+        alert(`成功从云端加载 ${result.trades.length} 条记录${hasSettings ? '及个性化配置' : ''}`);
       }
     } catch (error) {
       alert(`加载失败: ${(error as Error).message}`);
@@ -223,7 +238,15 @@ export default function App() {
 
   // --- Data Persistence Handlers ---
   const handleExport = () => {
-    const dataStr = JSON.stringify(trades, null, 2);
+    // UPDATED: Now exports an object containing both trades and settings
+    const exportData = {
+      version: 1,
+      timestamp: Date.now(),
+      trades: trades,
+      settings: appSettings
+    };
+    
+    const dataStr = JSON.stringify(exportData, null, 2);
     const blob = new Blob([dataStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -245,16 +268,37 @@ export default function App() {
       try {
         const result = e.target?.result;
         if (typeof result === 'string') {
-          const importedTrades = JSON.parse(result);
-          if (Array.isArray(importedTrades)) {
-            const isValid = importedTrades.every(t => t.id && t.type && typeof t.price === 'number');
+          const parsed = JSON.parse(result);
+          
+          // Case 1: Legacy Format (Array of trades only)
+          if (Array.isArray(parsed)) {
+            const isValid = parsed.every(t => t.id && t.type && typeof t.price === 'number');
             if (isValid) {
-              setTrades(importedTrades);
-              alert(`成功导入 ${importedTrades.length} 条交易记录`);
+              setTrades(parsed);
+              alert(`成功导入 ${parsed.length} 条交易记录 (旧格式)`);
             } else {
               alert('文件格式错误：无效的交易记录');
             }
+            return;
           }
+          
+          // Case 2: New Format (Object with trades and settings)
+          if (parsed.trades && Array.isArray(parsed.trades)) {
+             setTrades(parsed.trades);
+             
+             if (parsed.settings) {
+               setAppSettings(prev => ({
+                 ...prev,
+                 ...parsed.settings
+               }));
+             }
+             
+             const hasSettings = !!parsed.settings;
+             alert(`成功导入 ${parsed.trades.length} 条交易记录${hasSettings ? '及个性化配置' : ''}`);
+             return;
+          }
+          
+          alert('无法识别的文件格式');
         }
       } catch (error) {
         alert('文件解析失败，请确保是有效的 JSON 文件');
