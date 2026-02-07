@@ -1,4 +1,4 @@
-import { TradeRecord } from "../types";
+import { TradeRecord, AppSettings } from "../types";
 
 const GIST_FILENAME = "gold-trades.json";
 const GIST_DESCRIPTION = "GoldCost Pro 交易记录备份";
@@ -73,7 +73,13 @@ export const validateConnection = async (token: string, gistId?: string): Promis
   }
 };
 
-export const loadFromGist = async (token: string, gistId: string): Promise<TradeRecord[] | null> => {
+interface GistPayload {
+  trades: TradeRecord[];
+  settings?: AppSettings;
+  version?: number;
+}
+
+export const loadFromGist = async (token: string, gistId: string): Promise<{ trades: TradeRecord[], settings?: AppSettings } | null> => {
   try {
     const response = await fetch(`https://api.github.com/gists/${gistId}`, {
       headers: getHeaders(token),
@@ -90,7 +96,19 @@ export const loadFromGist = async (token: string, gistId: string): Promise<Trade
       throw new Error("Gist 中找不到 'gold-trades.json' 文件");
     }
 
-    return JSON.parse(file.content);
+    const parsed = JSON.parse(file.content);
+
+    // Backward compatibility: Old format was just an array of trades
+    if (Array.isArray(parsed)) {
+      return { trades: parsed };
+    }
+
+    // New format: Object containing trades and settings
+    return {
+      trades: parsed.trades || [],
+      settings: parsed.settings
+    };
+
   } catch (error) {
     console.error("Load from Gist failed:", error);
     throw error;
@@ -99,10 +117,17 @@ export const loadFromGist = async (token: string, gistId: string): Promise<Trade
 
 export const saveToGist = async (
   token: string,
-  trades: TradeRecord[],
+  data: { trades: TradeRecord[], settings: AppSettings },
   gistId?: string
 ): Promise<string> => {
-  const content = JSON.stringify(trades, null, 2);
+  
+  const payload: GistPayload = {
+    trades: data.trades,
+    settings: data.settings,
+    version: 1
+  };
+
+  const content = JSON.stringify(payload, null, 2);
   const files = {
     [GIST_FILENAME]: {
       content: content,
@@ -133,8 +158,8 @@ export const saveToGist = async (
       await handleApiError(response, "上传失败");
     }
 
-    const data = await response.json();
-    return data.id; // Return the new or existing Gist ID
+    const resData = await response.json();
+    return resData.id; // Return the new or existing Gist ID
   } catch (error) {
     console.error("Save to Gist failed:", error);
     throw error;
