@@ -506,7 +506,7 @@ export default function App() {
 
   // --- Render Functions (Fixed: No longer defining components inside components) ---
   const renderActionButtons = () => (
-    <div className="grid grid-cols-6 gap-1 lg:gap-2">
+    <div className="grid grid-cols-7 gap-1 lg:gap-2">
         <button 
             onClick={() => setIsSettingsOpen(true)}
             className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors"
@@ -559,6 +559,14 @@ export default function App() {
             title="重置"
           >
             <RefreshCcw size={16} />
+        </button>
+
+        <button
+            onClick={toggleTheme}
+            className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-brand-yellow hover:border-brand-yellow transition-colors"
+            title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+        >
+            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
         </button>
     </div>
   );
@@ -714,13 +722,7 @@ export default function App() {
             {/* Description removed */}
           </div>
           
-          <button
-            onClick={toggleTheme}
-            className="p-2 rounded-lg bg-app-card border border-app-border text-app-subtext hover:text-brand-yellow transition-colors shrink-0"
-            title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
-          >
-            {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
-          </button>
+          {/* Theme Toggle moved to action buttons */}
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6 items-start">
