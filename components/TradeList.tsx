@@ -204,6 +204,7 @@ const EditBubble: React.FC<EditBubbleProps> = ({
                     if (!isNaN(v)) onUpdate(trade.id, { grams: v });
                   }} 
                   step={settings.gramsStep} 
+                  isQuantity={true}
                 />
               </div>
 

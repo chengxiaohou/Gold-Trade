@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
@@ -8,7 +9,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.7.6';
+const APP_VERSION = 'v1.7.8';
 
 export default function App() {
   // --- Theme State ---
@@ -56,7 +57,7 @@ export default function App() {
     return saved || '';
   });
 
-  // 4. Global App Settings (New)
+  // 4. Global App Settings
   const [appSettings, setAppSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem('gold_app_settings');
     const parsed = saved ? JSON.parse(saved) : {};
@@ -75,7 +76,7 @@ export default function App() {
 
   // Github Cloud Config State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settingsDefaultTab, setSettingsDefaultTab] = useState<'general' | 'cloud'>('general');
+  const [settingsDefaultTab, setSettingsDefaultTab] = useState<'general' | 'cloud'>( 'general');
   const [isSyncing, setIsSyncing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
@@ -101,7 +102,6 @@ export default function App() {
   });
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const marketPriceInputRef = useRef<HTMLInputElement>(null);
 
   // --- Effects: Auto-save locally ---
   
@@ -136,28 +136,6 @@ export default function App() {
     if (!/^\d*\.?\d*$/.test(value)) return;
     setMarketPrice(value);
   };
-
-  const updateMarketPrice = (delta: number) => {
-    const currentVal = parseFloat(marketPrice) || 0;
-    const nextVal = Math.max(0, currentVal + delta);
-    const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(2);
-    handleMarketPriceChange(nextStr);
-  };
-
-  // Wheel listener for Market Price
-  useEffect(() => {
-    const el = marketPriceInputRef.current;
-    if (!el) return;
-
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const direction = e.deltaY > 0 ? -1 : 1;
-      updateMarketPrice(direction * appSettings.priceStep);
-    };
-
-    el.addEventListener('wheel', handleWheel, { passive: false });
-    return () => el.removeEventListener('wheel', handleWheel);
-  }, [marketPrice, appSettings.priceStep]);
 
   // --- Cloud & Settings Handlers ---
   const handleSaveSettings = (newGithubConfig: GithubConfig, newAppSettings: AppSettings) => {
@@ -653,7 +631,18 @@ export default function App() {
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border"><span className="text-xs text-app-subtext block mb-1">持仓总投入</span><div className="text-xl font-bold text-app-text font-mono">{currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2})}</div></div>
                     <div className={`bg-app-bg p-3 rounded-lg border ${currentPosition.realizedPnL >= 0 ? 'border-brand-redDim' : 'border-brand-greenDim'}`}><span className="text-xs text-app-subtext block mb-1">已实现盈亏</span><div className={`text-xl font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toFixed(2)}</div></div>
                     <div className={`bg-app-bg p-3 rounded-lg border ${floatingPnL >= 0 ? 'border-brand-redDim bg-brand-redDim/20' : 'border-brand-greenDim bg-brand-greenDim/20'}`}><span className="text-xs text-app-subtext block mb-1">浮动盈亏</span><div className={`text-xl font-bold font-mono ${floatingPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{marketPrice ? (floatingPnL > 0 ? '+' : '') + floatingPnL.toLocaleString('zh-CN', {minimumFractionDigits: 2}) : '--'}</div></div>
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 focus-within:border-brand-yellow transition-colors"><span className="text-xs text-app-subtext block mb-1">参考市价 (元/克)</span><div className="flex items-center"><input ref={marketPriceInputRef} type="number" value={marketPrice} onChange={(e) => handleMarketPriceChange(e.target.value)} placeholder="0.00" className="no-spinners text-xl font-bold text-brand-yellow font-mono bg-transparent border-none p-0 w-full outline-none" /><div className="flex flex-col gap-0.5 ml-2"><button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronUp size={10} strokeWidth={3} /></button><button onClick={() => updateMarketPrice(-appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronDown size={10} strokeWidth={3} /></button></div></div></div>
+                    {/* 修改点：移除外层多余的 overflow-hidden 以免遮挡 Portals */}
+                    <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 focus-within:border-brand-yellow transition-colors flex flex-col justify-center min-h-[72px]">
+                      <InputGroup 
+                        label="参考市价 (元/克)" 
+                        value={marketPrice} 
+                        onChange={handleMarketPriceChange} 
+                        placeholder="0.00" 
+                        step={appSettings.priceStep} 
+                        inputClassName="text-xl font-bold text-brand-yellow font-mono bg-transparent border-none p-0 w-full outline-none"
+                        containerClassName="!space-y-0.5"
+                      />
+                    </div>
                 </div>
              </div>
              <div className="space-y-3">
@@ -668,7 +657,7 @@ export default function App() {
               <div className="flex items-center gap-2 text-app-subtext pl-1"><TrendingUp size={16} /><h3 className="font-medium text-sm">模拟交易</h3></div>
               <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-2xl p-4 flex flex-col gap-3">
                 <div className="grid grid-cols-2 p-1 bg-app-input rounded-lg"><button onClick={() => setPreviewType('BUY')} className={`py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${previewType === 'BUY' ? 'bg-brand-red text-white shadow-lg shadow-brand-red/20' : 'text-app-subtext hover:text-app-text'}`}><TrendingUp size={16} />买入</button><button onClick={() => setPreviewType('SELL')} className={`py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${previewType === 'SELL' ? 'bg-brand-green text-white shadow-lg shadow-brand-green/20' : 'text-app-subtext hover:text-app-text'}`}><TrendingDown size={16} />卖出</button></div>
-                <div className="grid grid-cols-2 gap-2"><InputGroup label="价格 (元/克)" value={inputs.price} onChange={(v) => handleInputChange('price', v)} placeholder="0.00" step={appSettings.priceStep} /><InputGroup label="数量 (克)" value={inputs.grams} onChange={(v) => handleInputChange('grams', v)} placeholder="0.00" step={appSettings.gramsStep} /></div>
+                <div className="grid grid-cols-2 gap-2"><InputGroup label="价格 (元/克)" value={inputs.price} onChange={(v) => handleInputChange('price', v)} placeholder="0.00" step={appSettings.priceStep} /><InputGroup label="数量 (克)" value={inputs.grams} onChange={(v) => handleInputChange('grams', v)} placeholder="0.00" step={appSettings.gramsStep} isQuantity={true} /></div>
                 <div className="bg-app-input/30 rounded-xl p-4 border border-app-border space-y-3">
                     <div className="flex justify-between items-start"><div><span className="text-[10px] font-bold text-app-subtext uppercase block mb-1">成交后均价预估</span><div className="flex items-baseline gap-1.5"><span className="text-3xl font-bold text-app-text tracking-tight font-mono">{simulation.newAvgCost.toFixed(2)}</span><span className="text-[10px] text-app-subtext font-bold">CNY</span></div></div><div className="text-right">{currentPosition.grams > 0 && inputs.grams && previewType === 'BUY' ? <><span className="text-[10px] font-bold text-app-subtext uppercase block mb-1">成本浮动</span><div className={`text-xs font-bold font-mono px-1.5 py-0.5 rounded border ${simulation.costDifference > 0 ? 'bg-brand-red/10 text-brand-red border-brand-red/20' : 'bg-brand-green/10 text-brand-green border-brand-green/20'}`}>{simulation.costDifference > 0 ? '+' : ''}{simulation.costDifference.toFixed(2)}%</div></> : previewType === 'SELL' ? <><span className="text-[10px] font-bold text-app-subtext uppercase block mb-1">持仓成本</span><span className="text-xs font-bold text-app-subtext font-mono">不变</span></> : <span className="text-app-subtext text-xs">-</span>}</div></div>
                     <div className="h-px bg-white/5 w-full" /><div className="grid grid-cols-2 gap-x-4 gap-y-2"><div><p className="text-app-subtext text-[10px] font-medium">预计总持仓</p><div className="flex items-baseline gap-1"><span className="text-lg font-bold text-app-text font-mono">{simulation.newTotalGrams.toFixed(2)}</span><span className="text-[10px] text-app-subtext">g</span></div></div><div className="text-right"><p className="text-app-subtext text-[10px] font-medium">本次交易额</p><div className="flex items-baseline gap-1 justify-end"><span className="text-lg font-bold text-app-text font-mono">{((parseFloat(inputs.price)||0) * (parseFloat(inputs.grams)||0)).toLocaleString('zh-CN', {maximumFractionDigits:0})}</span><span className="text-[10px] text-app-subtext">¥</span></div></div>{previewType === 'SELL' && simulation.projectedPnL !== undefined && (<div className="col-span-2 border-t border-white/[0.03] pt-2 flex justify-between items-center"><span className="text-app-subtext text-[10px] font-bold">预计本次盈亏：</span><span className={`font-mono font-bold text-sm ${simulation.projectedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{simulation.projectedPnL >= 0 ? '+' : ''}{simulation.projectedPnL.toFixed(2)}</span></div>)}</div>
