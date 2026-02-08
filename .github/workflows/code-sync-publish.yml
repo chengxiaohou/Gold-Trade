@@ -1,25 +1,41 @@
-name: Manual Sync From Main To Action-Test
+name: 🔄 Merge Main to Action-Test
 
+# 用途：在GitHub网页端手动一键点击，执行从 main 到 Action-Test 分支的代码合并和提交
+# 特点：不会对 main 分支做任何修改
 on:
-  workflow_dispatch: # 开启手动触发按钮
+  workflow_dispatch: # 开启手动触发按钮（在 Actions 标签页中点击运行）
 
 jobs:
-  sync:
+  merge-main-to-action-test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
+      - name: Checkout Action-Test Branch
         uses: actions/checkout@v4
         with:
-          ref: Action-Test # 明确指定切到这个分支
+          ref: Action-Test # 明确指定切换到 Action-Test 分支
           fetch-depth: 0   # 拉取完整历史以便合并
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Merge Main into Current Branch
+      - name: Merge Main into Action-Test
         run: |
-          git fetch origin main # 获取远程 main 的最新状态
-          git merge origin/main --no-edit
+          echo "📥 Fetching latest main branch..."
+          git fetch origin main
+          
+          echo "🔀 Merging main into Action-Test..."
+          if git merge origin/main --no-edit; then
+            echo "✅ Merge successful!"
+          else
+            echo "❌ Merge conflict detected. Please resolve conflicts manually."
+            exit 1
+          fi
+
+      - name: Push Changes to Action-Test
+        run: |
+          echo "🚀 Pushing changes to Action-Test..."
           git push origin Action-Test
+          echo "✅ Successfully merged main into Action-Test!"
