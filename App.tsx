@@ -9,7 +9,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.8.1';
+const APP_VERSION = 'v1.8.0';
 
 export default function App() {
   // --- Theme State ---
