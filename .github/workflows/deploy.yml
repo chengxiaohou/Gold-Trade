@@ -1,0 +1,54 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: '分支或 ref，用于手动触发（默认: main）'
+        required: false
+        default: 'main'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          # 自动将库名作为 base，例如 "/Gold-Trade/"
+          # 使用 github.event.repository.name 来获取仓库名以避免 github.repository.name 在某些上下文中为空导致 base 为 "//"
+          VITE_BASE: '/${{ github.event.repository.name }}/'
+        run: npm run build
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v3
+        with:
+          # 尝试自动启用 Pages（当仓库未启用 Pages 时有用）
+          enablement: true
+
+      - name: Upload artifact
+        # 使用 v4 以避免依赖已弃用的 artifact actions v3
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./dist
+
+      - name: Deploy to GitHub Pages
+        # 使用最新稳定的 v4 版 deploy-pages
+        uses: actions/deploy-pages@v4
