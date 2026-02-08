@@ -36,9 +36,41 @@ This PR has successfully migrated the GitHub Pages automatic deployment from the
 
 ---
 
-## �� 接下来要做什么 / What To Do Next
+## 🚀 接下来要做什么 / What To Do Next
+
+### ⚠️ 步骤 0: 先处理旧工作流（必须！）/ Step 0: Handle Old Workflow First (Required!)
+
+**🔴 在合并 PR 之前必须先执行此步骤！**
+**🔴 You MUST complete this step BEFORE merging the PR!**
+
+**为什么？/ Why?**
+- Action-Test 分支的工作流仍在运行
+  The Action-Test branch workflow is still active
+- 两个工作流会同时部署到同一个 GitHub Pages，造成冲突
+  Both workflows will deploy to the same GitHub Pages, causing conflicts
+- 可能导致部署失败或内容被覆盖
+  May cause deployment failures or content overwrites
+
+**方案 A: 删除 Action-Test 分支（推荐）/ Option A: Delete Action-Test Branch (Recommended)**
+```bash
+# 删除远程 Action-Test 分支 / Delete remote Action-Test branch
+git push origin --delete Action-Test
+
+# 删除本地分支（如果有）/ Delete local branch (if exists)
+git branch -d Action-Test
+```
+
+**方案 B: 禁用工作流 / Option B: Disable Workflow**
+1. 进入仓库的 Actions 标签页 / Go to Actions tab
+2. 找到 "Deploy to GitHub Pages" 工作流 / Find "Deploy to GitHub Pages" workflow
+3. 点击 "..." 菜单，选择 "Disable workflow" / Click "..." menu, select "Disable workflow"
+
+---
 
 ### 步骤 1: 合并 PR / Step 1: Merge PR
+**只有在完成步骤 0 后才能执行！**
+**Only proceed after completing Step 0!**
+
 合并此 PR 到 main 分支
 Merge this PR to the main branch
 
@@ -52,9 +84,9 @@ Merge this PR to the main branch
 3. 确认网站正常工作
    Confirm the website works properly
 
-### 步骤 3: 删除旧分支 / Step 3: Delete Old Branch
-确认部署成功后，删除 Action-Test 分支：
-After confirming successful deployment, delete the Action-Test branch:
+### 步骤 3: 清理（如果需要）/ Step 3: Cleanup (If Needed)
+如果步骤 0 中选择了方案 B（禁用工作流），现在可以删除 Action-Test 分支：
+If you chose Option B in Step 0 (disable workflow), you can now delete the Action-Test branch:
 
 **方法 1: GitHub 网页界面 / Method 1: GitHub Web UI**
 1. 进入仓库的 Branches 页面 / Go to repository's Branches page
@@ -73,6 +105,16 @@ git branch -d Action-Test
 ---
 
 ## 📝 重要提示 / Important Notes
+
+### 🔴 关键警告 / Critical Warnings
+1. **必须先处理 Action-Test 工作流！**
+   **Must handle Action-Test workflow first!**
+   - 否则会导致部署冲突 / Otherwise will cause deployment conflicts
+   
+2. **正确的操作顺序至关重要**
+   **The correct order of operations is crucial**
+   - 步骤 0 → 步骤 1 → 步骤 2 → 步骤 3
+   - Step 0 → Step 1 → Step 2 → Step 3
 
 ### ⚠️ 注意事项 / Cautions
 1. **不要在验证前删除 Action-Test 分支**
