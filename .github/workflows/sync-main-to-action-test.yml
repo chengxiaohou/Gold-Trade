@@ -1,0 +1,43 @@
+name: Sync Main to Action-Test
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Sync branches
+        run: |
+          # 确保获取所有远程分支
+          git fetch origin
+
+          # 切换到 Action-Test 分支（如果远程存在则跟踪，不存在则基于 main 创建）
+          if git show-ref --verify --quiet refs/remotes/origin/Action-Test; then
+            git checkout Action-Test
+            git reset --hard origin/Action-Test
+          else
+            git checkout -b Action-Test
+          fi
+
+          # 合并 main 分支
+          # 使用 --no-ff 确保保留合并记录，或者根据喜好使用默认
+          git merge main --no-edit
+
+          # 推送回远程
+          git push origin Action-Test
