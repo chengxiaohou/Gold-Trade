@@ -1,0 +1,25 @@
+name: Manual Sync From Main
+
+on:
+  workflow_dispatch: # 开启手动触发按钮
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: Action-Test # 明确指定切到这个分支
+          fetch-depth: 0   # 拉取完整历史以便合并
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge Main into Current Branch
+        run: |
+          git fetch origin main # 获取远程 main 的最新状态
+          git merge origin/main --no-edit
+          git push origin Action-Test
