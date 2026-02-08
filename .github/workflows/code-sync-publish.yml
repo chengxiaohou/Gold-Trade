@@ -14,7 +14,6 @@ jobs:
         with:
           ref: Action-Test # 明确指定切换到 Action-Test 分支
           fetch-depth: 0   # 拉取完整历史以便合并
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
