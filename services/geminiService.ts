@@ -1,23 +1,19 @@
 import { GoogleGenAI } from "@google/genai";
 import { HoldingState, OrderState, SimulationResult } from "../types";
 
-const initGenAI = () => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) {
-    console.warn("API Key is missing. AI features will not work.");
-    return null;
-  }
-  return new GoogleGenAI({ apiKey });
-};
-
 export const analyzeTrade = async (
   current: HoldingState,
   order: OrderState,
   isBuy: boolean,
   simulation: SimulationResult
 ): Promise<string> => {
-  const ai = initGenAI();
-  if (!ai) return "请配置 API Key 以使用 AI 分析功能。";
+  // Always obtain the API key exclusively from process.env.API_KEY and use it directly
+  if (!process.env.API_KEY) {
+    return "请配置 API Key 以使用 AI 分析功能。";
+  }
+
+  // Create a new GoogleGenAI instance right before the API call
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const prompt = `
     我正在进行人民币(RMB)黄金交易。请根据以下持仓和拟交易数据，分析这笔交易的合理性。
@@ -50,10 +46,12 @@ export const analyzeTrade = async (
       model: 'gemini-3-flash-preview',
       contents: prompt,
       config: {
+        // Thinking budget set to 0 to minimize latency for basic text tasks
         thinkingConfig: { thinkingBudget: 0 } 
       }
     });
 
+    // Access .text property directly as per the latest SDK guidelines
     return response.text || "无法生成分析结果。";
   } catch (error) {
     console.error("Gemini Analysis Error:", error);
