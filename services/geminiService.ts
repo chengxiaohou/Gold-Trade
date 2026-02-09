@@ -1,14 +1,13 @@
 import { GoogleGenAI } from "@google/genai";
 import { HoldingState, OrderState, SimulationResult } from "../types";
 
-// Helper to initialize Google GenAI SDK strictly following the developer guidelines.
 const initGenAI = () => {
-  // Always use process.env.API_KEY directly when initializing the client.
-  if (!process.env.API_KEY) {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
     console.warn("API Key is missing. AI features will not work.");
     return null;
   }
-  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+  return new GoogleGenAI({ apiKey });
 };
 
 export const analyzeTrade = async (
@@ -17,7 +16,6 @@ export const analyzeTrade = async (
   isBuy: boolean,
   simulation: SimulationResult
 ): Promise<string> => {
-  // Create a new instance right before making an API call to ensure we use the correct context.
   const ai = initGenAI();
   if (!ai) return "请配置 API Key 以使用 AI 分析功能。";
 
@@ -56,7 +54,6 @@ export const analyzeTrade = async (
       }
     });
 
-    // The simplest way to get text is by accessing the .text property (not a method).
     return response.text || "无法生成分析结果。";
   } catch (error) {
     console.error("Gemini Analysis Error:", error);

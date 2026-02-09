@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
@@ -9,7 +8,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.8.2';
+const APP_VERSION = 'v1.9.0';
 
 export default function App() {
   // --- Theme State ---
@@ -57,7 +56,7 @@ export default function App() {
     return saved || '';
   });
 
-  // 4. Global App Settings
+  // 4. Global App Settings (New)
   const [appSettings, setAppSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem('gold_app_settings');
     const parsed = saved ? JSON.parse(saved) : {};
@@ -76,7 +75,7 @@ export default function App() {
 
   // Github Cloud Config State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settingsDefaultTab, setSettingsDefaultTab] = useState<'general' | 'cloud'>( 'general');
+  const [settingsDefaultTab, setSettingsDefaultTab] = useState<'general' | 'cloud'>('general');
   const [isSyncing, setIsSyncing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
@@ -102,6 +101,7 @@ export default function App() {
   });
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const marketPriceInputRef = useRef<HTMLInputElement>(null);
 
   // --- Effects: Auto-save locally ---
   
@@ -136,6 +136,28 @@ export default function App() {
     if (!/^\d*\.?\d*$/.test(value)) return;
     setMarketPrice(value);
   };
+
+  const updateMarketPrice = (delta: number) => {
+    const currentVal = parseFloat(marketPrice) || 0;
+    const nextVal = Math.max(0, currentVal + delta);
+    const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(2);
+    handleMarketPriceChange(nextStr);
+  };
+
+  // Wheel listener for Market Price
+  useEffect(() => {
+    const el = marketPriceInputRef.current;
+    if (!el) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const direction = e.deltaY > 0 ? -1 : 1;
+      updateMarketPrice(direction * appSettings.priceStep);
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [marketPrice, appSettings.priceStep]);
 
   // --- Cloud & Settings Handlers ---
   const handleSaveSettings = (newGithubConfig: GithubConfig, newAppSettings: AppSettings) => {
@@ -631,18 +653,7 @@ export default function App() {
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border"><span className="text-xs text-app-subtext block mb-1">持仓总投入</span><div className="text-xl font-bold text-app-text font-mono">{currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2})}</div></div>
                     <div className={`bg-app-bg p-3 rounded-lg border ${currentPosition.realizedPnL >= 0 ? 'border-brand-redDim' : 'border-brand-greenDim'}`}><span className="text-xs text-app-subtext block mb-1">已实现盈亏</span><div className={`text-xl font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toFixed(2)}</div></div>
                     <div className={`bg-app-bg p-3 rounded-lg border ${floatingPnL >= 0 ? 'border-brand-redDim bg-brand-redDim/20' : 'border-brand-greenDim bg-brand-greenDim/20'}`}><span className="text-xs text-app-subtext block mb-1">浮动盈亏</span><div className={`text-xl font-bold font-mono ${floatingPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{marketPrice ? (floatingPnL > 0 ? '+' : '') + floatingPnL.toLocaleString('zh-CN', {minimumFractionDigits: 2}) : '--'}</div></div>
-                    {/* 修改点：移除外层多余的 overflow-hidden 以免遮挡 Portals */}
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 focus-within:border-brand-yellow transition-colors flex flex-col justify-center min-h-[72px]">
-                      <InputGroup 
-                        label="参考市价 (元/克)" 
-                        value={marketPrice} 
-                        onChange={handleMarketPriceChange} 
-                        placeholder="0.00" 
-                        step={appSettings.priceStep} 
-                        inputClassName="text-xl font-bold text-brand-yellow font-mono bg-transparent border-none p-0 w-full outline-none"
-                        containerClassName="!space-y-0.5"
-                      />
-                    </div>
+                    <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 focus-within:border-brand-yellow transition-colors"><span className="text-xs text-app-subtext block mb-1">参考市价 (元/克)</span><div className="flex items-center"><input ref={marketPriceInputRef} type="number" value={marketPrice} onChange={(e) => handleMarketPriceChange(e.target.value)} placeholder="0.00" className="no-spinners text-xl font-bold text-brand-yellow font-mono bg-transparent border-none p-0 w-full outline-none" /><div className="flex flex-col gap-0.5 ml-2"><button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronUp size={10} strokeWidth={3} /></button><button onClick={() => updateMarketPrice(-appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronDown size={10} strokeWidth={3} /></button></div></div></div>
                 </div>
              </div>
              <div className="space-y-3">
