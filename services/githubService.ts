@@ -1,3 +1,4 @@
+
 import { TradeRecord, AppSettings } from "../types";
 
 const GIST_FILENAME = "gold-trades.json";
@@ -5,10 +6,6 @@ const GIST_DESCRIPTION = "GoldCost Pro 交易记录备份";
 
 // Helper to construct headers with robust token handling
 const getHeaders = (token: string) => {
-  // Check if token already has a prefix, if not, assume classic token and add 'token' prefix
-  // or simple Bearer if it's fine-grained, but 'token' works for classic which is most common for Gists.
-  // Actually, for Gists API, 'token GITHUB_TOKEN' or 'Bearer GITHUB_TOKEN' works.
-  // We'll stick to 'token' for Classic PATs which are most common for this use case.
   const authHeader = token.startsWith('Bearer ') || token.startsWith('token ') 
     ? token 
     : `token ${token}`;
@@ -21,35 +18,61 @@ const getHeaders = (token: string) => {
 };
 
 const handleApiError = async (response: Response, context: string) => {
-  let errorMessage = `GitHub API Error: ${response.statusText}`;
+  let detail = "";
   
-  if (response.status === 401) {
-    errorMessage = "鉴权失败 (401)：Token 无效或已过期。请检查 Token 是否包含多余空格。";
-  } else if (response.status === 403) {
-    errorMessage = "权限不足 (403)：Token 可能缺少 'gist' 权限。";
-  } else if (response.status === 404) {
-    errorMessage = "找不到资源 (404)：Gist ID 错误或该 Gist 不属于当前 Token。";
-  } else {
-    try {
-      const errData = await response.json();
-      if (errData.message) errorMessage = `GitHub Error: ${errData.message}`;
-    } catch (e) {
-      // ignore json parse error
+  // 1. Try to read response body (JSON or Text)
+  try {
+    const text = await response.text();
+    if (text) {
+      try {
+        const json = JSON.parse(text);
+        if (json.message) {
+          detail = json.message;
+          // Handle GitHub validation errors array
+          if (json.errors && Array.isArray(json.errors)) {
+             const subErrors = json.errors.map((e: any) => e.field ? `${e.field}: ${e.code}` : e.message).join('; ');
+             detail += ` [${subErrors}]`;
+          }
+        } else {
+          detail = text.slice(0, 300); // Fallback to raw text if no message field
+        }
+      } catch {
+        detail = text.slice(0, 300); // Fallback to raw text if not JSON
+      }
+    }
+  } catch (e) {
+    console.error("Error reading response body:", e);
+  }
+
+  // 2. Fallback if body provided no info
+  if (!detail || detail.trim() === "") {
+    if (response.statusText) {
+      detail = response.statusText;
+    } else {
+      // 3. Status Code specific defaults
+      switch (response.status) {
+        case 401: detail = "Token 无效或已过期，请检查设置。"; break;
+        case 403: detail = "权限不足 (可能缺少 gist 权限)。"; break;
+        case 404: detail = "资源未找到 (Gist ID 错误)。"; break;
+        case 422: detail = "数据验证失败 (格式错误)。"; break;
+        case 500: detail = "GitHub 服务器内部错误。"; break;
+        default: detail = "未知错误 (无响应内容)。";
+      }
     }
   }
   
-  throw new Error(`${context} - ${errorMessage}`);
+  throw new Error(`${context} [Status: ${response.status}] - ${detail}`);
 };
 
 export const validateConnection = async (token: string, gistId?: string): Promise<string> => {
-  // 1. Verify Token by fetching User info
   try {
+    // 1. Verify Token by fetching User info
     const userRes = await fetch("https://api.github.com/user", {
       headers: getHeaders(token),
     });
 
     if (!userRes.ok) {
-      await handleApiError(userRes, "Token 验证");
+      await handleApiError(userRes, "Token 验证失败");
     }
 
     const userData = await userRes.json();
@@ -62,13 +85,17 @@ export const validateConnection = async (token: string, gistId?: string): Promis
       });
 
       if (!gistRes.ok) {
-        await handleApiError(gistRes, "Gist ID 验证");
+        await handleApiError(gistRes, "Gist ID 验证失败");
       }
     }
 
     return username;
   } catch (error) {
     console.error("Validation failed:", error);
+    // Ensure network errors are also clear
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+       throw new Error(`网络连接失败: 请检查您的网络设置 (如代理/VPN)。\n详细: ${error.message}`);
+    }
     throw error;
   }
 };
@@ -86,14 +113,14 @@ export const loadFromGist = async (token: string, gistId: string): Promise<{ tra
     });
 
     if (!response.ok) {
-      await handleApiError(response, "下载失败");
+      await handleApiError(response, "下载数据失败");
     }
 
     const data = await response.json();
     const file = data.files[GIST_FILENAME];
 
     if (!file || !file.content) {
-      throw new Error("Gist 中找不到 'gold-trades.json' 文件");
+      throw new Error(`Gist 中未找到目标文件 '${GIST_FILENAME}'。请确认该 Gist 是由本应用创建的。`);
     }
 
     const parsed = JSON.parse(file.content);
@@ -111,6 +138,9 @@ export const loadFromGist = async (token: string, gistId: string): Promise<{ tra
 
   } catch (error) {
     console.error("Load from Gist failed:", error);
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+       throw new Error(`网络请求失败: 请检查网络连接。\nDetails: ${error.message}`);
+    }
     throw error;
   }
 };
@@ -155,13 +185,16 @@ export const saveToGist = async (
     });
 
     if (!response.ok) {
-      await handleApiError(response, "上传失败");
+      await handleApiError(response, "上传数据失败");
     }
 
     const resData = await response.json();
     return resData.id; // Return the new or existing Gist ID
   } catch (error) {
     console.error("Save to Gist failed:", error);
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+       throw new Error(`网络请求失败: 请检查网络连接。\nDetails: ${error.message}`);
+    }
     throw error;
   }
 };

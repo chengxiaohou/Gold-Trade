@@ -3,7 +3,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { TradeRecord, AppSettings } from '../types';
-import { Trash2, Edit2, X, GripHorizontal, Eye, EyeOff, RotateCcw } from 'lucide-react';
+import { Trash2, Edit2, X, GripHorizontal, Eye, EyeOff, RotateCcw, ArrowDownUp } from 'lucide-react';
 import { InputGroup } from './InputGroup';
 
 interface TradeListProps {
@@ -284,6 +284,7 @@ const EditBubble: React.FC<EditBubbleProps> = ({
 };
 
 export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate, onReorder, settings, onSettingsChange }) => {
+  // sortDesc: true = Latest -> Earliest (Reversed), false = Earliest -> Latest (Original)
   const [sortDesc, setSortDesc] = useState(() => {
     return localStorage.getItem('gold_trade_sort_desc') === 'true';
   });
@@ -487,7 +488,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     // 强制阻止文字选择和默认行为
     e.preventDefault();
     
-    if (sortDesc) { setSortDesc(false); return; }
+    // 允许在任何排序模式下进行拖拽，拖拽后的结果就是新的“真实”顺序
     const rects = new Map();
     displayTrades.forEach(t => {
       const el = containerRef.current?.querySelector(`[data-row="${t.id}"]`);
@@ -535,12 +536,23 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
         const newTrades = [...displayTrades];
         const item = newTrades.splice(activeIdx, 1)[0];
         newTrades.splice(currentHoverRowIdxRef.current, 0, item);
-        onReorder(newTrades as TradeRecord[]);
+        
+        // Remove computed fields to get clean TradeRecord objects
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const sanitized = newTrades.map(({ historicalAvg, avgChange, holdingTotal, ...rest }) => rest as TradeRecord);
+
+        if (sortDesc) {
+            // If dragging in "Newest -> Earliest" mode, the resulting 'newTrades' is also in reverse order.
+            // We must reverse it back to store the "true" chronological order (Earliest -> Newest).
+            onReorder(sanitized.reverse());
+        } else {
+            // In "Earliest -> Newest" mode, the visual order matches the storage order.
+            onReorder(sanitized);
+        }
       }
     }
     if (containerRef.current) {
       displayTrades.forEach((_, idx) => containerRef.current?.style.setProperty(`--row-shift-${idx}`, '0px'));
-      // Fix: Use .style.setProperty instead of calling it directly on the element
       containerRef.current.style.setProperty('--row-drag-ty', '0px');
     }
     setActiveRowId(null);
@@ -603,8 +615,9 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                   );
                 })}
                 <th className="px-1 py-3 md:py-4 text-center sticky right-0 z-20 bg-app-bg border-l border-b border-app-border shadow-lg w-[90px]">
-                   <button onClick={() => setSortDesc(!sortDesc)} className={`flex items-center justify-center gap-1 w-full py-1.5 rounded-md transition-all text-[11px] font-bold border ${sortDesc ? 'bg-brand-green/10 text-brand-green border-brand-green/20 hover:bg-brand-green/20' : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20'}`} title="切换时间排序">
-                     <span>{sortDesc ? "最新→最早" : "自定义排序"}</span>
+                   <button onClick={() => setSortDesc(!sortDesc)} className={`flex items-center justify-center gap-1 w-full py-1.5 rounded-md transition-all text-[11px] font-bold border ${sortDesc ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20' : 'bg-brand-green/10 text-brand-green border-brand-green/20 hover:bg-brand-green/20'}`} title={sortDesc ? "当前：最新在最前" : "当前：最早在最前"}>
+                     <ArrowDownUp size={12} />
+                     <span>{sortDesc ? "最新→最早" : "最早→最新"}</span>
                    </button>
                 </th>
               </tr>

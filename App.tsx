@@ -1,4 +1,5 @@
 
+
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
@@ -9,7 +10,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.9.4';
+const APP_VERSION = 'v1.9.5';
 
 export default function App() {
   // --- Theme State ---
@@ -327,7 +328,7 @@ export default function App() {
       setUploadSuccess(true);
       setTimeout(() => setUploadSuccess(false), 2000);
     } catch (error) {
-      alert(`上传失败: ${(error as Error).message}`);
+      alert((error as Error).message);
     } finally {
       setIsSyncing(false);
     }
@@ -353,7 +354,7 @@ export default function App() {
         setTimeout(() => setDownloadSuccess(false), 2000);
       }
     } catch (error) {
-      alert(`加载失败: ${(error as Error).message}`);
+      alert((error as Error).message);
     } finally {
       setIsDownloading(false);
     }
