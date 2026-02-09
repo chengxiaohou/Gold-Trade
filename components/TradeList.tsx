@@ -10,11 +10,11 @@ interface TradeListProps {
   trades: TradeRecord[];
   onDelete: (id: string) => void;
   onUpdate: (id: string, updates: Partial<TradeRecord>) => void;
+  onReorder: (newTrades: TradeRecord[]) => void;
   settings: AppSettings;
   onSettingsChange: (updates: Partial<AppSettings>) => void;
 }
 
-// Added 'tag' to ColumnKey
 type ColumnKey = 'tag' | 'price' | 'grams' | 'tradeTotal' | 'historicalAvg' | 'holdingTotal' | 'avgChange';
 
 interface ColumnDef {
@@ -25,7 +25,6 @@ interface ColumnDef {
 
 const fmt = (n: number) => n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-// --- Color Palette for Tags ---
 const TAG_PALETTE = [
   { key: 'indigo', label: '默认', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20', hover: 'hover:border-indigo-500/50' },
   { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20', hover: 'hover:border-gray-500/50' },
@@ -49,12 +48,12 @@ const getTagStyle = (colorKey?: string) => {
 
 interface EditBubbleProps {
   trade: TradeRecord;
-  availableTags: string[]; // List of unique tags for quick select
+  availableTags: string[];
   onUpdate: (id: string, updates: Partial<TradeRecord>) => void;
   onClose: () => void;
   initialPosition: { top: number, left: number };
   settings: AppSettings;
-  mode: 'full' | 'tag'; // 'full' = normal edit, 'tag' = only tag edit
+  mode: 'full' | 'tag';
   onTagColorChange: (tag: string, colorKey: string) => void;
 }
 
@@ -175,7 +174,6 @@ const EditBubble: React.FC<EditBubbleProps> = ({
         </div>
         
         <div className="p-5 space-y-4 bg-app-card max-h-[80vh] overflow-y-auto custom-scrollbar">
-          
           {mode === 'full' ? (
             <>
               <div className="space-y-1.5">
@@ -285,7 +283,7 @@ const EditBubble: React.FC<EditBubbleProps> = ({
   );
 };
 
-export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate, settings, onSettingsChange }) => {
+export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate, onReorder, settings, onSettingsChange }) => {
   const [sortDesc, setSortDesc] = useState(() => {
     return localStorage.getItem('gold_trade_sort_desc') === 'true';
   });
@@ -294,13 +292,18 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     localStorage.setItem('gold_trade_sort_desc', String(sortDesc));
   }, [sortDesc]);
 
-  const [activeId, setActiveId] = useState<ColumnKey | null>(null);
+  const [activeColId, setActiveColId] = useState<ColumnKey | null>(null);
+  const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const [editState, setEditState] = useState<{ id: string, top: number, left: number, mode: 'full' | 'tag' } | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const colRects = useRef<Map<string, { left: number, width: number }>>(new Map());
+  const rowRects = useRef<Map<string, { top: number, height: number }>>(new Map());
+  
   const startXRef = useRef(0);
-  const currentHoverIdxRef = useRef<number | null>(null);
+  const startYRef = useRef(0);
+  const currentHoverColIdxRef = useRef<number | null>(null);
+  const currentHoverRowIdxRef = useRef<number | null>(null);
 
   const handleEditClick = (e: React.MouseEvent, id: string, mode: 'full' | 'tag') => {
     e.stopPropagation();
@@ -318,7 +321,6 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     if (left < 10) left = 10;
     if (left + width > window.innerWidth) left = window.innerWidth - width - 10;
     
-    // Approximate height check to prevent overflow
     const bubbleHeight = mode === 'full' ? 240 : 280;
     if (top + bubbleHeight > window.innerHeight) {
         top = rect.top - bubbleHeight - 8; 
@@ -418,39 +420,30 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     localStorage.setItem('gold_trade_list_column_order_v3', JSON.stringify(columnOrder));
   }, [columnOrder]);
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const handleWheel = (e: WheelEvent) => {
-      if (e.shiftKey) { e.preventDefault(); el.scrollLeft += e.deltaY; }
-    };
-    el.addEventListener('wheel', handleWheel, { passive: false });
-    return () => el.removeEventListener('wheel', handleWheel);
-  }, [trades.length]);
-
-  const onPointerDown = (e: React.PointerEvent, id: ColumnKey) => {
+  const onColPointerDown = (e: React.PointerEvent, id: ColumnKey) => {
     if (e.button !== 0) return;
+    e.preventDefault();
     const rects = new Map();
     columnOrder.forEach(key => {
       const el = containerRef.current?.querySelector(`[data-col="${key}"]`);
       if (el) { const r = el.getBoundingClientRect(); rects.set(key, { left: r.left, width: r.width }); }
     });
     colRects.current = rects;
-    setActiveId(id);
-    currentHoverIdxRef.current = columnOrder.indexOf(id);
+    setActiveColId(id);
+    currentHoverColIdxRef.current = columnOrder.indexOf(id);
     startXRef.current = e.clientX;
-    columnOrder.forEach((_, idx) => containerRef.current?.style.setProperty(`--shift-${idx}`, '0px'));
-    containerRef.current?.style.setProperty('--drag-tx', '0px');
+    columnOrder.forEach((_, idx) => containerRef.current?.style.setProperty(`--col-shift-${idx}`, '0px'));
+    containerRef.current?.style.setProperty('--col-drag-tx', '0px');
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
-  const onPointerMove = (e: React.PointerEvent) => {
-    if (!activeId || !containerRef.current) return;
+  const onColPointerMove = (e: React.PointerEvent) => {
+    if (!activeColId || !containerRef.current) return;
     const offset = e.clientX - startXRef.current;
-    const activeIdx = columnOrder.indexOf(activeId);
-    const activeData = colRects.current.get(activeId);
+    const activeIdx = columnOrder.indexOf(activeColId);
+    const activeData = colRects.current.get(activeColId);
     if (!activeData) return;
-    containerRef.current.style.setProperty('--drag-tx', `${offset}px`);
+    containerRef.current.style.setProperty('--col-drag-tx', `${offset}px`);
     const dragCenter = activeData.left + (activeData.width / 2) + offset;
     let newHoverIdx = activeIdx;
     for (let i = 0; i < columnOrder.length; i++) {
@@ -458,34 +451,100 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
       if (!targetData) continue;
       if (dragCenter > targetData.left && dragCenter < targetData.left + targetData.width) { newHoverIdx = i; break; }
     }
-    if (newHoverIdx !== currentHoverIdxRef.current) {
-      currentHoverIdxRef.current = newHoverIdx;
+    if (newHoverIdx !== currentHoverColIdxRef.current) {
+      currentHoverColIdxRef.current = newHoverIdx;
       columnOrder.forEach((id, idx) => {
-        if (id === activeId) return;
+        if (id === activeColId) return;
         let tx = 0;
         if (newHoverIdx > activeIdx && idx > activeIdx && idx <= newHoverIdx) { tx = -activeData.width; }
         else if (newHoverIdx < activeIdx && idx < activeIdx && idx >= newHoverIdx) { tx = activeData.width; }
-        containerRef.current?.style.setProperty(`--shift-${idx}`, `${tx}px`);
+        containerRef.current?.style.setProperty(`--col-shift-${idx}`, `${tx}px`);
       });
     }
   };
 
-  const onPointerUp = (e: React.PointerEvent) => {
-    if (activeId && currentHoverIdxRef.current !== null) {
-      const activeIdx = columnOrder.indexOf(activeId);
-      if (activeIdx !== currentHoverIdxRef.current) {
+  const onColPointerUp = (e: React.PointerEvent) => {
+    if (activeColId && currentHoverColIdxRef.current !== null) {
+      const activeIdx = columnOrder.indexOf(activeColId);
+      if (activeIdx !== currentHoverColIdxRef.current) {
         const newOrder = [...columnOrder];
         const item = newOrder.splice(activeIdx, 1)[0];
-        newOrder.splice(currentHoverIdxRef.current, 0, item);
+        newOrder.splice(currentHoverColIdxRef.current, 0, item);
         setColumnOrder(newOrder);
       }
     }
     if (containerRef.current) {
-      columnOrder.forEach((_, idx) => containerRef.current?.style.setProperty(`--shift-${idx}`, '0px'));
-      containerRef.current.style.setProperty('--drag-tx', '0px');
+      columnOrder.forEach((_, idx) => containerRef.current?.style.setProperty(`--col-shift-${idx}`, '0px'));
+      containerRef.current.style.setProperty('--col-drag-tx', '0px');
     }
-    setActiveId(null);
-    currentHoverIdxRef.current = null;
+    setActiveColId(null);
+    currentHoverColIdxRef.current = null;
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+  };
+
+  const onRowPointerDown = (e: React.PointerEvent, id: string) => {
+    if (e.button !== 0) return;
+    // 强制阻止文字选择和默认行为
+    e.preventDefault();
+    
+    if (sortDesc) { setSortDesc(false); return; }
+    const rects = new Map();
+    displayTrades.forEach(t => {
+      const el = containerRef.current?.querySelector(`[data-row="${t.id}"]`);
+      if (el) { const r = el.getBoundingClientRect(); rects.set(t.id, { top: r.top, height: r.height }); }
+    });
+    rowRects.current = rects;
+    setActiveRowId(id);
+    currentHoverRowIdxRef.current = displayTrades.findIndex(t => t.id === id);
+    startYRef.current = e.clientY;
+    displayTrades.forEach((_, idx) => containerRef.current?.style.setProperty(`--row-shift-${idx}`, '0px'));
+    containerRef.current?.style.setProperty('--row-drag-ty', '0px');
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const onRowPointerMove = (e: React.PointerEvent) => {
+    if (!activeRowId || !containerRef.current) return;
+    const offset = e.clientY - startYRef.current;
+    const activeIdx = displayTrades.findIndex(t => t.id === activeRowId);
+    const activeData = rowRects.current.get(activeRowId);
+    if (!activeData) return;
+    containerRef.current.style.setProperty('--row-drag-ty', `${offset}px`);
+    const dragCenter = activeData.top + (activeData.height / 2) + offset;
+    let newHoverIdx = activeIdx;
+    for (let i = 0; i < displayTrades.length; i++) {
+      const targetData = rowRects.current.get(displayTrades[i].id);
+      if (!targetData) continue;
+      if (dragCenter > targetData.top && dragCenter < targetData.top + targetData.height) { newHoverIdx = i; break; }
+    }
+    if (newHoverIdx !== currentHoverRowIdxRef.current) {
+      currentHoverRowIdxRef.current = newHoverIdx;
+      displayTrades.forEach((t, idx) => {
+        if (t.id === activeRowId) return;
+        let ty = 0;
+        if (newHoverIdx > activeIdx && idx > activeIdx && idx <= newHoverIdx) { ty = -activeData.height; }
+        else if (newHoverIdx < activeIdx && idx < activeIdx && idx >= newHoverIdx) { ty = activeData.height; }
+        containerRef.current?.style.setProperty(`--row-shift-${idx}`, `${ty}px`);
+      });
+    }
+  };
+
+  const onRowPointerUp = (e: React.PointerEvent) => {
+    if (activeRowId && currentHoverRowIdxRef.current !== null) {
+      const activeIdx = displayTrades.findIndex(t => t.id === activeRowId);
+      if (activeIdx !== currentHoverRowIdxRef.current) {
+        const newTrades = [...displayTrades];
+        const item = newTrades.splice(activeIdx, 1)[0];
+        newTrades.splice(currentHoverRowIdxRef.current, 0, item);
+        onReorder(newTrades as TradeRecord[]);
+      }
+    }
+    if (containerRef.current) {
+      displayTrades.forEach((_, idx) => containerRef.current?.style.setProperty(`--row-shift-${idx}`, '0px'));
+      // Fix: Use .style.setProperty instead of calling it directly on the element
+      containerRef.current.style.setProperty('--row-drag-ty', '0px');
+    }
+    setActiveRowId(null);
+    currentHoverRowIdxRef.current = null;
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
   };
 
@@ -498,28 +557,46 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   return (
     <>
       <div className="rounded-xl border border-app-border bg-app-card overflow-hidden isolate transition-colors duration-300">
-        <div ref={containerRef} className={`overflow-x-auto custom-scrollbar ${activeId ? 'drag-active' : ''}`}>
+        <div ref={containerRef} className={`overflow-x-auto custom-scrollbar ${(activeColId || activeRowId) ? 'drag-active' : ''}`}>
           <style>{`
-            .drag-active th, .drag-active td { will-change: transform; transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); }
+            /* 基础状态：禁止选中 */
+            .drag-active { user-select: none !important; -webkit-user-select: none !important; }
+            .drag-active * { cursor: grabbing !important; user-select: none !important; }
+            
+            .drag-active table { pointer-events: none; }
+            .drag-active th, .drag-active td { pointer-events: auto; will-change: transform; transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); }
+            
+            /* 列拖拽样式 */
             ${columnOrder.map((id, idx) => `
-              .drag-col-${id} th:nth-child(${idx + 2}), .drag-col-${id} td:nth-child(${idx + 2}) { transform: translateX(var(--drag-tx)); transition: none !important; z-index: 50; position: relative; background: var(--drag-bg) !important; box-shadow: 15px 0 30px rgba(0,0,0,0.4), -15px 0 30px rgba(0,0,0,0.4); }
-              .drag-active th:nth-child(${idx + 2}):not(.dragging-cell), .drag-active td:nth-child(${idx + 2}):not(.dragging-cell) { transform: translateX(var(--shift-${idx})); }
+              .drag-col-${id} th:nth-child(${idx + 2}), .drag-col-${id} td:nth-child(${idx + 2}) { transform: translateX(var(--col-drag-tx)) !important; transition: none !important; z-index: 50; position: relative; background: var(--drag-bg) !important; box-shadow: 10px 0 20px rgba(0,0,0,0.3); }
+              .drag-active th:nth-child(${idx + 2}):not(.dragging-cell), .drag-active td:nth-child(${idx + 2}):not(.dragging-cell) { transform: translateX(var(--col-shift-${idx})); }
             `).join('\n')}
-            .drag-active th:first-child, .drag-active td:first-child { transform: none !important; z-index: 60; }
-            .drag-active th:last-child, .drag-active td:last-child { transform: none !important; z-index: 100; }
+            
+            /* 行拖拽样式：提升 z-index 至 1000 确保悬浮在所有元素（包括粘性列）上方 */
+            ${displayTrades.map((t, idx) => `
+               .drag-row-${t.id} td { transform: translateY(var(--row-drag-ty)) !important; transition: none !important; z-index: 1000 !important; position: relative; background: var(--drag-bg) !important; box-shadow: 0 15px 35px rgba(0,0,0,0.5); opacity: 0.95; }
+               .drag-active tr[data-row]:not(.dragging-row):nth-child(${idx + 1}) td { transform: translateY(var(--row-shift-${idx})); }
+            `).join('\n')}
+
+            /* 非拖拽粘性列的层级管理 */
+            .drag-active th:first-child, .drag-active td:first-child { z-index: 60; }
+            .drag-active th:last-child, .drag-active td:last-child { z-index: 100; }
+            
+            /* 再次确保拖拽单元格在顶层 */
+            .dragging-row td { z-index: 1000 !important; }
           `}</style>
 
           <table className="w-full text-sm text-left border-separate border-spacing-0 min-w-[550px]">
             <thead className="text-xs text-app-subtext uppercase bg-app-bg">
-              <tr className={activeId ? `drag-col-${activeId}` : ''}>
+              <tr className={activeColId ? `drag-col-${activeColId}` : ''}>
                 <th className="p-0 text-center sticky left-0 z-20 bg-app-bg border-b border-r border-app-border w-[40px] min-w-[40px] max-w-[40px] shadow-lg">
                    <span className="font-bold">方向</span>
                 </th>
                 {columnOrder.map((colKey) => {
                   const col = COLUMN_DEFS[colKey];
-                  const isDragging = activeId === colKey;
+                  const isDragging = activeColId === colKey;
                   return (
-                    <th key={colKey} data-col={colKey} onPointerDown={(e) => onPointerDown(e, colKey)} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} className={`px-2 py-3 md:px-4 md:py-4 border-b border-app-border cursor-grab active:cursor-grabbing select-none relative touch-none ${isDragging ? 'dragging-cell text-brand-yellow font-bold' : ''}`}>
+                    <th key={colKey} data-col={colKey} onPointerDown={(e) => onColPointerDown(e, colKey)} onPointerMove={onColPointerMove} onPointerUp={onColPointerUp} onPointerCancel={onColPointerUp} className={`px-2 py-3 md:px-4 md:py-4 border-b border-app-border cursor-grab active:cursor-grabbing select-none relative touch-none ${isDragging ? 'dragging-cell text-brand-yellow font-bold' : ''}`}>
                       <div className="flex items-center gap-1.5 pointer-events-none"><span className="whitespace-nowrap">{col.label}</span></div>
                       {isDragging && <div className="absolute inset-x-0 -bottom-[1px] h-0.5 bg-brand-yellow" />}
                     </th>
@@ -527,35 +604,48 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                 })}
                 <th className="px-1 py-3 md:py-4 text-center sticky right-0 z-20 bg-app-bg border-l border-b border-app-border shadow-lg w-[90px]">
                    <button onClick={() => setSortDesc(!sortDesc)} className={`flex items-center justify-center gap-1 w-full py-1.5 rounded-md transition-all text-[11px] font-bold border ${sortDesc ? 'bg-brand-green/10 text-brand-green border-brand-green/20 hover:bg-brand-green/20' : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20'}`} title="切换时间排序">
-                     <span>{sortDesc ? "最新→最早" : "最早→最新"}</span>
+                     <span>{sortDesc ? "最新→最早" : "自定义排序"}</span>
                    </button>
                 </th>
               </tr>
             </thead>
             <tbody>
-              {displayTrades.map((trade) => (
-                <tr key={trade.id} className={`${activeId ? `drag-col-${activeId}` : ''} hover:bg-app-hover group transition-colors ${trade.isDisabled ? 'opacity-40 grayscale decoration-app-subtext' : ''}`}>
-                  <td className="p-0 py-2.5 md:py-3 text-center sticky left-0 z-20 bg-app-card group-hover:bg-app-hover border-r border-b border-app-border shadow-lg transition-colors w-[40px] min-w-[40px] max-w-[40px]">
-                     <span className={`inline-flex items-center justify-center w-6 h-6 rounded text-xs font-bold mx-auto ${trade.type === 'BUY' ? 'bg-brand-red/10 text-brand-red' : 'bg-brand-green/10 text-brand-green'}`}>{trade.type === 'BUY' ? '买' : '卖'}</span>
-                  </td>
-                  {columnOrder.map((colKey) => (
-                    <td key={colKey} className={`px-2 py-2.5 md:px-4 md:py-3 whitespace-nowrap border-b border-app-border ${activeId === colKey ? 'dragging-cell' : ''}`}>{COLUMN_DEFS[colKey].render(trade as any)}</td>
-                  ))}
-                  <td className="px-1 py-2.5 md:py-3 text-center sticky right-0 z-20 bg-app-card group-hover:bg-app-hover border-l border-b border-app-border shadow-lg transition-colors">
-                    <div className="flex justify-center gap-1">
-                      <button onClick={(e) => handleEditClick(e, trade.id, 'full')} className={`p-1 transition-colors ${editState?.id === trade.id && editState.mode === 'full' ? 'text-brand-yellow' : 'text-app-subtext hover:text-brand-yellow'}`} title="编辑">
-                        <Edit2 size={14} />
-                      </button>
-                      <button onClick={() => onUpdate(trade.id, { isDisabled: !trade.isDisabled })} className={`p-1 transition-colors ${trade.isDisabled ? 'text-app-subtext hover:text-app-subtext/70' : 'text-app-subtext hover:text-indigo-400'}`} title={trade.isDisabled ? "恢复生效" : "暂时失效"}>
-                        {trade.isDisabled ? <EyeOff size={14} /> : <Eye size={14} />}
-                      </button>
-                      <button onClick={() => onDelete(trade.id)} className="text-app-subtext hover:text-red-400 transition-colors p-1" title="删除">
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {displayTrades.map((trade, index) => {
+                const isDraggingRow = activeRowId === trade.id;
+                return (
+                  <tr 
+                    key={trade.id} 
+                    data-row={trade.id}
+                    className={`${activeColId ? `drag-col-${activeColId}` : ''} ${isDraggingRow ? `drag-row-${trade.id} dragging-row` : ''} hover:bg-app-hover group transition-colors ${trade.isDisabled ? 'opacity-40 grayscale decoration-app-subtext' : ''}`}
+                  >
+                    <td 
+                      onPointerDown={(e) => onRowPointerDown(e, trade.id)} 
+                      onPointerMove={onRowPointerMove} 
+                      onPointerUp={onRowPointerUp}
+                      onPointerCancel={onRowPointerUp}
+                      className="p-0 py-2.5 md:py-3 text-center sticky left-0 z-20 bg-app-card group-hover:bg-app-hover border-r border-b border-app-border shadow-lg transition-colors w-[40px] min-w-[40px] max-w-[40px] cursor-grab active:cursor-grabbing touch-none select-none"
+                    >
+                       <span className={`inline-flex items-center justify-center w-6 h-6 rounded text-xs font-bold mx-auto transition-transform group-hover:scale-110 ${trade.type === 'BUY' ? 'bg-brand-red/10 text-brand-red' : 'bg-brand-green/10 text-brand-green'}`}>{trade.type === 'BUY' ? '买' : '卖'}</span>
+                    </td>
+                    {columnOrder.map((colKey) => (
+                      <td key={colKey} className={`px-2 py-2.5 md:px-4 md:py-3 whitespace-nowrap border-b border-app-border ${activeColId === colKey ? 'dragging-cell' : ''}`}>{COLUMN_DEFS[colKey].render(trade as any)}</td>
+                    ))}
+                    <td className="px-1 py-2.5 md:py-3 text-center sticky right-0 z-20 bg-app-card group-hover:bg-app-hover border-l border-b border-app-border shadow-lg transition-colors">
+                      <div className="flex justify-center gap-1">
+                        <button onClick={(e) => handleEditClick(e, trade.id, 'full')} className={`p-1 transition-colors ${editState?.id === trade.id && editState.mode === 'full' ? 'text-brand-yellow' : 'text-app-subtext hover:text-brand-yellow'}`} title="编辑">
+                          <Edit2 size={14} />
+                        </button>
+                        <button onClick={() => onUpdate(trade.id, { isDisabled: !trade.isDisabled })} className={`p-1 transition-colors ${trade.isDisabled ? 'text-app-subtext hover:text-app-subtext/70' : 'text-app-subtext hover:text-indigo-400'}`} title={trade.isDisabled ? "恢复生效" : "暂时失效"}>
+                          {trade.isDisabled ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
+                        <button onClick={() => onDelete(trade.id)} className="text-app-subtext hover:text-red-400 transition-colors p-1" title="删除">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -9,7 +9,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.9.2';
+const APP_VERSION = 'v1.9.4';
 
 export default function App() {
   // --- Theme State ---
@@ -511,6 +511,8 @@ export default function App() {
 
   const deleteTrade = (id: string) => setTrades(prev => prev.filter(t => t.id !== id));
   const updateTrade = (id: string, updates: Partial<TradeRecord>) => setTrades(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+  const handleReorderTrades = (newTrades: TradeRecord[]) => setTrades(newTrades);
+
   const requestReset = () => setShowResetConfirm(true);
   const confirmReset = () => {
     setTrades([]);
@@ -737,7 +739,7 @@ export default function App() {
              </div>
              <div className="space-y-3">
                <div className="flex items-center gap-2 text-app-subtext pl-1"><History size={16} /><h3 className="font-medium text-sm">成交记录</h3></div>
-               <TradeList trades={trades} onDelete={deleteTrade} onUpdate={updateTrade} settings={appSettings} onSettingsChange={handleSettingsUpdate} />
+               <TradeList trades={trades} onDelete={deleteTrade} onUpdate={updateTrade} onReorder={handleReorderTrades} settings={appSettings} onSettingsChange={handleSettingsUpdate} />
              </div>
              <div className="bg-app-card border border-app-border rounded-xl p-4 transition-colors"><div className="flex items-center justify-between mb-2"><h3 className="text-app-text font-medium flex items-center gap-2"><BrainCircuit size={16} className="text-indigo-400"/>智能分析 (预览)</h3><button onClick={handleAIAnalysis} disabled={aiState.loading || !inputs.grams || !inputs.price} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded disabled:opacity-50">{aiState.loading ? "分析中..." : "Gemini 深度分析"}</button></div>{aiState.result ? <div className="text-sm text-app-text leading-relaxed bg-app-input p-3 rounded-lg border border-app-border whitespace-pre-wrap">{aiState.result}</div> : <div className="text-xs text-app-subtext italic">输入交易信息后点击分析。</div>}</div>
           </div>
