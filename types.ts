@@ -1,4 +1,5 @@
 
+
 export type OrderType = 'BUY' | 'SELL';
 
 export interface TradeRecord {
@@ -46,4 +47,5 @@ export interface AppSettings {
   priceStep: number;
   gramsStep: number;
   tagColors: Record<string, string>; // Maps tag text to a color key (e.g., "short_term" -> "red")
+  touchMode: boolean; // New: Enable touch drag to adjust values
 }

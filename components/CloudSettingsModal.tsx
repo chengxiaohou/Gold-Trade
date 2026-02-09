@@ -1,5 +1,7 @@
+
+
 import React, { useState, useEffect, useRef } from 'react';
-import { X, ExternalLink, CheckCircle2, Sliders, Cloud } from 'lucide-react';
+import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad } from 'lucide-react';
 import { GithubConfig, AppSettings } from '../types';
 import { validateConnection } from '../services/githubService';
 
@@ -25,6 +27,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [gistId, setGistId] = useState(githubConfig.gistId);
   const [priceStep, setPriceStep] = useState(appSettings.priceStep.toString());
   const [gramsStep, setGramsStep] = useState(appSettings.gramsStep.toString());
+  const [touchMode, setTouchMode] = useState(appSettings.touchMode ?? true);
 
   const [activeTab, setActiveTab] = useState<'general' | 'cloud'>(initialTab);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -38,6 +41,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       setGistId(githubConfig.gistId);
       setPriceStep(appSettings.priceStep.toString());
       setGramsStep(appSettings.gramsStep.toString());
+      setTouchMode(appSettings.touchMode ?? true);
       setIsVerifying(false);
       setLogState(null);
       // Automatically switch to the requested tab when opening
@@ -66,7 +70,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     const newAppSettings: AppSettings = {
         priceStep: newPriceStep,
         gramsStep: newGramsStep,
-        tagColors: appSettings.tagColors // Preserve existing tag colors
+        tagColors: appSettings.tagColors, // Preserve existing tag colors
+        touchMode: touchMode
     };
 
     // If Cloud tab is not active and no changes to cloud config, just save app settings
@@ -208,6 +213,28 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       onChange={(e) => setGramsStep(e.target.value)}
                       className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-mono text-sm"
                     />
+                 </div>
+                 
+                 <div className="pt-2 border-t border-app-border">
+                    <div className="flex items-center justify-between">
+                       <div className="flex flex-col gap-1">
+                          <span className="text-sm font-medium text-app-text flex items-center gap-2">
+                             <Touchpad size={16} className="text-indigo-400"/> 触屏调节模式
+                          </span>
+                          <span className="text-xs text-app-subtext max-w-[240px]">
+                             开启后，手指在输入框内上下滑动即可模拟滚轮调节数值（推荐手机端使用）。
+                          </span>
+                       </div>
+                       <button
+                         type="button"
+                         onClick={() => setTouchMode(!touchMode)}
+                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-app-bg ${touchMode ? 'bg-indigo-600' : 'bg-app-input border border-app-border'}`}
+                       >
+                         <span
+                           className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${touchMode ? 'translate-x-6' : 'translate-x-1'}`}
+                         />
+                       </button>
+                    </div>
                  </div>
               </div>
             )}

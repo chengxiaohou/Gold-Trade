@@ -1,3 +1,5 @@
+
+
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { TradeRecord, AppSettings } from '../types';
@@ -193,7 +195,8 @@ const EditBubble: React.FC<EditBubbleProps> = ({
                     const v = parseFloat(val);
                     if (!isNaN(v)) onUpdate(trade.id, { price: v });
                   }} 
-                  step={settings.priceStep} 
+                  step={settings.priceStep}
+                  touchMode={settings.touchMode} 
                 />
                 <InputGroup 
                   label="数量" 
@@ -205,6 +208,7 @@ const EditBubble: React.FC<EditBubbleProps> = ({
                   }} 
                   step={settings.gramsStep} 
                   isQuantity={true}
+                  touchMode={settings.touchMode}
                 />
               </div>
 

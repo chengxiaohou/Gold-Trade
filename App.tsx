@@ -1,4 +1,5 @@
 
+
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
@@ -64,7 +65,8 @@ export default function App() {
     return {
       priceStep: parsed.priceStep || 5,
       gramsStep: parsed.gramsStep || 1,
-      tagColors: parsed.tagColors || {}
+      tagColors: parsed.tagColors || {},
+      touchMode: parsed.touchMode ?? true
     };
   });
 
@@ -103,6 +105,12 @@ export default function App() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const marketPriceInputRef = useRef<HTMLInputElement>(null);
+
+  // --- Refs for Event Listeners (Prevent Stale Closures in Touch/Wheel Handlers) ---
+  const marketPriceValueRef = useRef(marketPrice);
+  useEffect(() => {
+    marketPriceValueRef.current = marketPrice;
+  }, [marketPrice]);
 
   // --- Effects: Auto-save locally ---
   
@@ -181,6 +189,12 @@ export default function App() {
     setInputs(prev => ({ ...prev, price: value }));
   };
 
+  // Keep a ref to the handler to use in Effect without triggering re-binds
+  const handleMarketPriceChangeRef = useRef(handleMarketPriceChange);
+  useEffect(() => {
+    handleMarketPriceChangeRef.current = handleMarketPriceChange;
+  }, [handleMarketPriceChange]);
+
   const updateMarketPrice = (delta: number) => {
     const currentVal = parseFloat(marketPrice) || 0;
     const nextVal = Math.max(0, currentVal + delta);
@@ -211,6 +225,58 @@ export default function App() {
     el.addEventListener('wheel', handleWheel, { passive: false });
     return () => el.removeEventListener('wheel', handleWheel);
   }, [marketPrice, appSettings.priceStep]);
+
+  // Touch listener for Market Price (Slide to adjust)
+  useEffect(() => {
+    if (!appSettings.touchMode || !marketPriceInputRef.current) return;
+    
+    const el = marketPriceInputRef.current;
+    let lastY = 0;
+    const threshold = 15;
+    let accumulator = 0;
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      lastY = e.touches[0].clientY;
+      accumulator = 0;
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      
+      if (e.cancelable) e.preventDefault();
+      
+      const currentY = e.touches[0].clientY;
+      const deltaY = lastY - currentY; 
+      
+      accumulator += deltaY;
+      
+      const steps = Math.floor(Math.abs(accumulator) / threshold);
+      
+      if (steps > 0) {
+         const direction = accumulator > 0 ? 1 : -1;
+         
+         const currentVal = parseFloat(marketPriceValueRef.current) || 0;
+         const changeAmount = direction * appSettings.priceStep * steps;
+         const nextVal = Math.max(0, currentVal + changeAmount);
+         const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(2);
+         
+         handleMarketPriceChangeRef.current(nextStr);
+         
+         accumulator -= (direction * steps * threshold);
+      }
+      
+      lastY = currentY;
+    };
+
+    el.addEventListener('touchstart', handleTouchStart, { passive: false });
+    el.addEventListener('touchmove', handleTouchMove, { passive: false });
+    
+    return () => {
+      el.removeEventListener('touchstart', handleTouchStart);
+      el.removeEventListener('touchmove', handleTouchMove);
+    };
+  }, [appSettings.touchMode, appSettings.priceStep]);
 
   // --- Cloud & Settings Handlers ---
   const handleSaveSettings = (newGithubConfig: GithubConfig, newAppSettings: AppSettings) => {
@@ -667,7 +733,7 @@ export default function App() {
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border"><span className="text-xs text-app-subtext block mb-1">持仓总投入</span><div className="text-xl font-bold text-app-text font-mono">{currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2})}</div></div>
                     <div className={`bg-app-bg p-3 rounded-lg border ${currentPosition.realizedPnL >= 0 ? 'border-brand-redDim' : 'border-brand-greenDim'}`}><span className="text-xs text-app-subtext block mb-1">已实现盈亏</span><div className={`text-xl font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toFixed(2)}</div></div>
                     <div className={`bg-app-bg p-3 rounded-lg border ${floatingPnL >= 0 ? 'border-brand-redDim bg-brand-redDim/20' : 'border-brand-greenDim bg-brand-greenDim/20'}`}><span className="text-xs text-app-subtext block mb-1">浮动盈亏</span><div className={`text-xl font-bold font-mono ${floatingPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{marketPrice ? (floatingPnL > 0 ? '+' : '') + floatingPnL.toLocaleString('zh-CN', {minimumFractionDigits: 2}) : '--'}</div></div>
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 focus-within:border-brand-yellow transition-colors"><span className="text-xs text-app-subtext block mb-1">参考市价 (元/克)</span><div className="flex items-center"><input ref={marketPriceInputRef} type="number" value={marketPrice} onChange={(e) => handleMarketPriceChange(e.target.value)} placeholder="0.00" className="no-spinners text-xl font-bold text-brand-yellow font-mono bg-transparent border-none p-0 w-full outline-none" /><div className="flex flex-col gap-0.5 ml-2"><button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronUp size={10} strokeWidth={3} /></button><button onClick={() => updateMarketPrice(-appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronDown size={10} strokeWidth={3} /></button></div></div></div>
+                    <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 focus-within:border-brand-yellow transition-colors"><span className="text-xs text-app-subtext block mb-1">参考市价 (元/克)</span><div className="flex items-center"><input ref={marketPriceInputRef} type="number" value={marketPrice} onChange={(e) => handleMarketPriceChange(e.target.value)} placeholder="0.00" className={`no-spinners text-xl font-bold text-brand-yellow font-mono bg-transparent border-none p-0 w-full outline-none ${appSettings.touchMode ? 'cursor-ns-resize' : ''}`} /><div className="flex flex-col gap-0.5 ml-2"><button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronUp size={10} strokeWidth={3} /></button><button onClick={() => updateMarketPrice(-appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronDown size={10} strokeWidth={3} /></button></div></div></div>
                 </div>
              </div>
              <div className="space-y-3">
@@ -695,7 +761,8 @@ export default function App() {
                     value={inputs.price} 
                     onChange={(v) => handleInputChange('price', v)} 
                     placeholder="0.00" 
-                    step={appSettings.priceStep} 
+                    step={appSettings.priceStep}
+                    touchMode={appSettings.touchMode} 
                   />
                   <div className="relative">
                     <InputGroup 
@@ -704,7 +771,8 @@ export default function App() {
                       onChange={(v) => handleInputChange('grams', v)} 
                       placeholder="0.00" 
                       step={appSettings.gramsStep} 
-                      isQuantity={true} 
+                      isQuantity={true}
+                      touchMode={appSettings.touchMode} 
                     />
                     {previewType === 'SELL' && currentPosition.grams > 0 && (
                       <button 
