@@ -1,5 +1,4 @@
 
-
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
@@ -10,7 +9,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.9.1';
+const APP_VERSION = 'v1.9.2';
 
 export default function App() {
   // --- Theme State ---
@@ -766,7 +765,7 @@ export default function App() {
                   />
                   <div className="relative">
                     <InputGroup 
-                      label={previewType === 'SELL' ? "数量 (最大:" + currentPosition.grams.toFixed(2) + ")" : "数量 (克)"} 
+                      label="数量 (克)" 
                       value={inputs.grams} 
                       onChange={(v) => handleInputChange('grams', v)} 
                       placeholder="0.00" 
