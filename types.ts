@@ -1,5 +1,4 @@
 
-
 export type OrderType = 'BUY' | 'SELL';
 
 export interface TradeRecord {
@@ -29,6 +28,7 @@ export interface SimulationResult {
   newAvgCost: number;
   totalInvestment: number;
   costDifference: number; // Percent change in avg cost
+  totalValueChange: number; // Percent change in total position value
   projectedPnL?: number; // For SELL simulation
 }
 

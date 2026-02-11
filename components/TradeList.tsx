@@ -1,5 +1,4 @@
 
-
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { TradeRecord, AppSettings } from '../types';
@@ -15,12 +14,12 @@ interface TradeListProps {
   onSettingsChange: (updates: Partial<AppSettings>) => void;
 }
 
-type ColumnKey = 'tag' | 'price' | 'grams' | 'tradeTotal' | 'historicalAvg' | 'holdingTotal' | 'avgChange';
+type ColumnKey = 'tag' | 'price' | 'grams' | 'tradeTotal' | 'historicalAvg' | 'holdingTotal' | 'avgChange' | 'absChange';
 
 interface ColumnDef {
   id: ColumnKey;
   label: string;
-  render: (trade: TradeRecord & { historicalAvg: number, avgChange: number, holdingTotal: number }) => React.ReactNode;
+  render: (trade: TradeRecord & { historicalAvg: number, avgChange: number, absChange: number, holdingTotal: number }) => React.ReactNode;
 }
 
 const fmt = (n: number) => n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -339,7 +338,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     let runningTotalCost = 0;
     return trades.map(trade => {
       if (trade.isDisabled) {
-         return { ...trade, historicalAvg: 0, avgChange: 0, holdingTotal: 0 };
+         return { ...trade, historicalAvg: 0, avgChange: 0, absChange: 0, holdingTotal: 0 };
       }
       const avgBefore = runningGrams > 0 ? runningTotalCost / runningGrams : 0;
       if (trade.type === 'BUY') {
@@ -354,7 +353,9 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
       if (runningGrams < 0.0001) { runningGrams = 0; runningTotalCost = 0; }
       const avgAfter = runningGrams > 0 ? runningTotalCost / runningGrams : 0;
       let changePercent = avgBefore > 0 ? ((avgAfter - avgBefore) / avgBefore) * 100 : 0;
-      return { ...trade, historicalAvg: avgAfter, avgChange: changePercent, holdingTotal: runningTotalCost };
+      let changeAbs = avgBefore > 0 ? (avgAfter - avgBefore) : 0;
+      
+      return { ...trade, historicalAvg: avgAfter, avgChange: changePercent, absChange: changeAbs, holdingTotal: runningTotalCost };
     });
   }, [trades]);
 
@@ -391,21 +392,40 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     price: { id: 'price', label: '价格', render: (t) => <span className="font-mono text-app-text">{t.price.toFixed(2)}</span> },
     grams: { id: 'grams', label: '数量', render: (t) => <span className="font-mono text-app-text">{t.grams.toFixed(2)}</span> },
     tradeTotal: { id: 'tradeTotal', label: '交易额', render: (t) => <span className="font-mono text-app-text/70">{fmt(t.price * t.grams)}</span> },
-    historicalAvg: { id: 'historicalAvg', label: '持仓均价', render: (t) => 
-       t.isDisabled ? <span className="text-app-subtext select-none">-</span> : <span className="font-mono text-brand-yellow font-medium">{t.historicalAvg > 0 ? t.historicalAvg.toFixed(2) : '-'}</span> 
-    },
     holdingTotal: { id: 'holdingTotal', label: '持仓总额', render: (t) => 
        t.isDisabled ? <span className="text-app-subtext select-none">-</span> : <span className="font-mono text-app-subtext text-xs">{t.holdingTotal > 0 ? fmt(t.holdingTotal) : '-'}</span> 
     },
-    avgChange: { id: 'avgChange', label: '成本浮动', render: (t) => {
-      if (t.isDisabled || Math.abs(t.avgChange) < 0.001) return <span className="text-app-subtext">-</span>;
-      return <span className={`font-mono font-medium text-xs ${t.avgChange > 0 ? 'text-brand-red' : 'text-brand-green'}`}>{t.avgChange > 0 ? '+' : ''}{t.avgChange.toFixed(2)}%</span>;
+    historicalAvg: { id: 'historicalAvg', label: '持仓均价', render: (t) => {
+       if (t.isDisabled) return <span className="text-app-subtext select-none">-</span>;
+       if (t.historicalAvg <= 0) return <span className="font-mono text-brand-yellow font-medium">-</span>;
+       
+       let colorClass = 'text-brand-yellow';
+       // Reversed logic: red if historical avg is lower than trade price, green if higher
+       if (t.historicalAvg < t.price) colorClass = 'text-brand-red';
+       else if (t.historicalAvg > t.price) colorClass = 'text-brand-green';
+
+       return <span className={`font-mono font-medium ${colorClass}`}>{t.historicalAvg.toFixed(2)}</span>;
+    }},
+    absChange: { id: 'absChange', label: '均价变动', render: (t) => {
+        if (t.isDisabled || Math.abs(t.absChange) < 0.001) return <span className="text-app-subtext">-</span>;
+        return <span className={`font-mono font-medium text-xs ${t.absChange > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+          {t.absChange > 0 ? '+' : ''}{t.absChange.toFixed(2)}
+        </span>;
+    }},
+    avgChange: { id: 'avgChange', label: '均价价差', render: (t) => {
+      if (t.isDisabled || t.historicalAvg === 0) return <span className="text-app-subtext">-</span>;
+      const diff = t.historicalAvg - t.price;
+      if (Math.abs(diff) < 0.001) return <span className="text-app-subtext">0.00</span>;
+      // Reversed logic: red if diff is negative (avg < price), green if positive (avg > price)
+      return <span className={`font-mono font-medium text-xs ${diff < 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+        {diff > 0 ? '+' : ''}{diff.toFixed(2)}
+      </span>;
     }}
   };
 
-  const DEFAULT_ORDER: ColumnKey[] = ['tag', 'price', 'grams', 'tradeTotal', 'holdingTotal', 'historicalAvg', 'avgChange'];
+  const DEFAULT_ORDER: ColumnKey[] = ['tag', 'price', 'grams', 'tradeTotal', 'holdingTotal', 'historicalAvg', 'absChange', 'avgChange'];
   const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(() => {
-    const saved = localStorage.getItem('gold_trade_list_column_order_v3');
+    const saved = localStorage.getItem('gold_trade_list_column_order_v4');
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as ColumnKey[];
@@ -418,7 +438,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   });
 
   useEffect(() => {
-    localStorage.setItem('gold_trade_list_column_order_v3', JSON.stringify(columnOrder));
+    localStorage.setItem('gold_trade_list_column_order_v4', JSON.stringify(columnOrder));
   }, [columnOrder]);
 
   const onColPointerDown = (e: React.PointerEvent, id: ColumnKey) => {
@@ -485,10 +505,8 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
 
   const onRowPointerDown = (e: React.PointerEvent, id: string) => {
     if (e.button !== 0) return;
-    // 强制阻止文字选择和默认行为
     e.preventDefault();
     
-    // 允许在任何排序模式下进行拖拽，拖拽后的结果就是新的“真实”顺序
     const rects = new Map();
     displayTrades.forEach(t => {
       const el = containerRef.current?.querySelector(`[data-row="${t.id}"]`);
@@ -539,14 +557,11 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
         
         // Remove computed fields to get clean TradeRecord objects
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const sanitized = newTrades.map(({ historicalAvg, avgChange, holdingTotal, ...rest }) => rest as TradeRecord);
+        const sanitized = newTrades.map(({ historicalAvg, avgChange, absChange, holdingTotal, ...rest }) => rest as TradeRecord);
 
         if (sortDesc) {
-            // If dragging in "Newest -> Earliest" mode, the resulting 'newTrades' is also in reverse order.
-            // We must reverse it back to store the "true" chronological order (Earliest -> Newest).
             onReorder(sanitized.reverse());
         } else {
-            // In "Earliest -> Newest" mode, the visual order matches the storage order.
             onReorder(sanitized);
         }
       }
@@ -616,7 +631,6 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                 })}
                 <th className="px-1 py-3 md:py-4 text-center sticky right-0 z-20 bg-app-bg border-l border-b border-app-border shadow-lg w-[90px]">
                    <button onClick={() => setSortDesc(!sortDesc)} className={`flex items-center justify-center gap-1 w-full py-1.5 rounded-md transition-all text-[11px] font-bold border ${sortDesc ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20' : 'bg-brand-green/10 text-brand-green border-brand-green/20 hover:bg-brand-green/20'}`} title={sortDesc ? "当前：最新在最前" : "当前：最早在最前"}>
-                     <ArrowDownUp size={12} />
                      <span>{sortDesc ? "最新→最早" : "最早→最新"}</span>
                    </button>
                 </th>

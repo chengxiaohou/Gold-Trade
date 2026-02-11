@@ -5,9 +5,10 @@ interface CostChartProps {
   currentAvg: number;
   newAvg: number;
   orderType: 'BUY' | 'SELL';
+  totalValueChange: number; // 新增：持仓总额变化幅度
 }
 
-export const CostChart: React.FC<CostChartProps> = ({ currentAvg, newAvg, orderType }) => {
+export const CostChart: React.FC<CostChartProps> = ({ currentAvg, newAvg, orderType, totalValueChange }) => {
   // Logic to determine scale
   const maxVal = Math.max(currentAvg, newAvg) || 1;
   const buffer = maxVal * 0.1; 
@@ -18,22 +19,14 @@ export const CostChart: React.FC<CostChartProps> = ({ currentAvg, newAvg, orderT
 
   let diff = 0;
   
-  // Percent calculation (Signed)
-  // (New - Old) / Old
-  const percentChange = currentAvg > 0 ? ((newAvg - currentAvg) / currentAvg) * 100 : 0;
-  
+  // 对于下方差值展示，保留均价的绝对值差异计算
   if (orderType === 'BUY') {
-    // Buy affects Avg Cost
     diff = newAvg - currentAvg;
   } else {
-    // Sell compares Price to Cost
     diff = newAvg - currentAvg;
   }
 
-  // Color Logic: Red for Up/Rise, Green for Down/Fall
-  // For BUY: Cost Up (Red), Cost Down (Green)
-  // For SELL: Price > Cost (Red/Profitish), Price < Cost (Green/Lossish)
-  // General Rule: Value Higher = Red, Value Lower = Green
+  // 颜色逻辑：增加为红，减少为绿
   const isUp = newAvg > currentAvg;
   
   const currentBarColor = 'bg-app-subtext';
@@ -48,15 +41,9 @@ export const CostChart: React.FC<CostChartProps> = ({ currentAvg, newAvg, orderT
       {/* Visual Header */}
       <div className="flex justify-between items-end mb-2">
         <div className="flex flex-col">
-           <span className="text-[10px] uppercase tracking-wider text-app-subtext font-bold">差异金额</span>
+           <span className="text-[10px] uppercase tracking-wider text-app-subtext font-bold">均价差异</span>
            <span className={`text-lg font-bold ${diffColor}`}>
              {diff > 0 ? '+' : ''}{fmt(diff)}
-           </span>
-        </div>
-        <div className="text-right">
-           <span className="text-[10px] text-app-subtext block uppercase tracking-wider font-bold">影响幅度</span>
-           <span className={`text-xs font-mono font-bold ${diffColor}`}>
-             {percentChange > 0 ? '+' : ''}{percentChange.toFixed(2)}%
            </span>
         </div>
       </div>
