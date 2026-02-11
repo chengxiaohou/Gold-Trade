@@ -2,88 +2,84 @@
 import React from 'react';
 
 interface CostChartProps {
-  currentAvg: number;
-  newAvg: number;
-  orderType: 'BUY' | 'SELL';
-  totalValueChange: number; // 新增：持仓总额变化幅度
+  currentValue: number;
+  newValue: number;
 }
 
-export const CostChart: React.FC<CostChartProps> = ({ currentAvg, newAvg, orderType, totalValueChange }) => {
-  // Logic to determine scale
-  const maxVal = Math.max(currentAvg, newAvg) || 1;
-  const buffer = maxVal * 0.1; 
-  const scaleMax = maxVal + buffer;
+export const CostChart: React.FC<CostChartProps> = ({ currentValue, newValue }) => {
+  const isIncrease = newValue > currentValue;
+  const diff = Math.abs(newValue - currentValue);
 
-  const currentPercent = (currentAvg / scaleMax) * 100;
-  const newPercent = (newAvg / scaleMax) * 100;
+  const baseValue = isIncrease ? currentValue : newValue;
+  const changeValue = diff;
 
-  let diff = 0;
-  
-  // 对于下方差值展示，保留均价的绝对值差异计算
-  if (orderType === 'BUY') {
-    diff = newAvg - currentAvg;
-  } else {
-    diff = newAvg - currentAvg;
-  }
+  // Scale reference: The bar represents 100% of the larger value (Post-trade for Buy, Pre-trade for Sell)
+  const scaleRef = isIncrease ? newValue : currentValue;
+  const safeScale = scaleRef || 1;
 
-  // 颜色逻辑：增加为红，减少为绿
-  const isUp = newAvg > currentAvg;
-  
-  const currentBarColor = 'bg-app-subtext';
-  const newBarColor = isUp ? 'bg-brand-red' : 'bg-brand-green';
-  const diffColor = isUp ? 'text-brand-red' : 'text-brand-green';
+  const basePercent = (baseValue / safeScale) * 100;
+  const changePercent = (changeValue / safeScale) * 100;
 
   const fmt = (n: number) => n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
-    <div className="w-full mt-1 select-none bg-app-input border border-app-border rounded-lg p-3">
-      
-      {/* Visual Header */}
-      <div className="flex justify-between items-end mb-2">
-        <div className="flex flex-col">
-           <span className="text-[10px] uppercase tracking-wider text-app-subtext font-bold">均价差异</span>
-           <span className={`text-lg font-bold ${diffColor}`}>
-             {diff > 0 ? '+' : ''}{fmt(diff)}
-           </span>
-        </div>
+    <div className="w-full mt-3 pt-3 border-t border-app-border/30 select-none">
+      {/* Title / Header - Hidden to save space as the context is clear, or can be small caption */}
+      {/* <div className="text-[10px] text-app-subtext mb-2 flex justify-between">
+         <span>资金结构分布</span>
+      </div> */}
+
+      {/* The Bar */}
+      <div className="relative h-2 w-full bg-app-input rounded-full overflow-hidden flex">
+        {/* Base Segment (Gray) */}
+        <div 
+          className="h-full bg-app-subtext/30 transition-all duration-500"
+          style={{ width: `${basePercent}%` }}
+        ></div>
+        {/* Change Segment (Color) */}
+        <div 
+          className={`h-full transition-all duration-500 striped-bar ${isIncrease ? 'bg-brand-red' : 'bg-brand-green opacity-80'}`}
+          style={{ width: `${changePercent}%` }}
+        ></div>
+        
+         <style>{`
+            .striped-bar {
+              background-image: linear-gradient(45deg,rgba(255,255,255,.15) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.15) 75%,transparent 75%,transparent);
+              background-size: 6px 6px;
+            }
+          `}</style>
       </div>
 
-      {/* Bars Container */}
-      <div className="relative space-y-4">
+      {/* 3-Column Legend & Values */}
+      <div className="grid grid-cols-3 mt-2 gap-2">
         
-        {/* Current Cost Bar */}
-        <div className="relative group">
-          <div className="flex justify-between text-[10px] mb-0.5">
-             <span className="text-app-subtext">当前成本</span>
-             <span className="text-app-text font-mono">{fmt(currentAvg)}</span>
-          </div>
-          <div className="h-1.5 w-full bg-app-border rounded-full overflow-hidden">
-             <div 
-               className={`h-full ${currentBarColor} rounded-full transition-all duration-500`}
-               style={{ width: `${currentPercent}%` }}
-             ></div>
-          </div>
-          {/* Reference Line Down */}
-          <div 
-             className="absolute top-4 h-6 border-r border-dashed border-app-subtext/40 z-0"
-             style={{ left: `${currentPercent}%` }}
-          ></div>
+        {/* Left: Base State */}
+        <div className="flex flex-col items-start">
+           <div className="flex items-center gap-1.5 mb-0.5">
+             <div className="w-1.5 h-1.5 rounded-full bg-app-subtext/40"></div>
+             <span className="text-[10px] text-app-subtext">{isIncrease ? '原持仓' : '剩余持仓'}</span>
+           </div>
+           <span className="font-mono text-xs font-bold text-app-text/80">{fmt(isIncrease ? currentValue : newValue)}</span>
         </div>
 
-        {/* New Cost / Price Bar */}
-        <div className="relative">
-          <div className="flex justify-between text-[10px] mb-0.5">
-             <span className="text-app-subtext">{orderType === 'BUY' ? '预估成本' : '成交价格'}</span>
-             <span className={`font-mono font-bold ${diffColor}`}>{fmt(newAvg)}</span>
-          </div>
-          <div className="h-1.5 w-full bg-app-border rounded-full overflow-hidden relative z-10">
-             <div 
-               className={`h-full ${newBarColor} rounded-full transition-all duration-500 shadow-[0_0_8px_rgba(0,0,0,0.3)]`}
-               style={{ width: `${newPercent}%` }}
-             ></div>
-          </div>
+        {/* Center: Delta */}
+        <div className="flex flex-col items-center">
+           <div className="flex items-center gap-1.5 mb-0.5">
+             <div className={`w-1.5 h-1.5 rounded-full ${isIncrease ? 'bg-brand-red' : 'bg-brand-green'}`}></div>
+             <span className="text-[10px] text-app-subtext">{isIncrease ? '新增投入' : '变现成本'}</span>
+           </div>
+           <span className={`font-mono text-xs font-bold ${isIncrease ? 'text-brand-red' : 'text-brand-green'}`}>
+             {isIncrease ? '+' : '-'}{fmt(diff)}
+           </span>
         </div>
 
+        {/* Right: Final State */}
+        <div className="flex flex-col items-end">
+           <div className="flex items-center justify-end gap-1.5 mb-0.5">
+             <span className="text-[10px] text-app-subtext">{isIncrease ? '预计总持仓' : '原持仓总额'}</span>
+           </div>
+           <span className="font-mono text-xs font-bold text-app-text">{fmt(isIncrease ? newValue : currentValue)}</span>
+        </div>
       </div>
     </div>
   );

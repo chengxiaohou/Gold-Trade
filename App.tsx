@@ -9,7 +9,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.9.7';
+const APP_VERSION = 'v1.9.11';
 
 export default function App() {
   // --- Theme State ---
@@ -857,8 +857,11 @@ export default function App() {
                         </div>
                         {previewType === 'SELL' && simulation.projectedPnL !== undefined && (<div className="col-span-2 border-t border-white/[0.03] pt-2 flex justify-between items-center"><span className="text-app-subtext text-[10px] font-bold">预计本次盈亏：</span><span className={`font-mono font-bold text-sm ${simulation.projectedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{simulation.projectedPnL >= 0 ? '+' : ''}{simulation.projectedPnL.toFixed(2)}</span></div>)}
                     </div>
+                    {/* Move CostChart inside the stats card to integrate it as a visual footer */}
+                    {inputs.grams && inputs.price && (
+                      <CostChart currentValue={currentPosition.totalCost} newValue={simulation.totalInvestment} />
+                    )}
                 </div>
-                {inputs.grams && inputs.price && <CostChart currentAvg={currentPosition.avgCost} newAvg={previewType === 'BUY' ? simulation.newAvgCost : parseFloat(inputs.price)} orderType={previewType} totalValueChange={simulation.totalValueChange} />}
                 <button onClick={executeTrade} disabled={!inputs.price || !inputs.grams} className={`w-full py-2.5 rounded-lg font-semibold text-base flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 shadow-md ${previewType === 'BUY' ? 'bg-brand-red text-white hover:bg-red-500' : 'bg-brand-green text-white hover:bg-green-500'}`}><CheckCircle2 size={16} />成交</button>
               </div>
             </div>
