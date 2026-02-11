@@ -23,7 +23,7 @@ export const CostChart: React.FC<CostChartProps> = ({ currentValue, newValue }) 
   const fmt = (n: number) => n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
-    <div className="w-full mt-3 pt-3 border-t border-app-border/30 select-none">
+    <div className="w-full mt-3 pt-3 border-t border-black/5 dark:border-white/5 select-none">
       {/* Title / Header - Hidden to save space as the context is clear, or can be small caption */}
       {/* <div className="text-[10px] text-app-subtext mb-2 flex justify-between">
          <span>资金结构分布</span>
@@ -31,23 +31,16 @@ export const CostChart: React.FC<CostChartProps> = ({ currentValue, newValue }) 
 
       {/* The Bar */}
       <div className="relative h-2 w-full bg-app-input rounded-full overflow-hidden flex">
-        {/* Base Segment (Gray) */}
+        {/* Base Segment (Gray) - Significantly brighter solid color for visibility */}
         <div 
-          className="h-full bg-app-subtext/30 transition-all duration-500"
+          className="h-full bg-gray-200 dark:bg-gray-600 transition-all duration-500"
           style={{ width: `${basePercent}%` }}
         ></div>
-        {/* Change Segment (Color) */}
+        {/* Change Segment (Color) - Solid color */}
         <div 
-          className={`h-full transition-all duration-500 striped-bar ${isIncrease ? 'bg-brand-red' : 'bg-brand-green opacity-80'}`}
+          className={`h-full transition-all duration-500 ${isIncrease ? 'bg-brand-red' : 'bg-brand-green'}`}
           style={{ width: `${changePercent}%` }}
         ></div>
-        
-         <style>{`
-            .striped-bar {
-              background-image: linear-gradient(45deg,rgba(255,255,255,.15) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.15) 75%,transparent 75%,transparent);
-              background-size: 6px 6px;
-            }
-          `}</style>
       </div>
 
       {/* 3-Column Legend & Values */}
@@ -56,7 +49,7 @@ export const CostChart: React.FC<CostChartProps> = ({ currentValue, newValue }) 
         {/* Left: Base State */}
         <div className="flex flex-col items-start">
            <div className="flex items-center gap-1.5 mb-0.5">
-             <div className="w-1.5 h-1.5 rounded-full bg-app-subtext/40"></div>
+             <div className="w-1.5 h-1.5 rounded-full bg-gray-200 dark:bg-gray-600"></div>
              <span className="text-[10px] text-app-subtext">{isIncrease ? '原持仓' : '剩余持仓'}</span>
            </div>
            <span className="font-mono text-xs font-bold text-app-text/80">{fmt(isIncrease ? currentValue : newValue)}</span>
