@@ -581,7 +581,7 @@ export default function App() {
     const renderSingleDiff = (diff: number) => {
       if (Math.abs(diff) < 0.001) return <span className="text-[10px] text-app-subtext font-mono">-</span>;
       return (
-        <div className={`flex items-center text-xs font-bold font-mono ${diff > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+        <div className={`flex items-center text-xs font-bold font-mono ${diff < 0 ? 'text-brand-red' : 'text-brand-green'}`}>
             {diff > 0 ? (
               <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-b-[4px] border-b-current mr-1" />
             ) : (

@@ -411,7 +411,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     grams: { id: 'grams', label: '数量', render: (t) => <span className="font-mono text-app-text">{t.grams.toFixed(2)}</span> },
     tradeTotal: { id: 'tradeTotal', label: '交易额', render: (t) => <span className="font-mono text-app-text/70">{fmt(t.price * t.grams)}</span> },
     holdingTotal: { id: 'holdingTotal', label: '持仓总额', render: (t) => 
-       t.isDisabled ? <span className="text-app-subtext select-none">-</span> : <span className="font-mono text-app-subtext text-xs">{t.holdingTotal > 0 ? fmt(t.holdingTotal) : '-'}</span> 
+       <span className="font-mono text-app-subtext text-xs">{t.holdingTotal > 0 ? fmt(t.holdingTotal) : '-'}</span> 
     },
     historicalAvg: { id: 'historicalAvg', label: settings.priceDisplayMode === 'avgCost' ? '持仓均价' : settings.priceDisplayMode === 'breakEven' ? '回本价' : (
       <div className="flex flex-col leading-tight items-start">
@@ -419,10 +419,8 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
         <span className="text-[10px] opacity-70 font-normal">持仓均价</span>
       </div>
     ), render: (t) => {
-       if (t.isDisabled) return <span className="text-app-subtext select-none">-</span>;
-       
        const renderValue = (val: number, isAvg: boolean = false) => {
-           if (val <= 0) return <span className="font-mono text-app-subtext font-medium">-</span>;
+           if (val <= 0) return <span className={`font-mono text-app-subtext font-medium ${isAvg ? 'text-[10px] opacity-70' : ''}`}>-</span>;
            let colorClass = 'text-app-subtext';
            if (val < t.price) colorClass = 'text-brand-red';
            else if (val > t.price) colorClass = 'text-brand-green';
@@ -448,11 +446,9 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
         <span className="text-[10px] opacity-70 font-normal">均价变动</span>
       </div>
     ), render: (t) => {
-        if (t.isDisabled) return <span className="text-app-subtext">-</span>;
-        
         const renderValue = (val: number, isAvg: boolean = false) => {
             if (Math.abs(val) < 0.001) return <span className={`text-app-subtext ${isAvg ? 'text-[10px] opacity-70' : ''}`}>-</span>;
-            return <span className={`font-mono font-medium text-xs ${val > 0 ? 'text-brand-red' : 'text-brand-green'} ${isAvg ? 'text-[10px] opacity-70' : ''}`}>
+            return <span className={`font-mono font-medium text-xs ${val < 0 ? 'text-brand-red' : 'text-brand-green'} ${isAvg ? 'text-[10px] opacity-70' : ''}`}>
               {val > 0 ? '+' : ''}{val.toFixed(2)}
             </span>;
         };
@@ -476,8 +472,6 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
         <span className="text-[10px] opacity-70 font-normal">均价价差</span>
       </div>
     ), render: (t) => {
-      if (t.isDisabled) return <span className="text-app-subtext">-</span>;
-      
       const renderValue = (avgVal: number, isAvg: boolean = false) => {
           if (avgVal === 0) return <span className={`text-app-subtext ${isAvg ? 'text-[10px] opacity-70' : ''}`}>-</span>;
           const diff = t.price - avgVal;
