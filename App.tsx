@@ -9,7 +9,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.9.15';
+const APP_VERSION = 'v1.9.17';
 
 export default function App() {
   // --- Theme State ---
@@ -66,7 +66,8 @@ export default function App() {
       gramsStep: parsed.gramsStep || 1,
       tagColors: parsed.tagColors || {},
       touchMode: parsed.touchMode ?? true,
-      priceDisplayMode: parsed.priceDisplayMode || 'breakEven'
+      priceDisplayMode: parsed.priceDisplayMode || 'breakEven',
+      totalCapital: parsed.totalCapital || 0
     };
   });
 
@@ -173,10 +174,35 @@ export default function App() {
     if (!/^\d*\.?\d*$/.test(value)) return;
     
     let processedValue = value;
+    const numVal = parseFloat(value) || 0;
+
     if (field === 'grams' && previewType === 'SELL') {
-      const numVal = parseFloat(value) || 0;
       if (numVal > currentPosition.grams) {
         processedValue = currentPosition.grams.toString();
+      }
+    }
+
+    if (previewType === 'BUY' && appSettings.totalCapital && appSettings.totalCapital > 0) {
+      const availableCapital = appSettings.totalCapital - currentPosition.totalCost;
+      const otherField = field === 'grams' ? 'price' : 'grams';
+      // Use the current input state for the other field
+      const otherVal = parseFloat(inputs[otherField]) || 0;
+      
+      if (availableCapital > 0) {
+        if (numVal * otherVal > availableCapital) {
+          if (field === 'grams' && otherVal > 0) {
+            const maxGrams = availableCapital / otherVal;
+            processedValue = (Math.floor(maxGrams * 100) / 100).toString();
+          } else if (field === 'price' && otherVal > 0) {
+            const maxPrice = availableCapital / otherVal;
+            processedValue = (Math.floor(maxPrice * 100) / 100).toString();
+          }
+        }
+      } else {
+        // No available capital, force to 0 if they try to enter a positive number
+        if (numVal > 0) {
+          processedValue = "0";
+        }
       }
     }
     
@@ -186,8 +212,27 @@ export default function App() {
   const handleMarketPriceChange = (value: string) => {
     if (!/^\d*\.?\d*$/.test(value)) return;
     setMarketPrice(value);
+    
     // Real-time synchronization: Update simulation input price when market price changes
-    setInputs(prev => ({ ...prev, price: value }));
+    setInputs(prev => {
+      let newGrams = prev.grams;
+      const newPriceNum = parseFloat(value) || 0;
+      const currentGramsNum = parseFloat(prev.grams) || 0;
+      
+      if (previewType === 'BUY' && appSettings.totalCapital && appSettings.totalCapital > 0) {
+        const availableCapital = appSettings.totalCapital - currentPosition.totalCost;
+        if (availableCapital > 0) {
+          if (newPriceNum * currentGramsNum > availableCapital && newPriceNum > 0) {
+            const maxGrams = availableCapital / newPriceNum;
+            newGrams = (Math.floor(maxGrams * 100) / 100).toString();
+          }
+        } else if (currentGramsNum > 0) {
+          newGrams = "0";
+        }
+      }
+      
+      return { price: value, grams: newGrams };
+    });
   };
 
   // Keep a ref to the handler to use in Effect without triggering re-binds
@@ -805,7 +850,28 @@ export default function App() {
                 <div className="bg-app-card border border-app-border rounded-xl p-6 shadow-sm grid grid-cols-2 md:grid-cols-3 gap-4">
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border"><span className="text-xs text-app-subtext block mb-1">{renderPriceLabel('平均成本')}</span><div className="text-xl font-bold text-app-text font-mono">{renderPriceValue(currentPosition.breakEvenPrice, currentPosition.avgCost, "text-xs text-app-subtext")}</div></div>
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border"><span className="text-xs text-app-subtext block mb-1">持仓数量 (克)</span><div className="text-xl font-bold text-app-text font-mono">{currentPosition.grams.toFixed(2)}</div></div>
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border"><span className="text-xs text-app-subtext block mb-1">持仓总投入</span><div className="text-xl font-bold text-app-text font-mono">{currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div></div>
+                    <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-indigo-500/50 focus-within:border-indigo-500 transition-colors">
+                        <span className="text-xs text-app-subtext block mb-1">总资金</span>
+                        <div className="flex items-center">
+                            <input 
+                                type="number" 
+                                value={appSettings.totalCapital || ''} 
+                                onChange={(e) => handleSettingsUpdate({ totalCapital: parseFloat(e.target.value) || 0 })} 
+                                placeholder="0.00" 
+                                className="no-spinners text-xl font-bold text-app-text font-mono bg-transparent border-none p-0 w-full outline-none" 
+                            />
+                        </div>
+                    </div>
+                    <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5">
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-app-subtext">持仓总投入</span>
+                            <span className="text-sm font-bold font-mono text-app-text">{currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-app-subtext">持仓净值</span>
+                            <span className="text-sm font-bold font-mono text-app-text">{marketPrice ? (currentPosition.grams * (parseFloat(marketPrice) || 0)).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</span>
+                        </div>
+                    </div>
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5">
                         <div className="flex items-center justify-between">
                             <span className="text-[11px] text-app-subtext">浮动盈亏</span>
@@ -815,10 +881,6 @@ export default function App() {
                             <span className="text-[11px] text-app-subtext">已实现盈亏</span>
                             <span className={`text-sm font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
                         </div>
-                    </div>
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border">
-                        <span className="text-xs text-app-subtext block mb-1">持仓净值</span>
-                        <div className="text-xl font-bold text-app-text font-mono">{marketPrice ? (currentPosition.grams * (parseFloat(marketPrice) || 0)).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</div>
                     </div>
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 focus-within:border-brand-yellow transition-colors"><span className="text-xs text-app-subtext block mb-1">参考市价 (元/克)</span><div className="flex items-center"><input ref={marketPriceInputRef} type="number" value={marketPrice} onChange={(e) => handleMarketPriceChange(e.target.value)} placeholder="0.00" className={`no-spinners text-xl font-bold text-brand-yellow font-mono bg-transparent border-none p-0 w-full outline-none ${appSettings.touchMode ? 'cursor-ns-resize' : ''}`} /><div className="flex flex-col gap-0.5 ml-2"><button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronUp size={10} strokeWidth={3} /></button><button onClick={() => updateMarketPrice(-appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronDown size={10} strokeWidth={3} /></button></div></div></div>
                 </div>
@@ -867,6 +929,18 @@ export default function App() {
                         className="absolute -top-1 right-0 text-[9px] font-bold text-brand-green hover:underline"
                       >
                         全部卖出
+                      </button>
+                    )}
+                    {previewType === 'BUY' && appSettings.totalCapital && appSettings.totalCapital > 0 && (appSettings.totalCapital - currentPosition.totalCost) > 0 && parseFloat(inputs.price) > 0 && (
+                      <button 
+                        onClick={() => {
+                          const available = appSettings.totalCapital! - currentPosition.totalCost;
+                          const maxGrams = available / parseFloat(inputs.price);
+                          handleInputChange('grams', (Math.floor(maxGrams * 100) / 100).toString());
+                        }}
+                        className="absolute -top-1 right-0 text-[9px] font-bold text-brand-red hover:underline"
+                      >
+                        全部买入
                       </button>
                     )}
                   </div>

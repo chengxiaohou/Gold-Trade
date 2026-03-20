@@ -51,4 +51,5 @@ export interface AppSettings {
   tagColors: Record<string, string>; // Maps tag text to a color key (e.g., "short_term" -> "red")
   touchMode: boolean; // New: Enable touch drag to adjust values
   priceDisplayMode: 'breakEven' | 'avgCost' | 'both';
+  totalCapital?: number; // New: Total planned investment capital
 }
