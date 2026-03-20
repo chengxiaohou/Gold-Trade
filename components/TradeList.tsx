@@ -447,8 +447,9 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
       </div>
     ), render: (t) => {
         const renderValue = (val: number, isAvg: boolean = false) => {
-            if (Math.abs(val) < 0.001) return <span className={`text-app-subtext ${isAvg ? 'text-[10px] opacity-70' : ''}`}>-</span>;
-            return <span className={`font-mono font-medium text-xs ${val < 0 ? 'text-brand-red' : 'text-brand-green'} ${isAvg ? 'text-[10px] opacity-70' : ''}`}>
+            const sizeClass = isAvg ? 'text-[10px] opacity-70' : 'text-xs';
+            if (Math.abs(val) < 0.001) return <span className={`font-mono text-app-subtext ${sizeClass}`}>-</span>;
+            return <span className={`font-mono font-medium ${sizeClass} ${val < 0 ? 'text-brand-red' : 'text-brand-green'}`}>
               {val > 0 ? '+' : ''}{val.toFixed(2)}
             </span>;
         };
@@ -473,10 +474,11 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
       </div>
     ), render: (t) => {
       const renderValue = (avgVal: number, isAvg: boolean = false) => {
-          if (avgVal === 0) return <span className={`text-app-subtext ${isAvg ? 'text-[10px] opacity-70' : ''}`}>-</span>;
+          const sizeClass = isAvg ? 'text-[10px] opacity-70' : 'text-xs';
+          if (avgVal === 0) return <span className={`font-mono text-app-subtext ${sizeClass}`}>-</span>;
           const diff = t.price - avgVal;
-          if (Math.abs(diff) < 0.001) return <span className={`text-app-subtext ${isAvg ? 'text-[10px] opacity-70' : '0.00'}`}>0.00</span>;
-          return <span className={`font-mono font-medium text-xs ${diff > 0 ? 'text-brand-red' : 'text-brand-green'} ${isAvg ? 'text-[10px] opacity-70' : ''}`}>
+          if (Math.abs(diff) < 0.001) return <span className={`font-mono text-app-subtext ${sizeClass}`}>0.00</span>;
+          return <span className={`font-mono font-medium ${sizeClass} ${diff > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
             {diff > 0 ? '+' : ''}{diff.toFixed(2)}
           </span>;
       };
