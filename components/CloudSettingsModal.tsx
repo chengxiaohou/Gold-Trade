@@ -28,6 +28,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [priceStep, setPriceStep] = useState(appSettings.priceStep.toString());
   const [gramsStep, setGramsStep] = useState(appSettings.gramsStep.toString());
   const [touchMode, setTouchMode] = useState(appSettings.touchMode ?? true);
+  const [priceDisplayMode, setPriceDisplayMode] = useState<'breakEven' | 'avgCost' | 'both'>(appSettings.priceDisplayMode || 'breakEven');
 
   const [activeTab, setActiveTab] = useState<'general' | 'cloud'>(initialTab);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -42,6 +43,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       setPriceStep(appSettings.priceStep.toString());
       setGramsStep(appSettings.gramsStep.toString());
       setTouchMode(appSettings.touchMode ?? true);
+      setPriceDisplayMode(appSettings.priceDisplayMode || 'breakEven');
       setIsVerifying(false);
       setLogState(null);
       // Automatically switch to the requested tab when opening
@@ -71,7 +73,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         priceStep: newPriceStep,
         gramsStep: newGramsStep,
         tagColors: appSettings.tagColors, // Preserve existing tag colors
-        touchMode: touchMode
+        touchMode: touchMode,
+        priceDisplayMode: priceDisplayMode
     };
 
     // If Cloud tab is not active and no changes to cloud config, just save app settings
@@ -213,6 +216,21 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       onChange={(e) => setGramsStep(e.target.value)}
                       className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-mono text-sm"
                     />
+                 </div>
+                 
+                 <div className="space-y-2">
+                    <label className="text-sm font-medium text-app-text block">
+                      价格显示模式
+                    </label>
+                    <select
+                      value={priceDisplayMode}
+                      onChange={(e) => setPriceDisplayMode(e.target.value as 'breakEven' | 'avgCost' | 'both')}
+                      className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all text-sm"
+                    >
+                      <option value="breakEven">仅看回本价</option>
+                      <option value="avgCost">仅看持仓均价</option>
+                      <option value="both">同时显示</option>
+                    </select>
                  </div>
                  
                  <div className="pt-2 border-t border-app-border">

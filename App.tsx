@@ -65,7 +65,8 @@ export default function App() {
       priceStep: parsed.priceStep || 5,
       gramsStep: parsed.gramsStep || 1,
       tagColors: parsed.tagColors || {},
-      touchMode: parsed.touchMode ?? true
+      touchMode: parsed.touchMode ?? true,
+      priceDisplayMode: parsed.priceDisplayMode || 'breakEven'
     };
   });
 
@@ -157,7 +158,8 @@ export default function App() {
 
     if (grams < 0.0001) { grams = 0; totalCost = 0; }
     const avgCost = grams > 0 ? totalCost / grams : 0;
-    return { grams, avgCost, totalCost, realizedPnL };
+    const breakEvenPrice = grams > 0 ? Math.max(0, (totalCost - realizedPnL) / grams) : 0;
+    return { grams, avgCost, totalCost, realizedPnL, breakEvenPrice };
   }, [trades]);
 
   const floatingPnL = useMemo(() => {
@@ -475,6 +477,7 @@ export default function App() {
     let newTotalGrams = 0;
     let newTotalCost = 0;
     let projectedPnL = 0;
+    let newRealizedPnL = currentPosition.realizedPnL;
 
     if (type === 'BUY') {
       newTotalGrams = currentPosition.grams + grams;
@@ -484,9 +487,12 @@ export default function App() {
       const costBasis = grams * currentPosition.avgCost;
       newTotalCost = currentPosition.totalCost - costBasis;
       projectedPnL = (price * grams) - costBasis;
+      newRealizedPnL += projectedPnL;
     }
 
     const newAvgCost = newTotalGrams > 0 ? newTotalCost / newTotalGrams : 0;
+    const newBreakEvenPrice = newTotalGrams > 0 ? Math.max(0, (newTotalCost - newRealizedPnL) / newTotalGrams) : 0;
+    
     const costDifference = currentPosition.avgCost > 0 
       ? ((newAvgCost - currentPosition.avgCost) / currentPosition.avgCost) * 100 
       : 0;
@@ -498,6 +504,7 @@ export default function App() {
     return { 
       newTotalGrams, 
       newAvgCost, 
+      newBreakEvenPrice,
       totalInvestment: newTotalCost, 
       costDifference, 
       totalValueChange,
@@ -540,6 +547,62 @@ export default function App() {
     setAiState({ loading: true, result: null, error: null });
     const resultText = await analyzeTrade(currentPosition, order, previewType === 'BUY', simulation);
     setAiState({ loading: false, result: resultText, error: null });
+  };
+
+  const renderPriceLabel = (baseLabel: string) => {
+    const isAvg = baseLabel.includes('均价') || baseLabel.includes('平均成本');
+    if (!isAvg) return baseLabel;
+    
+    if (appSettings.priceDisplayMode === 'breakEven') return baseLabel.replace('均价', '回本价').replace('平均成本', '回本价');
+    if (appSettings.priceDisplayMode === 'avgCost') return baseLabel.replace('回本价', '持仓均价').replace('平均成本', '持仓均价');
+    return (
+      <span className="flex flex-col leading-tight">
+        <span>{baseLabel.replace('均价', '回本价').replace('平均成本', '回本价')}</span>
+        <span className="text-[10px] opacity-70">持仓均价</span>
+      </span>
+    );
+  };
+
+  const renderPriceValue = (breakEven: number, avgCost: number, smallClassName: string = "text-sm text-app-subtext") => {
+    if (appSettings.priceDisplayMode === 'breakEven') return breakEven.toFixed(2);
+    if (appSettings.priceDisplayMode === 'avgCost') return avgCost.toFixed(2);
+    return (
+      <span className="flex flex-col leading-tight">
+        <span>{breakEven.toFixed(2)}</span>
+        <span className={smallClassName}>{avgCost.toFixed(2)}</span>
+      </span>
+    );
+  };
+
+  const renderPriceDiff = (newBreakEven: number, oldBreakEven: number, newAvg: number, oldAvg: number) => {
+    const diffBreakEven = newBreakEven - oldBreakEven;
+    const diffAvg = newAvg - oldAvg;
+    
+    const renderSingleDiff = (diff: number) => {
+      if (Math.abs(diff) < 0.001) return <span className="text-[10px] text-app-subtext font-mono">-</span>;
+      return (
+        <div className={`flex items-center text-xs font-bold font-mono ${diff > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+            {diff > 0 ? (
+              <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-b-[4px] border-b-current mr-1" />
+            ) : (
+              <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-t-[4px] border-t-current mr-1" />
+            )}
+            {Math.abs(diff).toFixed(2)}
+        </div>
+      );
+    };
+
+    if (appSettings.priceDisplayMode === 'breakEven') return renderSingleDiff(diffBreakEven);
+    if (appSettings.priceDisplayMode === 'avgCost') return renderSingleDiff(diffAvg);
+    
+    return (
+      <div className="flex flex-col items-end leading-tight">
+        {renderSingleDiff(diffBreakEven)}
+        <div className="opacity-70 scale-90 origin-right">
+          {renderSingleDiff(diffAvg)}
+        </div>
+      </div>
+    );
   };
 
   const renderActionButtons = () => (
@@ -740,7 +803,7 @@ export default function App() {
              <div className="space-y-3">
                 <div className="flex items-center gap-2 text-app-subtext pl-1"><Wallet size={16} /><h3 className="font-medium text-sm">当前持仓详情</h3></div>
                 <div className="bg-app-card border border-app-border rounded-xl p-6 shadow-sm grid grid-cols-2 md:grid-cols-3 gap-4">
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border"><span className="text-xs text-app-subtext block mb-1">平均成本</span><div className="text-xl font-bold text-app-text font-mono">{currentPosition.avgCost.toFixed(2)}</div></div>
+                    <div className="bg-app-bg p-3 rounded-lg border border-app-border"><span className="text-xs text-app-subtext block mb-1">{renderPriceLabel('平均成本')}</span><div className="text-xl font-bold text-app-text font-mono">{renderPriceValue(currentPosition.breakEvenPrice, currentPosition.avgCost, "text-xs text-app-subtext")}</div></div>
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border"><span className="text-xs text-app-subtext block mb-1">持仓数量 (克)</span><div className="text-xl font-bold text-app-text font-mono">{currentPosition.grams.toFixed(2)}</div></div>
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border"><span className="text-xs text-app-subtext block mb-1">持仓总投入</span><div className="text-xl font-bold text-app-text font-mono">{currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2})}</div></div>
                     <div className={`bg-app-bg p-3 rounded-lg border ${currentPosition.realizedPnL >= 0 ? 'border-brand-redDim' : 'border-brand-greenDim'}`}><span className="text-xs text-app-subtext block mb-1">已实现盈亏</span><div className={`text-xl font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toFixed(2)}</div></div>
@@ -799,23 +862,12 @@ export default function App() {
                 <div className="bg-app-input/30 rounded-xl p-4 border border-app-border space-y-3">
                     <div className="flex justify-between items-start">
                         <div>
-                            <span className="text-[10px] font-bold text-app-subtext uppercase block mb-1">成交后均价预估</span>
-                            <div className="flex items-baseline gap-1.5"><span className="text-3xl font-bold text-app-text tracking-tight font-mono">{simulation.newAvgCost.toFixed(2)}</span><span className="text-[10px] text-app-subtext font-bold">¥</span></div>
+                            <span className="text-[10px] font-bold text-app-subtext uppercase block mb-1">{renderPriceLabel('成交后均价预估')}</span>
+                            <div className="flex items-baseline gap-1.5"><span className="text-3xl font-bold text-app-text tracking-tight font-mono">{renderPriceValue(simulation.newBreakEvenPrice, simulation.newAvgCost, "text-sm text-app-subtext font-bold")}</span><span className="text-[10px] text-app-subtext font-bold">¥</span></div>
                             {(previewType === 'BUY' || currentPosition.grams > 0) && (
                                 <div className="flex items-center gap-1.5 mt-0.5">
                                     <span className="text-[10px] text-app-subtext font-medium opacity-80">较当前</span>
-                                    {Math.abs(simulation.newAvgCost - currentPosition.avgCost) > 0.001 ? (
-                                    <div className={`flex items-center text-xs font-bold font-mono ${simulation.newAvgCost - currentPosition.avgCost > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                                        {simulation.newAvgCost - currentPosition.avgCost > 0 ? (
-                                          <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-b-[4px] border-b-current mr-1" />
-                                        ) : (
-                                          <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-t-[4px] border-t-current mr-1" />
-                                        )}
-                                        {Math.abs(simulation.newAvgCost - currentPosition.avgCost).toFixed(2)}
-                                    </div>
-                                    ) : (
-                                    <span className="text-[10px] text-app-subtext font-mono">-</span>
-                                    )}
+                                    {renderPriceDiff(simulation.newBreakEvenPrice, currentPosition.breakEvenPrice, simulation.newAvgCost, currentPosition.avgCost)}
                                 </div>
                             )}
                         </div>

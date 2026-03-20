@@ -18,8 +18,8 @@ type ColumnKey = 'tag' | 'price' | 'grams' | 'tradeTotal' | 'historicalAvg' | 'h
 
 interface ColumnDef {
   id: ColumnKey;
-  label: string;
-  render: (trade: TradeRecord & { historicalAvg: number, avgChange: number, absChange: number, holdingTotal: number }) => React.ReactNode;
+  label: React.ReactNode;
+  render: (trade: TradeRecord & { historicalAvg: number, historicalBreakEven: number, avgChange: number, absChange: number, breakEvenChange: number, breakEvenAbsChange: number, holdingTotal: number }) => React.ReactNode;
 }
 
 const fmt = (n: number) => n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -336,11 +336,14 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   const tradesWithHistory = useMemo(() => {
     let runningGrams = 0;
     let runningTotalCost = 0;
+    let runningRealizedPnL = 0;
     return trades.map(trade => {
       if (trade.isDisabled) {
-         return { ...trade, historicalAvg: 0, avgChange: 0, absChange: 0, holdingTotal: 0 };
+         return { ...trade, historicalAvg: 0, historicalBreakEven: 0, avgChange: 0, absChange: 0, breakEvenChange: 0, breakEvenAbsChange: 0, holdingTotal: 0 };
       }
       const avgBefore = runningGrams > 0 ? runningTotalCost / runningGrams : 0;
+      const breakEvenBefore = runningGrams > 0 ? Math.max(0, (runningTotalCost - runningRealizedPnL) / runningGrams) : 0;
+      
       if (trade.type === 'BUY') {
         runningTotalCost += trade.price * trade.grams;
         runningGrams += trade.grams;
@@ -348,14 +351,29 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
         const currentAvg = runningGrams > 0 ? runningTotalCost / runningGrams : 0;
         const costBasis = trade.grams * currentAvg;
         runningTotalCost -= costBasis;
+        runningRealizedPnL += (trade.price * trade.grams) - costBasis;
         runningGrams -= trade.grams;
       }
       if (runningGrams < 0.0001) { runningGrams = 0; runningTotalCost = 0; }
       const avgAfter = runningGrams > 0 ? runningTotalCost / runningGrams : 0;
-      let changePercent = avgBefore > 0 ? ((avgAfter - avgBefore) / avgBefore) * 100 : 0;
-      let changeAbs = avgBefore > 0 ? (avgAfter - avgBefore) : 0;
+      const breakEvenAfter = runningGrams > 0 ? Math.max(0, (runningTotalCost - runningRealizedPnL) / runningGrams) : 0;
       
-      return { ...trade, historicalAvg: avgAfter, avgChange: changePercent, absChange: changeAbs, holdingTotal: runningTotalCost };
+      let avgChangePercent = avgBefore > 0 ? ((avgAfter - avgBefore) / avgBefore) * 100 : 0;
+      let avgChangeAbs = avgBefore > 0 ? (avgAfter - avgBefore) : 0;
+      
+      let breakEvenChangePercent = breakEvenBefore > 0 ? ((breakEvenAfter - breakEvenBefore) / breakEvenBefore) * 100 : 0;
+      let breakEvenChangeAbs = breakEvenBefore > 0 ? (breakEvenAfter - breakEvenBefore) : 0;
+      
+      return { 
+        ...trade, 
+        historicalAvg: avgAfter, 
+        historicalBreakEven: breakEvenAfter, 
+        avgChange: avgChangePercent, 
+        absChange: avgChangeAbs, 
+        breakEvenChange: breakEvenChangePercent,
+        breakEvenAbsChange: breakEvenChangeAbs,
+        holdingTotal: runningTotalCost 
+      };
     });
   }, [trades]);
 
@@ -395,31 +413,92 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     holdingTotal: { id: 'holdingTotal', label: '持仓总额', render: (t) => 
        t.isDisabled ? <span className="text-app-subtext select-none">-</span> : <span className="font-mono text-app-subtext text-xs">{t.holdingTotal > 0 ? fmt(t.holdingTotal) : '-'}</span> 
     },
-    historicalAvg: { id: 'historicalAvg', label: '持仓均价', render: (t) => {
+    historicalAvg: { id: 'historicalAvg', label: settings.priceDisplayMode === 'avgCost' ? '持仓均价' : settings.priceDisplayMode === 'breakEven' ? '回本价' : (
+      <div className="flex flex-col leading-tight items-start">
+        <span>回本价</span>
+        <span className="text-[10px] opacity-70 font-normal">持仓均价</span>
+      </div>
+    ), render: (t) => {
        if (t.isDisabled) return <span className="text-app-subtext select-none">-</span>;
-       if (t.historicalAvg <= 0) return <span className="font-mono text-brand-yellow font-medium">-</span>;
        
-       let colorClass = 'text-brand-yellow';
-       // Reversed logic: red if historical avg is lower than trade price, green if higher
-       if (t.historicalAvg < t.price) colorClass = 'text-brand-red';
-       else if (t.historicalAvg > t.price) colorClass = 'text-brand-green';
+       const renderValue = (val: number, isAvg: boolean = false) => {
+           if (val <= 0) return <span className="font-mono text-app-subtext font-medium">-</span>;
+           let colorClass = 'text-app-subtext';
+           if (val < t.price) colorClass = 'text-brand-red';
+           else if (val > t.price) colorClass = 'text-brand-green';
+           return <span className={`font-mono font-medium ${colorClass} ${isAvg ? 'text-[10px] opacity-70' : ''}`}>{val.toFixed(2)}</span>;
+       };
 
-       return <span className={`font-mono font-medium ${colorClass}`}>{t.historicalAvg.toFixed(2)}</span>;
+       if (settings.priceDisplayMode === 'avgCost') {
+           return renderValue(t.historicalAvg);
+       } else if (settings.priceDisplayMode === 'breakEven') {
+           return renderValue(t.historicalBreakEven);
+       } else {
+           return (
+               <div className="flex flex-col items-end leading-tight">
+                   {renderValue(t.historicalBreakEven)}
+                   {renderValue(t.historicalAvg, true)}
+               </div>
+           );
+       }
     }},
-    absChange: { id: 'absChange', label: '均价变动', render: (t) => {
-        if (t.isDisabled || Math.abs(t.absChange) < 0.001) return <span className="text-app-subtext">-</span>;
-        return <span className={`font-mono font-medium text-xs ${t.absChange > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-          {t.absChange > 0 ? '+' : ''}{t.absChange.toFixed(2)}
-        </span>;
+    absChange: { id: 'absChange', label: settings.priceDisplayMode === 'avgCost' ? '均价变动' : settings.priceDisplayMode === 'breakEven' ? '回本变动' : (
+      <div className="flex flex-col leading-tight items-start">
+        <span>回本变动</span>
+        <span className="text-[10px] opacity-70 font-normal">均价变动</span>
+      </div>
+    ), render: (t) => {
+        if (t.isDisabled) return <span className="text-app-subtext">-</span>;
+        
+        const renderValue = (val: number, isAvg: boolean = false) => {
+            if (Math.abs(val) < 0.001) return <span className={`text-app-subtext ${isAvg ? 'text-[10px] opacity-70' : ''}`}>-</span>;
+            return <span className={`font-mono font-medium text-xs ${val > 0 ? 'text-brand-red' : 'text-brand-green'} ${isAvg ? 'text-[10px] opacity-70' : ''}`}>
+              {val > 0 ? '+' : ''}{val.toFixed(2)}
+            </span>;
+        };
+
+        if (settings.priceDisplayMode === 'avgCost') {
+            return renderValue(t.absChange);
+        } else if (settings.priceDisplayMode === 'breakEven') {
+            return renderValue(t.breakEvenAbsChange);
+        } else {
+            return (
+                <div className="flex flex-col items-end leading-tight">
+                    {renderValue(t.breakEvenAbsChange)}
+                    {renderValue(t.absChange, true)}
+                </div>
+            );
+        }
     }},
-    avgChange: { id: 'avgChange', label: '均价价差', render: (t) => {
-      if (t.isDisabled || t.historicalAvg === 0) return <span className="text-app-subtext">-</span>;
-      const diff = t.historicalAvg - t.price;
-      if (Math.abs(diff) < 0.001) return <span className="text-app-subtext">0.00</span>;
-      // Reversed logic: red if diff is negative (avg < price), green if positive (avg > price)
-      return <span className={`font-mono font-medium text-xs ${diff < 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-        {diff > 0 ? '+' : ''}{diff.toFixed(2)}
-      </span>;
+    avgChange: { id: 'avgChange', label: settings.priceDisplayMode === 'avgCost' ? '均价价差' : settings.priceDisplayMode === 'breakEven' ? '回本价差' : (
+      <div className="flex flex-col leading-tight items-start">
+        <span>回本价差</span>
+        <span className="text-[10px] opacity-70 font-normal">均价价差</span>
+      </div>
+    ), render: (t) => {
+      if (t.isDisabled) return <span className="text-app-subtext">-</span>;
+      
+      const renderValue = (avgVal: number, isAvg: boolean = false) => {
+          if (avgVal === 0) return <span className={`text-app-subtext ${isAvg ? 'text-[10px] opacity-70' : ''}`}>-</span>;
+          const diff = t.price - avgVal;
+          if (Math.abs(diff) < 0.001) return <span className={`text-app-subtext ${isAvg ? 'text-[10px] opacity-70' : '0.00'}`}>0.00</span>;
+          return <span className={`font-mono font-medium text-xs ${diff > 0 ? 'text-brand-red' : 'text-brand-green'} ${isAvg ? 'text-[10px] opacity-70' : ''}`}>
+            {diff > 0 ? '+' : ''}{diff.toFixed(2)}
+          </span>;
+      };
+
+      if (settings.priceDisplayMode === 'avgCost') {
+          return renderValue(t.historicalAvg);
+      } else if (settings.priceDisplayMode === 'breakEven') {
+          return renderValue(t.historicalBreakEven);
+      } else {
+          return (
+              <div className="flex flex-col items-end leading-tight">
+                  {renderValue(t.historicalBreakEven)}
+                  {renderValue(t.historicalAvg, true)}
+              </div>
+          );
+      }
     }}
   };
 

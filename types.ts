@@ -16,6 +16,7 @@ export interface HoldingState {
   avgCost: number;
   totalCost: number;
   realizedPnL: number;
+  breakEvenPrice: number;
 }
 
 export interface OrderState {
@@ -26,6 +27,7 @@ export interface OrderState {
 export interface SimulationResult {
   newTotalGrams: number;
   newAvgCost: number;
+  newBreakEvenPrice: number;
   totalInvestment: number;
   costDifference: number; // Percent change in avg cost
   totalValueChange: number; // Percent change in total position value
@@ -48,4 +50,5 @@ export interface AppSettings {
   gramsStep: number;
   tagColors: Record<string, string>; // Maps tag text to a color key (e.g., "short_term" -> "red")
   touchMode: boolean; // New: Enable touch drag to adjust values
+  priceDisplayMode: 'breakEven' | 'avgCost' | 'both';
 }
