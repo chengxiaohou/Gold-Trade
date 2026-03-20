@@ -9,7 +9,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.9.13';
+const APP_VERSION = 'v1.9.14';
 
 export default function App() {
   // --- Theme State ---
@@ -579,16 +579,16 @@ export default function App() {
     const diffAvg = newAvg - oldAvg;
     
     const renderSingleDiff = (diff: number) => {
-      if (Math.abs(diff) < 0.001) return <div className="flex items-center text-xs text-app-subtext font-mono h-4">-</div>;
+      if (Math.abs(diff) < 0.001) return <span className="text-xs text-app-subtext font-mono">-</span>;
       return (
-        <div className={`flex items-center text-xs font-bold font-mono h-4 ${diff < 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+        <span className={`flex items-center text-xs font-bold font-mono ${diff < 0 ? 'text-brand-red' : 'text-brand-green'}`}>
             {diff > 0 ? (
               <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-b-[4px] border-b-current mr-1" />
             ) : (
               <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-t-[4px] border-t-current mr-1" />
             )}
             {Math.abs(diff).toFixed(2)}
-        </div>
+        </span>
       );
     };
 
