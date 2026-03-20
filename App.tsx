@@ -9,7 +9,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v1.9.14';
+const APP_VERSION = 'v1.9.15';
 
 export default function App() {
   // --- Theme State ---
@@ -579,16 +579,16 @@ export default function App() {
     const diffAvg = newAvg - oldAvg;
     
     const renderSingleDiff = (diff: number) => {
-      if (Math.abs(diff) < 0.001) return <span className="text-xs text-app-subtext font-mono">-</span>;
+      if (Math.abs(diff) < 0.001) return <div className="flex items-center h-4 text-xs text-app-subtext font-mono">-</div>;
       return (
-        <span className={`flex items-center text-xs font-bold font-mono ${diff < 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+        <div className={`flex items-center h-4 text-xs font-bold font-mono ${diff < 0 ? 'text-brand-red' : 'text-brand-green'}`}>
             {diff > 0 ? (
               <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-b-[4px] border-b-current mr-1" />
             ) : (
               <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-t-[4px] border-t-current mr-1" />
             )}
             {Math.abs(diff).toFixed(2)}
-        </span>
+        </div>
       );
     };
 
@@ -864,12 +864,10 @@ export default function App() {
                         <div>
                             <span className="text-[10px] font-bold text-app-subtext uppercase block mb-1">{renderPriceLabel('成交后均价预估')}</span>
                             <div className="flex items-baseline gap-1.5"><span className="text-3xl font-bold text-app-text tracking-tight font-mono">{renderPriceValue(simulation.newBreakEvenPrice, simulation.newAvgCost, "text-sm text-app-subtext font-bold")}</span><span className="text-[10px] text-app-subtext font-bold">¥</span></div>
-                            {(previewType === 'BUY' || currentPosition.grams > 0) && (
-                                <div className="flex items-center gap-1.5 mt-0.5">
-                                    <span className="text-[10px] text-app-subtext font-medium opacity-80">较当前</span>
-                                    {renderPriceDiff(simulation.newBreakEvenPrice, currentPosition.breakEvenPrice, simulation.newAvgCost, currentPosition.avgCost)}
-                                </div>
-                            )}
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className="text-[10px] text-app-subtext font-medium opacity-80">较当前</span>
+                                {renderPriceDiff(simulation.newBreakEvenPrice, currentPosition.breakEvenPrice, simulation.newAvgCost, currentPosition.avgCost)}
+                            </div>
                         </div>
                     </div>
                     <div className="h-px bg-white/5 w-full" />
@@ -881,23 +879,21 @@ export default function App() {
                                     <span className="text-lg font-bold text-app-text font-mono">{simulation.totalInvestment.toLocaleString('zh-CN', {maximumFractionDigits:0})}</span>
                                     <span className="text-[10px] text-app-subtext">¥</span>
                                 </div>
-                                {(previewType === 'BUY' || currentPosition.totalCost > 0) && (
-                                    <div className="flex items-center gap-1.5 mt-0.5">
-                                        <span className="text-[10px] text-app-subtext font-medium opacity-80">较当前</span>
-                                        {Math.abs(simulation.totalValueChange) > 0.001 ? (
-                                        <div className={`flex items-center text-xs font-bold font-mono ${simulation.totalValueChange > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                                            {simulation.totalValueChange > 0 ? (
-                                              <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-b-[4px] border-b-current mr-1" />
-                                            ) : (
-                                              <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-t-[4px] border-t-current mr-1" />
-                                            )}
-                                            {Math.abs(simulation.totalValueChange).toFixed(2)}%
-                                        </div>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                    <span className="text-[10px] text-app-subtext font-medium opacity-80">较当前</span>
+                                    {Math.abs(simulation.totalValueChange) > 0.001 ? (
+                                    <div className={`flex items-center h-4 text-xs font-bold font-mono ${simulation.totalValueChange > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                                        {simulation.totalValueChange > 0 ? (
+                                          <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-b-[4px] border-b-current mr-1" />
                                         ) : (
-                                        <span className="text-[10px] text-app-subtext font-mono">-</span>
+                                          <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-t-[4px] border-t-current mr-1" />
                                         )}
+                                        {Math.abs(simulation.totalValueChange).toFixed(2)}%
                                     </div>
-                                )}
+                                    ) : (
+                                    <div className="flex items-center h-4 text-xs text-app-subtext font-mono">-</div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                         <div className="text-right">

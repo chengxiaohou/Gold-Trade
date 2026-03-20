@@ -411,7 +411,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     grams: { id: 'grams', label: '数量', render: (t) => <span className="font-mono text-app-text">{t.grams.toFixed(2)}</span> },
     tradeTotal: { id: 'tradeTotal', label: '交易额', render: (t) => <span className="font-mono text-app-text/70">{fmt(t.price * t.grams)}</span> },
     holdingTotal: { id: 'holdingTotal', label: '持仓总额', render: (t) => {
-       if (t.isDisabled) return <span className="text-app-subtext">-</span>;
+       if (t.isDisabled) return <span className="font-mono text-app-subtext text-xs">-</span>;
        return <span className="font-mono text-app-subtext text-xs">{t.holdingTotal > 0 ? fmt(t.holdingTotal) : '-'}</span> 
     }},
     historicalAvg: { id: 'historicalAvg', label: settings.priceDisplayMode === 'avgCost' ? '持仓均价' : settings.priceDisplayMode === 'breakEven' ? '回本价' : (
@@ -420,9 +420,8 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
         <span className="text-[10px] opacity-70 font-normal">持仓均价</span>
       </div>
     ), render: (t) => {
-       if (t.isDisabled) return <span className="text-app-subtext">-</span>;
        const renderValue = (val: number, isAvg: boolean = false) => {
-           if (val <= 0) return <span className={`font-mono text-app-subtext font-medium ${isAvg ? 'text-[10px] opacity-70' : ''}`}>-</span>;
+           if (val <= 0 || t.isDisabled) return <span className={`font-mono text-app-subtext font-medium ${isAvg ? 'text-[10px] opacity-70' : ''}`}>-</span>;
            let colorClass = 'text-app-subtext';
            if (val < t.price) colorClass = 'text-brand-red';
            else if (val > t.price) colorClass = 'text-brand-green';
@@ -448,10 +447,9 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
         <span className="text-[10px] opacity-70 font-normal">均价变动</span>
       </div>
     ), render: (t) => {
-        if (t.isDisabled) return <span className="text-app-subtext">-</span>;
         const renderValue = (val: number, isAvg: boolean = false) => {
             const sizeClass = isAvg ? 'text-[10px] opacity-70' : 'text-xs';
-            if (Math.abs(val) < 0.001) return <span className={`font-mono text-app-subtext ${sizeClass}`}>-</span>;
+            if (Math.abs(val) < 0.001 || t.isDisabled) return <span className={`font-mono text-app-subtext ${sizeClass}`}>-</span>;
             return <span className={`font-mono font-medium ${sizeClass} ${val < 0 ? 'text-brand-red' : 'text-brand-green'}`}>
               {val > 0 ? '+' : ''}{val.toFixed(2)}
             </span>;
@@ -476,10 +474,9 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
         <span className="text-[10px] opacity-70 font-normal">均价价差</span>
       </div>
     ), render: (t) => {
-      if (t.isDisabled) return <span className="text-app-subtext">-</span>;
       const renderValue = (avgVal: number, isAvg: boolean = false) => {
           const sizeClass = isAvg ? 'text-[10px] opacity-70' : 'text-xs';
-          if (avgVal === 0) return <span className={`font-mono text-app-subtext ${sizeClass}`}>-</span>;
+          if (avgVal === 0 || t.isDisabled) return <span className={`font-mono text-app-subtext ${sizeClass}`}>-</span>;
           const diff = t.price - avgVal;
           if (Math.abs(diff) < 0.001) return <span className={`font-mono text-app-subtext ${sizeClass}`}>0.00</span>;
           return <span className={`font-mono font-medium ${sizeClass} ${diff > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
@@ -663,7 +660,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   return (
     <>
       <div className="rounded-xl border border-app-border bg-app-card overflow-hidden isolate transition-colors duration-300">
-        <div ref={containerRef} className={`overflow-x-auto custom-scrollbar ${(activeColId || activeRowId) ? 'drag-active' : ''}`} style={{ overflowAnchor: 'none' }}>
+        <div ref={containerRef} className={`overflow-x-auto custom-scrollbar ${(activeColId || activeRowId) ? 'drag-active' : ''}`}>
           <style>{`
             /* 基础状态：禁止选中 */
             .drag-active { user-select: none !important; -webkit-user-select: none !important; }
@@ -742,16 +739,9 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                           <Edit2 size={14} />
                         </button>
                         <button 
-                          onMouseDown={(e) => e.preventDefault()}
                           onClick={(e) => {
-                            e.preventDefault();
-                            const scrollY = window.scrollY;
-                            const scrollX = window.scrollX;
+                            e.stopPropagation();
                             onUpdate(trade.id, { isDisabled: !trade.isDisabled });
-                            requestAnimationFrame(() => {
-                              window.scrollTo(scrollX, scrollY);
-                              setTimeout(() => window.scrollTo(scrollX, scrollY), 0);
-                            });
                           }} 
                           className={`p-1 transition-colors ${trade.isDisabled ? 'text-app-subtext hover:text-app-subtext/70' : 'text-app-subtext hover:text-indigo-400'}`} 
                           title={trade.isDisabled ? "恢复生效" : "暂时失效"}
