@@ -97,6 +97,7 @@ export default function App() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportFileName, setExportFileName] = useState('');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [isEditingCapital, setIsEditingCapital] = useState(false);
 
   // 5. Preview Type
   const [previewType, setPreviewType] = useState<OrderType>(() => {
@@ -182,6 +183,12 @@ export default function App() {
       }
     }
 
+    if (previewType === 'BUY' && field === 'grams') {
+      if (value.includes('.')) {
+        processedValue = value.split('.')[0];
+      }
+    }
+
     if (previewType === 'BUY' && appSettings.totalCapital && appSettings.totalCapital > 0) {
       const availableCapital = appSettings.totalCapital - currentPosition.totalCost;
       const otherField = field === 'grams' ? 'price' : 'grams';
@@ -192,7 +199,7 @@ export default function App() {
         if (numVal * otherVal > availableCapital) {
           if (field === 'grams' && otherVal > 0) {
             const maxGrams = availableCapital / otherVal;
-            processedValue = (Math.floor(maxGrams * 100) / 100).toString();
+            processedValue = Math.floor(maxGrams).toString();
           } else if (field === 'price' && otherVal > 0) {
             const maxPrice = availableCapital / otherVal;
             processedValue = (Math.floor(maxPrice * 100) / 100).toString();
@@ -848,28 +855,59 @@ export default function App() {
              <div className="space-y-3">
                 <div className="flex items-center gap-2 text-app-subtext pl-1"><Wallet size={16} /><h3 className="font-medium text-sm">当前持仓详情</h3></div>
                 <div className="bg-app-card border border-app-border rounded-xl p-6 shadow-sm grid grid-cols-2 md:grid-cols-3 gap-4">
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border"><span className="text-xs text-app-subtext block mb-1">{renderPriceLabel('平均成本')}</span><div className="text-xl font-bold text-app-text font-mono">{renderPriceValue(currentPosition.breakEvenPrice, currentPosition.avgCost, "text-xs text-app-subtext")}</div></div>
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border"><span className="text-xs text-app-subtext block mb-1">持仓数量 (克)</span><div className="text-xl font-bold text-app-text font-mono">{currentPosition.grams.toFixed(2)}</div></div>
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-indigo-500/50 focus-within:border-indigo-500 transition-colors">
-                        <span className="text-xs text-app-subtext block mb-1">总资金</span>
-                        <div className="flex items-center">
-                            <input 
-                                type="number" 
-                                value={appSettings.totalCapital || ''} 
-                                onChange={(e) => handleSettingsUpdate({ totalCapital: parseFloat(e.target.value) || 0 })} 
-                                placeholder="0.00" 
-                                className="no-spinners text-xl font-bold text-app-text font-mono bg-transparent border-none p-0 w-full outline-none" 
-                            />
+                    <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5">
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-app-subtext">持仓净值</span>
+                            <span className="text-sm font-bold font-mono text-app-text">
+                                {marketPrice ? (currentPosition.grams * (parseFloat(marketPrice) || 0)).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}
+                            </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-app-subtext">持仓数量</span>
+                            <span className="text-sm font-bold font-mono text-app-text">{currentPosition.grams.toFixed(2)} 克</span>
+                        </div>
+                    </div>
+                    <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5 transition-colors relative group hover:border-indigo-500/50 focus-within:border-indigo-500">
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-app-subtext">总资金</span>
+                            {isEditingCapital ? (
+                                <input 
+                                    autoFocus
+                                    type="number" 
+                                    value={appSettings.totalCapital || ''} 
+                                    onChange={(e) => handleSettingsUpdate({ totalCapital: parseFloat(e.target.value) || 0 })} 
+                                    onBlur={() => setIsEditingCapital(false)}
+                                    placeholder="0.00" 
+                                    className="no-spinners text-sm font-bold text-app-text font-mono bg-transparent border-none p-0 text-right outline-none w-24" 
+                                />
+                            ) : (
+                                <span 
+                                    onClick={() => setIsEditingCapital(true)}
+                                    className="text-sm font-bold font-mono text-app-text cursor-pointer hover:text-indigo-400 transition-colors"
+                                >
+                                    {appSettings.totalCapital ? appSettings.totalCapital.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '0.00'}
+                                </span>
+                            )}
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-app-subtext">可用资金</span>
+                            <span className="text-sm font-bold font-mono text-app-text">
+                                {appSettings.totalCapital ? (appSettings.totalCapital - currentPosition.totalCost).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}
+                            </span>
                         </div>
                     </div>
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5">
                         <div className="flex items-center justify-between">
                             <span className="text-[11px] text-app-subtext">持仓总投入</span>
-                            <span className="text-sm font-bold font-mono text-app-text">{currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                            <span className="text-sm font-bold font-mono text-app-text">
+                                {currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                            </span>
                         </div>
                         <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-app-subtext">持仓净值</span>
-                            <span className="text-sm font-bold font-mono text-app-text">{marketPrice ? (currentPosition.grams * (parseFloat(marketPrice) || 0)).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</span>
+                            <span className="text-[11px] text-app-subtext">仓位占比</span>
+                            <span className="text-sm font-bold font-mono text-app-text">
+                                {appSettings.totalCapital && appSettings.totalCapital > 0 ? ((currentPosition.totalCost / appSettings.totalCapital) * 100).toFixed(1) + '%' : '--'}
+                            </span>
                         </div>
                     </div>
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5">
@@ -882,7 +920,29 @@ export default function App() {
                             <span className={`text-sm font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
                         </div>
                     </div>
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 focus-within:border-brand-yellow transition-colors"><span className="text-xs text-app-subtext block mb-1">参考市价 (元/克)</span><div className="flex items-center"><input ref={marketPriceInputRef} type="number" value={marketPrice} onChange={(e) => handleMarketPriceChange(e.target.value)} placeholder="0.00" className={`no-spinners text-xl font-bold text-brand-yellow font-mono bg-transparent border-none p-0 w-full outline-none ${appSettings.touchMode ? 'cursor-ns-resize' : ''}`} /><div className="flex flex-col gap-0.5 ml-2"><button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronUp size={10} strokeWidth={3} /></button><button onClick={() => updateMarketPrice(-appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronDown size={10} strokeWidth={3} /></button></div></div></div>
+                    <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center">
+                        <span className="text-xs text-app-subtext block mb-1">{renderPriceLabel('平均成本')}</span>
+                        <div className="text-xl font-bold text-app-text font-mono">
+                            {renderPriceValue(currentPosition.breakEvenPrice, currentPosition.avgCost, "text-xs text-app-subtext")}
+                        </div>
+                    </div>
+                    <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 focus-within:border-brand-yellow transition-colors">
+                        <span className="text-xs text-app-subtext block mb-1">参考市价 (元/克)</span>
+                        <div className="flex items-center">
+                            <input 
+                                ref={marketPriceInputRef} 
+                                type="number" 
+                                value={marketPrice} 
+                                onChange={(e) => handleMarketPriceChange(e.target.value)} 
+                                placeholder="0.00" 
+                                className={`no-spinners text-xl font-bold text-brand-yellow font-mono bg-transparent border-none p-0 w-full outline-none ${appSettings.touchMode ? 'cursor-ns-resize' : ''}`} 
+                            />
+                            <div className="flex flex-col gap-0.5 ml-2">
+                                <button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronUp size={10} strokeWidth={3} /></button>
+                                <button onClick={() => updateMarketPrice(-appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronDown size={10} strokeWidth={3} /></button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
              </div>
              <div className="space-y-3">
@@ -936,7 +996,7 @@ export default function App() {
                         onClick={() => {
                           const available = appSettings.totalCapital! - currentPosition.totalCost;
                           const maxGrams = available / parseFloat(inputs.price);
-                          handleInputChange('grams', (Math.floor(maxGrams * 100) / 100).toString());
+                          handleInputChange('grams', Math.floor(maxGrams).toString());
                         }}
                         className="absolute -top-1 right-0 text-[9px] font-bold text-brand-red hover:underline"
                       >
