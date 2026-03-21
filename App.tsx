@@ -888,20 +888,8 @@ export default function App() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6 items-start">
           <div className="lg:col-span-8 flex flex-col gap-6 order-2 lg:order-1">
              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-app-subtext pl-1"><Wallet size={16} /><h3 className="font-medium text-sm">当前持仓详情</h3></div>
+                <div className="flex items-center gap-2 text-app-subtext pl-1"><Wallet size={16} /><h3 className="font-medium text-sm">持仓详情</h3></div>
                 <div className="bg-app-card border border-app-border rounded-xl p-6 shadow-sm grid grid-cols-2 md:grid-cols-3 gap-4">
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5">
-                        <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-app-subtext">持仓净值</span>
-                            <span className="text-sm font-bold font-mono text-app-text">
-                                {marketPrice ? (currentPosition.grams * (parseFloat(marketPrice) || 0)).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}
-                            </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-app-subtext">持仓数量</span>
-                            <span className="text-sm font-bold font-mono text-app-text">{currentPosition.grams.toFixed(2)} 克</span>
-                        </div>
-                    </div>
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5 transition-colors relative group hover:border-indigo-500/50 focus-within:border-indigo-500">
                         <div className="flex items-center justify-between">
                             <span className="text-[11px] text-app-subtext">总资金</span>
@@ -929,6 +917,18 @@ export default function App() {
                             <span className="text-sm font-bold font-mono text-app-text">
                                 {appSettings.totalCapital ? (appSettings.totalCapital - currentPosition.totalCost).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}
                             </span>
+                        </div>
+                    </div>
+                    <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5">
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-app-subtext">持仓净值</span>
+                            <span className="text-sm font-bold font-mono text-app-text">
+                                {marketPrice ? (currentPosition.grams * (parseFloat(marketPrice) || 0)).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}
+                            </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-app-subtext">持仓数量</span>
+                            <span className="text-sm font-bold font-mono text-app-text">{currentPosition.grams.toFixed(2)} 克</span>
                         </div>
                     </div>
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5">
@@ -970,7 +970,11 @@ export default function App() {
                                 value={marketPrice} 
                                 onChange={(e) => handleMarketPriceChange(e.target.value)} 
                                 placeholder="0.00" 
-                                className={`no-spinners text-xl font-bold text-brand-yellow font-mono bg-transparent border-none p-0 w-full outline-none ${appSettings.touchMode ? 'cursor-ns-resize' : ''}`} 
+                                className={`no-spinners text-xl font-bold font-mono bg-transparent border-none p-0 w-full outline-none ${appSettings.touchMode ? 'cursor-ns-resize' : ''} ${
+                                    currentPosition.grams > 0 && parseFloat(marketPrice) 
+                                        ? (parseFloat(marketPrice) > currentPosition.breakEvenPrice ? 'text-brand-red' : parseFloat(marketPrice) < currentPosition.breakEvenPrice ? 'text-brand-green' : 'text-brand-yellow')
+                                        : 'text-brand-yellow'
+                                }`} 
                             />
                             <div className="flex flex-col gap-0.5 ml-2">
                                 <button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronUp size={10} strokeWidth={3} /></button>
