@@ -1,9 +1,10 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle, Zap, Activity } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
+import { TradingPlanPanel } from './components/TradingPlanPanel';
 import { CloudSettingsModal } from './components/CloudSettingsModal';
 import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
@@ -105,6 +106,8 @@ export default function App() {
     return (saved === 'SELL') ? 'SELL' : 'BUY';
   });
   
+  const [activeSimPanel, setActiveSimPanel] = useState<'manual' | 'plan' | 'none'>('manual');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const marketPriceInputRef = useRef<HTMLInputElement>(null);
 
@@ -163,6 +166,8 @@ export default function App() {
     const breakEvenPrice = grams > 0 ? Math.max(0, (totalCost - realizedPnL) / grams) : 0;
     return { grams, avgCost, totalCost, realizedPnL, breakEvenPrice };
   }, [trades]);
+
+  const availableFunds = Math.max(0, (appSettings.totalCapital || 0) - currentPosition.totalCost);
 
   const floatingPnL = useMemo(() => {
     const market = parseFloat(marketPrice) || 0;
@@ -595,6 +600,20 @@ export default function App() {
     setAiState({ loading: false, result: null, error: null });
   };
 
+  const handleApplyPlan = (planTrades: TradeRecord[]) => {
+    // Remove existing plan trades
+    setTrades(prev => {
+      const filtered = prev.filter(t => !t.isPlan);
+      return [...filtered, ...planTrades];
+    });
+  };
+
+  const handleClearPlan = () => {
+    setTrades(prev => prev.filter(t => !t.isPlan));
+  };
+
+  const hasPlan = useMemo(() => trades.some(t => t.isPlan), [trades]);
+
   const deleteTrade = (id: string) => setTrades(prev => prev.filter(t => t.id !== id));
   const updateTrade = (id: string, updates: Partial<TradeRecord>) => setTrades(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
   const handleReorderTrades = (newTrades: TradeRecord[]) => setTrades(newTrades);
@@ -971,109 +990,137 @@ export default function App() {
           <div className="lg:col-span-4 lg:col-start-9 order-1 lg:order-2 lg:sticky lg:top-6 space-y-4">
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-app-subtext pl-1"><TrendingUp size={16} /><h3 className="font-medium text-sm">模拟交易</h3></div>
-              <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-2xl p-4 flex flex-col gap-3">
-                <div className="grid grid-cols-2 p-1 bg-app-input rounded-lg">
-                  <button onClick={() => changeOrderType('BUY')} className={`py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${previewType === 'BUY' ? 'bg-brand-red text-white shadow-lg shadow-brand-red/20' : 'text-app-subtext hover:text-app-text'}`}>
-                    <TrendingUp size={16} />买入
-                  </button>
-                  <button onClick={() => changeOrderType('SELL')} className={`py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${previewType === 'SELL' ? 'bg-brand-green text-white shadow-lg shadow-brand-green/20' : 'text-app-subtext hover:text-app-text'}`}>
-                    <TrendingDown size={16} />卖出
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <InputGroup 
-                    label="价格 (元/克)" 
-                    value={inputs.price} 
-                    onChange={(v) => handleInputChange('price', v)} 
-                    placeholder="0.00" 
-                    step={appSettings.priceStep}
-                    touchMode={appSettings.touchMode} 
-                  />
-                  <div className="relative">
-                    <InputGroup 
-                      label="数量 (克)" 
-                      value={inputs.grams} 
-                      onChange={(v) => handleInputChange('grams', v)} 
-                      placeholder="0.00" 
-                      step={appSettings.gramsStep} 
-                      isQuantity={true}
-                      touchMode={appSettings.touchMode} 
-                    />
-                    {previewType === 'SELL' && currentPosition.grams > 0 && (
-                      <button 
-                        onClick={() => handleInputChange('grams', currentPosition.grams.toString())}
-                        className="absolute -top-1 right-0 text-[9px] font-bold text-brand-green hover:underline"
-                      >
-                        全部卖出
-                      </button>
-                    )}
-                    {previewType === 'BUY' && appSettings.totalCapital && appSettings.totalCapital > 0 && (appSettings.totalCapital - currentPosition.totalCost) > 0 && parseFloat(inputs.price) > 0 && (
-                      <button 
-                        onClick={() => {
-                          const available = appSettings.totalCapital! - currentPosition.totalCost;
-                          const maxGrams = available / parseFloat(inputs.price);
-                          handleInputChange('grams', Math.floor(maxGrams).toString());
-                        }}
-                        className="absolute -top-1 right-0 text-[9px] font-bold text-brand-red hover:underline"
-                      >
-                        全部买入
-                      </button>
-                    )}
+              <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-2xl flex flex-col">
+                <button 
+                  onClick={() => setActiveSimPanel(prev => prev === 'manual' ? 'none' : 'manual')}
+                  className="flex items-center justify-between p-3 bg-app-input/50 hover:bg-app-hover transition-colors"
+                >
+                  <div className="flex items-center gap-2 text-app-text font-medium text-sm">
+                    <Activity size={16} className={previewType === 'BUY' ? 'text-brand-red' : 'text-brand-green'} />
+                    交易窗口
                   </div>
-                </div>
-                <div className="bg-app-input/30 rounded-xl p-4 border border-app-border space-y-3">
-                    <div className="flex justify-between items-start">
-                        <div>
-                            <span className="text-[10px] font-bold text-app-subtext uppercase block mb-1">{renderPriceLabel('成交后均价预估')}</span>
-                            <div className="flex items-baseline gap-1.5"><span className="text-3xl font-bold text-app-text tracking-tight font-mono">{renderPriceValue(simulation.newBreakEvenPrice, simulation.newAvgCost, "text-sm text-app-subtext font-bold")}</span><span className="text-[10px] text-app-subtext font-bold">¥</span></div>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                                <span className="text-[10px] text-app-subtext font-medium opacity-80">较当前</span>
-                                {renderPriceDiff(simulation.newBreakEvenPrice, currentPosition.breakEvenPrice, simulation.newAvgCost, currentPosition.avgCost)}
-                            </div>
-                        </div>
+                  <ChevronDown size={16} className={`text-app-subtext transition-transform ${activeSimPanel === 'manual' ? 'rotate-180' : ''}`} />
+                </button>
+                
+                {activeSimPanel === 'manual' && (
+                  <div className="p-4 flex flex-col gap-3 border-t border-app-border">
+                    <div className="grid grid-cols-2 p-1 bg-app-input rounded-lg">
+                      <button onClick={() => changeOrderType('BUY')} className={`py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${previewType === 'BUY' ? 'bg-brand-red text-white shadow-lg shadow-brand-red/20' : 'text-app-subtext hover:text-app-text'}`}>
+                        <TrendingUp size={16} />买入
+                      </button>
+                      <button onClick={() => changeOrderType('SELL')} className={`py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${previewType === 'SELL' ? 'bg-brand-green text-white shadow-lg shadow-brand-green/20' : 'text-app-subtext hover:text-app-text'}`}>
+                        <TrendingDown size={16} />卖出
+                      </button>
                     </div>
-                    <div className="h-px bg-white/5 w-full" />
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                        <div>
-                            <p className="text-app-subtext text-[10px] font-medium">预计总持仓 (金额)</p>
-                            <div className="flex flex-col">
-                                <div className="flex items-baseline gap-1">
-                                    <span className="text-lg font-bold text-app-text font-mono">{simulation.totalInvestment.toLocaleString('zh-CN', {maximumFractionDigits:0})}</span>
-                                    <span className="text-[10px] text-app-subtext">¥</span>
-                                </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <InputGroup 
+                        label="价格 (元/克)" 
+                        value={inputs.price} 
+                        onChange={(v) => handleInputChange('price', v)} 
+                        placeholder="0.00" 
+                        step={appSettings.priceStep}
+                        touchMode={appSettings.touchMode} 
+                      />
+                      <div className="relative">
+                        <InputGroup 
+                          label="数量 (克)" 
+                          value={inputs.grams} 
+                          onChange={(v) => handleInputChange('grams', v)} 
+                          placeholder="0.00" 
+                          step={appSettings.gramsStep} 
+                          isQuantity={true}
+                          touchMode={appSettings.touchMode} 
+                        />
+                        {previewType === 'SELL' && currentPosition.grams > 0 && (
+                          <button 
+                            onClick={() => handleInputChange('grams', currentPosition.grams.toString())}
+                            className="absolute -top-1 right-0 text-[9px] font-bold text-brand-green hover:underline"
+                          >
+                            全部卖出
+                          </button>
+                        )}
+                        {previewType === 'BUY' && appSettings.totalCapital && appSettings.totalCapital > 0 && (appSettings.totalCapital - currentPosition.totalCost) > 0 && parseFloat(inputs.price) > 0 && (
+                          <button 
+                            onClick={() => {
+                              const available = appSettings.totalCapital! - currentPosition.totalCost;
+                              const maxGrams = available / parseFloat(inputs.price);
+                              handleInputChange('grams', Math.floor(maxGrams).toString());
+                            }}
+                            className="absolute -top-1 right-0 text-[9px] font-bold text-brand-red hover:underline"
+                          >
+                            全部买入
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="bg-app-input/30 rounded-xl p-4 border border-app-border space-y-3">
+                        <div className="flex justify-between items-start">
+                            <div>
+                                <span className="text-[10px] font-bold text-app-subtext uppercase block mb-1">{renderPriceLabel('成交后均价预估')}</span>
+                                <div className="flex items-baseline gap-1.5"><span className="text-3xl font-bold text-app-text tracking-tight font-mono">{renderPriceValue(simulation.newBreakEvenPrice, simulation.newAvgCost, "text-sm text-app-subtext font-bold")}</span><span className="text-[10px] text-app-subtext font-bold">¥</span></div>
                                 <div className="flex items-center gap-1.5 mt-0.5">
                                     <span className="text-[10px] text-app-subtext font-medium opacity-80">较当前</span>
-                                    {Math.abs(simulation.totalValueChange) > 0.001 ? (
-                                    <div className={`flex items-center h-4 text-xs font-bold font-mono ${simulation.totalValueChange > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                                        {simulation.totalValueChange > 0 ? (
-                                          <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-b-[4px] border-b-current mr-1" />
-                                        ) : (
-                                          <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-t-[4px] border-t-current mr-1" />
-                                        )}
-                                        {Math.abs(simulation.totalValueChange).toFixed(2)}%
-                                    </div>
-                                    ) : (
-                                    <div className="flex items-center h-4 text-xs text-app-subtext font-mono">-</div>
-                                    )}
+                                    {renderPriceDiff(simulation.newBreakEvenPrice, currentPosition.breakEvenPrice, simulation.newAvgCost, currentPosition.avgCost)}
                                 </div>
                             </div>
                         </div>
-                        <div className="text-right">
-                            <p className="text-app-subtext text-[10px] font-medium">本次交易额</p>
-                            <div className="flex items-baseline gap-1 justify-end">
-                                <span className="text-lg font-bold text-app-text font-mono">{((parseFloat(inputs.price)||0) * (parseFloat(inputs.grams)||0)).toLocaleString('zh-CN', {maximumFractionDigits:0})}</span>
-                                <span className="text-[10px] text-app-subtext">¥</span>
+                        <div className="h-px bg-white/5 w-full" />
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                            <div>
+                                <p className="text-app-subtext text-[10px] font-medium">预计总持仓 (金额)</p>
+                                <div className="flex flex-col">
+                                    <div className="flex items-baseline gap-1">
+                                        <span className="text-lg font-bold text-app-text font-mono">{simulation.totalInvestment.toLocaleString('zh-CN', {maximumFractionDigits:0})}</span>
+                                        <span className="text-[10px] text-app-subtext">¥</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                        <span className="text-[10px] text-app-subtext font-medium opacity-80">较当前</span>
+                                        {Math.abs(simulation.totalValueChange) > 0.001 ? (
+                                        <div className={`flex items-center h-4 text-xs font-bold font-mono ${simulation.totalValueChange > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                                            {simulation.totalValueChange > 0 ? (
+                                              <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-b-[4px] border-b-current mr-1" />
+                                            ) : (
+                                              <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-t-[4px] border-t-current mr-1" />
+                                            )}
+                                            {Math.abs(simulation.totalValueChange).toFixed(2)}%
+                                        </div>
+                                        ) : (
+                                        <div className="flex items-center h-4 text-xs text-app-subtext font-mono">-</div>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
+                            <div className="text-right">
+                                <p className="text-app-subtext text-[10px] font-medium">本次交易额</p>
+                                <div className="flex items-baseline gap-1 justify-end">
+                                    <span className="text-lg font-bold text-app-text font-mono">{((parseFloat(inputs.price)||0) * (parseFloat(inputs.grams)||0)).toLocaleString('zh-CN', {maximumFractionDigits:0})}</span>
+                                    <span className="text-[10px] text-app-subtext">¥</span>
+                                </div>
+                            </div>
+                            {previewType === 'SELL' && simulation.projectedPnL !== undefined && (<div className="col-span-2 border-t border-white/[0.03] pt-2 flex justify-between items-center"><span className="text-app-subtext text-[10px] font-bold">预计本次盈亏：</span><span className={`font-mono font-bold text-sm ${simulation.projectedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{simulation.projectedPnL >= 0 ? '+' : ''}{simulation.projectedPnL.toFixed(2)}</span></div>)}
                         </div>
-                        {previewType === 'SELL' && simulation.projectedPnL !== undefined && (<div className="col-span-2 border-t border-white/[0.03] pt-2 flex justify-between items-center"><span className="text-app-subtext text-[10px] font-bold">预计本次盈亏：</span><span className={`font-mono font-bold text-sm ${simulation.projectedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{simulation.projectedPnL >= 0 ? '+' : ''}{simulation.projectedPnL.toFixed(2)}</span></div>)}
+                        {/* Move CostChart inside the stats card to integrate it as a visual footer */}
+                        {inputs.grams && inputs.price && (
+                          <CostChart currentValue={currentPosition.totalCost} newValue={simulation.totalInvestment} />
+                        )}
                     </div>
-                    {/* Move CostChart inside the stats card to integrate it as a visual footer */}
-                    {inputs.grams && inputs.price && (
-                      <CostChart currentValue={currentPosition.totalCost} newValue={simulation.totalInvestment} />
-                    )}
-                </div>
-                <button onClick={executeTrade} disabled={!inputs.price || !inputs.grams} className={`w-full py-2.5 rounded-lg font-semibold text-base flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 shadow-md ${previewType === 'BUY' ? 'bg-brand-red text-white hover:bg-red-500' : 'bg-brand-green text-white hover:bg-green-500'}`}><CheckCircle2 size={16} />成交</button>
+                    <button onClick={executeTrade} disabled={!inputs.price || !inputs.grams} className={`w-full py-2.5 rounded-lg font-semibold text-base flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 shadow-md ${previewType === 'BUY' ? 'bg-brand-red text-white hover:bg-red-500' : 'bg-brand-green text-white hover:bg-green-500'}`}><CheckCircle2 size={16} />成交</button>
+                  </div>
+                )}
               </div>
+              
+              <TradingPlanPanel 
+                marketPrice={marketPrice}
+                onMarketPriceChange={handleMarketPriceChange}
+                priceStep={appSettings.priceStep}
+                touchMode={appSettings.touchMode}
+                availableFunds={availableFunds}
+                isExpanded={activeSimPanel === 'plan'}
+                onToggle={() => setActiveSimPanel(prev => prev === 'plan' ? 'none' : 'plan')}
+                onApplyPlan={handleApplyPlan}
+                onClearPlan={handleClearPlan}
+                hasPlan={hasPlan}
+              />
             </div>
             <div className="hidden lg:block">{renderActionButtons()}</div>
           </div>

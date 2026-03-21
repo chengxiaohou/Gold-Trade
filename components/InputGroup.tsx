@@ -12,6 +12,8 @@ interface InputGroupProps {
   unit?: string;
   isQuantity?: boolean; // 标记是否为数量（克数）输入框
   touchMode?: boolean; // 新增：是否启用触屏拖拽调节模式
+  hideControls?: boolean; // 新增：是否隐藏增减按钮
+  className?: string; // 新增：自定义样式
 }
 
 export const InputGroup: React.FC<InputGroupProps> = ({
@@ -24,7 +26,9 @@ export const InputGroup: React.FC<InputGroupProps> = ({
   step = 0.01,
   unit,
   isQuantity = false,
-  touchMode = false
+  touchMode = false,
+  hideControls = false,
+  className = ""
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   // 用 ref 存储最新的 value，供事件监听器使用，避免 stale closure
@@ -173,7 +177,7 @@ export const InputGroup: React.FC<InputGroupProps> = ({
           readOnly={isIOS && isQuantity && !touchMode} 
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className={`no-spinners w-full bg-app-input border border-app-border text-app-text rounded-lg py-2.5 pl-3 pr-10 focus:outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all font-mono text-base placeholder-app-subtext/50 ${touchMode ? 'cursor-ns-resize' : ''}`}
+          className={`no-spinners w-full bg-app-input border border-app-border text-app-text rounded-lg py-2.5 pl-3 ${hideControls ? 'pr-3' : 'pr-10'} focus:outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all font-mono text-base placeholder-app-subtext/50 ${touchMode ? 'cursor-ns-resize' : ''} ${className}`}
         />
 
         {/* iOS 滚轮触发器：仅在未开启 TouchMode 时显示 */}
@@ -191,27 +195,29 @@ export const InputGroup: React.FC<InputGroupProps> = ({
           </select>
         )}
         
-        <div className="absolute right-0.5 inset-y-1 flex items-stretch py-0.5 z-20 pointer-events-none group-hover/input:pointer-events-auto">
-           <div className="w-[1px] bg-app-border h-full mx-1 opacity-50"></div>
-           <div className="flex flex-col justify-center gap-0.5 w-6 opacity-60 group-hover/input:opacity-100 transition-opacity">
-              <button 
-                type="button"
-                onClick={() => updateValue(step)}
-                className="flex-1 flex items-center justify-center hover:bg-brand-yellow/20 rounded-sm text-app-subtext hover:text-brand-yellow transition-colors"
-                tabIndex={-1}
-              >
-                <ChevronUp size={12} strokeWidth={3} />
-              </button>
-              <button 
-                type="button"
-                onClick={() => updateValue(-step)}
-                className="flex-1 flex items-center justify-center hover:bg-brand-yellow/20 rounded-sm text-app-subtext hover:text-brand-yellow transition-colors"
-                tabIndex={-1}
-              >
-                <ChevronDown size={12} strokeWidth={3} />
-              </button>
-           </div>
-        </div>
+        {!hideControls && (
+          <div className="absolute right-0.5 inset-y-1 flex items-stretch py-0.5 z-20 pointer-events-none group-hover/input:pointer-events-auto">
+             <div className="w-[1px] bg-app-border h-full mx-1 opacity-50"></div>
+             <div className="flex flex-col justify-center gap-0.5 w-6 opacity-60 group-hover/input:opacity-100 transition-opacity">
+                <button 
+                  type="button"
+                  onClick={() => updateValue(step)}
+                  className="flex-1 flex items-center justify-center hover:bg-brand-yellow/20 rounded-sm text-app-subtext hover:text-brand-yellow transition-colors"
+                  tabIndex={-1}
+                >
+                  <ChevronUp size={12} strokeWidth={3} />
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => updateValue(-step)}
+                  className="flex-1 flex items-center justify-center hover:bg-brand-yellow/20 rounded-sm text-app-subtext hover:text-brand-yellow transition-colors"
+                  tabIndex={-1}
+                >
+                  <ChevronDown size={12} strokeWidth={3} />
+                </button>
+             </div>
+          </div>
+        )}
 
         {unit && (
           <div className="absolute right-10 inset-y-0 flex items-center pointer-events-none">

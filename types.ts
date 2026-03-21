@@ -9,6 +9,7 @@ export interface TradeRecord {
   timestamp: number;
   tag?: string; // New: User defined tag for filtering or categorization
   isDisabled?: boolean; // New: If true, this trade is ignored in calculations
+  isPlan?: boolean; // New: If true, this is a simulated plan record
 }
 
 export interface HoldingState {
