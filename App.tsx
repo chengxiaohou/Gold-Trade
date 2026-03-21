@@ -248,6 +248,22 @@ export default function App() {
     handleMarketPriceChangeRef.current = handleMarketPriceChange;
   }, [handleMarketPriceChange]);
 
+  // Sync market price with the latest active trade when trades change
+  const isInitialMount = useRef(true);
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    const activeTrades = trades.filter(t => !t.isDisabled);
+    if (activeTrades.length > 0) {
+      const latestTrade = activeTrades[activeTrades.length - 1];
+      handleMarketPriceChangeRef.current(latestTrade.price.toString());
+    } else {
+      handleMarketPriceChangeRef.current('');
+    }
+  }, [trades]);
+
   const updateMarketPrice = (delta: number) => {
     const currentVal = parseFloat(marketPrice) || 0;
     const nextVal = Math.max(0, currentVal + delta);

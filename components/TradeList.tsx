@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { TradeRecord, AppSettings } from '../types';
-import { Trash2, Edit2, X, GripHorizontal, Eye, EyeOff, RotateCcw, ArrowDownUp } from 'lucide-react';
+import { Trash2, Edit2, X, GripHorizontal, Eye, EyeOff, RotateCcw, ArrowDownUp, ChevronDown, ChevronUp } from 'lucide-react';
 import { InputGroup } from './InputGroup';
 
 interface TradeListProps {
@@ -285,7 +285,8 @@ const EditBubble: React.FC<EditBubbleProps> = ({
 export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate, onReorder, settings, onSettingsChange }) => {
   // sortDesc: true = Latest -> Earliest (Reversed), false = Earliest -> Latest (Original)
   const [sortDesc, setSortDesc] = useState(() => {
-    return localStorage.getItem('gold_trade_sort_desc') === 'true';
+    const saved = localStorage.getItem('gold_trade_sort_desc');
+    return saved !== 'false';
   });
 
   useEffect(() => {
@@ -295,6 +296,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   const [activeColId, setActiveColId] = useState<ColumnKey | null>(null);
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const [editState, setEditState] = useState<{ id: string, top: number, left: number, mode: 'full' | 'tag' } | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const colRects = useRef<Map<string, { left: number, width: number }>>(new Map());
@@ -407,9 +409,9 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
          </div>
        );
     }},
-    price: { id: 'price', label: '价格', render: (t) => <span className="font-mono text-app-text">{t.price.toFixed(2)}</span> },
-    grams: { id: 'grams', label: '数量', render: (t) => <span className="font-mono text-app-text">{t.grams.toFixed(2)}</span> },
-    tradeTotal: { id: 'tradeTotal', label: '交易额', render: (t) => <span className="font-mono text-app-text/70">{fmt(t.price * t.grams)}</span> },
+    price: { id: 'price', label: '单价', render: (t) => <span className="font-mono text-app-text">{t.price.toFixed(2)}</span> },
+    grams: { id: 'grams', label: '数量', render: (t) => <span className="font-mono text-app-subtext">{t.grams.toFixed(2)}</span> },
+    tradeTotal: { id: 'tradeTotal', label: '交易额', render: (t) => <span className="font-mono text-app-subtext">{fmt(t.price * t.grams)}</span> },
     holdingTotal: { id: 'holdingTotal', label: '持仓总额', render: (t) => {
        if (t.isDisabled) return <span className="font-mono text-app-subtext text-xs">-</span>;
        return <span className="font-mono text-app-subtext text-xs">{t.holdingTotal > 0 ? fmt(t.holdingTotal) : '-'}</span> 
@@ -441,10 +443,10 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
            );
        }
     }},
-    absChange: { id: 'absChange', label: settings.priceDisplayMode === 'avgCost' ? '均价变动' : settings.priceDisplayMode === 'breakEven' ? '回本变动' : (
+    absChange: { id: 'absChange', label: settings.priceDisplayMode === 'avgCost' ? '均价浮动' : settings.priceDisplayMode === 'breakEven' ? '回本浮动' : (
       <div className="flex flex-col leading-tight items-start">
-        <span>回本变动</span>
-        <span className="text-[10px] opacity-70 font-normal">均价变动</span>
+        <span>回本浮动</span>
+        <span className="text-[10px] opacity-70 font-normal">均价浮动</span>
       </div>
     ), render: (t) => {
         const renderValue = (val: number, isAvg: boolean = false) => {
@@ -656,11 +658,12 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   }
 
   const editingTrade = editState ? trades.find(t => t.id === editState.id) : null;
+  const visibleTrades = isExpanded ? displayTrades : displayTrades.slice(0, 20);
 
   return (
     <>
       <div className="rounded-xl border border-app-border bg-app-card overflow-hidden isolate transition-colors duration-300">
-        <div ref={containerRef} className={`overflow-x-auto custom-scrollbar ${(activeColId || activeRowId) ? 'drag-active' : ''}`}>
+        <div ref={containerRef} className={`overflow-x-auto custom-scrollbar ${(activeColId || activeRowId) ? 'drag-active' : ''} ${isExpanded ? 'overflow-y-auto max-h-[800px]' : ''}`}>
           <style>{`
             /* 基础状态：禁止选中 */
             .drag-active { user-select: none !important; -webkit-user-select: none !important; }
@@ -676,7 +679,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
             `).join('\n')}
             
             /* 行拖拽样式：提升 z-index 至 1000 确保悬浮在所有元素（包括粘性列）上方 */
-            ${displayTrades.map((t, idx) => `
+            ${visibleTrades.map((t, idx) => `
                .drag-row-${t.id} td { transform: translateY(var(--row-drag-ty)) !important; transition: none !important; z-index: 1000 !important; position: relative; background: var(--drag-bg) !important; box-shadow: 0 15px 35px rgba(0,0,0,0.5); opacity: 0.95; }
                .drag-active tr[data-row]:not(.dragging-row):nth-child(${idx + 1}) td { transform: translateY(var(--row-shift-${idx})); }
             `).join('\n')}
@@ -690,22 +693,22 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
           `}</style>
 
           <table className="w-full text-sm text-left border-separate border-spacing-0 min-w-[550px]">
-            <thead className="text-xs text-app-subtext uppercase bg-app-bg">
+            <thead className="text-xs text-app-subtext uppercase bg-app-bg sticky top-0 z-30 shadow-sm">
               <tr className={activeColId ? `drag-col-${activeColId}` : ''}>
-                <th className="p-0 text-center sticky left-0 z-20 bg-app-bg border-b border-r border-app-border w-[40px] min-w-[40px] max-w-[40px] shadow-lg">
+                <th className="p-0 text-center sticky top-0 left-0 z-40 bg-app-bg border-b border-r border-app-border w-[40px] min-w-[40px] max-w-[40px] shadow-lg">
                    <span className="font-bold">方向</span>
                 </th>
                 {columnOrder.map((colKey) => {
                   const col = COLUMN_DEFS[colKey];
                   const isDragging = activeColId === colKey;
                   return (
-                    <th key={colKey} data-col={colKey} onPointerDown={(e) => onColPointerDown(e, colKey)} onPointerMove={onColPointerMove} onPointerUp={onColPointerUp} onPointerCancel={onColPointerUp} className={`px-2 py-3 md:px-4 md:py-4 border-b border-app-border cursor-grab active:cursor-grabbing select-none relative touch-none ${isDragging ? 'dragging-cell text-brand-yellow font-bold' : ''}`}>
+                    <th key={colKey} data-col={colKey} onPointerDown={(e) => onColPointerDown(e, colKey)} onPointerMove={onColPointerMove} onPointerUp={onColPointerUp} onPointerCancel={onColPointerUp} className={`px-2 py-3 md:px-4 md:py-4 border-b border-app-border bg-app-bg sticky top-0 z-30 cursor-grab active:cursor-grabbing select-none relative touch-none ${isDragging ? 'dragging-cell text-brand-yellow font-bold' : ''}`}>
                       <div className="flex items-center gap-1.5 pointer-events-none"><span className="whitespace-nowrap">{col.label}</span></div>
                       {isDragging && <div className="absolute inset-x-0 -bottom-[1px] h-0.5 bg-brand-yellow" />}
                     </th>
                   );
                 })}
-                <th className="px-1 py-3 md:py-4 text-center sticky right-0 z-20 bg-app-bg border-l border-b border-app-border shadow-lg w-[90px]">
+                <th className="px-1 py-3 md:py-4 text-center sticky top-0 right-0 z-40 bg-app-bg border-l border-b border-app-border shadow-lg w-[90px]">
                    <button onClick={() => setSortDesc(!sortDesc)} className={`flex items-center justify-center gap-1 w-full py-1.5 rounded-md transition-all text-[11px] font-bold border ${sortDesc ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20' : 'bg-brand-green/10 text-brand-green border-brand-green/20 hover:bg-brand-green/20'}`} title={sortDesc ? "当前：最新在最前" : "当前：最早在最前"}>
                      <span>{sortDesc ? "最新→最早" : "最早→最新"}</span>
                    </button>
@@ -713,7 +716,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
               </tr>
             </thead>
             <tbody>
-              {displayTrades.map((trade, index) => {
+              {visibleTrades.map((trade, index) => {
                 const isDraggingRow = activeRowId === trade.id;
                 return (
                   <tr 
@@ -735,9 +738,6 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                     ))}
                     <td className="px-1 py-2.5 md:py-3 text-center sticky right-0 z-20 bg-app-card group-hover:bg-app-hover border-l border-b border-app-border shadow-lg transition-colors">
                       <div className="flex justify-center gap-1">
-                        <button onClick={(e) => handleEditClick(e, trade.id, 'full')} className={`p-1 transition-colors ${editState?.id === trade.id && editState.mode === 'full' ? 'text-brand-yellow' : 'text-app-subtext hover:text-brand-yellow'}`} title="编辑">
-                          <Edit2 size={14} />
-                        </button>
                         <button 
                           onClick={(e) => {
                             e.stopPropagation();
@@ -748,6 +748,9 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                         >
                           {trade.isDisabled ? <EyeOff size={14} /> : <Eye size={14} />}
                         </button>
+                        <button onClick={(e) => handleEditClick(e, trade.id, 'full')} className={`p-1 transition-colors ${editState?.id === trade.id && editState.mode === 'full' ? 'text-brand-yellow' : 'text-app-subtext hover:text-brand-yellow'}`} title="编辑">
+                          <Edit2 size={14} />
+                        </button>
                         <button onClick={() => onDelete(trade.id)} className="text-app-subtext hover:text-red-400 transition-colors p-1" title="删除">
                           <Trash2 size={14} />
                         </button>
@@ -757,6 +760,30 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                 );
               })}
             </tbody>
+            {displayTrades.length > 20 && (
+              <tfoot>
+                <tr>
+                  <td colSpan={columnOrder.length + 2} className="p-0 border-b border-app-border bg-app-card hover:bg-app-hover transition-colors">
+                    <button 
+                      onClick={() => setIsExpanded(!isExpanded)}
+                      className="w-full py-3 text-sm text-app-subtext hover:text-app-text flex items-center justify-center gap-2 sticky left-0 right-0"
+                    >
+                      {isExpanded ? (
+                        <>
+                          <ChevronUp size={16} />
+                          收起列表
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown size={16} />
+                          展开全部 ({displayTrades.length} 条记录)
+                        </>
+                      )}
+                    </button>
+                  </td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>
