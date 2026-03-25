@@ -34,6 +34,9 @@ export function TradingPlanPanel({
     stepType: 'amount' as 'amount' | 'percentage',
     stepValue: '10',
     strategy: 'equal' as 'equal' | 'arithmetic' | 'extreme',
+    extremeSplitCount: '1',
+    arithmeticGramsIncrement: '1',
+    equalBuyGrams: '',
   });
 
   useEffect(() => {
@@ -49,39 +52,37 @@ export function TradingPlanPanel({
   }, [isExpanded, availableFunds, marketPrice]);
 
   const handleParamChange = (field: keyof typeof params, value: string) => {
-    setParams(prev => ({ ...prev, [field]: value }));
+    let finalValue = value;
+    
+    // Enforce basic numeric constraints on typing
+    const num = parseFloat(value);
+    if (!isNaN(num)) {
+      if (field === 'extremeSplitCount') {
+        finalValue = Math.max(1, Math.min(100, Math.floor(num))).toString();
+      } else if (field === 'stepValue') {
+        finalValue = Math.max(1, Math.min(params.stepType === 'percentage' ? 50 : 1000, Math.floor(num))).toString();
+      } else if (field === 'equalBuyGrams') {
+        finalValue = Math.max(1, Math.floor(num)).toString();
+      } else if (num < 0) {
+        finalValue = '0';
+      }
+    }
+    
+    setParams(prev => ({ ...prev, [field]: finalValue }));
   };
 
-  const generatedTrades = useMemo(() => {
-    const start = parseFloat(marketPrice);
+  const currentFundsVal = parseFloat(params.totalFunds) || 0;
+  const currentMarketPriceVal = parseFloat(marketPrice) || 0;
+
+  const planPrices = useMemo(() => {
+    const start = currentMarketPriceVal;
     const target = parseFloat(params.targetPrice);
-    const funds = parseFloat(params.totalFunds);
     const step = parseFloat(params.stepValue);
-
-    if (!target || !funds || (params.strategy !== 'extreme' && (!start || !step || start <= target || step <= 0))) {
+    
+    if (!target || (!start || !step || start <= target || step <= 0)) {
       return [];
     }
-
-    const now = Date.now();
-
-    if (params.strategy === 'extreme') {
-      // 优先使用手动输入的资金，如果没有输入则使用全部可用资金
-      const fundsToUse = params.totalFunds ? parseFloat(params.totalFunds) : availableFunds;
-      const grams = Math.floor(fundsToUse / target);
-      if (grams > 0) {
-        return [{
-          id: `plan-${now}-0`,
-          type: 'BUY',
-          price: Number(target.toFixed(2)),
-          grams,
-          timestamp: now,
-          isPlan: true,
-          tag: '预案'
-        }];
-      }
-      return [];
-    }
-
+    
     const prices: number[] = [];
     let current = start;
 
@@ -98,17 +99,88 @@ export function TradingPlanPanel({
         current = current * (1 - step / 100);
       }
     }
+    return prices;
+  }, [currentMarketPriceVal, params.targetPrice, params.stepValue, params.stepType]);
 
+  const maxEqualGrams = useMemo(() => {
+    if (planPrices.length === 0) return Math.floor(currentFundsVal / (currentMarketPriceVal || 1));
+    const sumPi = planPrices.reduce((a, b) => a + b, 0);
+    return Math.floor(currentFundsVal / sumPi);
+  }, [planPrices, currentFundsVal, currentMarketPriceVal]);
+
+  const maxArithmeticIncrement = useMemo(() => {
+    if (planPrices.length === 0) return 100;
+    const sumIPi = planPrices.reduce((a, b, i) => a + i * b, 0);
+    return sumIPi > 0 ? Math.floor(currentFundsVal / sumIPi) : 100;
+  }, [planPrices, currentFundsVal]);
+
+  const generatedTrades = useMemo(() => {
+    const start = currentMarketPriceVal;
+    const target = parseFloat(params.targetPrice);
+    const funds = currentFundsVal;
+    const step = parseFloat(params.stepValue);
+    const splitCount = parseInt(params.extremeSplitCount) || 1;
+    const arithmeticGramsIncrement = parseFloat(params.arithmeticGramsIncrement) || 0;
+    const equalBuyGrams = parseFloat(params.equalBuyGrams) || 0;
+
+    if (!target || !funds || (params.strategy !== 'extreme' && (!start || !step || start <= target || step <= 0))) {
+      return [];
+    }
+
+    const now = Date.now();
+
+    if (params.strategy === 'extreme') {
+      const fundsToUse = params.totalFunds ? parseFloat(params.totalFunds) : availableFunds;
+      const fundsPerSplit = fundsToUse / splitCount;
+      const trades: TradeRecord[] = [];
+      const priceDiff = start - target;
+      const priceInterval = priceDiff / splitCount;
+      
+      let remainingFunds = fundsToUse;
+      
+      for (let i = 0; i < splitCount; i++) {
+        const executionPrice = start - (i + 1) * priceInterval;
+        let grams = Math.floor(fundsPerSplit / executionPrice);
+        
+        if (grams * executionPrice > remainingFunds) {
+          grams = Math.floor(remainingFunds / executionPrice);
+        }
+        
+        if (grams > 0) {
+          remainingFunds -= grams * executionPrice;
+          trades.push({
+            id: `plan-${now}-${i}`,
+            type: 'BUY',
+            price: Number(executionPrice.toFixed(2)),
+            grams,
+            timestamp: now + i,
+            isPlan: true,
+            tag: '极限'
+          });
+        }
+      }
+      return trades;
+    }
+
+    const prices = planPrices;
     if (prices.length === 0) return [];
 
     const N = prices.length;
     const trades: TradeRecord[] = [];
 
     if (params.strategy === 'equal') {
-      const fundsPerStep = funds / N;
+      const defaultFundsPerStep = funds / N;
+      let remainingFunds = funds;
+      
       prices.forEach((p, index) => {
-        const grams = Math.floor(fundsPerStep / p);
+        let grams = equalBuyGrams > 0 ? equalBuyGrams : Math.floor(defaultFundsPerStep / p);
+        
+        if (grams * p > remainingFunds) {
+          grams = Math.floor(remainingFunds / p);
+        }
+        
         if (grams > 0) {
+          remainingFunds -= grams * p;
           trades.push({
             id: `plan-${now}-${index}`,
             type: 'BUY',
@@ -116,36 +188,54 @@ export function TradingPlanPanel({
             grams,
             timestamp: now + index,
             isPlan: true,
-            tag: '预案'
+            tag: '等额'
           });
         }
       });
     } else if (params.strategy === 'arithmetic') {
-      const totalParts = (N * (N + 1)) / 2;
-      const partValue = funds / totalParts;
+      const sumPi = prices.reduce((a, b) => a + b, 0);
+      const sumIPi = prices.reduce((a, b, i) => a + i * b, 0);
+      
+      let actualIncrement = arithmeticGramsIncrement;
+      if (actualIncrement * sumIPi > funds) {
+        actualIncrement = sumIPi > 0 ? funds / sumIPi : 0;
+      }
+      
+      const totalIncrementCost = actualIncrement * sumIPi;
+      const baseGrams = sumPi > 0 ? (funds - totalIncrementCost) / sumPi : 0;
+      
+      let remainingFunds = funds;
       
       prices.forEach((p, index) => {
-        const stepFunds = partValue * (index + 1);
-        const grams = Math.floor(stepFunds / p);
-        if (grams > 0) {
+        let stepGrams = Math.max(0, Math.floor(baseGrams + index * actualIncrement));
+        
+        if (stepGrams * p > remainingFunds) {
+          stepGrams = Math.floor(remainingFunds / p);
+        }
+        
+        if (stepGrams > 0) {
+          remainingFunds -= stepGrams * p;
           trades.push({
             id: `plan-${now}-${index}`,
             type: 'BUY',
             price: Number(p.toFixed(2)),
-            grams,
+            grams: stepGrams,
             timestamp: now + index,
             isPlan: true,
-            tag: '预案'
+            tag: '等差'
           });
         }
       });
     }
 
     return trades;
-  }, [marketPrice, params]);
+  }, [currentMarketPriceVal, params, currentFundsVal, availableFunds, planPrices]);
 
   const handleApply = () => {
     if (generatedTrades.length > 0) {
+      if (hasPlan) {
+        onClearPlan();
+      }
       onApplyPlan(generatedTrades);
     }
   };
@@ -168,7 +258,7 @@ export function TradingPlanPanel({
         <div className="p-4 flex flex-col gap-4 border-t border-app-border">
           <div className="grid grid-cols-2 gap-3">
             <InputGroup 
-              label="起始价格" 
+              label="参考市价" 
               value={marketPrice} 
               onChange={onMarketPriceChange} 
               placeholder="当前价格" 
@@ -180,13 +270,22 @@ export function TradingPlanPanel({
               value={params.targetPrice} 
               onChange={(v) => handleParamChange('targetPrice', v)} 
               placeholder="400" 
+              step={priceStep}
+              min={1}
+              max={marketPrice ? parseFloat(marketPrice) - 0.01 : 1000}
+              touchMode={touchMode}
             />
+          </div>
+
+          <div className="flex flex-col gap-2 p-3 bg-app-input/30 rounded-xl border border-app-border">
             <div className="relative">
               <InputGroup 
                 label="计划动用资金" 
                 value={params.totalFunds} 
                 onChange={(v) => handleParamChange('totalFunds', v)} 
                 placeholder={availableFunds.toFixed(2)} 
+                min={0}
+                max={availableFunds > 0 ? availableFunds : 1000000}
                 hideControls={true}
               />
               {availableFunds > 0 && params.totalFunds !== availableFunds.toFixed(2) && (
@@ -199,50 +298,144 @@ export function TradingPlanPanel({
               )}
             </div>
             
-            <div className={`flex flex-col gap-1.5 transition-opacity ${params.strategy === 'extreme' ? 'opacity-30 pointer-events-none' : ''}`}>
-              <label className="text-xs font-medium text-app-subtext pl-1">下跌步长</label>
-              <div className="flex gap-1">
+            {availableFunds > 0 && (
+              <div className="px-1 flex items-center gap-3">
                 <input 
-                  type="text" 
-                  value={params.stepValue}
-                  onChange={(e) => handleParamChange('stepValue', e.target.value.replace(/[^\d.]/g, ''))}
-                  placeholder="10"
-                  className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-sm text-app-text outline-none focus:border-indigo-500/50 transition-colors"
+                  type="range"
+                  min="0"
+                  max={availableFunds}
+                  step="1"
+                  value={parseFloat(params.totalFunds) || 0}
+                  onChange={(e) => handleParamChange('totalFunds', e.target.value)}
+                  className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-indigo-500"
                 />
-                <select 
-                  value={params.stepType}
-                  onChange={(e) => handleParamChange('stepType', e.target.value as any)}
-                  className="bg-app-input border border-app-border rounded-lg px-2 py-2 text-sm text-app-text outline-none focus:border-indigo-500/50 transition-colors"
-                >
-                  <option value="amount">元</option>
-                  <option value="percentage">%</option>
-                </select>
+                <span className="text-[10px] font-mono text-app-subtext w-8 text-right">
+                  {availableFunds > 0 ? Math.round(((parseFloat(params.totalFunds) || 0) / availableFunds) * 100) : 0}%
+                </span>
               </div>
-            </div>
+            )}
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-app-subtext pl-1">补仓策略</label>
-            <div className="grid grid-cols-3 gap-2 p-1 bg-app-input rounded-lg">
-              <button 
-                onClick={() => handleParamChange('strategy', 'equal')} 
-                className={`py-2 rounded-md text-[11px] font-medium transition-all ${params.strategy === 'equal' ? 'bg-app-card text-indigo-400 shadow-sm border border-indigo-500/30' : 'text-app-subtext hover:text-app-text'}`}
-              >
-                等额买入
-              </button>
-              <button 
-                onClick={() => handleParamChange('strategy', 'arithmetic')} 
-                className={`py-2 rounded-md text-[11px] font-medium transition-all ${params.strategy === 'arithmetic' ? 'bg-app-card text-indigo-400 shadow-sm border border-indigo-500/30' : 'text-app-subtext hover:text-app-text'}`}
-              >
-                等差买入
-              </button>
-              <button 
-                onClick={() => handleParamChange('strategy', 'extreme')} 
-                className={`py-2 rounded-md text-[11px] font-medium transition-all ${params.strategy === 'extreme' ? 'bg-app-card text-indigo-400 shadow-sm border border-indigo-500/30' : 'text-app-subtext hover:text-app-text'}`}
-              >
-                极限抄底
-              </button>
+          <div className="flex flex-col gap-3 p-3 bg-app-input/30 rounded-xl border border-app-border">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-app-subtext pl-1">补仓策略</label>
+              <div className="grid grid-cols-3 gap-2 p-1 bg-app-input rounded-lg">
+                <button 
+                  onClick={() => handleParamChange('strategy', 'equal')} 
+                  className={`py-2 rounded-md text-[11px] font-medium transition-all ${params.strategy === 'equal' ? 'bg-app-card text-indigo-400 shadow-sm border border-indigo-500/30' : 'text-app-subtext hover:text-app-text'}`}
+                >
+                  等额买入
+                </button>
+                <button 
+                  onClick={() => handleParamChange('strategy', 'arithmetic')} 
+                  className={`py-2 rounded-md text-[11px] font-medium transition-all ${params.strategy === 'arithmetic' ? 'bg-app-card text-indigo-400 shadow-sm border border-indigo-500/30' : 'text-app-subtext hover:text-app-text'}`}
+                >
+                  等差买入
+                </button>
+                <button 
+                  onClick={() => handleParamChange('strategy', 'extreme')} 
+                  className={`py-2 rounded-md text-[11px] font-medium transition-all ${params.strategy === 'extreme' ? 'bg-app-card text-indigo-400 shadow-sm border border-indigo-500/30' : 'text-app-subtext hover:text-app-text'}`}
+                >
+                  极限抄底
+                </button>
+              </div>
             </div>
+
+            {params.strategy === 'equal' && (
+              <div className="grid grid-cols-2 gap-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between pr-1">
+                    <label className="text-[10px] text-app-subtext font-medium ml-1">触发跌幅</label>
+                    <select 
+                      value={params.stepType}
+                      onChange={(e) => handleParamChange('stepType', e.target.value as any)}
+                      className="bg-transparent text-[10px] font-bold text-indigo-400 outline-none cursor-pointer"
+                    >
+                      <option value="amount">元</option>
+                      <option value="percentage">%</option>
+                    </select>
+                  </div>
+                  <InputGroup 
+                    value={params.stepValue}
+                    onChange={(v) => handleParamChange('stepValue', v)}
+                    placeholder="10"
+                    step={1}
+                    min={1}
+                    max={params.stepType === 'percentage' ? 50 : 1000}
+                    touchMode={touchMode}
+                    className="!py-2 text-sm"
+                  />
+                </div>
+
+                <InputGroup 
+                  label="购入克数"
+                  value={params.equalBuyGrams}
+                  onChange={(v) => handleParamChange('equalBuyGrams', v)}
+                  placeholder="1"
+                  step={1}
+                  min={1}
+                  max={maxEqualGrams}
+                  touchMode={touchMode}
+                  className="!py-2 text-sm"
+                />
+              </div>
+            )}
+
+            {params.strategy === 'arithmetic' && (
+              <div className="grid grid-cols-2 gap-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between pr-1">
+                    <label className="text-[10px] text-app-subtext font-medium ml-1">触发跌幅</label>
+                    <select 
+                      value={params.stepType}
+                      onChange={(e) => handleParamChange('stepType', e.target.value as any)}
+                      className="bg-transparent text-[10px] font-bold text-indigo-400 outline-none cursor-pointer"
+                    >
+                      <option value="amount">元</option>
+                      <option value="percentage">%</option>
+                    </select>
+                  </div>
+                  <InputGroup 
+                    value={params.stepValue}
+                    onChange={(v) => handleParamChange('stepValue', v)}
+                    placeholder="10"
+                    step={1}
+                    min={1}
+                    max={params.stepType === 'percentage' ? 50 : 1000}
+                    touchMode={touchMode}
+                    className="!py-2 text-sm"
+                  />
+                </div>
+
+                <InputGroup 
+                  label="递增克数"
+                  value={params.arithmeticGramsIncrement}
+                  onChange={(v) => handleParamChange('arithmeticGramsIncrement', v)}
+                  placeholder="1"
+                  step={1}
+                  min={0}
+                  max={maxArithmeticIncrement}
+                  touchMode={touchMode}
+                  className="!py-2 text-sm"
+                />
+              </div>
+            )}
+
+            {params.strategy === 'extreme' && (
+              <div className="grid grid-cols-2 gap-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                <InputGroup 
+                  label="抄底次数"
+                  value={params.extremeSplitCount}
+                  onChange={(v) => handleParamChange('extremeSplitCount', v)}
+                  placeholder="1"
+                  step={1}
+                  min={1}
+                  max={50}
+                  touchMode={touchMode}
+                  className="!py-2 text-sm"
+                />
+              </div>
+            )}
           </div>
 
           {generatedTrades.length > 0 && (

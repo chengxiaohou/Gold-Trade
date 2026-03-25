@@ -260,12 +260,13 @@ export default function App() {
       isInitialMount.current = false;
       return;
     }
-    const activeTrades = trades.filter(t => !t.isDisabled);
+    const activeTrades = trades.filter(t => !t.isDisabled && !t.isPlan);
     if (activeTrades.length > 0) {
       const latestTrade = activeTrades[activeTrades.length - 1];
-      handleMarketPriceChangeRef.current(latestTrade.price.toString());
-    } else {
-      handleMarketPriceChangeRef.current('');
+      const priceStr = latestTrade.price.toString();
+      if (priceStr !== marketPriceValueRef.current) {
+        handleMarketPriceChangeRef.current(priceStr);
+      }
     }
   }, [trades]);
 
@@ -955,7 +956,13 @@ export default function App() {
                             <span className={`text-sm font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
                         </div>
                     </div>
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center">
+                    <div 
+                        onClick={() => {
+                            const nextMode = appSettings.priceDisplayMode === 'breakEven' ? 'avgCost' : 'breakEven';
+                            handleSettingsUpdate({ priceDisplayMode: nextMode });
+                        }}
+                        className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center cursor-pointer hover:border-brand-yellow/50 transition-colors"
+                    >
                         <span className="text-xs text-app-subtext block mb-1">{renderPriceLabel('平均成本')}</span>
                         <div className="text-xl font-bold text-app-text font-mono">
                             {renderPriceValue(currentPosition.breakEvenPrice, currentPosition.avgCost, "text-xs text-app-subtext")}

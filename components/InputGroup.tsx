@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useMemo } from 'react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 
 interface InputGroupProps {
-  label: string;
+  label?: React.ReactNode;
   value: number | string;
   onChange: (val: string) => void;
   type?: string;
@@ -14,6 +14,8 @@ interface InputGroupProps {
   touchMode?: boolean; // 新增：是否启用触屏拖拽调节模式
   hideControls?: boolean; // 新增：是否隐藏增减按钮
   className?: string; // 新增：自定义样式
+  min?: number;
+  max?: number;
 }
 
 export const InputGroup: React.FC<InputGroupProps> = ({
@@ -28,7 +30,9 @@ export const InputGroup: React.FC<InputGroupProps> = ({
   isQuantity = false,
   touchMode = false,
   hideControls = false,
-  className = ""
+  className = "",
+  min,
+  max
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   // 用 ref 存储最新的 value，供事件监听器使用，避免 stale closure
@@ -52,7 +56,11 @@ export const InputGroup: React.FC<InputGroupProps> = ({
   const updateValue = (delta: number) => {
     // 这里使用 props 传入的 value 或者 ref 都可以，但 touch 逻辑中需要用 ref
     const currentVal = parseFloat(valueRef.current.toString()) || 0;
-    const nextVal = Math.round((currentVal + delta) * 100) / 100;
+    let nextVal = Math.round((currentVal + delta) * 100) / 100;
+    
+    if (min !== undefined) nextVal = Math.max(min, nextVal);
+    if (max !== undefined) nextVal = Math.min(max, nextVal);
+    
     const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(2);
     onChange(nextStr);
   };
@@ -130,7 +138,11 @@ export const InputGroup: React.FC<InputGroupProps> = ({
          // 直接在 Effect 内部计算，不依赖外部不稳定的 updateValue/onChange
          const currentVal = parseFloat(valueRef.current.toString()) || 0;
          const changeAmount = direction * step * steps;
-         const nextVal = Math.round((currentVal + changeAmount) * 100) / 100;
+         let nextVal = Math.round((currentVal + changeAmount) * 100) / 100;
+         
+         if (min !== undefined) nextVal = Math.max(min, nextVal);
+         if (max !== undefined) nextVal = Math.min(max, nextVal);
+         
          const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(2);
          
          // 使用 ref 调用 onChange，不作为依赖项
@@ -155,7 +167,8 @@ export const InputGroup: React.FC<InputGroupProps> = ({
 
   return (
     <div className="flex flex-col space-y-1.5 w-full group/input relative">
-      <label className="text-[10px] text-app-subtext font-medium ml-1 truncate">{label}</label>
+      {label && <label className="text-[10px] text-app-subtext font-medium ml-1 truncate">{label}</label>}
+
       <div className="relative flex items-center">
         <style>{`
           .no-spinners::-webkit-inner-spin-button,

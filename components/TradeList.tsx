@@ -395,7 +395,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
        let style = EMPTY_STYLE;
        if (t.tag) {
            let colorKey = settings.tagColors?.[t.tag];
-           if (!colorKey && t.tag === '预案') {
+           if (!colorKey && (t.tag === '预案' || t.tag === '等额' || t.tag === '等差' || t.tag === '极限')) {
              colorKey = 'indigo';
            }
            style = getTagStyle(colorKey);
