@@ -14,12 +14,12 @@ interface TradeListProps {
   onSettingsChange: (updates: Partial<AppSettings>) => void;
 }
 
-type ColumnKey = 'tag' | 'price' | 'grams' | 'tradeTotal' | 'historicalAvg' | 'holdingTotal' | 'avgChange' | 'absChange';
+type ColumnKey = 'tag' | 'price' | 'grams' | 'tradeTotal' | 'historicalAvg' | 'holdingTotal' | 'avgChange' | 'absChange' | 'pnl';
 
 interface ColumnDef {
   id: ColumnKey;
   label: React.ReactNode;
-  render: (trade: TradeRecord & { historicalAvg: number, historicalBreakEven: number, avgChange: number, absChange: number, breakEvenChange: number, breakEvenAbsChange: number, holdingTotal: number }) => React.ReactNode;
+  render: (trade: TradeRecord & { historicalAvg: number, historicalBreakEven: number, avgChange: number, absChange: number, breakEvenChange: number, breakEvenAbsChange: number, holdingTotal: number, floatingPnL: number, realizedPnLAfter: number }) => React.ReactNode;
 }
 
 const fmt = (n: number) => n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -341,7 +341,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     let runningRealizedPnL = 0;
     return trades.map(trade => {
       if (trade.isDisabled) {
-         return { ...trade, historicalAvg: 0, historicalBreakEven: 0, avgChange: 0, absChange: 0, breakEvenChange: 0, breakEvenAbsChange: 0, holdingTotal: 0 };
+         return { ...trade, historicalAvg: 0, historicalBreakEven: 0, avgChange: 0, absChange: 0, breakEvenChange: 0, breakEvenAbsChange: 0, holdingTotal: 0, floatingPnL: 0, realizedPnLAfter: 0 };
       }
       const avgBefore = runningGrams > 0 ? runningTotalCost / runningGrams : 0;
       const breakEvenBefore = runningGrams > 0 ? Math.max(0, (runningTotalCost - runningRealizedPnL) / runningGrams) : 0;
@@ -366,6 +366,12 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
       let breakEvenChangePercent = breakEvenBefore > 0 ? ((breakEvenAfter - breakEvenBefore) / breakEvenBefore) * 100 : 0;
       let breakEvenChangeAbs = breakEvenBefore > 0 ? (breakEvenAfter - breakEvenBefore) : 0;
       
+      let floatingPnL = 0;
+      // 只有卖出交易后才计算浮动盈亏，用该笔卖出的成交价计算
+      if (runningGrams > 0 && trade.type === 'SELL') {
+        floatingPnL = (trade.price - avgAfter) * runningGrams;
+      }
+      
       return { 
         ...trade, 
         historicalAvg: avgAfter, 
@@ -374,7 +380,9 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
         absChange: avgChangeAbs, 
         breakEvenChange: breakEvenChangePercent,
         breakEvenAbsChange: breakEvenChangeAbs,
-        holdingTotal: runningTotalCost 
+        holdingTotal: runningTotalCost,
+        floatingPnL,
+        realizedPnLAfter: runningRealizedPnL
       };
     });
   }, [trades]);
@@ -426,11 +434,11 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
       </div>
     ), render: (t) => {
        const renderValue = (val: number, isAvg: boolean = false) => {
-           if (val <= 0 || t.isDisabled) return <span className={`font-mono text-app-subtext font-medium ${isAvg ? 'text-[10px] opacity-70' : ''}`}>-</span>;
+           if (val <= 0 || t.isDisabled) return <span className={`font-mono text-app-subtext font-medium ${isAvg ? 'text-[10px] opacity-70' : 'text-xs'}`}>-</span>;
            let colorClass = 'text-app-subtext';
            if (val < t.price) colorClass = 'text-brand-red';
            else if (val > t.price) colorClass = 'text-brand-green';
-           return <span className={`font-mono font-medium ${colorClass} ${isAvg ? 'text-[10px] opacity-70' : ''}`}>{val.toFixed(2)}</span>;
+           return <span className={`font-mono font-medium ${colorClass} ${isAvg ? 'text-[10px] opacity-70' : 'text-xs'}`}>{val.toFixed(2)}</span>;
        };
 
        if (settings.priceDisplayMode === 'avgCost') {
@@ -501,10 +509,30 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
               </div>
           );
       }
+    }},
+    pnl: { id: 'pnl', label: (
+      <div className="flex flex-col leading-tight items-start">
+        <span>浮动盈亏</span>
+        <span className="text-[10px] opacity-70 font-normal">实现盈亏</span>
+      </div>
+    ), render: (t) => {
+      const renderPnLValue = (val: number, isRealized: boolean = false) => {
+          const sizeClass = isRealized ? 'text-[10px] opacity-70' : 'text-xs';
+          if (Math.abs(val) < 0.01) return <span className={`font-mono text-app-subtext ${sizeClass}`}>-</span>;
+          return <span className={`font-mono font-medium ${sizeClass} ${val >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+            {val >= 0 ? '+' : ''}{fmt(val)}
+          </span>;
+      };
+      return (
+          <div className="flex flex-col items-end leading-tight">
+              {renderPnLValue(t.floatingPnL)}
+              {renderPnLValue(t.realizedPnLAfter, true)}
+          </div>
+      );
     }}
   };
 
-  const DEFAULT_ORDER: ColumnKey[] = ['tag', 'price', 'grams', 'tradeTotal', 'holdingTotal', 'historicalAvg', 'absChange', 'avgChange'];
+  const DEFAULT_ORDER: ColumnKey[] = ['tag', 'price', 'grams', 'tradeTotal', 'holdingTotal', 'historicalAvg', 'absChange', 'avgChange', 'pnl'];
   const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(() => {
     const saved = localStorage.getItem('gold_trade_list_column_order_v4');
     if (saved) {
@@ -521,6 +549,12 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
   useEffect(() => {
     localStorage.setItem('gold_trade_list_column_order_v4', JSON.stringify(columnOrder));
   }, [columnOrder]);
+
+  // Filter columns based on visibility settings
+  const filteredColumnOrder = useMemo(() => {
+    const visibleColumns = settings.visibleColumns || DEFAULT_ORDER;
+    return columnOrder.filter(colKey => visibleColumns.includes(colKey));
+  }, [columnOrder, settings.visibleColumns]);
 
   const onColPointerDown = (e: React.PointerEvent, id: ColumnKey) => {
     if (e.button !== 0) return;
@@ -701,7 +735,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                 <th className="p-0 text-center sticky top-0 left-0 z-40 bg-app-bg border-b border-r border-app-border w-[40px] min-w-[40px] max-w-[40px] shadow-lg">
                    <span className="font-bold">方向</span>
                 </th>
-                {columnOrder.map((colKey) => {
+                {filteredColumnOrder.map((colKey) => {
                   const col = COLUMN_DEFS[colKey];
                   const isDragging = activeColId === colKey;
                   return (
@@ -713,7 +747,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                 })}
                 <th className="px-1 py-3 md:py-4 text-center sticky top-0 right-0 z-40 bg-app-bg border-l border-b border-app-border shadow-lg w-[90px]">
                    <button onClick={() => setSortDesc(!sortDesc)} className={`flex items-center justify-center gap-1 w-full py-1.5 rounded-md transition-all text-[11px] font-bold border ${sortDesc ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20' : 'bg-brand-green/10 text-brand-green border-brand-green/20 hover:bg-brand-green/20'}`} title={sortDesc ? "当前：最新在最前" : "当前：最早在最前"}>
-                     <span>{sortDesc ? "最新→最早" : "最早→最新"}</span>
+                     <span>{sortDesc ? "最新" : "最早"} ↓</span>
                    </button>
                 </th>
               </tr>
@@ -736,7 +770,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                     >
                        <span className={`inline-flex items-center justify-center w-6 h-6 rounded text-xs font-bold mx-auto transition-transform group-hover:scale-110 ${trade.type === 'BUY' ? 'bg-brand-red/10 text-brand-red' : 'bg-brand-green/10 text-brand-green'}`}>{trade.type === 'BUY' ? '买' : '卖'}</span>
                     </td>
-                    {columnOrder.map((colKey) => (
+                    {filteredColumnOrder.map((colKey) => (
                       <td key={colKey} className={`px-2 py-2.5 md:px-4 md:py-3 whitespace-nowrap border-b border-app-border ${activeColId === colKey ? 'dragging-cell' : ''}`}>{COLUMN_DEFS[colKey].render(trade as any)}</td>
                     ))}
                     <td className="px-1 py-2.5 md:py-3 text-center sticky right-0 z-20 bg-app-card group-hover:bg-app-hover border-l border-b border-app-border shadow-lg transition-colors">
@@ -766,7 +800,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
             {displayTrades.length > 20 && (
               <tfoot>
                 <tr>
-                  <td colSpan={columnOrder.length + 2} className="p-0 border-b border-app-border bg-app-card hover:bg-app-hover transition-colors">
+                  <td colSpan={filteredColumnOrder.length + 2} className="p-0 border-b border-app-border bg-app-card hover:bg-app-hover transition-colors">
                     <button 
                       onClick={() => setIsExpanded(!isExpanded)}
                       className="w-full py-3 text-sm text-app-subtext hover:text-app-text flex items-center justify-center gap-2 sticky left-0 right-0"

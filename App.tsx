@@ -277,13 +277,9 @@ export default function App() {
     handleMarketPriceChange(nextStr);
   };
 
-  // Switch Order Type logic: resets grams and syncs price
+  // Switch Order Type logic: keeps price and grams unchanged
   const changeOrderType = (type: OrderType) => {
     setPreviewType(type);
-    setInputs({
-      price: marketPrice,
-      grams: ''
-    });
   };
 
   // Wheel listener for Market Price
@@ -597,7 +593,7 @@ export default function App() {
     const newTrade: TradeRecord = { id: Date.now().toString(), type, price, grams, timestamp: Date.now(), isDisabled: false };
     setTrades(prev => [...prev, newTrade]);
     setMarketPrice(inputs.price);
-    setInputs({ price: inputs.price, grams: '' }); // Keep the price, reset grams
+    setInputs({ price: inputs.price, grams: inputs.grams }); // Keep both price and grams
     setAiState({ loading: false, result: null, error: null });
   };
 
@@ -961,11 +957,15 @@ export default function App() {
                             const nextMode = appSettings.priceDisplayMode === 'breakEven' ? 'avgCost' : 'breakEven';
                             handleSettingsUpdate({ priceDisplayMode: nextMode });
                         }}
-                        className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center cursor-pointer hover:border-brand-yellow/50 transition-colors"
+                        className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5 cursor-pointer hover:border-brand-yellow/50 transition-colors"
                     >
-                        <span className="text-xs text-app-subtext block mb-1">{renderPriceLabel('平均成本')}</span>
-                        <div className="text-xl font-bold text-app-text font-mono">
-                            {renderPriceValue(currentPosition.breakEvenPrice, currentPosition.avgCost, "text-xs text-app-subtext")}
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-app-subtext">回本价</span>
+                            <span className={`text-sm font-bold font-mono ${parseFloat(marketPrice) > currentPosition.breakEvenPrice ? 'text-brand-red' : parseFloat(marketPrice) < currentPosition.breakEvenPrice ? 'text-brand-green' : 'text-app-text'}`}>{currentPosition.breakEvenPrice.toFixed(2)}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-app-subtext">持仓均价</span>
+                            <span className={`text-sm font-bold font-mono ${parseFloat(marketPrice) > currentPosition.avgCost ? 'text-brand-red' : parseFloat(marketPrice) < currentPosition.avgCost ? 'text-brand-green' : 'text-app-text'}`}>{currentPosition.avgCost.toFixed(2)}</span>
                         </div>
                     </div>
                     <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 focus-within:border-brand-yellow transition-colors">
@@ -977,11 +977,7 @@ export default function App() {
                                 value={marketPrice} 
                                 onChange={(e) => handleMarketPriceChange(e.target.value)} 
                                 placeholder="0.00" 
-                                className={`no-spinners text-xl font-bold font-mono bg-transparent border-none p-0 w-full outline-none ${appSettings.touchMode ? 'cursor-ns-resize' : ''} ${
-                                    currentPosition.grams > 0 && parseFloat(marketPrice) 
-                                        ? (parseFloat(marketPrice) > currentPosition.breakEvenPrice ? 'text-brand-red' : parseFloat(marketPrice) < currentPosition.breakEvenPrice ? 'text-brand-green' : 'text-brand-yellow')
-                                        : 'text-brand-yellow'
-                                }`} 
+                                className={`no-spinners text-xl font-bold font-mono bg-transparent border-none p-0 w-full outline-none ${appSettings.touchMode ? 'cursor-ns-resize' : ''} text-app-text`} 
                             />
                             <div className="flex flex-col gap-0.5 ml-2">
                                 <button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronUp size={10} strokeWidth={3} /></button>
@@ -1015,6 +1011,7 @@ export default function App() {
                 
                 {activeSimPanel === 'manual' && (
                   <div className="p-4 flex flex-col gap-3 border-t border-app-border">
+                    {/* 买入/卖出切换 */}
                     <div className="grid grid-cols-2 p-1 bg-app-input rounded-lg">
                       <button onClick={() => changeOrderType('BUY')} className={`py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${previewType === 'BUY' ? 'bg-brand-red text-white shadow-lg shadow-brand-red/20' : 'text-app-subtext hover:text-app-text'}`}>
                         <TrendingUp size={16} />买入
@@ -1023,6 +1020,7 @@ export default function App() {
                         <TrendingDown size={16} />卖出
                       </button>
                     </div>
+                    {/* 价格和数量输入 */}
                     <div className="grid grid-cols-2 gap-2">
                       <InputGroup 
                         label="价格 (元/克)" 
@@ -1032,47 +1030,26 @@ export default function App() {
                         step={appSettings.priceStep}
                         touchMode={appSettings.touchMode} 
                       />
-                      <div className="relative">
-                        <InputGroup 
-                          label="数量 (克)" 
-                          value={inputs.grams} 
-                          onChange={(v) => handleInputChange('grams', v)} 
-                          placeholder="0.00" 
-                          step={appSettings.gramsStep} 
-                          isQuantity={true}
-                          touchMode={appSettings.touchMode} 
-                        />
-                        {previewType === 'SELL' && currentPosition.grams > 0 && (
-                          <button 
-                            onClick={() => handleInputChange('grams', currentPosition.grams.toString())}
-                            className="absolute -top-1 right-0 text-[9px] font-bold text-brand-green hover:underline"
-                          >
-                            全部卖出
-                          </button>
-                        )}
-                        {previewType === 'BUY' && appSettings.totalCapital && appSettings.totalCapital > 0 && (appSettings.totalCapital - currentPosition.totalCost) > 0 && parseFloat(inputs.price) > 0 && (
-                          <button 
-                            onClick={() => {
-                              const available = appSettings.totalCapital! - currentPosition.totalCost;
-                              const maxGrams = available / parseFloat(inputs.price);
-                              handleInputChange('grams', Math.floor(maxGrams).toString());
-                            }}
-                            className="absolute -top-1 right-0 text-[9px] font-bold text-brand-red hover:underline"
-                          >
-                            全部买入
-                          </button>
-                        )}
-                      </div>
+                      <InputGroup 
+                        label="数量 (克)" 
+                        value={inputs.grams} 
+                        onChange={(v) => handleInputChange('grams', v)} 
+                        placeholder="0.00" 
+                        step={appSettings.gramsStep} 
+                        isQuantity={true}
+                        touchMode={appSettings.touchMode} 
+                      />
                     </div>
+                    {/* 成交后预估模块 */}
                     <div className="bg-app-input/30 rounded-xl p-4 border border-app-border space-y-3">
                         <div className="flex justify-between items-start">
                             <div>
                                 <span className="text-[10px] font-bold text-app-subtext uppercase block mb-1">{renderPriceLabel('成交后均价预估')}</span>
                                 <div className="flex items-baseline gap-1.5"><span className="text-3xl font-bold text-app-text tracking-tight font-mono">{renderPriceValue(simulation.newBreakEvenPrice, simulation.newAvgCost, "text-sm text-app-subtext font-bold")}</span><span className="text-[10px] text-app-subtext font-bold">¥</span></div>
-                                <div className="flex items-center gap-1.5 mt-0.5">
-                                    <span className="text-[10px] text-app-subtext font-medium opacity-80">较当前</span>
-                                    {renderPriceDiff(simulation.newBreakEvenPrice, currentPosition.breakEvenPrice, simulation.newAvgCost, currentPosition.avgCost)}
-                                </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 self-end">
+                                <span className="text-[10px] text-app-subtext font-medium opacity-80">较当前</span>
+                                {renderPriceDiff(simulation.newBreakEvenPrice, currentPosition.breakEvenPrice, simulation.newAvgCost, currentPosition.avgCost)}
                             </div>
                         </div>
                         <div className="h-px bg-white/5 w-full" />
@@ -1110,12 +1087,12 @@ export default function App() {
                             </div>
                             {previewType === 'SELL' && simulation.projectedPnL !== undefined && (<div className="col-span-2 border-t border-white/[0.03] pt-2 flex justify-between items-center"><span className="text-app-subtext text-[10px] font-bold">预计本次盈亏：</span><span className={`font-mono font-bold text-sm ${simulation.projectedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{simulation.projectedPnL >= 0 ? '+' : ''}{simulation.projectedPnL.toFixed(2)}</span></div>)}
                         </div>
-                        {/* Move CostChart inside the stats card to integrate it as a visual footer */}
                         {inputs.grams && inputs.price && (
                           <CostChart currentValue={currentPosition.totalCost} newValue={simulation.totalInvestment} />
                         )}
                     </div>
-                    <button onClick={executeTrade} disabled={!inputs.price || !inputs.grams} className={`w-full py-2.5 rounded-lg font-semibold text-base flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 shadow-md ${previewType === 'BUY' ? 'bg-brand-red text-white hover:bg-red-500' : 'bg-brand-green text-white hover:bg-green-500'}`}><CheckCircle2 size={16} />成交</button>
+                    {/* 成交按钮 */}
+                    <button onClick={executeTrade} disabled={!inputs.price || !inputs.grams} className={`w-full py-2.5 rounded-lg font-semibold text-base flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 shadow-md ${previewType === 'BUY' ? 'bg-brand-red text-white hover:bg-red-500' : 'bg-brand-green text-white hover:bg-green-500'}`}><CheckCircle2 size={16} />{previewType === 'BUY' ? '买入成交' : '卖出成交'}</button>
                   </div>
                 )}
               </div>

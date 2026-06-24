@@ -1,9 +1,22 @@
 
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad } from 'lucide-react';
+import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3 } from 'lucide-react';
 import { GithubConfig, AppSettings } from '../types';
 import { validateConnection } from '../services/githubService';
+
+// All available columns in trade list
+const ALL_COLUMNS = [
+  { key: 'tag', label: '标签' },
+  { key: 'price', label: '单价' },
+  { key: 'grams', label: '数量' },
+  { key: 'tradeTotal', label: '交易额' },
+  { key: 'holdingTotal', label: '持仓总额' },
+  { key: 'historicalAvg', label: '回本价/均价' },
+  { key: 'absChange', label: '价差浮动' },
+  { key: 'avgChange', label: '价差百分比' },
+  { key: 'pnl', label: '盈亏' },
+];
 
 interface CloudSettingsModalProps {
   isOpen: boolean;
@@ -29,6 +42,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [gramsStep, setGramsStep] = useState(appSettings.gramsStep.toString());
   const [touchMode, setTouchMode] = useState(appSettings.touchMode ?? true);
   const [priceDisplayMode, setPriceDisplayMode] = useState<'breakEven' | 'avgCost' | 'both'>(appSettings.priceDisplayMode || 'breakEven');
+  const [visibleColumns, setVisibleColumns] = useState<string[]>(() => 
+    appSettings.visibleColumns || ALL_COLUMNS.map(c => c.key)
+  );
 
   const [activeTab, setActiveTab] = useState<'general' | 'cloud'>(initialTab);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -44,6 +60,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       setGramsStep(appSettings.gramsStep.toString());
       setTouchMode(appSettings.touchMode ?? true);
       setPriceDisplayMode(appSettings.priceDisplayMode || 'breakEven');
+      setVisibleColumns(appSettings.visibleColumns || ALL_COLUMNS.map(c => c.key));
       setIsVerifying(false);
       setLogState(null);
       // Automatically switch to the requested tab when opening
@@ -74,7 +91,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         gramsStep: newGramsStep,
         tagColors: appSettings.tagColors, // Preserve existing tag colors
         touchMode: touchMode,
-        priceDisplayMode: priceDisplayMode
+        priceDisplayMode: priceDisplayMode,
+        totalCapital: appSettings.totalCapital, // Preserve existing total capital
+        visibleColumns: visibleColumns
     };
 
     // If Cloud tab is not active and no changes to cloud config, just save app settings
@@ -129,8 +148,35 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
 
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget && !isVerifying) {
+      saveGeneralSettings();
       onClose();
     }
+  };
+
+  const handleClose = () => {
+    saveGeneralSettings();
+    onClose();
+  };
+
+  const saveGeneralSettings = () => {
+    const newPriceStep = parseFloat(priceStep);
+    const newGramsStep = parseFloat(gramsStep);
+    
+    if (isNaN(newPriceStep) || newPriceStep <= 0 || isNaN(newGramsStep) || newGramsStep <= 0) {
+      return;
+    }
+    
+    const newAppSettings: AppSettings = {
+      priceStep: newPriceStep,
+      gramsStep: newGramsStep,
+      tagColors: appSettings.tagColors,
+      touchMode: touchMode,
+      priceDisplayMode: priceDisplayMode,
+      totalCapital: appSettings.totalCapital,
+      visibleColumns: visibleColumns
+    };
+    
+    onSave({ token: '', gistId: '' }, newAppSettings);
   };
 
   if (!isOpen) return null;
@@ -154,7 +200,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
           </div>
           <button 
             type="button"
-            onClick={onClose} 
+            onClick={handleClose} 
             disabled={isVerifying}
             className="text-app-subtext hover:text-app-text transition-colors disabled:opacity-50"
           >
@@ -193,6 +239,54 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
             {/* Tab: General */}
             {activeTab === 'general' && (
               <div className="space-y-4 animate-in fade-in slide-in-from-left-4 duration-200">
+                 {/* Column Visibility Settings - moved to top */}
+                 <div className="pt-2 border-t border-app-border">
+                    <div className="flex flex-col gap-2">
+                       <span className="text-sm font-medium text-app-text flex items-center gap-2">
+                          <Columns3 size={16} className="text-indigo-400"/> 成交记录列显示
+                       </span>
+                       <span className="text-xs text-app-subtext">
+                          勾选需要在成交记录表格中显示的列。
+                       </span>
+                       <div className="grid grid-cols-2 gap-2 mt-2">
+                         {ALL_COLUMNS.map(col => (
+                           <button
+                             key={col.key}
+                             type="button"
+                             onClick={() => {
+                               if (visibleColumns.includes(col.key)) {
+                                 // Don't allow unchecking all columns
+                                 if (visibleColumns.length > 1) {
+                                   setVisibleColumns(visibleColumns.filter(k => k !== col.key));
+                                 }
+                               } else {
+                                 setVisibleColumns([...visibleColumns, col.key]);
+                               }
+                             }}
+                             className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all ${
+                               visibleColumns.includes(col.key)
+                                 ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50'
+                                 : 'bg-app-input text-app-subtext border border-app-border hover:border-app-text/30'
+                             }`}
+                           >
+                             <span className={`w-4 h-4 rounded flex items-center justify-center border ${
+                               visibleColumns.includes(col.key)
+                                 ? 'bg-indigo-500 border-indigo-500 text-white'
+                                 : 'border-app-border'
+                             }`}>
+                               {visibleColumns.includes(col.key) && (
+                                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                 </svg>
+                               )}
+                             </span>
+                             {col.label}
+                           </button>
+                         ))}
+                       </div>
+                    </div>
+                 </div>
+
                  <div className="space-y-2">
                     <label className="text-sm font-medium text-app-text block">
                       价格调整步长 (元/克)
@@ -321,41 +415,44 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
               </div>
             )}
 
-            <div className="pt-2">
-              {isSuccess ? (
-                <button 
-                  type="button" 
-                  onClick={onClose}
-                  className="w-full font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-2 bg-brand-green text-white hover:bg-brand-green/90 shadow-lg shadow-brand-green/20"
-                >
-                  <CheckCircle2 size={18} />
-                  完成并关闭
-                </button>
-              ) : (
-                <button 
-                  type="button" 
-                  onClick={handleSave}
-                  disabled={isVerifying}
-                  className={`w-full font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-2 touch-manipulation
-                    ${isVerifying 
-                      ? 'bg-slate-700 text-slate-400 cursor-wait' 
-                      : 'bg-indigo-600 text-white hover:bg-indigo-500'
-                    }`}
-                >
-                  {isVerifying ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
-                      验证连接中...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 size={18} />
-                      保存设置
-                    </>
-                  )}
-                </button>
-              )}
-            </div>
+            {/* Save button only for Cloud tab */}
+            {activeTab === 'cloud' && (
+              <div className="pt-2">
+                {isSuccess ? (
+                  <button 
+                    type="button" 
+                    onClick={onClose}
+                    className="w-full font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-2 bg-brand-green text-white hover:bg-brand-green/90 shadow-lg shadow-brand-green/20"
+                  >
+                    <CheckCircle2 size={18} />
+                    完成并关闭
+                  </button>
+                ) : (
+                  <button 
+                    type="button" 
+                    onClick={handleSave}
+                    disabled={isVerifying}
+                    className={`w-full font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-2 touch-manipulation
+                      ${isVerifying 
+                        ? 'bg-slate-700 text-slate-400 cursor-wait' 
+                        : 'bg-indigo-600 text-white hover:bg-indigo-500'
+                      }`}
+                  >
+                    {isVerifying ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
+                        验证连接中...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 size={18} />
+                        保存设置
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            )}
           
           </form>
         </div>

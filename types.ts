@@ -53,4 +53,5 @@ export interface AppSettings {
   touchMode: boolean; // New: Enable touch drag to adjust values
   priceDisplayMode: 'breakEven' | 'avgCost' | 'both';
   totalCapital?: number; // New: Total planned investment capital
+  visibleColumns?: string[]; // New: Which columns to show in trade list
 }
