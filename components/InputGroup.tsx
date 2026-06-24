@@ -16,6 +16,10 @@ interface InputGroupProps {
   className?: string; // 新增：自定义样式
   min?: number;
   max?: number;
+  onEnter?: () => void; // 新增：回车键回调
+  inputRef?: React.RefObject<HTMLInputElement>; // 新增：父组件传入的 ref 用于聚焦
+  onTypeSwitch?: (key: string) => boolean; // 新增：处理特殊按键（如[、]），返回 true 表示已处理，阻止默认输入
+  onTab?: () => boolean; // 新增：处理 Tab 键（用于在两个输入框间循环切换），返回 true 表示已处理
 }
 
 export const InputGroup: React.FC<InputGroupProps> = ({
@@ -32,9 +36,14 @@ export const InputGroup: React.FC<InputGroupProps> = ({
   hideControls = false,
   className = "",
   min,
-  max
+  max,
+  onEnter,
+  inputRef: externalInputRef,
+  onTypeSwitch,
+  onTab
 }) => {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const internalInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = externalInputRef || internalInputRef;
   // 用 ref 存储最新的 value，供事件监听器使用，避免 stale closure
   const valueRef = useRef(value);
   
@@ -189,6 +198,28 @@ export const InputGroup: React.FC<InputGroupProps> = ({
           // 如果开启 touchMode，允许用户交互（实际上会被 touchmove 拦截滚动）
           readOnly={isIOS && isQuantity && !touchMode} 
           onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && onEnter) {
+              e.preventDefault();
+              onEnter();
+              return;
+            }
+            // 处理 Tab 键（用于在两个输入框间循环切换）
+            if (e.key === 'Tab' && onTab) {
+              const handled = onTab();
+              if (handled) {
+                e.preventDefault();
+                return;
+              }
+            }
+            // 处理特殊按键（如 [ 和 ] 用于切换买入/卖出）
+            if (onTypeSwitch && (e.key === '[' || e.key === ']')) {
+              const handled = onTypeSwitch(e.key);
+              if (handled) {
+                e.preventDefault();
+              }
+            }
+          }}
           placeholder={placeholder}
           className={`no-spinners w-full bg-app-input border border-app-border text-app-text rounded-lg py-2.5 pl-3 ${hideControls ? 'pr-3' : 'pr-10'} focus:outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all font-mono text-base placeholder-app-subtext/50 ${touchMode ? 'cursor-ns-resize' : ''} ${className}`}
         />

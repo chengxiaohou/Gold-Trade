@@ -746,8 +746,8 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                   );
                 })}
                 <th className="px-1 py-3 md:py-4 text-center sticky top-0 right-0 z-40 bg-app-bg border-l border-b border-app-border shadow-lg w-[90px]">
-                   <button onClick={() => setSortDesc(!sortDesc)} className={`flex items-center justify-center gap-1 w-full py-1.5 rounded-md transition-all text-[11px] font-bold border ${sortDesc ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20' : 'bg-brand-green/10 text-brand-green border-brand-green/20 hover:bg-brand-green/20'}`} title={sortDesc ? "当前：最新在最前" : "当前：最早在最前"}>
-                     <span>{sortDesc ? "最新" : "最早"} ↓</span>
+                   <button onClick={() => setSortDesc(!sortDesc)} className={`flex items-center justify-center gap-1 w-full py-1.5 rounded-md transition-all text-[11px] font-bold ${sortDesc ? 'text-indigo-400 hover:bg-indigo-500/10' : 'text-brand-green hover:bg-brand-green/10'}`} title={sortDesc ? "当前：最新在最前" : "当前：最早在最前"}>
+                     <span>{sortDesc ? "最新" : "最早"}↓</span>
                    </button>
                 </th>
               </tr>

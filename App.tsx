@@ -10,7 +10,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v2.0.0';
+const APP_VERSION = 'v2.0.1';
 
 export default function App() {
   // --- Theme State ---
@@ -110,6 +110,8 @@ export default function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const marketPriceInputRef = useRef<HTMLInputElement>(null);
+  const priceInputRef = useRef<HTMLInputElement>(null);
+  const gramsInputRef = useRef<HTMLInputElement>(null);
 
   // --- Refs for Event Listeners (Prevent Stale Closures in Touch/Wheel Handlers) ---
   const marketPriceValueRef = useRef(marketPrice);
@@ -597,6 +599,58 @@ export default function App() {
     setAiState({ loading: false, result: null, error: null });
   };
 
+  // 回车键处理：在两个输入框之间智能跳转或触发成交
+  const handlePriceEnter = () => {
+    const price = parseFloat(inputs.price);
+    const grams = parseFloat(inputs.grams);
+    if (price > 0 && grams > 0) {
+      // 两个都有合法值：直接成交，不取消焦点，方便连续修改
+      executeTrade();
+    } else if (price > 0 && !grams) {
+      // 只有价格合法：聚焦到数量输入框
+      gramsInputRef.current?.focus();
+      gramsInputRef.current?.select();
+    }
+  };
+
+  const handleGramsEnter = () => {
+    const price = parseFloat(inputs.price);
+    const grams = parseFloat(inputs.grams);
+    if (price > 0 && grams > 0) {
+      // 两个都有合法值：直接成交，不取消焦点
+      executeTrade();
+    } else if (grams > 0 && !price) {
+      // 只有数量合法：聚焦到价格输入框
+      priceInputRef.current?.focus();
+      priceInputRef.current?.select();
+    }
+  };
+
+  // 处理 [ 和 ] 键切换买入/卖出
+  const handleTypeSwitch = (key: string): boolean => {
+    if (key === '[') {
+      changeOrderType('BUY');
+      return true;
+    } else if (key === ']') {
+      changeOrderType('SELL');
+      return true;
+    }
+    return false;
+  };
+
+  // 处理 Tab 键在两个输入框间循环切换
+  const handlePriceTab = (): boolean => {
+    gramsInputRef.current?.focus();
+    gramsInputRef.current?.select();
+    return true;
+  };
+
+  const handleGramsTab = (): boolean => {
+    priceInputRef.current?.focus();
+    priceInputRef.current?.select();
+    return true;
+  };
+
   const handleApplyPlan = (planTrades: TradeRecord[]) => {
     // Remove existing plan trades
     setTrades(prev => {
@@ -1013,11 +1067,11 @@ export default function App() {
                   <div className="p-4 flex flex-col gap-3 border-t border-app-border">
                     {/* 买入/卖出切换 */}
                     <div className="grid grid-cols-2 p-1 bg-app-input rounded-lg">
-                      <button onClick={() => changeOrderType('BUY')} className={`py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${previewType === 'BUY' ? 'bg-brand-red text-white shadow-lg shadow-brand-red/20' : 'text-app-subtext hover:text-app-text'}`}>
-                        <TrendingUp size={16} />买入
+                      <button onClick={() => changeOrderType('BUY')} className={`py-2 pr-2 rounded-md text-sm font-bold flex items-center justify-center transition-all ${previewType === 'BUY' ? 'bg-brand-red text-white shadow-lg shadow-brand-red/20' : 'text-app-subtext hover:text-app-text'}`}>
+                        <span className="inline-flex items-center gap-2"><TrendingUp size={16} />买入</span>
                       </button>
-                      <button onClick={() => changeOrderType('SELL')} className={`py-2 rounded-md text-sm font-bold flex items-center justify-center gap-2 transition-all ${previewType === 'SELL' ? 'bg-brand-green text-white shadow-lg shadow-brand-green/20' : 'text-app-subtext hover:text-app-text'}`}>
-                        <TrendingDown size={16} />卖出
+                      <button onClick={() => changeOrderType('SELL')} className={`py-2 pr-2 rounded-md text-sm font-bold flex items-center justify-center transition-all ${previewType === 'SELL' ? 'bg-brand-green text-white shadow-lg shadow-brand-green/20' : 'text-app-subtext hover:text-app-text'}`}>
+                        <span className="inline-flex items-center gap-2"><TrendingDown size={16} />卖出</span>
                       </button>
                     </div>
                     {/* 价格和数量输入 */}
@@ -1029,6 +1083,10 @@ export default function App() {
                         placeholder="0.00" 
                         step={appSettings.priceStep}
                         touchMode={appSettings.touchMode} 
+                        onEnter={handlePriceEnter}
+                        inputRef={priceInputRef}
+                        onTypeSwitch={handleTypeSwitch}
+                        onTab={handlePriceTab}
                       />
                       <InputGroup 
                         label="数量 (克)" 
@@ -1038,6 +1096,10 @@ export default function App() {
                         step={appSettings.gramsStep} 
                         isQuantity={true}
                         touchMode={appSettings.touchMode} 
+                        onEnter={handleGramsEnter}
+                        inputRef={gramsInputRef}
+                        onTypeSwitch={handleTypeSwitch}
+                        onTab={handleGramsTab}
                       />
                     </div>
                     {/* 成交后预估模块 */}
