@@ -41,10 +41,12 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [priceStep, setPriceStep] = useState(appSettings.priceStep.toString());
   const [gramsStep, setGramsStep] = useState(appSettings.gramsStep.toString());
   const [touchMode, setTouchMode] = useState(appSettings.touchMode ?? true);
-  const [priceDisplayMode, setPriceDisplayMode] = useState<'breakEven' | 'avgCost' | 'both'>(appSettings.priceDisplayMode || 'breakEven');
+  const [priceDisplayMode, setPriceDisplayMode] = useState<'breakEven' | 'avgCost' | 'both'>(appSettings.priceDisplayMode || 'both');
   const [visibleColumns, setVisibleColumns] = useState<string[]>(() => 
-    appSettings.visibleColumns || ALL_COLUMNS.map(c => c.key)
+    appSettings.visibleColumns || ALL_COLUMNS.filter(c => c.key !== 'absChange' && c.key !== 'avgChange').map(c => c.key)
   );
+  const [buyTaxFee, setBuyTaxFee] = useState((appSettings.buyTaxFee ?? 5).toString());
+  const [sellTaxFee, setSellTaxFee] = useState((appSettings.sellTaxFee ?? 5).toString());
 
   const [activeTab, setActiveTab] = useState<'general' | 'cloud'>(initialTab);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -59,8 +61,10 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       setPriceStep(appSettings.priceStep.toString());
       setGramsStep(appSettings.gramsStep.toString());
       setTouchMode(appSettings.touchMode ?? true);
-      setPriceDisplayMode(appSettings.priceDisplayMode || 'breakEven');
-      setVisibleColumns(appSettings.visibleColumns || ALL_COLUMNS.map(c => c.key));
+      setPriceDisplayMode(appSettings.priceDisplayMode || 'both');
+      setVisibleColumns(appSettings.visibleColumns || ALL_COLUMNS.filter(c => c.key !== 'absChange' && c.key !== 'avgChange').map(c => c.key));
+      setBuyTaxFee((appSettings.buyTaxFee ?? 5).toString());
+      setSellTaxFee((appSettings.sellTaxFee ?? 5).toString());
       setIsVerifying(false);
       setLogState(null);
       // Automatically switch to the requested tab when opening
@@ -93,7 +97,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         touchMode: touchMode,
         priceDisplayMode: priceDisplayMode,
         totalCapital: appSettings.totalCapital, // Preserve existing total capital
-        visibleColumns: visibleColumns
+        visibleColumns: visibleColumns,
+        buyTaxFee: parseFloat(buyTaxFee) || 5,
+        sellTaxFee: parseFloat(sellTaxFee) || 5
     };
 
     // If Cloud tab is not active and no changes to cloud config, just save app settings
@@ -173,7 +179,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       touchMode: touchMode,
       priceDisplayMode: priceDisplayMode,
       totalCapital: appSettings.totalCapital,
-      visibleColumns: visibleColumns
+      visibleColumns: visibleColumns,
+      buyTaxFee: parseFloat(buyTaxFee) || 5,
+      sellTaxFee: parseFloat(sellTaxFee) || 5
     };
     
     onSave({ token: '', gistId: '' }, newAppSettings);
@@ -325,6 +333,32 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       <option value="avgCost">仅看持仓均价</option>
                       <option value="both">同时显示</option>
                     </select>
+                 </div>
+                 
+                 <div className="space-y-2">
+                    <label className="text-sm font-medium text-app-text block">
+                      买入税费 (元/笔)
+                    </label>
+                    <input 
+                      type="number" 
+                      value={buyTaxFee}
+                      onChange={(e) => setBuyTaxFee(e.target.value)}
+                      className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-mono text-sm"
+                    />
+                    <p className="text-xs text-app-subtext">每笔买入交易的税费，不纳入盈亏计算。</p>
+                 </div>
+                 
+                 <div className="space-y-2">
+                    <label className="text-sm font-medium text-app-text block">
+                      卖出税费 (元/笔)
+                    </label>
+                    <input 
+                      type="number" 
+                      value={sellTaxFee}
+                      onChange={(e) => setSellTaxFee(e.target.value)}
+                      className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-mono text-sm"
+                    />
+                    <p className="text-xs text-app-subtext">每笔卖出交易的税费，不纳入盈亏计算。</p>
                  </div>
                  
                  <div className="pt-2 border-t border-app-border">

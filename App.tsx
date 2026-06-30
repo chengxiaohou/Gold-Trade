@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle, Zap, Activity } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
@@ -10,7 +10,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v2.0.2';
+const APP_VERSION = 'v2.0.3';
 
 export default function App() {
   // --- Theme State ---
@@ -67,8 +67,10 @@ export default function App() {
       gramsStep: parsed.gramsStep || 1,
       tagColors: parsed.tagColors || {},
       touchMode: parsed.touchMode ?? true,
-      priceDisplayMode: parsed.priceDisplayMode || 'breakEven',
-      totalCapital: parsed.totalCapital || 0
+      priceDisplayMode: parsed.priceDisplayMode || 'both',
+      totalCapital: parsed.totalCapital || 0,
+      buyTaxFee: parsed.buyTaxFee ?? 5,
+      sellTaxFee: parsed.sellTaxFee ?? 5
     };
   });
 
@@ -176,6 +178,46 @@ export default function App() {
     if (market <= 0 || currentPosition.grams <= 0) return 0;
     return (market - currentPosition.avgCost) * currentPosition.grams;
   }, [marketPrice, currentPosition]);
+
+  // 税费统计（不纳入盈亏计算，仅作为独立参考）
+  const taxFeeStats = useMemo(() => {
+    let buyCount = 0;
+    let sellCount = 0;
+    trades.forEach(t => {
+      if (t.isDisabled) return;
+      if (t.type === 'BUY') buyCount++;
+      else sellCount++;
+    });
+    const buyTaxFeeTotal = buyCount * (appSettings.buyTaxFee || 5);
+    const sellTaxFeeTotal = sellCount * (appSettings.sellTaxFee || 5);
+    return {
+      buyCount,
+      sellCount,
+      buyTaxFeeTotal,
+      sellTaxFeeTotal,
+      totalTaxFee: buyTaxFeeTotal + sellTaxFeeTotal
+    };
+  }, [trades, appSettings.buyTaxFee, appSettings.sellTaxFee]);
+
+  // 收益率统计（依赖总资金）
+  const returnRateStats = useMemo(() => {
+    const totalCapital = appSettings.totalCapital || 0;
+    if (totalCapital <= 0) {
+      return {
+        floatingReturnRate: null,
+        realizedReturnRate: null,
+        totalReturnRate: null
+      };
+    }
+    const floatingReturnRate = (floatingPnL / totalCapital) * 100;
+    const realizedReturnRate = (currentPosition.realizedPnL / totalCapital) * 100;
+    const totalReturnRate = ((floatingPnL + currentPosition.realizedPnL) / totalCapital) * 100;
+    return {
+      floatingReturnRate,
+      realizedReturnRate,
+      totalReturnRate
+    };
+  }, [floatingPnL, currentPosition.realizedPnL, appSettings.totalCapital]);
 
   // --- Handlers ---
   const handleInputChange = (field: keyof typeof inputs, value: string) => {
@@ -626,13 +668,17 @@ export default function App() {
     }
   };
 
-  // 处理 [ 和 ] 键切换买入/卖出
+  // 处理 [ 和 ] 键切换买入/卖出，' 键来回切换
   const handleTypeSwitch = (key: string): boolean => {
     if (key === '[') {
       changeOrderType('BUY');
       return true;
     } else if (key === ']') {
       changeOrderType('SELL');
+      return true;
+    } else if (key === "'") {
+      // 来回切换：买入变卖出，卖出变买入
+      changeOrderType(previewType === 'BUY' ? 'SELL' : 'BUY');
       return true;
     }
     return false;
@@ -1045,7 +1091,70 @@ export default function App() {
                <div className="flex items-center gap-2 text-app-subtext pl-1"><History size={16} /><h3 className="font-medium text-sm">成交记录</h3></div>
                <TradeList trades={trades} onDelete={deleteTrade} onUpdate={updateTrade} onReorder={handleReorderTrades} settings={appSettings} onSettingsChange={handleSettingsUpdate} />
              </div>
-             <div className="bg-app-card border border-app-border rounded-xl p-4 transition-colors"><div className="flex items-center justify-between mb-2"><h3 className="text-app-text font-medium flex items-center gap-2"><BrainCircuit size={16} className="text-indigo-400"/>智能分析 (预览)</h3><button onClick={handleAIAnalysis} disabled={aiState.loading || !inputs.grams || !inputs.price} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded disabled:opacity-50">{aiState.loading ? "分析中..." : "Gemini 深度分析"}</button></div>{aiState.result ? <div className="text-sm text-app-text leading-relaxed bg-app-input p-3 rounded-lg border border-app-border whitespace-pre-wrap">{aiState.result}</div> : <div className="text-xs text-app-subtext italic">输入交易信息后点击分析。</div>}</div>
+             <div className="bg-app-card border border-app-border rounded-xl p-4 transition-colors">
+               <div className="flex items-center gap-2 mb-3">
+                 <BarChart3 size={16} className="text-indigo-400"/>
+                 <h3 className="text-app-text font-medium text-sm">数据分析</h3>
+               </div>
+               
+               {/* 税费统计 */}
+               <div className="mb-4 p-3 bg-app-input rounded-lg border border-app-border">
+                 <div className="text-sm text-app-subtext font-bold mb-2">税费统计<span className="text-xs opacity-70">（未计入盈亏）</span></div>
+                 <div className="grid grid-cols-2 gap-1.5 text-xs">
+                   <div className="flex items-center gap-2">
+                     <span className="text-app-subtext w-16">买入笔数：</span>
+                     <span className="text-app-text font-mono font-medium">{taxFeeStats.buyCount}</span>
+                   </div>
+                   <div className="flex items-center gap-2">
+                     <span className="text-app-subtext w-16">卖出笔数：</span>
+                     <span className="text-app-text font-mono font-medium">{taxFeeStats.sellCount}</span>
+                   </div>
+                   <div className="flex items-center gap-2">
+                     <span className="text-app-subtext w-16">买入税费：</span>
+                     <span className="text-app-text font-mono font-medium">{taxFeeStats.buyTaxFeeTotal.toFixed(2)}元</span>
+                   </div>
+                   <div className="flex items-center gap-2">
+                     <span className="text-app-subtext w-16">卖出税费：</span>
+                     <span className="text-app-text font-mono font-medium">{taxFeeStats.sellTaxFeeTotal.toFixed(2)}元</span>
+                   </div>
+                   <div className="col-span-2 flex items-center gap-2 pt-1 border-t border-app-border">
+                     <span className="text-app-subtext w-16 font-medium">总税费：</span>
+                     <span className="text-app-text font-mono font-bold">{taxFeeStats.totalTaxFee.toFixed(2)}元</span>
+                   </div>
+                 </div>
+               </div>
+               
+               {/* 收益率统计 */}
+               <div className="p-3 bg-app-input rounded-lg border border-app-border">
+                 <div className="text-sm text-app-subtext font-bold mb-2">收益率统计</div>
+                 {returnRateStats.floatingReturnRate === null ? (
+                   <div className="text-xs text-app-subtext italic text-center py-2">
+                     请在设置中填写总资金以计算收益率
+                   </div>
+                 ) : (
+                   <div className="flex flex-col gap-1.5 text-xs">
+                     <div className="flex items-center gap-2">
+                       <span className="text-app-subtext whitespace-nowrap">浮动盈亏收益率：</span>
+                       <span className={`font-mono font-bold ${floatingPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                         {returnRateStats.floatingReturnRate >= 0 ? '+' : ''}{returnRateStats.floatingReturnRate.toFixed(2)}%
+                       </span>
+                     </div>
+                     <div className="flex items-center gap-2">
+                       <span className="text-app-subtext whitespace-nowrap">已实现盈亏收益率：</span>
+                       <span className={`font-mono font-bold ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                         {returnRateStats.realizedReturnRate >= 0 ? '+' : ''}{returnRateStats.realizedReturnRate.toFixed(2)}%
+                       </span>
+                     </div>
+                     <div className="flex items-center gap-2 pt-1 border-t border-app-border">
+                       <span className="text-app-subtext whitespace-nowrap font-medium">总体收益率：</span>
+                       <span className={`font-mono font-bold text-sm ${returnRateStats.totalReturnRate >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                         {returnRateStats.totalReturnRate >= 0 ? '+' : ''}{returnRateStats.totalReturnRate.toFixed(2)}%
+                       </span>
+                     </div>
+                   </div>
+                 )}
+               </div>
+             </div>
           </div>
 
           <div className="lg:col-span-4 lg:col-start-9 order-1 lg:order-2 lg:sticky lg:top-6 space-y-4">

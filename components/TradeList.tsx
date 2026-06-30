@@ -537,7 +537,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     }}
   };
 
-  const DEFAULT_ORDER: ColumnKey[] = ['tag', 'price', 'grams', 'tradeTotal', 'holdingTotal', 'historicalAvg', 'absChange', 'avgChange', 'pnl'];
+  const DEFAULT_ORDER: ColumnKey[] = ['tag', 'price', 'grams', 'tradeTotal', 'holdingTotal', 'historicalAvg', 'pnl'];
   const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(() => {
     const saved = localStorage.getItem('gold_trade_list_column_order_v4');
     if (saved) {

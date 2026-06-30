@@ -212,8 +212,8 @@ export const InputGroup: React.FC<InputGroupProps> = ({
                 return;
               }
             }
-            // 处理特殊按键（如 [ 和 ] 用于切换买入/卖出）
-            if (onTypeSwitch && (e.key === '[' || e.key === ']')) {
+            // 处理特殊按键（如 [ 和 ] 用于切换买入/卖出，' 用于来回切换）
+            if (onTypeSwitch && (e.key === '[' || e.key === ']' || e.key === "'")) {
               const handled = onTypeSwitch(e.key);
               if (handled) {
                 e.preventDefault();

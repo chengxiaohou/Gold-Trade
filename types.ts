@@ -54,4 +54,6 @@ export interface AppSettings {
   priceDisplayMode: 'breakEven' | 'avgCost' | 'both';
   totalCapital?: number; // New: Total planned investment capital
   visibleColumns?: string[]; // New: Which columns to show in trade list
+  buyTaxFee?: number; // New: Tax fee per buy transaction
+  sellTaxFee?: number; // New: Tax fee per sell transaction
 }
