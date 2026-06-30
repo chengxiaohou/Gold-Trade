@@ -345,6 +345,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
       }
       const avgBefore = runningGrams > 0 ? runningTotalCost / runningGrams : 0;
       const breakEvenBefore = runningGrams > 0 ? Math.max(0, (runningTotalCost - runningRealizedPnL) / runningGrams) : 0;
+      const gramsBefore = runningGrams;
       
       if (trade.type === 'BUY') {
         runningTotalCost += trade.price * trade.grams;
@@ -367,7 +368,11 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
       let breakEvenChangeAbs = breakEvenBefore > 0 ? (breakEvenAfter - breakEvenBefore) : 0;
       
       let floatingPnL = 0;
-      // 只有卖出交易后才计算浮动盈亏，用该笔卖出的成交价计算
+      // 买入后：之前持有的仓位相对于新买入价的盈亏
+      if (trade.type === 'BUY' && gramsBefore > 0) {
+        floatingPnL = (trade.price - avgBefore) * gramsBefore;
+      }
+      // 卖出后：剩余持仓相对于卖出价的盈亏
       if (runningGrams > 0 && trade.type === 'SELL') {
         floatingPnL = (trade.price - avgAfter) * runningGrams;
       }
