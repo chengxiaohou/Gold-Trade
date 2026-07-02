@@ -10,7 +10,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
 
-const APP_VERSION = 'v2.0.3';
+const APP_VERSION = 'v2.0.4';
 
 export default function App() {
   // --- Theme State ---
@@ -115,6 +115,15 @@ export default function App() {
   const priceInputRef = useRef<HTMLInputElement>(null);
   const gramsInputRef = useRef<HTMLInputElement>(null);
 
+  const [dividendRate, setDividendRate] = useState(() => {
+    const saved = localStorage.getItem('gold_dividend_rate');
+    return saved || '0';
+  }); // 年收益率（百分比）
+  const [dividendPeriod, setDividendPeriod] = useState(() => {
+    const saved = localStorage.getItem('gold_dividend_period');
+    return saved || '12';
+  }); // 分红周期（月）
+
   // --- Refs for Event Listeners (Prevent Stale Closures in Touch/Wheel Handlers) ---
   const marketPriceValueRef = useRef(marketPrice);
   useEffect(() => {
@@ -130,6 +139,14 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('gold_inputs_draft', JSON.stringify(inputs));
   }, [inputs]);
+
+  useEffect(() => {
+    localStorage.setItem('gold_dividend_rate', dividendRate);
+  }, [dividendRate]);
+
+  useEffect(() => {
+    localStorage.setItem('gold_dividend_period', dividendPeriod);
+  }, [dividendPeriod]);
 
   useEffect(() => {
     localStorage.setItem('gold_market_price', marketPrice);
@@ -152,6 +169,10 @@ export default function App() {
 
     trades.forEach(t => {
       if (t.isDisabled) return;
+      if (t.type === 'DIVIDEND') {
+        realizedPnL += t.dividendAmount || 0;
+        return;
+      }
       const tradeValue = t.grams * t.price;
       if (t.type === 'BUY') {
         grams += t.grams;
@@ -304,7 +325,7 @@ export default function App() {
       isInitialMount.current = false;
       return;
     }
-    const activeTrades = trades.filter(t => !t.isDisabled && !t.isPlan);
+    const activeTrades = trades.filter(t => !t.isDisabled && !t.isPlan && t.type !== 'DIVIDEND');
     if (activeTrades.length > 0) {
       const latestTrade = activeTrades[activeTrades.length - 1];
       const priceStr = latestTrade.price.toString();
@@ -703,6 +724,36 @@ export default function App() {
       const filtered = prev.filter(t => !t.isPlan);
       return [...filtered, ...planTrades];
     });
+  };
+
+  // 处理分红结算
+  const handleDividendSettlement = () => {
+    const rate = parseFloat(dividendRate);
+    const period = parseFloat(dividendPeriod);
+    if (rate <= 0 || period <= 0) return;
+
+    const currentMarketPrice = parseFloat(marketPrice) || 0;
+    const positionValue = currentMarketPrice * currentPosition.grams;
+    if (positionValue <= 0) return;
+
+    const singleDividendRate = rate / 100 * (period / 12);
+    const dividendAmount = positionValue * singleDividendRate;
+    if (dividendAmount <= 0) return;
+
+    const dividendTrade: TradeRecord = {
+      id: `trade-${Date.now()}`,
+      type: 'DIVIDEND',
+      grams: 0,
+      price: 0,
+      timestamp: Date.now(),
+      tag: '分红',
+      dividendAmount,
+      annualDividendRate: rate,
+      dividendPeriodMonths: period,
+      positionValue
+    };
+
+    setTrades(prev => [...prev, dividendTrade]);
   };
 
   const handleClearPlan = () => {
@@ -1266,6 +1317,48 @@ export default function App() {
                     <button onClick={executeTrade} disabled={!inputs.price || !inputs.grams} className={`w-full py-2.5 rounded-lg font-semibold text-base flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 shadow-md ${previewType === 'BUY' ? 'bg-brand-red text-white hover:bg-red-500' : 'bg-brand-green text-white hover:bg-green-500'}`}><CheckCircle2 size={16} />{previewType === 'BUY' ? '买入成交' : '卖出成交'}</button>
                   </div>
                 )}
+              </div>
+              
+              <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-2xl">
+                <div className="p-4 border-t border-app-border space-y-3">
+                  <div className="flex items-center gap-2 text-app-subtext pl-1">
+                    <Receipt size={16} className="text-brand-red" />
+                    <h3 className="font-medium text-sm">分红结算</h3>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">年收益率 (%)</label>
+                      <input 
+                        type="number" 
+                        value={dividendRate} 
+                        onChange={(e) => setDividendRate(e.target.value)} 
+                        placeholder="0.00" 
+                        className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2.5 text-app-text font-mono text-sm focus:border-brand-red focus:ring-1 focus:ring-brand-red/50 outline-none transition-all"
+                        min="0"
+                        step="0.1"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">分红周期 (月/次)</label>
+                      <input 
+                        type="number" 
+                        value={dividendPeriod} 
+                        onChange={(e) => setDividendPeriod(e.target.value)} 
+                        placeholder="12" 
+                        className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2.5 text-app-text font-mono text-sm focus:border-brand-red focus:ring-1 focus:ring-brand-red/50 outline-none transition-all"
+                        min="1"
+                        step="1"
+                      />
+                    </div>
+                  </div>
+                  <button 
+                    onClick={handleDividendSettlement} 
+                    disabled={parseFloat(dividendRate) <= 0 || parseFloat(dividendPeriod) <= 0 || currentPosition.grams <= 0}
+                    className="w-full py-2.5 rounded-lg font-semibold text-base flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 shadow-md bg-brand-red text-white hover:bg-red-500"
+                  >
+                    <Receipt size={16} />分红结算
+                  </button>
+                </div>
               </div>
               
               <TradingPlanPanel 

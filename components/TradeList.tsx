@@ -52,7 +52,7 @@ interface EditBubbleProps {
   onClose: () => void;
   initialPosition: { top: number, left: number };
   settings: AppSettings;
-  mode: 'full' | 'tag';
+  mode: 'full' | 'tag' | 'dividend';
   onTagColorChange: (tag: string, colorKey: string) => void;
 }
 
@@ -63,12 +63,17 @@ const EditBubble: React.FC<EditBubbleProps> = ({
     price: trade.price,
     grams: trade.grams,
     type: trade.type,
-    tag: trade.tag || ''
+    tag: trade.tag || '',
+    dividendAmount: trade.dividendAmount,
+    annualDividendRate: trade.annualDividendRate,
+    dividendPeriodMonths: trade.dividendPeriodMonths
   });
 
   const [priceStr, setPriceStr] = useState(trade.price.toString());
   const [gramsStr, setGramsStr] = useState(trade.grams.toString());
   const [tagStr, setTagStr] = useState(trade.tag || '');
+  const [dividendRateStr, setDividendRateStr] = useState((trade.annualDividendRate || 0).toString());
+  const [dividendPeriodStr, setDividendPeriodStr] = useState((trade.dividendPeriodMonths || 12).toString());
   
   const currentTagColorKey = settings.tagColors?.[tagStr] || 'indigo';
   const [position, setPosition] = useState(initialPosition);
@@ -87,6 +92,14 @@ const EditBubble: React.FC<EditBubbleProps> = ({
       });
       setPriceStr(init.price.toString());
       setGramsStr(init.grams.toString());
+    } else if (mode === 'dividend') {
+      onUpdate(trade.id, {
+        dividendAmount: init.dividendAmount,
+        annualDividendRate: init.annualDividendRate,
+        dividendPeriodMonths: init.dividendPeriodMonths
+      });
+      setDividendRateStr((init.annualDividendRate || 0).toString());
+      setDividendPeriodStr((init.dividendPeriodMonths || 12).toString());
     } else {
       onUpdate(trade.id, { tag: init.tag });
       setTagStr(init.tag);
@@ -154,7 +167,7 @@ const EditBubble: React.FC<EditBubbleProps> = ({
         >
           <div className="flex items-center gap-2 text-app-subtext pointer-events-none">
             <GripHorizontal size={16} className="opacity-80"/>
-            <h4 className="text-sm font-bold tracking-wider">{mode === 'tag' ? '编辑标签' : '编辑交易'}</h4>
+            <h4 className="text-sm font-bold tracking-wider">{mode === 'tag' ? '编辑标签' : mode === 'dividend' ? '编辑分红' : '编辑交易'}</h4>
           </div>
           
           <div className="flex items-center gap-1">
@@ -216,6 +229,51 @@ const EditBubble: React.FC<EditBubbleProps> = ({
                  </span>
               </div>
             </>
+          ) : mode === 'dividend' ? (
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                 <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">年收益率 (%)</label>
+                 <input 
+                   type="number"
+                   value={dividendRateStr}
+                   onChange={(e) => {
+                     setDividendRateStr(e.target.value);
+                     const rate = parseFloat(e.target.value) || 0;
+                     const period = parseFloat(dividendPeriodStr) || 12;
+                     const singleRate = rate / 100 * (period / 12);
+                     const newAmount = (trade.positionValue || 0) * singleRate;
+                     onUpdate(trade.id, { annualDividendRate: rate, dividendAmount: newAmount });
+                   }}
+                   min="0"
+                   step="0.1"
+                   className="w-full bg-app-input border border-white/5 rounded-lg px-3 py-2.5 text-app-text font-mono text-sm focus:border-brand-red focus:ring-1 focus:ring-brand-red/50 outline-none transition-all"
+                 />
+              </div>
+              <div className="space-y-1.5">
+                 <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">分红周期 (月/次)</label>
+                 <input 
+                   type="number"
+                   value={dividendPeriodStr}
+                   onChange={(e) => {
+                     setDividendPeriodStr(e.target.value);
+                     const period = parseFloat(e.target.value) || 12;
+                     const rate = parseFloat(dividendRateStr) || 0;
+                     const singleRate = rate / 100 * (period / 12);
+                     const newAmount = (trade.positionValue || 0) * singleRate;
+                     onUpdate(trade.id, { dividendPeriodMonths: period, dividendAmount: newAmount });
+                   }}
+                   min="1"
+                   step="1"
+                   className="w-full bg-app-input border border-white/5 rounded-lg px-3 py-2.5 text-app-text font-mono text-sm focus:border-brand-red focus:ring-1 focus:ring-brand-red/50 outline-none transition-all"
+                 />
+              </div>
+              <div className="pt-3 flex justify-between items-center text-xs border-t border-white/5 mt-1">
+                 <span className="text-app-subtext font-medium">分红金额:</span>
+                 <span className="text-brand-red font-mono font-bold">
+                   +¥ {fmt(trade.dividendAmount || 0)}
+                 </span>
+              </div>
+            </div>
           ) : (
             <div className="space-y-5">
               <div className="space-y-2">
@@ -295,7 +353,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
 
   const [activeColId, setActiveColId] = useState<ColumnKey | null>(null);
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
-  const [editState, setEditState] = useState<{ id: string, top: number, left: number, mode: 'full' | 'tag' } | null>(null);
+  const [editState, setEditState] = useState<{ id: string, top: number, left: number, mode: 'full' | 'tag' | 'dividend' } | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -312,6 +370,11 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     const rect = e.currentTarget.getBoundingClientRect();
     const width = 288; 
     let left = rect.right - width;
+    let editMode: 'full' | 'tag' | 'dividend' = mode;
+    const trade = trades.find(t => t.id === id);
+    if (trade?.type === 'DIVIDEND' && mode === 'full') {
+      editMode = 'dividend';
+    }
     if (mode === 'tag') {
         left = rect.left;
     } else {
@@ -323,11 +386,11 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
     if (left < 10) left = 10;
     if (left + width > window.innerWidth) left = window.innerWidth - width - 10;
     
-    const bubbleHeight = mode === 'full' ? 240 : 280;
+    const bubbleHeight = editMode === 'full' ? 240 : editMode === 'dividend' ? 220 : 280;
     if (top + bubbleHeight > window.innerHeight) {
         top = rect.top - bubbleHeight - 8; 
     }
-    setEditState({ id, top, left, mode });
+    setEditState({ id, top, left, mode: editMode });
   };
 
   const handleTagColorChange = (tag: string, colorKey: string) => {
@@ -350,12 +413,14 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
       if (trade.type === 'BUY') {
         runningTotalCost += trade.price * trade.grams;
         runningGrams += trade.grams;
-      } else {
+      } else if (trade.type === 'SELL') {
         const currentAvg = runningGrams > 0 ? runningTotalCost / runningGrams : 0;
         const costBasis = trade.grams * currentAvg;
         runningTotalCost -= costBasis;
         runningRealizedPnL += (trade.price * trade.grams) - costBasis;
         runningGrams -= trade.grams;
+      } else if (trade.type === 'DIVIDEND') {
+        runningRealizedPnL += trade.dividendAmount || 0;
       }
       if (runningGrams < 0.0001) { runningGrams = 0; runningTotalCost = 0; }
       const avgAfter = runningGrams > 0 ? runningTotalCost / runningGrams : 0;
@@ -411,6 +476,9 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
            if (!colorKey && (t.tag === '预案' || t.tag === '等额' || t.tag === '等差' || t.tag === '极限')) {
              colorKey = 'indigo';
            }
+           if (!colorKey && t.tag === '分红') {
+             colorKey = 'red';
+           }
            style = getTagStyle(colorKey);
        }
        return (
@@ -425,9 +493,15 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
          </div>
        );
     }},
-    price: { id: 'price', label: '单价', render: (t) => <span className="font-mono text-app-text">{t.price.toFixed(2)}</span> },
-    grams: { id: 'grams', label: '数量', render: (t) => <span className="font-mono text-app-subtext">{t.grams.toFixed(2)}</span> },
-    tradeTotal: { id: 'tradeTotal', label: '交易额', render: (t) => <span className="font-mono text-app-subtext">{fmt(t.price * t.grams)}</span> },
+    price: { id: 'price', label: '单价', render: (t) => t.type === 'DIVIDEND' ? <span className="font-mono text-app-subtext">-</span> : <span className="font-mono text-app-text">{t.price.toFixed(2)}</span> },
+    grams: { id: 'grams', label: '数量', render: (t) => t.type === 'DIVIDEND' ? <span className="font-mono text-app-subtext">-</span> : <span className="font-mono text-app-subtext">{t.grams.toFixed(2)}</span> },
+    tradeTotal: { id: 'tradeTotal', label: '交易额', render: (t) => {
+       if (t.type === 'DIVIDEND') {
+         const amount = t.dividendAmount || 0;
+         return <span className={`font-mono font-bold ${amount >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>+{fmt(amount)}</span>;
+       }
+       return <span className="font-mono text-app-subtext">{fmt(t.price * t.grams)}</span>;
+    }},
     holdingTotal: { id: 'holdingTotal', label: '持仓总额', render: (t) => {
        if (t.isDisabled) return <span className="font-mono text-app-subtext text-xs">-</span>;
        return <span className="font-mono text-app-subtext text-xs">{t.holdingTotal > 0 ? fmt(t.holdingTotal) : '-'}</span> 
@@ -441,8 +515,10 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
        const renderValue = (val: number, isAvg: boolean = false) => {
            if (val <= 0 || t.isDisabled) return <span className={`font-mono text-app-subtext font-medium ${isAvg ? 'text-[10px] opacity-70' : 'text-xs'}`}>-</span>;
            let colorClass = 'text-app-subtext';
-           if (val < t.price) colorClass = 'text-brand-red';
-           else if (val > t.price) colorClass = 'text-brand-green';
+           if (t.type !== 'DIVIDEND') {
+             if (val < t.price) colorClass = 'text-brand-red';
+             else if (val > t.price) colorClass = 'text-brand-green';
+           }
            return <span className={`font-mono font-medium ${colorClass} ${isAvg ? 'text-[10px] opacity-70' : 'text-xs'}`}>{val.toFixed(2)}</span>;
        };
 
@@ -530,14 +606,14 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
       };
       return (
           <div className="flex flex-col items-end leading-tight">
-              {renderPnLValue(t.floatingPnL)}
+              {t.type === 'DIVIDEND' ? <span className="font-mono text-app-subtext text-xs">-</span> : renderPnLValue(t.floatingPnL)}
               {renderPnLValue(t.realizedPnLAfter, true)}
           </div>
       );
     }}
   };
 
-  const DEFAULT_ORDER: ColumnKey[] = ['tag', 'price', 'grams', 'tradeTotal', 'holdingTotal', 'historicalAvg', 'pnl'];
+  const DEFAULT_ORDER: ColumnKey[] = ['tag', 'price', 'grams', 'tradeTotal', 'holdingTotal', 'historicalAvg', 'absChange', 'avgChange', 'pnl'];
   const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(() => {
     const saved = localStorage.getItem('gold_trade_list_column_order_v4');
     if (saved) {
@@ -773,7 +849,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
                       onPointerCancel={onRowPointerUp}
                       className="p-0 py-2.5 md:py-3 text-center sticky left-0 z-20 bg-app-card group-hover:bg-app-hover border-r border-b border-app-border shadow-lg transition-colors w-[40px] min-w-[40px] max-w-[40px] cursor-grab active:cursor-grabbing touch-none select-none"
                     >
-                       <span className={`inline-flex items-center justify-center w-6 h-6 rounded text-xs font-bold mx-auto transition-transform group-hover:scale-110 ${trade.type === 'BUY' ? 'bg-brand-red/10 text-brand-red' : 'bg-brand-green/10 text-brand-green'}`}>{trade.type === 'BUY' ? '买' : '卖'}</span>
+                       <span className={`inline-flex items-center justify-center w-6 h-6 rounded text-xs font-bold mx-auto transition-transform group-hover:scale-110 ${trade.type === 'BUY' ? 'bg-brand-red/10 text-brand-red' : trade.type === 'SELL' ? 'bg-brand-green/10 text-brand-green' : 'bg-gray-500/10 text-gray-500'}`}>{trade.type === 'BUY' ? '买' : trade.type === 'SELL' ? '卖' : '息'}</span>
                     </td>
                     {filteredColumnOrder.map((colKey) => (
                       <td key={colKey} className={`px-2 py-2.5 md:px-4 md:py-3 whitespace-nowrap border-b border-app-border ${activeColId === colKey ? 'dragging-cell' : ''}`}>{COLUMN_DEFS[colKey].render(trade as any)}</td>

@@ -1,5 +1,5 @@
 
-export type OrderType = 'BUY' | 'SELL';
+export type OrderType = 'BUY' | 'SELL' | 'DIVIDEND';
 
 export interface TradeRecord {
   id: string;
@@ -10,6 +10,10 @@ export interface TradeRecord {
   tag?: string; // New: User defined tag for filtering or categorization
   isDisabled?: boolean; // New: If true, this trade is ignored in calculations
   isPlan?: boolean; // New: If true, this is a simulated plan record
+  dividendAmount?: number; // New: For DIVIDEND type, the dividend amount
+  annualDividendRate?: number; // New: For DIVIDEND type, the annual dividend rate (%)
+  dividendPeriodMonths?: number; // New: For DIVIDEND type, the dividend period in months
+  positionValue?: number; // New: For DIVIDEND type, the position value at dividend time
 }
 
 export interface HoldingState {
@@ -56,4 +60,6 @@ export interface AppSettings {
   visibleColumns?: string[]; // New: Which columns to show in trade list
   buyTaxFee?: number; // New: Tax fee per buy transaction
   sellTaxFee?: number; // New: Tax fee per sell transaction
+  dividendRate?: number; // New: Dividend annual rate (%)
+  dividendPeriod?: number; // New: Dividend period in months
 }
