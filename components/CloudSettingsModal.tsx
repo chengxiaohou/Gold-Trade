@@ -110,9 +110,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         setDividendRateColumns(stockSettings?.dividendRateColumns || ['2%', '3%', '4%', '5%', '6%', '7%']);
         console.log('设置 dividendRateColorRanges:', stockSettings?.dividendRateColorRanges);
         setDividendRateColorRanges(stockSettings?.dividendRateColorRanges || [
-          { min: 3, max: 4, color: 'red' },
-          { min: 4.5, max: 5.5, color: 'gray' },
-          { min: 6, max: 7, color: 'green' }
+          { min: 0, max: 4.5, color: 'red' },
+          { min: 4.5, max: 5.5, color: 'yellow' },
+          { min: 5.5, max: 100, color: 'green' }
         ]);
       } else {
         setVisibleColumns(appSettings.visibleColumns || GOLD_COLUMNS.filter(c => c.key !== 'absChange' && c.key !== 'avgChange').map(c => c.key));
@@ -250,6 +250,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     
     const newStockSettings: StockSettings = {
       visibleColumns: currentPage === 'stock' ? visibleColumns : stockSettings?.visibleColumns,
+      dividendRateColumns: currentPage === 'stock' ? dividendRateColumns : stockSettings?.dividendRateColumns,
+      dividendRateColorRanges: currentPage === 'stock' ? dividendRateColorRanges : stockSettings?.dividendRateColorRanges,
     };
     
     onSave({ token: '', gistId: '' }, newAppSettings, newStockSettings);
@@ -512,7 +514,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                            <div className="flex gap-2">
                              <input
                                type="number"
-                               value={newDividendRate.replace('%', '')}
+                               value={newDividendRate}
                                onChange={(e) => {
                                  const val = parseFloat(e.target.value);
                                  if (isNaN(val) || val >= 0 && val <= 100) {
@@ -520,7 +522,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                  }
                                }}
                                placeholder="股息率"
-                               className="w-16 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                               className="w-14 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
                                min="0"
                                max="100"
                                onKeyDown={(e) => {
@@ -558,9 +560,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                    setNewDividendRate('');
                                  }
                                }}
-                               className="px-4 py-2 bg-app-input text-app-text border border-white/5 rounded-lg text-sm font-semibold hover:bg-app-card hover:border-app-text/50 transition-colors"
+                               className="px-3 py-1.5 bg-app-input text-app-text border border-white/5 rounded-lg text-xs font-semibold hover:bg-app-card hover:border-app-text/50 transition-colors"
                              >
-                               {editingDividendRateIndex !== null ? '保存' : '添加'}
+                               {editingDividendRateIndex !== null ? '确认' : '添加'}
                              </button>
                            </div>
                            <div className="flex flex-wrap gap-2 pt-2 border-t border-white/5 mt-2">
@@ -605,7 +607,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                value={newRange.min}
                                onChange={(e) => setNewRange(prev => ({ ...prev, min: e.target.value }))}
                                placeholder="最小"
-                               className="w-14 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                               className="w-14 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
                                step="0.1"
                              />
                              <span className="text-app-subtext text-xs">-</span>
@@ -614,7 +616,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                value={newRange.max}
                                onChange={(e) => setNewRange(prev => ({ ...prev, max: e.target.value }))}
                                placeholder="最大"
-                               className="w-14 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                               className="w-14 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
                                step="0.1"
                              />
                              <button
@@ -626,6 +628,23 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                    if (editingRangeIndex !== null) {
                                      const updated = [...dividendRateColorRanges];
                                      updated[editingRangeIndex] = { min, max, color: newRange.color };
+                                     
+                                     // 联动修改相邻区间
+                                     // 修改左边区间的 max
+                                     if (editingRangeIndex > 0) {
+                                       updated[editingRangeIndex - 1] = {
+                                         ...updated[editingRangeIndex - 1],
+                                         max: min
+                                       };
+                                     }
+                                     // 修改右边区间的 min
+                                     if (editingRangeIndex < updated.length - 1) {
+                                       updated[editingRangeIndex + 1] = {
+                                         ...updated[editingRangeIndex + 1],
+                                         min: max
+                                       };
+                                     }
+                                     
                                      setDividendRateColorRanges(updated);
                                    } else {
                                      setDividendRateColorRanges([...dividendRateColorRanges, { min, max, color: newRange.color }]);

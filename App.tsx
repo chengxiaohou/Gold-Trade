@@ -198,9 +198,9 @@ export default function App() {
         visibleColumns: parsed.visibleColumns || ['code', 'name', 'price', 'changePercent', 'high', 'low', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'],
         dividendRateColumns: parsed.dividendRateColumns || ['2%', '3%', '4%', '5%', '6%', '7%'],
         dividendRateColorRanges: parsed.dividendRateColorRanges || [
-          { min: 3, max: 4, color: 'red' },
-          { min: 4.5, max: 5.5, color: 'gray' },
-          { min: 6, max: 7, color: 'green' }
+          { min: 0, max: 4.5, color: 'red' },
+          { min: 4.5, max: 5.5, color: 'yellow' },
+          { min: 5.5, max: 100, color: 'green' }
         ]
       };
     } catch {
@@ -208,9 +208,9 @@ export default function App() {
         visibleColumns: ['code', 'name', 'price', 'changePercent', 'high', 'low', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'],
         dividendRateColumns: ['2%', '3%', '4%', '5%', '6%', '7%'],
         dividendRateColorRanges: [
-          { min: 3, max: 4, color: 'red' },
-          { min: 4.5, max: 5.5, color: 'gray' },
-          { min: 6, max: 7, color: 'green' }
+          { min: 0, max: 4.5, color: 'red' },
+          { min: 4.5, max: 5.5, color: 'yellow' },
+          { min: 5.5, max: 100, color: 'green' }
         ]
       };
     }
