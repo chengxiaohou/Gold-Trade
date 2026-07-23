@@ -1,5 +1,5 @@
 
-import { TradeRecord, AppSettings } from "../types";
+import { TradeRecord, AppSettings, StockEntry, StockSettings } from "../types";
 
 const GIST_FILENAME = "gold-trades.json";
 const GIST_DESCRIPTION = "GoldCost Pro 交易记录备份";
@@ -123,12 +123,14 @@ export const validateConnection = async (token: string, gistId?: string): Promis
 };
 
 interface GistPayload {
-  trades: TradeRecord[];
+  trades?: TradeRecord[];
   settings?: AppSettings;
+  stocks?: StockEntry[];
+  stockSettings?: StockSettings;
   version?: number;
 }
 
-export const loadFromGist = async (token: string, gistId: string): Promise<{ trades: TradeRecord[], settings?: AppSettings } | null> => {
+export const loadFromGist = async (token: string, gistId: string): Promise<{ trades: TradeRecord[], settings?: AppSettings, stocks?: StockEntry[], stockSettings?: StockSettings } | null> => {
   try {
     const response = await fetch(`https://api.github.com/gists/${gistId}`, {
       headers: getHeaders(token),
@@ -153,10 +155,12 @@ export const loadFromGist = async (token: string, gistId: string): Promise<{ tra
       return { trades: parsed };
     }
 
-    // New format: Object containing trades and settings
+    // New format: Object containing trades, settings and stocks
     return {
       trades: parsed.trades || [],
-      settings: parsed.settings
+      settings: parsed.settings,
+      stocks: parsed.stocks,
+      stockSettings: parsed.stockSettings
     };
 
   } catch (error) {
@@ -170,13 +174,15 @@ export const loadFromGist = async (token: string, gistId: string): Promise<{ tra
 
 export const saveToGist = async (
   token: string,
-  data: { trades: TradeRecord[], settings: AppSettings },
+  data: { trades?: TradeRecord[], settings?: AppSettings, stocks?: StockEntry[], stockSettings?: StockSettings },
   gistId?: string
 ): Promise<string> => {
   
   const payload: GistPayload = {
     trades: data.trades,
     settings: data.settings,
+    stocks: data.stocks,
+    stockSettings: data.stockSettings,
     version: 1
   };
 

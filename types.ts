@@ -63,3 +63,32 @@ export interface AppSettings {
   dividendRate?: number; // New: Dividend annual rate (%)
   dividendPeriod?: number; // New: Dividend period in months
 }
+
+export type StockDividendRates = Record<string, number>;
+
+export interface StockEntry {
+  id: string;
+  code: string;
+  name: string;
+  price: number;
+  changePercent: number;
+  high: number;
+  low: number;
+  dividend2024: number;
+  dividend2025: number;
+  dividendRate2025: number;
+  priceUpdatedAt: number | null;
+  dividendRates: StockDividendRates;
+}
+
+export interface DividendRateColorRange {
+  min: number;
+  max: number;
+  color: string;
+}
+
+export interface StockSettings {
+  visibleColumns?: string[];
+  dividendRateColumns?: string[];
+  dividendRateColorRanges?: DividendRateColorRange[];
+}

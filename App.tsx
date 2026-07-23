@@ -1,14 +1,15 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Trash2 } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
 import { TradingPlanPanel } from './components/TradingPlanPanel';
 import { CloudSettingsModal } from './components/CloudSettingsModal';
+import { StockDividendPage } from './components/StockDividendPage';
 import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
-import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings } from './types';
+import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings } from './types';
 
 const APP_VERSION = 'v2.0.4';
 
@@ -34,6 +35,98 @@ export default function App() {
 
   const toggleTheme = () => {
     setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  };
+
+  // --- Page Switch State ---
+  const [currentPage, setCurrentPage] = useState<'gold' | 'stocks'>(() => {
+    const saved = localStorage.getItem('gold_current_page');
+    return saved === 'stocks' ? 'stocks' : 'gold';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('gold_current_page', currentPage);
+  }, [currentPage]);
+
+  const togglePage = () => {
+    setCurrentPage(prev => prev === 'gold' ? 'stocks' : 'gold');
+  };
+
+  // --- Stock State ---
+  const [stocks, setStocks] = useState<StockEntry[]>(() => {
+    const saved = localStorage.getItem('stock_dividend_stocks');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+    return [
+      { id: '1', code: '600036.SH', name: '招商银行', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.00, dividend2025: 2.016, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 100.8, '3%': 67.2, '4%': 50.4, '5%': 40.32, '6%': 33.6, '7%': 28.8 } },
+      { id: '2', code: '601318.SH', name: '中国平安', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.55, dividend2025: 2.70, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 135, '3%': 90, '4%': 67.5, '5%': 54, '6%': 45, '7%': 38.57 } },
+      { id: '3', code: '600900.SH', name: '长江电力', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.943, dividend2025: 1.00, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 50, '3%': 33.33, '4%': 25, '5%': 20, '6%': 16.67, '7%': 14.29 } },
+      { id: '4', code: '600887.SH', name: '伊利股份', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.22, dividend2025: 0.90, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 45, '3%': 30, '4%': 22.5, '5%': 18, '6%': 15, '7%': 12.86 } },
+      { id: '5', code: '601377.SH', name: '兴业证券', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.943, dividend2025: 1.00, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 50, '3%': 33.33, '4%': 25, '5%': 20, '6%': 16.67, '7%': 14.29 } },
+      { id: '6', code: '000333.SZ', name: '美的集团', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 3.50, dividend2025: 4.30, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 215, '3%': 143.33, '4%': 107.5, '5%': 86, '6%': 71.67, '7%': 61.43 } },
+      { id: '7', code: '601088.SH', name: '中国神华', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.26, dividend2025: 2.01, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 100.5, '3%': 67, '4%': 50.25, '5%': 40.2, '6%': 33.5, '7%': 28.71 } },
+      { id: '8', code: '600895.SH', name: '张江高科', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.275, dividend2025: 0.40, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 20, '3%': 13.33, '4%': 10, '5%': 8, '6%': 6.67, '7%': 5.71 } },
+      { id: '9', code: '600011.SH', name: '华能国际', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.96, dividend2025: 1.45, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 72.5, '3%': 48.33, '4%': 36.25, '5%': 29, '6%': 24.17, '7%': 20.71 } },
+      { id: '10', code: '600690.SH', name: '海尔智家', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.965, dividend2025: 1.156, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 57.8, '3%': 38.53, '4%': 28.9, '5%': 23.12, '6%': 19.27, '7%': 16.51 } },
+      { id: '11', code: '600190.SH', name: '中远海控', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.55, dividend2025: 1.00, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 50, '3%': 33.33, '4%': 25, '5%': 20, '6%': 16.67, '7%': 14.29 } },
+      { id: '12', code: '600985.SH', name: '国投电力', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.457, dividend2025: 0.508, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 25.4, '3%': 16.93, '4%': 12.7, '5%': 10.16, '6%': 8.47, '7%': 7.26 } },
+      { id: '13', code: '000858.SZ', name: '五粮液', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 3.169, dividend2025: 2.58, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 129, '3%': 86, '4%': 64.5, '5%': 51.6, '6%': 43, '7%': 36.86 } },
+      { id: '14', code: '000651.SZ', name: '格力电器', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 5.18, dividend2025: 4.78, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 239, '3%': 159.33, '4%': 119.5, '5%': 95.6, '6%': 79.67, '7%': 68.29 } },
+      { id: '15', code: '600795.SH', name: '国电电力', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.11, dividend2025: 0.241, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 12.05, '3%': 8.03, '4%': 6.03, '5%': 4.82, '6%': 4.02, '7%': 3.44 } },
+    ];
+  });
+
+  const [isAddingStock, setIsAddingStock] = useState(false);
+  const [isRefreshingStockPrices, setIsRefreshingStockPrices] = useState(false);
+
+  const handleRefreshStockPrices = async () => {
+    if (stocks.length === 0) return;
+    setIsRefreshingStockPrices(true);
+    try {
+      const newStocks = await Promise.all(stocks.map(async (stock) => {
+        try {
+          let market = 'sh';
+          let code = stock.code;
+          if (code.endsWith('.SZ')) {
+            market = 'sz';
+            code = code.replace('.SZ', '');
+          } else if (code.endsWith('.SH')) {
+            code = code.replace('.SH', '');
+          }
+          const res = await fetch(`https://qt.gtimg.cn/q=${market}${code}`);
+          const text = await res.text();
+          const match = text.match(/v_\w+="([^"]+)"/);
+          if (match && match[1]) {
+            const data = match[1].split('~');
+            if (data.length >= 8) {
+              const price = parseFloat(data[3]);
+              const prevClose = parseFloat(data[4]);
+              const high = parseFloat(data[7]) || price;
+              const low = parseFloat(data[6]) || price;
+              let changePercent = 0;
+              if (prevClose > 0) {
+                changePercent = ((price - prevClose) / prevClose) * 100;
+              }
+              const dividendRate = price > 0 ? (stock.dividend2025 / price) * 100 : 0;
+              return {
+                ...stock,
+                price,
+                changePercent,
+                priceUpdatedAt: Date.now(),
+                dividendRate2025: dividendRate,
+              };
+            }
+          }
+        } catch {}
+        return stock;
+      }));
+      setStocks(newStocks);
+    } finally {
+      setIsRefreshingStockPrices(false);
+    }
   };
 
   // --- State ---
@@ -95,6 +188,67 @@ export default function App() {
     const saved = localStorage.getItem('gold_github_config');
     return saved ? JSON.parse(saved) : { token: '', gistId: '' };
   });
+
+  // Stock Settings
+  const [stockSettings, setStockSettings] = useState<StockSettings>(() => {
+    try {
+      const saved = localStorage.getItem('stock_dividend_settings');
+      const parsed = saved ? JSON.parse(saved) : {};
+      return {
+        visibleColumns: parsed.visibleColumns || ['code', 'name', 'price', 'changePercent', 'high', 'low', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'],
+        dividendRateColumns: parsed.dividendRateColumns || ['2%', '3%', '4%', '5%', '6%', '7%'],
+        dividendRateColorRanges: parsed.dividendRateColorRanges || [
+          { min: 3, max: 4, color: 'red' },
+          { min: 4.5, max: 5.5, color: 'gray' },
+          { min: 6, max: 7, color: 'green' }
+        ]
+      };
+    } catch {
+      return {
+        visibleColumns: ['code', 'name', 'price', 'changePercent', 'high', 'low', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'],
+        dividendRateColumns: ['2%', '3%', '4%', '5%', '6%', '7%'],
+        dividendRateColorRanges: [
+          { min: 3, max: 4, color: 'red' },
+          { min: 4.5, max: 5.5, color: 'gray' },
+          { min: 6, max: 7, color: 'green' }
+        ]
+      };
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('stock_dividend_settings', JSON.stringify(stockSettings));
+  }, [stockSettings]);
+
+  const resetStockData = () => {
+    const defaultStocks = [
+      { id: '1', code: '600036.SH', name: '招商银行', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.00, dividend2025: 2.016, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 100.8, '3%': 67.2, '4%': 50.4, '5%': 40.32, '6%': 33.6, '7%': 28.8 } },
+      { id: '2', code: '601318.SH', name: '中国平安', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.55, dividend2025: 2.70, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 135, '3%': 90, '4%': 67.5, '5%': 54, '6%': 45, '7%': 38.57 } },
+      { id: '3', code: '600900.SH', name: '长江电力', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.943, dividend2025: 1.00, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 50, '3%': 33.33, '4%': 25, '5%': 20, '6%': 16.67, '7%': 14.29 } },
+      { id: '4', code: '600887.SH', name: '伊利股份', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.22, dividend2025: 0.90, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 45, '3%': 30, '4%': 22.5, '5%': 18, '6%': 15, '7%': 12.86 } },
+      { id: '5', code: '601377.SH', name: '兴业证券', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.943, dividend2025: 1.00, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 50, '3%': 33.33, '4%': 25, '5%': 20, '6%': 16.67, '7%': 14.29 } },
+      { id: '6', code: '000333.SZ', name: '美的集团', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 3.50, dividend2025: 4.30, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 215, '3%': 143.33, '4%': 107.5, '5%': 86, '6%': 71.67, '7%': 61.43 } },
+      { id: '7', code: '601088.SH', name: '中国神华', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.26, dividend2025: 2.01, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 100.5, '3%': 67, '4%': 50.25, '5%': 40.2, '6%': 33.5, '7%': 28.71 } },
+      { id: '8', code: '600895.SH', name: '张江高科', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.275, dividend2025: 0.40, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 20, '3%': 13.33, '4%': 10, '5%': 8, '6%': 6.67, '7%': 5.71 } },
+      { id: '9', code: '600011.SH', name: '华能国际', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.96, dividend2025: 1.45, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 72.5, '3%': 48.33, '4%': 36.25, '5%': 29, '6%': 24.17, '7%': 20.71 } },
+      { id: '10', code: '600690.SH', name: '海尔智家', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.965, dividend2025: 1.156, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 57.8, '3%': 38.53, '4%': 28.9, '5%': 23.12, '6%': 19.27, '7%': 16.51 } },
+      { id: '11', code: '600190.SH', name: '中远海控', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.55, dividend2025: 1.00, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 50, '3%': 33.33, '4%': 25, '5%': 20, '6%': 16.67, '7%': 14.29 } },
+      { id: '12', code: '600985.SH', name: '国投电力', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.457, dividend2025: 0.508, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 25.4, '3%': 16.93, '4%': 12.7, '5%': 10.16, '6%': 8.47, '7%': 7.26 } },
+      { id: '13', code: '000858.SZ', name: '五粮液', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 3.169, dividend2025: 2.58, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 129, '3%': 86, '4%': 64.5, '5%': 51.6, '6%': 43, '7%': 36.86 } },
+      { id: '14', code: '000651.SZ', name: '格力电器', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 5.18, dividend2025: 4.78, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 239, '3%': 159.33, '4%': 119.5, '5%': 95.6, '6%': 79.67, '7%': 68.29 } },
+      { id: '15', code: '600795.SH', name: '国电电力', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.11, dividend2025: 0.241, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '2%': 12.05, '3%': 8.03, '4%': 6.03, '5%': 4.82, '6%': 4.02, '7%': 3.44 } },
+    ];
+    setStocks(defaultStocks);
+    setStockSettings({
+      visibleColumns: ['code', 'name', 'price', 'changePercent', 'high', 'low', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'],
+      dividendRateColumns: ['2%', '3%', '4%', '5%', '6%', '7%'],
+      dividendRateColorRanges: [
+        { min: 3, max: 4, color: 'red' },
+        { min: 4.5, max: 5.5, color: 'gray' },
+        { min: 6, max: 7, color: 'green' }
+      ]
+    });
+  };
 
   // Modal States
   const [showExportModal, setShowExportModal] = useState(false);
@@ -415,10 +569,16 @@ export default function App() {
   }, [appSettings.touchMode, appSettings.priceStep]);
 
   // --- Cloud & Settings Handlers ---
-  const handleSaveSettings = (newGithubConfig: GithubConfig, newAppSettings: AppSettings) => {
+  const handleSaveSettings = (newGithubConfig: GithubConfig, newAppSettings: AppSettings, newStockSettings?: StockSettings) => {
+    console.log('handleSaveSettings 被调用, newStockSettings:', newStockSettings);
     setGithubConfig(newGithubConfig);
     localStorage.setItem('gold_github_config', JSON.stringify(newGithubConfig));
     setAppSettings(newAppSettings);
+    if (newStockSettings) {
+      console.log('保存 stockSettings 到 localStorage:', newStockSettings);
+      setStockSettings(newStockSettings);
+      localStorage.setItem('stock_dividend_settings', JSON.stringify(newStockSettings));
+    }
   };
   
   const handleSettingsUpdate = (updates: Partial<AppSettings>) => {
@@ -449,9 +609,44 @@ export default function App() {
     setIsSyncing(true);
     setUploadSuccess(false);
     try {
+      let existingTrades: TradeRecord[] = [];
+      let existingSettings: AppSettings | undefined;
+      let existingStocks: StockEntry[] = [];
+      let existingStockSettings: StockSettings | undefined;
+      
+      if (githubConfig.gistId) {
+        try {
+          const existing = await loadFromGist(githubConfig.token, githubConfig.gistId);
+          if (existing) {
+            existingTrades = existing.trades || [];
+            existingSettings = existing.settings;
+            existingStocks = existing.stocks || [];
+            existingStockSettings = existing.stockSettings;
+          }
+        } catch {
+        }
+      }
+      
+      let dataToUpload;
+      if (currentPage === 'gold') {
+        dataToUpload = {
+          trades,
+          settings: appSettings,
+          stocks: existingStocks,
+          stockSettings: existingStockSettings
+        };
+      } else {
+        dataToUpload = {
+          trades: existingTrades,
+          settings: existingSettings,
+          stocks,
+          stockSettings
+        };
+      }
+      
       const newGistId = await saveToGist(
         githubConfig.token, 
-        { trades, settings: appSettings }, 
+        dataToUpload, 
         githubConfig.gistId || undefined
       );
       
@@ -477,13 +672,24 @@ export default function App() {
     try {
       const result = await loadFromGist(githubConfig.token, githubConfig.gistId);
       if (result) {
-        setTrades(result.trades);
-        
-        if (result.settings) {
-          setAppSettings(prev => ({
-            ...prev,
-            ...result.settings
-          }));
+        if (currentPage === 'gold') {
+          setTrades(result.trades);
+          
+          if (result.settings) {
+            setAppSettings(prev => ({
+              ...prev,
+              ...result.settings
+            }));
+          }
+        } else {
+          if (result.stocks) {
+            setStocks(result.stocks);
+          }
+          
+          if (result.stockSettings) {
+            setStockSettings(result.stockSettings);
+            localStorage.setItem('stock_dividend_settings', JSON.stringify(result.stockSettings));
+          }
         }
         
         setDownloadSuccess(true);
@@ -973,6 +1179,8 @@ export default function App() {
         onClose={() => setIsSettingsOpen(false)}
         githubConfig={githubConfig}
         appSettings={appSettings}
+        stockSettings={stockSettings}
+        currentPage={currentPage === 'gold' ? 'gold' : 'stock'}
         onSave={handleSaveSettings}
         initialTab={settingsDefaultTab}
       />
@@ -1026,358 +1234,444 @@ export default function App() {
       <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".json" />
 
       <div className="max-w-[1400px] w-full pb-12 flex flex-col">
-        <header className="mb-6 flex items-start justify-between gap-4">
+        <header className="mb-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-bold text-app-subtext tracking-wide">黄金交易模拟</h1>
+            <h1 className="text-3xl font-bold text-app-subtext tracking-wide">{currentPage === 'gold' ? '黄金交易模拟' : '股息率一览表'}</h1>
             <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1">{APP_VERSION}</span>
+            <button
+              onClick={togglePage}
+              className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1 transition-colors"
+              title={currentPage === 'gold' ? '切换到股票股息率计算器' : '切换到黄金交易模拟'}
+            >
+              [{currentPage === 'gold' ? '股票' : '黄金'}]
+            </button>
           </div>
+          {currentPage === 'stocks' && (
+            <div className="flex gap-1 lg:gap-2">
+              <button 
+                  onClick={() => openSettings('general')}
+                  className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors w-10"
+                  title="设置"
+                >
+                <Settings size={16} />
+              </button>
+              <button 
+                  onClick={() => requestCloudAction('download')}
+                  disabled={isDownloading || downloadSuccess || !!cloudConfirm}
+                  className={`flex items-center justify-center bg-app-card border border-app-border py-2.5 rounded-md transition-all w-10 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-indigo-400 hover:text-indigo-300 hover:border-indigo-500'} disabled:opacity-30`}
+                  title="从云端下载"
+                >
+                {isDownloading ? (
+                  <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                ) : downloadSuccess ? (
+                  <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
+                ) : (
+                  <CloudDownload size={16} />
+                )}
+              </button>
+              <button 
+                  onClick={() => requestCloudAction('upload')}
+                  disabled={isSyncing || uploadSuccess || !!cloudConfirm}
+                  className={`flex items-center justify-center bg-app-card border border-app-border py-2.5 rounded-md transition-all w-10 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-brand-yellow hover:bg-brand-yellow/10 hover:border-brand-yellow'} disabled:opacity-30`}
+                  title="上传到云端"
+                >
+                {isSyncing ? (
+                  <div className="w-4 h-4 border-2 border-brand-yellow border-t-transparent rounded-full animate-spin"></div>
+                ) : uploadSuccess ? (
+                  <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
+                ) : (
+                  <CloudUpload size={16} />
+                )}
+              </button>
+              <button 
+                  onClick={() => setIsAddingStock(true)}
+                  className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors w-10"
+                  title="添加股票"
+                >
+                <Plus size={16} />
+              </button>
+              <button 
+                  onClick={handleRefreshStockPrices}
+                  disabled={isRefreshingStockPrices}
+                  className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors disabled:opacity-50 w-10"
+                  title="刷新股票价格"
+                >
+                <RefreshCw size={16} className={isRefreshingStockPrices ? 'animate-spin' : ''} />
+              </button>
+              <button 
+                  onClick={() => { if (confirm('确定要重置所有股票数据吗？')) resetStockData(); }}
+                  className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-red-400 hover:border-red-400 transition-colors w-10"
+                  title="重置数据"
+                >
+                <Trash2 size={16} />
+              </button>
+              <button
+                  onClick={toggleTheme}
+                  className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-brand-yellow hover:border-brand-yellow transition-colors w-10"
+                  title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+              >
+                {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
+            </div>
+          )}
         </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6 items-start">
-          <div className="lg:col-span-8 flex flex-col gap-6 order-2 lg:order-1">
-             <div className="space-y-3">
-                <div className="flex items-center gap-2 text-app-subtext pl-1"><Wallet size={16} /><h3 className="font-medium text-sm">持仓详情</h3></div>
-                <div className="bg-app-card border border-app-border rounded-xl p-6 shadow-sm grid grid-cols-2 md:grid-cols-3 gap-4">
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5 transition-colors relative group hover:border-indigo-500/50 focus-within:border-indigo-500">
-                        <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-app-subtext">总资金</span>
-                            {isEditingCapital ? (
-                                <input 
-                                    autoFocus
-                                    type="number" 
-                                    value={appSettings.totalCapital || ''} 
-                                    onChange={(e) => handleSettingsUpdate({ totalCapital: parseFloat(e.target.value) || 0 })} 
-                                    onBlur={() => setIsEditingCapital(false)}
-                                    placeholder="0.00" 
-                                    className="no-spinners text-sm font-bold text-app-text font-mono bg-transparent border-none p-0 text-right outline-none w-24" 
-                                />
-                            ) : (
-                                <span 
-                                    onClick={() => setIsEditingCapital(true)}
-                                    className="text-sm font-bold font-mono text-app-text cursor-pointer hover:text-indigo-400 transition-colors"
-                                >
-                                    {appSettings.totalCapital ? appSettings.totalCapital.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '0.00'}
-                                </span>
-                            )}
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-app-subtext">可用资金</span>
-                            <span className="text-sm font-bold font-mono text-app-text">
-                                {appSettings.totalCapital ? (appSettings.totalCapital - currentPosition.totalCost).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}
-                            </span>
-                        </div>
-                    </div>
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5">
-                        <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-app-subtext">持仓净值</span>
-                            <span className="text-sm font-bold font-mono text-app-text">
-                                {marketPrice ? (currentPosition.grams * (parseFloat(marketPrice) || 0)).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}
-                            </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-app-subtext">持仓数量</span>
-                            <span className="text-sm font-bold font-mono text-app-text">{currentPosition.grams.toFixed(2)} 克</span>
-                        </div>
-                    </div>
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5">
-                        <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-app-subtext">持仓总投入</span>
-                            <span className="text-sm font-bold font-mono text-app-text">
-                                {currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                            </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-app-subtext">仓位占比</span>
-                            <span className="text-sm font-bold font-mono text-app-text">
-                                {appSettings.totalCapital && appSettings.totalCapital > 0 ? ((currentPosition.totalCost / appSettings.totalCapital) * 100).toFixed(1) + '%' : '--'}
-                            </span>
-                        </div>
-                    </div>
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5">
-                        <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-app-subtext">浮动盈亏</span>
-                            <span className={`text-sm font-bold font-mono ${floatingPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{marketPrice ? (floatingPnL > 0 ? '+' : '') + floatingPnL.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-app-subtext">已实现盈亏</span>
-                            <span className={`text-sm font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-                        </div>
-                    </div>
-                    <div 
-                        onClick={() => {
-                            const nextMode = appSettings.priceDisplayMode === 'breakEven' ? 'avgCost' : 'breakEven';
-                            handleSettingsUpdate({ priceDisplayMode: nextMode });
-                        }}
-                        className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5 cursor-pointer hover:border-brand-yellow/50 transition-colors"
-                    >
-                        <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-app-subtext">回本价</span>
-                            <span className={`text-sm font-bold font-mono ${parseFloat(marketPrice) > currentPosition.breakEvenPrice ? 'text-brand-red' : parseFloat(marketPrice) < currentPosition.breakEvenPrice ? 'text-brand-green' : 'text-app-text'}`}>{currentPosition.breakEvenPrice.toFixed(2)}</span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-app-subtext">持仓均价</span>
-                            <span className={`text-sm font-bold font-mono ${parseFloat(marketPrice) > currentPosition.avgCost ? 'text-brand-red' : parseFloat(marketPrice) < currentPosition.avgCost ? 'text-brand-green' : 'text-app-text'}`}>{currentPosition.avgCost.toFixed(2)}</span>
-                        </div>
-                    </div>
-                    <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 focus-within:border-brand-yellow transition-colors">
-                        <span className="text-xs text-app-subtext block mb-1">参考市价 (元/克)</span>
-                        <div className="flex items-center">
-                            <input 
-                                ref={marketPriceInputRef} 
-                                type="number" 
-                                value={marketPrice} 
-                                onChange={(e) => handleMarketPriceChange(e.target.value)} 
-                                placeholder="0.00" 
-                                className={`no-spinners text-xl font-bold font-mono bg-transparent border-none p-0 w-full outline-none ${appSettings.touchMode ? 'cursor-ns-resize' : ''} text-app-text`} 
-                            />
-                            <div className="flex flex-col gap-0.5 ml-2">
-                                <button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronUp size={10} strokeWidth={3} /></button>
-                                <button onClick={() => updateMarketPrice(-appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronDown size={10} strokeWidth={3} /></button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-             </div>
-             <div className="space-y-3">
-               <div className="flex items-center gap-2 text-app-subtext pl-1"><History size={16} /><h3 className="font-medium text-sm">成交记录</h3></div>
-               <TradeList trades={trades} onDelete={deleteTrade} onUpdate={updateTrade} onReorder={handleReorderTrades} settings={appSettings} onSettingsChange={handleSettingsUpdate} />
-             </div>
-             <div className="bg-app-card border border-app-border rounded-xl p-4 transition-colors">
-               <div className="flex items-center gap-2 mb-3">
-                 <BarChart3 size={16} className="text-indigo-400"/>
-                 <h3 className="text-app-text font-medium text-sm">数据分析</h3>
+        {currentPage === 'gold' ? (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6 items-start">
+            <div className="lg:col-span-8 flex flex-col gap-6 order-2 lg:order-1">
+               <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-app-subtext pl-1"><Wallet size={16} /><h3 className="font-medium text-sm">持仓详情</h3></div>
+                  <div className="bg-app-card border border-app-border rounded-xl p-6 shadow-sm grid grid-cols-2 md:grid-cols-3 gap-4">
+                      <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5 transition-colors relative group hover:border-indigo-500/50 focus-within:border-indigo-500">
+                          <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-app-subtext">总资金</span>
+                              {isEditingCapital ? (
+                                  <input 
+                                      autoFocus
+                                      type="number" 
+                                      value={appSettings.totalCapital || ''} 
+                                      onChange={(e) => handleSettingsUpdate({ totalCapital: parseFloat(e.target.value) || 0 })} 
+                                      onBlur={() => setIsEditingCapital(false)}
+                                      placeholder="0.00" 
+                                      className="no-spinners text-sm font-bold text-app-text font-mono bg-transparent border-none p-0 text-right outline-none w-24" 
+                                  />
+                              ) : (
+                                  <span 
+                                      onClick={() => setIsEditingCapital(true)}
+                                      className="text-sm font-bold font-mono text-app-text cursor-pointer hover:text-indigo-400 transition-colors"
+                                  >
+                                      {appSettings.totalCapital ? appSettings.totalCapital.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '0.00'}
+                                  </span>
+                              )}
+                          </div>
+                          <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-app-subtext">可用资金</span>
+                              <span className="text-sm font-bold font-mono text-app-text">
+                                  {appSettings.totalCapital ? (appSettings.totalCapital - currentPosition.totalCost).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}
+                              </span>
+                          </div>
+                      </div>
+                      <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5">
+                          <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-app-subtext">持仓净值</span>
+                              <span className="text-sm font-bold font-mono text-app-text">
+                                  {marketPrice ? (currentPosition.grams * (parseFloat(marketPrice) || 0)).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}
+                              </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-app-subtext">持仓数量</span>
+                              <span className="text-sm font-bold font-mono text-app-text">{currentPosition.grams.toFixed(2)} 克</span>
+                          </div>
+                      </div>
+                      <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5">
+                          <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-app-subtext">持仓总投入</span>
+                              <span className="text-sm font-bold font-mono text-app-text">
+                                  {currentPosition.totalCost.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                              </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-app-subtext">仓位占比</span>
+                              <span className="text-sm font-bold font-mono text-app-text">
+                                  {appSettings.totalCapital && appSettings.totalCapital > 0 ? ((currentPosition.totalCost / appSettings.totalCapital) * 100).toFixed(1) + '%' : '--'}
+                              </span>
+                          </div>
+                      </div>
+                      <div className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5">
+                          <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-app-subtext">浮动盈亏</span>
+                              <span className={`text-sm font-bold font-mono ${floatingPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{marketPrice ? (floatingPnL > 0 ? '+' : '') + floatingPnL.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-app-subtext">已实现盈亏</span>
+                              <span className={`text-sm font-bold font-mono ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{currentPosition.realizedPnL >= 0 ? '+' : ''}{currentPosition.realizedPnL.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                          </div>
+                      </div>
+                      <div 
+                          onClick={() => {
+                              const nextMode = appSettings.priceDisplayMode === 'breakEven' ? 'avgCost' : 'breakEven';
+                              handleSettingsUpdate({ priceDisplayMode: nextMode });
+                          }}
+                          className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5 cursor-pointer hover:border-brand-yellow/50 transition-colors"
+                      >
+                          <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-app-subtext">回本价</span>
+                              <span className={`text-sm font-bold font-mono ${parseFloat(marketPrice) > currentPosition.breakEvenPrice ? 'text-brand-red' : parseFloat(marketPrice) < currentPosition.breakEvenPrice ? 'text-brand-green' : 'text-app-text'}`}>{currentPosition.breakEvenPrice.toFixed(2)}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-app-subtext">持仓均价</span>
+                              <span className={`text-sm font-bold font-mono ${parseFloat(marketPrice) > currentPosition.avgCost ? 'text-brand-red' : parseFloat(marketPrice) < currentPosition.avgCost ? 'text-brand-green' : 'text-app-text'}`}>{currentPosition.avgCost.toFixed(2)}</span>
+                          </div>
+                      </div>
+                      <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 focus-within:border-brand-yellow transition-colors">
+                          <span className="text-xs text-app-subtext block mb-1">参考市价 (元/克)</span>
+                          <div className="flex items-center">
+                              <input 
+                                  ref={marketPriceInputRef} 
+                                  type="number" 
+                                  value={marketPrice} 
+                                  onChange={(e) => handleMarketPriceChange(e.target.value)} 
+                                  placeholder="0.00" 
+                                  className={`no-spinners text-xl font-bold font-mono bg-transparent border-none p-0 w-full outline-none ${appSettings.touchMode ? 'cursor-ns-resize' : ''} text-app-text`} 
+                              />
+                              <div className="flex flex-col gap-0.5 ml-2">
+                                  <button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronUp size={10} strokeWidth={3} /></button>
+                                  <button onClick={() => updateMarketPrice(-appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronDown size={10} strokeWidth={3} /></button>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
                </div>
-               
-               {/* 税费统计 */}
-               <div className="mb-4 p-3 bg-app-input rounded-lg border border-app-border">
-                 <div className="text-sm text-app-subtext font-bold mb-2">税费统计<span className="text-xs opacity-70">（未计入盈亏）</span></div>
-                 <div className="grid grid-cols-2 gap-1.5 text-xs">
-                   <div className="flex items-center gap-2">
-                     <span className="text-app-subtext w-16">买入笔数：</span>
-                     <span className="text-app-text font-mono font-medium">{taxFeeStats.buyCount}</span>
-                   </div>
-                   <div className="flex items-center gap-2">
-                     <span className="text-app-subtext w-16">卖出笔数：</span>
-                     <span className="text-app-text font-mono font-medium">{taxFeeStats.sellCount}</span>
-                   </div>
-                   <div className="flex items-center gap-2">
-                     <span className="text-app-subtext w-16">买入税费：</span>
-                     <span className="text-app-text font-mono font-medium">{taxFeeStats.buyTaxFeeTotal.toFixed(2)}元</span>
-                   </div>
-                   <div className="flex items-center gap-2">
-                     <span className="text-app-subtext w-16">卖出税费：</span>
-                     <span className="text-app-text font-mono font-medium">{taxFeeStats.sellTaxFeeTotal.toFixed(2)}元</span>
-                   </div>
-                   <div className="col-span-2 flex items-center gap-2 pt-1 border-t border-app-border">
-                     <span className="text-app-subtext w-16 font-medium">总税费：</span>
-                     <span className="text-app-text font-mono font-bold">{taxFeeStats.totalTaxFee.toFixed(2)}元</span>
+               <div className="space-y-3">
+                 <div className="flex items-center gap-2 text-app-subtext pl-1"><History size={16} /><h3 className="font-medium text-sm">成交记录</h3></div>
+                 <TradeList trades={trades} onDelete={deleteTrade} onUpdate={updateTrade} onReorder={handleReorderTrades} settings={appSettings} onSettingsChange={handleSettingsUpdate} />
+               </div>
+               <div className="bg-app-card border border-app-border rounded-xl p-4 transition-colors">
+                 <div className="flex items-center gap-2 mb-3">
+                   <BarChart3 size={16} className="text-indigo-400"/>
+                   <h3 className="text-app-text font-medium text-sm">数据分析</h3>
+                 </div>
+                 
+                 {/* 税费统计 */}
+                 <div className="mb-4 p-3 bg-app-input rounded-lg border border-app-border">
+                   <div className="text-sm text-app-subtext font-bold mb-2">税费统计<span className="text-xs opacity-70">（未计入盈亏）</span></div>
+                   <div className="grid grid-cols-2 gap-1.5 text-xs">
+                     <div className="flex items-center gap-2">
+                       <span className="text-app-subtext w-16">买入笔数：</span>
+                       <span className="text-app-text font-mono font-medium">{taxFeeStats.buyCount}</span>
+                     </div>
+                     <div className="flex items-center gap-2">
+                       <span className="text-app-subtext w-16">卖出笔数：</span>
+                       <span className="text-app-text font-mono font-medium">{taxFeeStats.sellCount}</span>
+                     </div>
+                     <div className="flex items-center gap-2">
+                       <span className="text-app-subtext w-16">买入税费：</span>
+                       <span className="text-app-text font-mono font-medium">{taxFeeStats.buyTaxFeeTotal.toFixed(2)}元</span>
+                     </div>
+                     <div className="flex items-center gap-2">
+                       <span className="text-app-subtext w-16">卖出税费：</span>
+                       <span className="text-app-text font-mono font-medium">{taxFeeStats.sellTaxFeeTotal.toFixed(2)}元</span>
+                     </div>
+                     <div className="col-span-2 flex items-center gap-2 pt-1 border-t border-app-border">
+                       <span className="text-app-subtext w-16 font-medium">总税费：</span>
+                       <span className="text-app-text font-mono font-bold">{taxFeeStats.totalTaxFee.toFixed(2)}元</span>
+                     </div>
                    </div>
                  </div>
+                 
+                 {/* 收益率统计 */}
+                 <div className="p-3 bg-app-input rounded-lg border border-app-border">
+                   <div className="text-sm text-app-subtext font-bold mb-2">收益率统计</div>
+                   {returnRateStats.floatingReturnRate === null ? (
+                     <div className="text-xs text-app-subtext italic text-center py-2">
+                       请在设置中填写总资金以计算收益率
+                     </div>
+                   ) : (
+                     <div className="flex flex-col gap-1.5 text-xs">
+                       <div className="flex items-center gap-2">
+                         <span className="text-app-subtext whitespace-nowrap">浮动盈亏收益率：</span>
+                         <span className={`font-mono font-bold ${floatingPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                           {returnRateStats.floatingReturnRate >= 0 ? '+' : ''}{returnRateStats.floatingReturnRate.toFixed(2)}%
+                         </span>
+                       </div>
+                       <div className="flex items-center gap-2">
+                         <span className="text-app-subtext whitespace-nowrap">已实现盈亏收益率：</span>
+                         <span className={`font-mono font-bold ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                           {returnRateStats.realizedReturnRate >= 0 ? '+' : ''}{returnRateStats.realizedReturnRate.toFixed(2)}%
+                         </span>
+                       </div>
+                       <div className="flex items-center gap-2 pt-1 border-t border-app-border">
+                         <span className="text-app-subtext whitespace-nowrap font-medium">总体收益率：</span>
+                         <span className={`font-mono font-bold text-sm ${returnRateStats.totalReturnRate >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                           {returnRateStats.totalReturnRate >= 0 ? '+' : ''}{returnRateStats.totalReturnRate.toFixed(2)}%
+                         </span>
+                       </div>
+                     </div>
+                   )}
+                 </div>
                </div>
-               
-               {/* 收益率统计 */}
-               <div className="p-3 bg-app-input rounded-lg border border-app-border">
-                 <div className="text-sm text-app-subtext font-bold mb-2">收益率统计</div>
-                 {returnRateStats.floatingReturnRate === null ? (
-                   <div className="text-xs text-app-subtext italic text-center py-2">
-                     请在设置中填写总资金以计算收益率
-                   </div>
-                 ) : (
-                   <div className="flex flex-col gap-1.5 text-xs">
-                     <div className="flex items-center gap-2">
-                       <span className="text-app-subtext whitespace-nowrap">浮动盈亏收益率：</span>
-                       <span className={`font-mono font-bold ${floatingPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                         {returnRateStats.floatingReturnRate >= 0 ? '+' : ''}{returnRateStats.floatingReturnRate.toFixed(2)}%
-                       </span>
-                     </div>
-                     <div className="flex items-center gap-2">
-                       <span className="text-app-subtext whitespace-nowrap">已实现盈亏收益率：</span>
-                       <span className={`font-mono font-bold ${currentPosition.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                         {returnRateStats.realizedReturnRate >= 0 ? '+' : ''}{returnRateStats.realizedReturnRate.toFixed(2)}%
-                       </span>
-                     </div>
-                     <div className="flex items-center gap-2 pt-1 border-t border-app-border">
-                       <span className="text-app-subtext whitespace-nowrap font-medium">总体收益率：</span>
-                       <span className={`font-mono font-bold text-sm ${returnRateStats.totalReturnRate >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                         {returnRateStats.totalReturnRate >= 0 ? '+' : ''}{returnRateStats.totalReturnRate.toFixed(2)}%
-                       </span>
-                     </div>
-                   </div>
-                 )}
-               </div>
-             </div>
-          </div>
-
-          <div className="lg:col-span-4 lg:col-start-9 order-1 lg:order-2 lg:sticky lg:top-6 space-y-4">
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 text-app-subtext pl-1"><TrendingUp size={16} /><h3 className="font-medium text-sm">模拟交易</h3></div>
-              <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-2xl flex flex-col">
-                <button 
-                  onClick={() => setActiveSimPanel(prev => prev === 'manual' ? 'none' : 'manual')}
-                  className="flex items-center justify-between p-3 bg-app-input/50 hover:bg-app-hover transition-colors"
-                >
-                  <div className="flex items-center gap-2 text-app-text font-medium text-sm">
-                    <Activity size={16} className={previewType === 'BUY' ? 'text-brand-red' : 'text-brand-green'} />
-                    交易窗口
-                  </div>
-                  <ChevronDown size={16} className={`text-app-subtext transition-transform ${activeSimPanel === 'manual' ? 'rotate-180' : ''}`} />
-                </button>
-                
-                {activeSimPanel === 'manual' && (
-                  <div className="p-4 flex flex-col gap-3 border-t border-app-border">
-                    {/* 买入/卖出切换 */}
-                    <div className="grid grid-cols-2 p-1 bg-app-input rounded-lg">
-                      <button onClick={() => changeOrderType('BUY')} className={`py-2 pr-2 rounded-md text-sm font-bold flex items-center justify-center transition-all ${previewType === 'BUY' ? 'bg-brand-red text-white shadow-lg shadow-brand-red/20' : 'text-app-subtext hover:text-app-text'}`}>
-                        <span className="inline-flex items-center gap-2"><TrendingUp size={16} />买入</span>
-                      </button>
-                      <button onClick={() => changeOrderType('SELL')} className={`py-2 pr-2 rounded-md text-sm font-bold flex items-center justify-center transition-all ${previewType === 'SELL' ? 'bg-brand-green text-white shadow-lg shadow-brand-green/20' : 'text-app-subtext hover:text-app-text'}`}>
-                        <span className="inline-flex items-center gap-2"><TrendingDown size={16} />卖出</span>
-                      </button>
-                    </div>
-                    {/* 价格和数量输入 */}
-                    <div className="grid grid-cols-2 gap-2">
-                      <InputGroup 
-                        label="价格 (元/克)" 
-                        value={inputs.price} 
-                        onChange={(v) => handleInputChange('price', v)} 
-                        placeholder="0.00" 
-                        step={appSettings.priceStep}
-                        touchMode={appSettings.touchMode} 
-                        onEnter={handlePriceEnter}
-                        inputRef={priceInputRef}
-                        onTypeSwitch={handleTypeSwitch}
-                        onTab={handlePriceTab}
-                      />
-                      <InputGroup 
-                        label="数量 (克)" 
-                        value={inputs.grams} 
-                        onChange={(v) => handleInputChange('grams', v)} 
-                        placeholder="0.00" 
-                        step={appSettings.gramsStep} 
-                        isQuantity={true}
-                        touchMode={appSettings.touchMode} 
-                        onEnter={handleGramsEnter}
-                        inputRef={gramsInputRef}
-                        onTypeSwitch={handleTypeSwitch}
-                        onTab={handleGramsTab}
-                      />
-                    </div>
-                    {/* 成交后预估模块 */}
-                    <div className="bg-app-input/30 rounded-xl p-4 border border-app-border space-y-3">
-                        <div className="flex justify-between items-start">
-                            <div>
-                                <span className="text-[10px] font-bold text-app-subtext uppercase block mb-1">{renderPriceLabel('成交后均价预估')}</span>
-                                <div className="flex items-baseline gap-1.5"><span className="text-3xl font-bold text-app-text tracking-tight font-mono">{renderPriceValue(simulation.newBreakEvenPrice, simulation.newAvgCost, "text-sm text-app-subtext font-bold")}</span><span className="text-[10px] text-app-subtext font-bold">¥</span></div>
-                            </div>
-                            <div className="flex items-center gap-1.5 self-end">
-                                <span className="text-[10px] text-app-subtext font-medium opacity-80">较当前</span>
-                                {renderPriceDiff(simulation.newBreakEvenPrice, currentPosition.breakEvenPrice, simulation.newAvgCost, currentPosition.avgCost)}
-                            </div>
-                        </div>
-                        <div className="h-px bg-white/5 w-full" />
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                            <div>
-                                <p className="text-app-subtext text-[10px] font-medium">预计总持仓 (金额)</p>
-                                <div className="flex flex-col">
-                                    <div className="flex items-baseline gap-1">
-                                        <span className="text-lg font-bold text-app-text font-mono">{simulation.totalInvestment.toLocaleString('zh-CN', {maximumFractionDigits:0})}</span>
-                                        <span className="text-[10px] text-app-subtext">¥</span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5 mt-0.5">
-                                        <span className="text-[10px] text-app-subtext font-medium opacity-80">较当前</span>
-                                        {Math.abs(simulation.totalValueChange) > 0.001 ? (
-                                        <div className={`flex items-center h-4 text-xs font-bold font-mono ${simulation.totalValueChange > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                                            {simulation.totalValueChange > 0 ? (
-                                              <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-b-[4px] border-b-current mr-1" />
-                                            ) : (
-                                              <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-t-[4px] border-t-current mr-1" />
-                                            )}
-                                            {Math.abs(simulation.totalValueChange).toFixed(2)}%
-                                        </div>
-                                        ) : (
-                                        <div className="flex items-center h-4 text-xs text-app-subtext font-mono">-</div>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="text-right">
-                                <p className="text-app-subtext text-[10px] font-medium">本次交易额</p>
-                                <div className="flex items-baseline gap-1 justify-end">
-                                    <span className="text-lg font-bold text-app-text font-mono">{((parseFloat(inputs.price)||0) * (parseFloat(inputs.grams)||0)).toLocaleString('zh-CN', {maximumFractionDigits:0})}</span>
-                                    <span className="text-[10px] text-app-subtext">¥</span>
-                                </div>
-                            </div>
-                            {previewType === 'SELL' && simulation.projectedPnL !== undefined && (<div className="col-span-2 border-t border-white/[0.03] pt-2 flex justify-between items-center"><span className="text-app-subtext text-[10px] font-bold">预计本次盈亏：</span><span className={`font-mono font-bold text-sm ${simulation.projectedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{simulation.projectedPnL >= 0 ? '+' : ''}{simulation.projectedPnL.toFixed(2)}</span></div>)}
-                        </div>
-                        {inputs.grams && inputs.price && (
-                          <CostChart currentValue={currentPosition.totalCost} newValue={simulation.totalInvestment} />
-                        )}
-                    </div>
-                    {/* 成交按钮 */}
-                    <button onClick={executeTrade} disabled={!inputs.price || !inputs.grams} className={`w-full py-2.5 rounded-lg font-semibold text-base flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 shadow-md ${previewType === 'BUY' ? 'bg-brand-red text-white hover:bg-red-500' : 'bg-brand-green text-white hover:bg-green-500'}`}><CheckCircle2 size={16} />{previewType === 'BUY' ? '买入成交' : '卖出成交'}</button>
-                  </div>
-                )}
-              </div>
-              
-              <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-2xl">
-                <div className="p-4 border-t border-app-border space-y-3">
-                  <div className="flex items-center gap-2 text-app-subtext pl-1">
-                    <Receipt size={16} className="text-brand-red" />
-                    <h3 className="font-medium text-sm">分红结算</h3>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">年收益率 (%)</label>
-                      <input 
-                        type="number" 
-                        value={dividendRate} 
-                        onChange={(e) => setDividendRate(e.target.value)} 
-                        placeholder="0.00" 
-                        className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2.5 text-app-text font-mono text-sm focus:border-brand-red focus:ring-1 focus:ring-brand-red/50 outline-none transition-all"
-                        min="0"
-                        step="0.1"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">分红周期 (月/次)</label>
-                      <input 
-                        type="number" 
-                        value={dividendPeriod} 
-                        onChange={(e) => setDividendPeriod(e.target.value)} 
-                        placeholder="12" 
-                        className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2.5 text-app-text font-mono text-sm focus:border-brand-red focus:ring-1 focus:ring-brand-red/50 outline-none transition-all"
-                        min="1"
-                        step="1"
-                      />
-                    </div>
-                  </div>
-                  <button 
-                    onClick={handleDividendSettlement} 
-                    disabled={parseFloat(dividendRate) <= 0 || parseFloat(dividendPeriod) <= 0 || currentPosition.grams <= 0}
-                    className="w-full py-2.5 rounded-lg font-semibold text-base flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 shadow-md bg-brand-red text-white hover:bg-red-500"
-                  >
-                    <Receipt size={16} />分红结算
-                  </button>
-                </div>
-              </div>
-              
-              <TradingPlanPanel 
-                marketPrice={marketPrice}
-                onMarketPriceChange={handleMarketPriceChange}
-                priceStep={appSettings.priceStep}
-                touchMode={appSettings.touchMode}
-                availableFunds={availableFunds}
-                isExpanded={activeSimPanel === 'plan'}
-                onToggle={() => setActiveSimPanel(prev => prev === 'plan' ? 'none' : 'plan')}
-                onApplyPlan={handleApplyPlan}
-                onClearPlan={handleClearPlan}
-                hasPlan={hasPlan}
-              />
             </div>
-            <div className="hidden lg:block">{renderActionButtons()}</div>
+
+            <div className="lg:col-span-4 lg:col-start-9 order-1 lg:order-2 lg:sticky lg:top-6 space-y-4">
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-app-subtext pl-1"><TrendingUp size={16} /><h3 className="font-medium text-sm">模拟交易</h3></div>
+                <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-2xl flex flex-col">
+                  <button 
+                    onClick={() => setActiveSimPanel(prev => prev === 'manual' ? 'none' : 'manual')}
+                    className="flex items-center justify-between p-3 bg-app-input/50 hover:bg-app-hover transition-colors"
+                  >
+                    <div className="flex items-center gap-2 text-app-text font-medium text-sm">
+                      <Activity size={16} className={previewType === 'BUY' ? 'text-brand-red' : 'text-brand-green'} />
+                      交易窗口
+                    </div>
+                    <ChevronDown size={16} className={`text-app-subtext transition-transform ${activeSimPanel === 'manual' ? 'rotate-180' : ''}`} />
+                  </button>
+                  
+                  {activeSimPanel === 'manual' && (
+                    <div className="p-4 flex flex-col gap-3 border-t border-app-border">
+                      {/* 买入/卖出切换 */}
+                      <div className="grid grid-cols-2 p-1 bg-app-input rounded-lg">
+                        <button onClick={() => changeOrderType('BUY')} className={`py-2 pr-2 rounded-md text-sm font-bold flex items-center justify-center transition-all ${previewType === 'BUY' ? 'bg-brand-red text-white shadow-lg shadow-brand-red/20' : 'text-app-subtext hover:text-app-text'}`}>
+                          <span className="inline-flex items-center gap-2"><TrendingUp size={16} />买入</span>
+                        </button>
+                        <button onClick={() => changeOrderType('SELL')} className={`py-2 pr-2 rounded-md text-sm font-bold flex items-center justify-center transition-all ${previewType === 'SELL' ? 'bg-brand-green text-white shadow-lg shadow-brand-green/20' : 'text-app-subtext hover:text-app-text'}`}>
+                          <span className="inline-flex items-center gap-2"><TrendingDown size={16} />卖出</span>
+                        </button>
+                      </div>
+                      {/* 价格和数量输入 */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <InputGroup 
+                          label="价格 (元/克)" 
+                          value={inputs.price} 
+                          onChange={(v) => handleInputChange('price', v)} 
+                          placeholder="0.00" 
+                          step={appSettings.priceStep}
+                          touchMode={appSettings.touchMode} 
+                          onEnter={handlePriceEnter}
+                          inputRef={priceInputRef}
+                          onTypeSwitch={handleTypeSwitch}
+                          onTab={handlePriceTab}
+                        />
+                        <InputGroup 
+                          label="数量 (克)" 
+                          value={inputs.grams} 
+                          onChange={(v) => handleInputChange('grams', v)} 
+                          placeholder="0.00" 
+                          step={appSettings.gramsStep} 
+                          isQuantity={true}
+                          touchMode={appSettings.touchMode} 
+                          onEnter={handleGramsEnter}
+                          inputRef={gramsInputRef}
+                          onTypeSwitch={handleTypeSwitch}
+                          onTab={handleGramsTab}
+                        />
+                      </div>
+                      {/* 成交后预估模块 */}
+                      <div className="bg-app-input/30 rounded-xl p-4 border border-app-border space-y-3">
+                          <div className="flex justify-between items-start">
+                              <div>
+                                  <span className="text-[10px] font-bold text-app-subtext uppercase block mb-1">{renderPriceLabel('成交后均价预估')}</span>
+                                  <div className="flex items-baseline gap-1.5"><span className="text-3xl font-bold text-app-text tracking-tight font-mono">{renderPriceValue(simulation.newBreakEvenPrice, simulation.newAvgCost, "text-sm text-app-subtext font-bold")}</span><span className="text-[10px] text-app-subtext font-bold">¥</span></div>
+                              </div>
+                              <div className="flex items-center gap-1.5 self-end">
+                                  <span className="text-[10px] text-app-subtext font-medium opacity-80">较当前</span>
+                                  {renderPriceDiff(simulation.newBreakEvenPrice, currentPosition.breakEvenPrice, simulation.newAvgCost, currentPosition.avgCost)}
+                              </div>
+                          </div>
+                          <div className="h-px bg-white/5 w-full" />
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                              <div>
+                                  <p className="text-app-subtext text-[10px] font-medium">预计总持仓 (金额)</p>
+                                  <div className="flex flex-col">
+                                      <div className="flex items-baseline gap-1">
+                                          <span className="text-lg font-bold text-app-text font-mono">{simulation.totalInvestment.toLocaleString('zh-CN', {maximumFractionDigits:0})}</span>
+                                          <span className="text-[10px] text-app-subtext">¥</span>
+                                      </div>
+                                      <div className="flex items-center gap-1.5 mt-0.5">
+                                          <span className="text-[10px] text-app-subtext font-medium opacity-80">较当前</span>
+                                          {Math.abs(simulation.totalValueChange) > 0.001 ? (
+                                          <div className={`flex items-center h-4 text-xs font-bold font-mono ${simulation.totalValueChange > 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                                              {simulation.totalValueChange > 0 ? (
+                                                <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-b-[4px] border-b-current mr-1" />
+                                              ) : (
+                                                <div className="w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-t-[4px] border-t-current mr-1" />
+                                              )}
+                                              {Math.abs(simulation.totalValueChange).toFixed(2)}%
+                                          </div>
+                                          ) : (
+                                          <div className="flex items-center h-4 text-xs text-app-subtext font-mono">-</div>
+                                          )}
+                                      </div>
+                                  </div>
+                              </div>
+                              <div className="text-right">
+                                  <p className="text-app-subtext text-[10px] font-medium">本次交易额</p>
+                                  <div className="flex items-baseline gap-1 justify-end">
+                                      <span className="text-lg font-bold text-app-text font-mono">{((parseFloat(inputs.price)||0) * (parseFloat(inputs.grams)||0)).toLocaleString('zh-CN', {maximumFractionDigits:0})}</span>
+                                      <span className="text-[10px] text-app-subtext">¥</span>
+                                  </div>
+                              </div>
+                              {previewType === 'SELL' && simulation.projectedPnL !== undefined && (<div className="col-span-2 border-t border-white/[0.03] pt-2 flex justify-between items-center"><span className="text-app-subtext text-[10px] font-bold">预计本次盈亏：</span><span className={`font-mono font-bold text-sm ${simulation.projectedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{simulation.projectedPnL >= 0 ? '+' : ''}{simulation.projectedPnL.toFixed(2)}</span></div>)}
+                          </div>
+                          {inputs.grams && inputs.price && (
+                            <CostChart currentValue={currentPosition.totalCost} newValue={simulation.totalInvestment} />
+                          )}
+                      </div>
+                      {/* 成交按钮 */}
+                      <button onClick={executeTrade} disabled={!inputs.price || !inputs.grams} className={`w-full py-2.5 rounded-lg font-semibold text-base flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 shadow-md ${previewType === 'BUY' ? 'bg-brand-red text-white hover:bg-red-500' : 'bg-brand-green text-white hover:bg-green-500'}`}><CheckCircle2 size={16} />{previewType === 'BUY' ? '买入成交' : '卖出成交'}</button>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-2xl">
+                  <div className="p-4 border-t border-app-border space-y-3">
+                    <div className="flex items-center gap-2 text-app-subtext pl-1">
+                      <Receipt size={16} className="text-brand-red" />
+                      <h3 className="font-medium text-sm">分红结算</h3>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">年收益率 (%)</label>
+                        <input 
+                          type="number" 
+                          value={dividendRate} 
+                          onChange={(e) => setDividendRate(e.target.value)} 
+                          placeholder="0.00" 
+                          className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2.5 text-app-text font-mono text-sm focus:border-brand-red focus:ring-1 focus:ring-brand-red/50 outline-none transition-all"
+                          min="0"
+                          step="0.1"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">分红周期 (月/次)</label>
+                        <input 
+                          type="number" 
+                          value={dividendPeriod} 
+                          onChange={(e) => setDividendPeriod(e.target.value)} 
+                          placeholder="12" 
+                          className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2.5 text-app-text font-mono text-sm focus:border-brand-red focus:ring-1 focus:ring-brand-red/50 outline-none transition-all"
+                          min="1"
+                          step="1"
+                        />
+                      </div>
+                    </div>
+                    <button 
+                      onClick={handleDividendSettlement} 
+                      disabled={parseFloat(dividendRate) <= 0 || parseFloat(dividendPeriod) <= 0 || currentPosition.grams <= 0}
+                      className="w-full py-2.5 rounded-lg font-semibold text-base flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 shadow-md bg-brand-red text-white hover:bg-red-500"
+                    >
+                      <Receipt size={16} />分红结算
+                    </button>
+                  </div>
+                </div>
+                
+                <TradingPlanPanel 
+                  marketPrice={marketPrice}
+                  onMarketPriceChange={handleMarketPriceChange}
+                  priceStep={appSettings.priceStep}
+                  touchMode={appSettings.touchMode}
+                  availableFunds={availableFunds}
+                  isExpanded={activeSimPanel === 'plan'}
+                  onToggle={() => setActiveSimPanel(prev => prev === 'plan' ? 'none' : 'plan')}
+                  onApplyPlan={handleApplyPlan}
+                  onClearPlan={handleClearPlan}
+                  hasPlan={hasPlan}
+                />
+              </div>
+              <div className="hidden lg:block">{renderActionButtons()}</div>
+            </div>
           </div>
-        </div>
-        <div className="lg:hidden mt-2 order-3">{renderActionButtons()}</div>
+        ) : (
+          <StockDividendPage 
+            stocks={stocks} 
+            onStocksChange={setStocks}
+            isAdding={isAddingStock}
+            onCloseAdding={() => setIsAddingStock(false)}
+            dividendRateColumns={stockSettings.dividendRateColumns}
+            colorRanges={stockSettings.dividendRateColorRanges}
+          />
+        )}
+        <div className="lg:hidden mt-2 order-3">{currentPage === 'gold' && renderActionButtons()}</div>
       </div>
     </div>
   );
