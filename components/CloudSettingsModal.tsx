@@ -67,7 +67,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   });
   const [buyTaxFee, setBuyTaxFee] = useState((appSettings.buyTaxFee ?? 5).toString());
   const [sellTaxFee, setSellTaxFee] = useState((appSettings.sellTaxFee ?? 5).toString());
-  const [dividendRateColumns, setDividendRateColumns] = useState<string[]>(stockSettings?.dividendRateColumns || ['2%', '3%', '4%', '5%', '6%', '7%']);
+  const [dividendRateColumns, setDividendRateColumns] = useState<string[]>(stockSettings?.dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%']);
   const [newDividendRate, setNewDividendRate] = useState('');
   const [editingDividendRateIndex, setEditingDividendRateIndex] = useState<number | null>(null);
   const [dividendRateColorRanges, setDividendRateColorRanges] = useState<DividendRateColorRange[]>(stockSettings?.dividendRateColorRanges || [
@@ -77,6 +77,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   ]);
   const [newRange, setNewRange] = useState({ min: '', max: '', color: 'red' });
   const [editingRangeIndex, setEditingRangeIndex] = useState<number | null>(null);
+  const [maxRows, setMaxRows] = useState<number>(stockSettings?.maxRows || 10);
 
   const COLOR_OPTIONS = [
     { key: 'indigo', label: '默认', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20' },
@@ -107,7 +108,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       setPriceDisplayMode(appSettings.priceDisplayMode || 'both');
       if (currentPage === 'stock') {
         setVisibleColumns(stockSettings?.visibleColumns || STOCK_COLUMNS.map(c => c.key));
-        setDividendRateColumns(stockSettings?.dividendRateColumns || ['2%', '3%', '4%', '5%', '6%', '7%']);
+        setDividendRateColumns(stockSettings?.dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%']);
         console.log('设置 dividendRateColorRanges:', stockSettings?.dividendRateColorRanges);
         setDividendRateColorRanges(stockSettings?.dividendRateColorRanges || [
           { min: 0, max: 4.5, color: 'red' },
@@ -159,12 +160,13 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
 
     const newStockSettings: StockSettings = {
       visibleColumns: (currentPage === 'stock' ? visibleColumns : stockSettings?.visibleColumns) || STOCK_COLUMNS.map(c => c.key),
-      dividendRateColumns: dividendRateColumns || stockSettings?.dividendRateColumns || ['2%', '3%', '4%', '5%', '6%', '7%'],
+      dividendRateColumns: dividendRateColumns || stockSettings?.dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'],
       dividendRateColorRanges: dividendRateColorRanges || stockSettings?.dividendRateColorRanges || [
         { min: 3, max: 4, color: 'red' },
         { min: 4.5, max: 5.5, color: 'gray' },
         { min: 6, max: 7, color: 'green' }
       ],
+      maxRows: maxRows || stockSettings?.maxRows || 10,
     };
 
     // If Cloud tab is not active and no changes to cloud config, just save app settings
@@ -252,6 +254,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       visibleColumns: currentPage === 'stock' ? visibleColumns : stockSettings?.visibleColumns,
       dividendRateColumns: currentPage === 'stock' ? dividendRateColumns : stockSettings?.dividendRateColumns,
       dividendRateColorRanges: currentPage === 'stock' ? dividendRateColorRanges : stockSettings?.dividendRateColorRanges,
+      maxRows: currentPage === 'stock' ? maxRows : stockSettings?.maxRows,
     };
     
     onSave({ token: '', gistId: '' }, newAppSettings, newStockSettings);
@@ -707,6 +710,27 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                );
                              })}
                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                           <label className="text-sm font-medium text-app-text block">
+                              列表最大行数
+                           </label>
+                           <p className="text-xs text-app-subtext">
+                              设置表格内部滚动时显示的最大行数，设为0则不限制高度。
+                           </p>
+                           <input
+                             type="number"
+                             value={maxRows}
+                             onChange={(e) => {
+                               const val = parseInt(e.target.value) || 0;
+                               if (val >= 0) {
+                                 setMaxRows(val);
+                               }
+                             }}
+                             className="w-20 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
+                             min="0"
+                           />
                         </div>
                      </div>
                    </>

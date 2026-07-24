@@ -79,6 +79,7 @@ export interface StockEntry {
   dividendRate2025: number;
   priceUpdatedAt: number | null;
   dividendRates: StockDividendRates;
+  tag?: string; // User defined tag for filtering or categorization
 }
 
 export interface DividendRateColorRange {
@@ -91,4 +92,5 @@ export interface StockSettings {
   visibleColumns?: string[];
   dividendRateColumns?: string[];
   dividendRateColorRanges?: DividendRateColorRange[];
+  maxRows?: number; // 最大显示行数，用于固定高度内部滚动
 }

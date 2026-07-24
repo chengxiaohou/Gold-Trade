@@ -1,6 +1,202 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2 } from 'lucide-react';
-import { StockEntry, StockDividendRates, DividendRateColorRange } from '../types';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw } from 'lucide-react';
+import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings } from '../types';
+
+const TAG_PALETTE = [
+  { key: 'indigo', label: '默认', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20', hover: 'hover:border-indigo-500/50' },
+  { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20', hover: 'hover:border-gray-500/50' },
+  { key: 'red', label: '红色', bg: 'bg-red-500/10', text: 'text-red-500', border: 'border-red-500/20', hover: 'hover:border-red-500/50' },
+  { key: 'green', label: '绿色', bg: 'bg-green-500/10', text: 'text-green-500', border: 'border-green-500/20', hover: 'hover:border-green-500/50' },
+  { key: 'yellow', label: '黄色', bg: 'bg-yellow-500/10', text: 'text-yellow-500', border: 'border-yellow-500/20', hover: 'hover:border-yellow-500/50' },
+  { key: 'blue', label: '蓝色', bg: 'bg-blue-500/10', text: 'text-blue-500', border: 'border-blue-500/20', hover: 'hover:border-blue-500/50' },
+  { key: 'purple', label: '紫色', bg: 'bg-purple-500/10', text: 'text-purple-500', border: 'border-purple-500/20', hover: 'hover:border-purple-500/50' },
+  { key: 'pink', label: '粉色', bg: 'bg-pink-500/10', text: 'text-pink-500', border: 'border-pink-500/20', hover: 'hover:border-pink-500/50' },
+];
+
+const EMPTY_STYLE = { 
+  bg: 'bg-white/5', 
+  text: 'text-gray-500', 
+  border: 'border-white/10', 
+  hover: 'group-hover/tag:border-white/20' 
+};
+
+const getTagStyle = (colorKey?: string) => {
+  return TAG_PALETTE.find(p => p.key === colorKey) || TAG_PALETTE[0];
+};
+
+interface EditTagBubbleProps {
+  stock: StockEntry;
+  availableTags: string[];
+  onUpdate: (id: string, updates: Partial<StockEntry>) => void;
+  onClose: () => void;
+  initialPosition: { top: number, left: number };
+  tagColors: Record<string, string>;
+  onTagColorChange: (tag: string, colorKey: string) => void;
+}
+
+const EditTagBubble: React.FC<EditTagBubbleProps> = ({ 
+  stock, availableTags, onUpdate, onClose, initialPosition, tagColors, onTagColorChange 
+}) => {
+  const initialSnapshot = useRef({
+    tag: stock.tag || '',
+  });
+
+  const [tagStr, setTagStr] = useState(stock.tag || '');
+  
+  const currentTagColorKey = tagColors?.[tagStr] || 'indigo';
+  const [position, setPosition] = useState(initialPosition);
+  
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const dragOffset = useRef({ x: 0, y: 0 });
+  const isDragging = useRef(false);
+
+  const handleReset = () => {
+    const init = initialSnapshot.current;
+    onUpdate(stock.id, { tag: init.tag });
+    setTagStr(init.tag);
+  };
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!bubbleRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = bubbleRef.current.getBoundingClientRect();
+    dragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    isDragging.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    bubbleRef.current.style.transition = 'none';
+    document.body.style.cursor = 'grabbing';
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDragging.current || !bubbleRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const newLeft = e.clientX - dragOffset.current.x;
+    const newTop = e.clientY - dragOffset.current.y;
+    bubbleRef.current.style.left = `${newLeft}px`;
+    bubbleRef.current.style.top = `${newTop}px`;
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDragging.current || !bubbleRef.current) return;
+    isDragging.current = false;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    document.body.style.cursor = '';
+    const rect = bubbleRef.current.getBoundingClientRect();
+    setPosition({ left: rect.left, top: rect.top });
+    bubbleRef.current.style.transition = '';
+  };
+
+  const handleTagChange = (val: string) => {
+    setTagStr(val);
+    onUpdate(stock.id, { tag: val });
+  };
+
+  const handleColorSelect = (key: string) => {
+     if (tagStr.trim()) {
+        onTagColorChange(tagStr.trim(), key);
+     }
+  };
+
+  const currentStyle = tagStr ? getTagStyle(currentTagColorKey) : EMPTY_STYLE;
+
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-[9998]" onClick={onClose} />
+      <div 
+        ref={bubbleRef}
+        className="fixed z-[9999] bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl w-80 flex flex-col overflow-hidden text-app-text"
+        style={{ top: position.top, left: position.left }}
+      >
+        <div 
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          className="bg-app-bg/80 backdrop-blur-md p-3 flex justify-between items-center border-b border-white/5 cursor-grab active:cursor-grabbing touch-none select-none group"
+        >
+          <div className="flex items-center gap-2 text-app-subtext pointer-events-none">
+            <h4 className="text-sm font-bold tracking-wider">编辑标签</h4>
+          </div>
+          
+          <div className="flex items-center gap-1">
+            <button 
+              onClick={handleReset}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="text-app-subtext hover:text-brand-yellow transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1 mr-1"
+              title="撤销更改"
+            >
+              <RotateCcw size={14} />
+            </button>
+            <button onClick={onClose} onPointerDown={(e) => e.stopPropagation()} className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+        
+        <div className="p-5 space-y-5 bg-app-card max-h-[80vh] overflow-y-auto custom-scrollbar">
+          <div className="space-y-2">
+             <label className="text-xs text-app-subtext font-medium">标签 (Tag)</label>
+             <div className="relative">
+                <input
+                  type="text"
+                  value={tagStr}
+                  onChange={(e) => handleTagChange(e.target.value)}
+                  placeholder="如: 高股息, 长线..."
+                  className="w-full bg-app-input border border-white/5 rounded-lg pl-3 pr-3 h-11 text-sm text-gray-400 placeholder-app-subtext/50 focus:border-brand-yellow focus:outline-none focus:ring-1 focus:ring-brand-yellow/50 transition-all"
+                />
+             </div>
+             
+             <div className="pt-2 animate-in fade-in slide-in-from-top-1">
+                 <div className="flex items-center gap-2 mb-2">
+                   <div className="text-[10px] text-app-subtext">预览:</div>
+                   <span className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[22px] border ${currentStyle.bg} ${currentStyle.text} ${currentStyle.border}`}>
+                     {tagStr || '-'}
+                   </span>
+                 </div>
+                 
+                 <div className="grid grid-cols-8 gap-2">
+                   {TAG_PALETTE.map((p) => (
+                     <button
+                       key={p.key}
+                       onClick={() => handleColorSelect(p.key)}
+                       className={`w-6 h-6 rounded-full border transition-all flex items-center justify-center ${p.bg} ${p.border} ${
+                         currentTagColorKey === p.key ? 'opacity-100 scale-100' : 'hover:scale-105 opacity-60 hover:opacity-100'
+                       }`}
+                       title={p.label}
+                     >
+                       {currentTagColorKey === p.key && <div className={`w-2 h-2 rounded-full ${p.text} bg-current shadow-sm`} />}
+                     </button>
+                   ))}
+                 </div>
+             </div>
+
+             {availableTags.length > 0 && (
+                <div className="flex flex-wrap gap-2 pt-2 border-t border-white/5 mt-2">
+                   {availableTags.filter(t => t !== tagStr).map(tag => {
+                      const savedColorKey = tagColors?.[tag];
+                      const style = getTagStyle(savedColorKey);
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => handleTagChange(tag)}
+                          className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[22px] border transition-all ${style.bg} ${style.border} ${style.text} hover:opacity-80`}
+                        >
+                          {tag}
+                        </button>
+                      );
+                   })}
+                </div>
+             )}
+          </div>
+        </div>
+      </div>
+    </>,
+    document.body
+  );
+};
 
 interface StockDividendPageProps {
   stocks: StockEntry[];
@@ -10,6 +206,9 @@ interface StockDividendPageProps {
   visibleColumns?: string[];
   dividendRateColumns?: string[];
   colorRanges?: DividendRateColorRange[];
+  tagColors?: Record<string, string>;
+  onTagColorsChange?: (colors: Record<string, string>) => void;
+  maxRows?: number;
 }
 
 const DEFAULT_DIVIDEND_RATES: StockDividendRates = {
@@ -21,7 +220,7 @@ const DEFAULT_DIVIDEND_RATES: StockDividendRates = {
   '7%': 0,
 };
 
-const calculateDividendRates = (dividend: number, rateColumns: string[] = ['2%', '3%', '4%', '5%', '6%', '7%']): StockDividendRates => {
+const calculateDividendRates = (dividend: number, rateColumns: string[] = ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%']): StockDividendRates => {
   const rates: StockDividendRates = {};
   rateColumns.forEach(rate => {
     const rateNum = parseFloat(rate) / 100;
@@ -73,10 +272,10 @@ const formatPercent = (percent: number): string => {
   return percent.toFixed(2) + '%';
 };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 10 }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
-  const rateCols = dividendRateColumns || ['2%', '3%', '4%', '5%', '6%', '7%'];
+  const rateCols = dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'];
   const ranges = colorRanges || [
     { min: 3, max: 4, color: 'red' },
     { min: 4.5, max: 5.5, color: 'gray' },
@@ -92,10 +291,111 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   });
   const [isRefreshing, setIsRefreshing] = useState<Set<string>>(new Set());
   const [refreshFailed, setRefreshFailed] = useState<Set<string>>(new Set());
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [editTagState, setEditTagState] = useState<{ id: string, top: number, left: number } | null>(null);
+
+  const availableTags = useMemo(() => {
+    const tags = new Set<string>();
+    stocks.forEach(s => { if (s.tag && s.tag.trim()) tags.add(s.tag.trim()); });
+    return Array.from(tags).sort();
+  }, [stocks]);
+
+  const handleEditTagClick = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const width = 288;
+    let left = rect.left;
+    let top = rect.bottom + 8;
+    
+    if (left < 10) left = 10;
+    if (left + width > window.innerWidth) left = window.innerWidth - width - 10;
+    
+    const bubbleHeight = 280;
+    if (top + bubbleHeight > window.innerHeight) {
+      top = rect.top - bubbleHeight - 8;
+    }
+    setEditTagState({ id, top, left });
+  };
+
+  const handleTagColorChange = (tag: string, colorKey: string) => {
+    const newColors = { ...tagColors, [tag]: colorKey };
+    onTagColorsChange?.(newColors);
+  };
+
+  useEffect(() => {
+    const header = headerRef.current;
+    const body = bodyRef.current;
+
+    if (!header || !body) return;
+
+    let rafId: number | null = null;
+    let isSyncing = false;
+
+    const syncScroll = () => {
+      if (isSyncing) return;
+      isSyncing = true;
+      
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        header.scrollLeft = body.scrollLeft;
+        isSyncing = false;
+      });
+    };
+
+    body.addEventListener('scroll', syncScroll, { passive: true });
+
+    return () => {
+      body.removeEventListener('scroll', syncScroll);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('stock_dividend_stocks', JSON.stringify(stocks));
   }, [stocks]);
+
+  const handleDragStart = (e: React.DragEvent, id: string) => {
+    setDraggedId(id);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);
+  };
+
+  const handleDragOver = (e: React.DragEvent, id: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (draggedId && draggedId !== id) {
+      setDragOverId(id);
+    }
+  };
+
+  const handleDragLeave = () => {
+    setDragOverId(null);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    if (!draggedId || draggedId === targetId) {
+      setDraggedId(null);
+      setDragOverId(null);
+      return;
+    }
+
+    const draggedIndex = stocks.findIndex(s => s.id === draggedId);
+    const targetIndex = stocks.findIndex(s => s.id === targetId);
+
+    if (draggedIndex !== -1 && targetIndex !== -1) {
+      const newStocks = [...stocks];
+      const [draggedItem] = newStocks.splice(draggedIndex, 1);
+      newStocks.splice(targetIndex, 0, draggedItem);
+      onStocksChange(newStocks);
+    }
+
+    setDraggedId(null);
+    setDragOverId(null);
+  };
 
   const fetchStockPrice = useCallback(async (stockCode: string): Promise<{
     price: number;
@@ -369,59 +669,137 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       )}
 
       <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
+        {/* 表头容器 */}
+        <div ref={headerRef} className="overflow-x-auto">
           <table className="w-full text-sm">
+            <colgroup>
+              {(cols.includes('code') || cols.includes('name')) && <col style={{ minWidth: '100px' }} />}
+              {cols.includes('dividendRate2025') && <col style={{ minWidth: '80px' }} />}
+              {cols.includes('price') && <col style={{ minWidth: '100px' }} />}
+              {cols.includes('changePercent') && <col style={{ minWidth: '70px' }} />}
+              {cols.includes('dividend2024') && <col style={{ minWidth: '70px' }} />}
+              {cols.includes('dividend2025') && <col style={{ minWidth: '70px' }} />}
+              {cols.includes('dividendRates') && rateCols.map((_, idx) => <col key={idx} style={{ minWidth: '30px' }} />)}
+              <col style={{ minWidth: '40px' }} />
+            </colgroup>
             <thead>
-              <tr className="bg-app-input">
-                {(cols.includes('code') || cols.includes('name')) && <th className="px-3 py-2 text-left text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[100px] border-b border-app-border">股票名称</th>}
-                {cols.includes('dividendRate2025') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[80px] border-b border-app-border">股息率</th>}
-                {cols.includes('price') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[100px] border-b border-app-border">价格</th>}
-                {cols.includes('changePercent') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[70px] border-b border-app-border">涨跌幅</th>}
-                {cols.includes('dividend2024') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[70px] border-b border-app-border">分红</th>}
-                {cols.includes('dividend2025') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[70px] border-b border-app-border">分红</th>}
-                {cols.includes('dividendRates') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[200px] border-b border-app-border" colSpan={rateCols.length}>股息率对应股价</th>}
-                <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[40px]" rowSpan={2}>操作</th>
+              <tr>
+                {(cols.includes('code') || cols.includes('name')) && <th className="px-3 py-2 text-left text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[100px] border-b border-app-border bg-app-input">股票名称</th>}
+                {cols.includes('dividendRate2025') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[80px] border-b border-app-border bg-app-input">股息率</th>}
+                {cols.includes('price') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[100px] border-b border-app-border bg-app-input">
+                    <div className="flex items-center justify-center gap-1">
+                      价格
+                      <button
+                        onClick={handleRefreshAll}
+                        disabled={isRefreshing.size > 0}
+                        className="p-0.5 hover:bg-app-card rounded transition-colors disabled:opacity-50"
+                        title="刷新所有股价"
+                      >
+                        <RefreshCw size={12} className={isRefreshing.size > 0 ? 'animate-spin' : ''} />
+                      </button>
+                    </div>
+                  </th>}
+                {cols.includes('changePercent') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[70px] border-b border-app-border bg-app-input">涨跌幅</th>}
+                {cols.includes('dividend2024') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[70px] border-b border-app-border bg-app-input">分红</th>}
+                {cols.includes('dividend2025') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[70px] border-b border-app-border bg-app-input">分红</th>}
+                {cols.includes('dividendRates') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[200px] border-b border-app-border border-l border-r bg-app-input" colSpan={rateCols.length}>股息率对应股价</th>}
+                <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider min-w-[40px] bg-app-input" rowSpan={2}>操作</th>
               </tr>
-              <tr className="bg-app-input">
-                {(cols.includes('code') || cols.includes('name')) && <th className="px-3 py-1 text-left text-xs font-bold text-app-subtext">股票代码</th>}
-                {cols.includes('dividendRate2025') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext"></th>}
-                {cols.includes('price') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext">{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</th>}
-                {cols.includes('changePercent') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext"></th>}
-                {cols.includes('dividend2024') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext">2024</th>}
-                {cols.includes('dividend2025') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext">2025</th>}
-                {cols.includes('dividendRates') && rateCols.map(rate => (
-                  <th key={rate} className="px-2 py-1 text-center text-xs font-bold text-app-subtext min-w-[30px]">{rate}</th>
+              <tr>
+                {(cols.includes('code') || cols.includes('name')) && <th className="px-3 py-1 text-left text-xs font-bold text-app-subtext bg-app-input">股票代码</th>}
+                {cols.includes('dividendRate2025') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input"></th>}
+                {cols.includes('price') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input">{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</th>}
+                {cols.includes('changePercent') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input"></th>}
+                {cols.includes('dividend2024') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input">2024</th>}
+                {cols.includes('dividend2025') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input">2025</th>}
+                {cols.includes('dividendRates') && rateCols.map((rate, idx) => (
+                  <th key={rate} className={`px-2 py-1 text-center text-xs font-bold text-app-subtext min-w-[30px] bg-app-input ${idx === 0 ? 'border-l border-app-border' : ''} ${idx === rateCols.length - 1 ? 'border-r border-app-border' : ''}`}>{rate}</th>
                 ))}
               </tr>
             </thead>
+          </table>
+        </div>
+        {/* 表体容器 */}
+        <div 
+          ref={bodyRef}
+          className="overflow-x-auto custom-scrollbar"
+          style={{ 
+            maxHeight: maxRows > 0 ? `${maxRows * 40}px` : 'none',
+            overflowY: maxRows > 0 ? 'auto' : 'visible',
+            willChange: 'transform',
+            transform: 'translateZ(0)'
+          }}
+        >
+          <table className="w-full text-sm">
+            <colgroup>
+              {(cols.includes('code') || cols.includes('name')) && <col style={{ minWidth: '100px' }} />}
+              {cols.includes('dividendRate2025') && <col style={{ minWidth: '80px' }} />}
+              {cols.includes('price') && <col style={{ minWidth: '100px' }} />}
+              {cols.includes('changePercent') && <col style={{ minWidth: '70px' }} />}
+              {cols.includes('dividend2024') && <col style={{ minWidth: '70px' }} />}
+              {cols.includes('dividend2025') && <col style={{ minWidth: '70px' }} />}
+              {cols.includes('dividendRates') && rateCols.map((_, idx) => <col key={idx} style={{ minWidth: '30px' }} />)}
+              <col style={{ minWidth: '40px' }} />
+            </colgroup>
             <tbody>
               {stocks.map(stock => (
-                <tr key={stock.id} className="border-t border-app-border hover:bg-app-hover transition-colors">
-                  {(cols.includes('code') || cols.includes('name')) && <td className="px-3 py-2 text-left">
-                    {editingId === stock.id ? (
-                      <div className="flex flex-col gap-1">
-                        {cols.includes('name') && <input
-                          type="text"
-                          value={stock.name}
-                          onChange={(e) => handleUpdateField(stock.id, 'name', e.target.value)}
-                          className="w-full bg-app-input border border-brand-yellow rounded px-2 py-1 text-xs text-app-text outline-none"
-                        />}
-                        {cols.includes('code') && <input
-                          type="text"
-                          value={stock.code}
-                          onChange={(e) => handleUpdateField(stock.id, 'code', e.target.value.toUpperCase())}
-                          className="w-full bg-app-input border border-brand-yellow rounded px-2 py-1 text-xs font-mono text-app-text outline-none"
-                        />}
+                <tr 
+                  key={stock.id} 
+                  className={`border-t border-app-border hover:bg-app-hover transition-colors ${dragOverId === stock.id ? 'bg-brand-yellow/10' : ''}`}
+                >
+                  {(cols.includes('code') || cols.includes('name')) && <td 
+                    className={`px-3 py-2 text-left sticky left-0 z-10 bg-app-card cursor-move ${draggedId === stock.id ? 'opacity-50' : ''}`}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, stock.id)}
+                    onDragOver={(e) => handleDragOver(e, stock.id)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, stock.id)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div 
+                        onClick={(e) => handleEditTagClick(e, stock.id)}
+                        className="cursor-pointer group/tag flex-shrink-0"
+                        title="点击编辑标签"
+                      >
+                        {(() => {
+                          const displayTag = stock.tag || '-';
+                          let style = EMPTY_STYLE;
+                          if (stock.tag) {
+                            const colorKey = tagColors?.[stock.tag];
+                            style = getTagStyle(colorKey);
+                          }
+                          return (
+                            <span className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[22px] transition-colors border ${style.bg} ${style.text} ${style.border} ${style.hover || ''}`}>
+                              {displayTag}
+                            </span>
+                          );
+                        })()}
                       </div>
-                    ) : (
-                      <div className="flex flex-col">
-                        <span className="text-xs text-app-text">{stock.name}</span>
-                        <span className="font-mono text-[10px] text-app-subtext/70">{stock.code}</span>
-                      </div>
-                    )}
+                      {editingId === stock.id ? (
+                        <div className="flex flex-col gap-1">
+                          {cols.includes('name') && <input
+                            type="text"
+                            value={stock.name}
+                            onChange={(e) => handleUpdateField(stock.id, 'name', e.target.value)}
+                            className="w-full bg-app-input border border-brand-yellow rounded px-2 py-1 text-xs text-app-text outline-none"
+                          />}
+                          {cols.includes('code') && <input
+                            type="text"
+                            value={stock.code}
+                            onChange={(e) => handleUpdateField(stock.id, 'code', e.target.value.toUpperCase())}
+                            className="w-full bg-app-input border border-brand-yellow rounded px-2 py-1 text-xs font-mono text-app-text outline-none"
+                          />}
+                        </div>
+                      ) : (
+                        <div className="flex flex-col">
+                          <span className="text-xs text-app-text">{stock.name}</span>
+                          <span className="font-mono text-[10px] text-app-subtext/70">{stock.code}</span>
+                        </div>
+                      )}
+                    </div>
                   </td>}
                   {cols.includes('dividendRate2025') && <td className="px-3 py-2 text-center">
-                    <span className={`font-mono text-xs font-bold ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>
+                    <span className={`font-mono text-sm font-bold ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>
                       {stock.dividendRate2025 > 0 ? formatPercent(stock.dividendRate2025) : '--'}
                     </span>
                   </td>}
@@ -442,7 +820,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </div>
                   </td>}
                   {cols.includes('changePercent') && <td className="px-3 py-2 text-center">
-                    <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                    <span className={`font-mono text-sm font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                       {stock.changePercent >= 0 ? '+' : ''}{formatPercent(stock.changePercent)}
                     </span>
                   </td>}
@@ -472,8 +850,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       <span className="font-mono text-xs text-app-text">{formatPrice(stock.dividend2025)}</span>
                     )}
                   </td>}
-                  {cols.includes('dividendRates') && rateCols.map(rate => (
-                    <td key={rate} className="px-2 py-2 text-center min-w-[40px]">
+                  {cols.includes('dividendRates') && rateCols.map((rate, idx) => (
+                    <td key={rate} className={`px-2 py-2 text-center min-w-[40px] ${idx === 0 ? 'border-l border-app-border' : ''} ${idx === rateCols.length - 1 ? 'border-r border-app-border' : ''}`}>
                       {editingDividendRate === `${stock.id}-${rate}` ? (
                         <input
                           type="number"
@@ -500,7 +878,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       )}
                     </td>
                   ))}
-                  <td className="px-3 py-2 text-center">
+                  <td className="px-3 py-2 text-center sticky right-0 z-10 bg-app-card">
                     <div className="flex items-center justify-center gap-1">
                       {editingId === stock.id ? (
                         <button
@@ -549,6 +927,18 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <p className="mt-2 text-[10px] opacity-70">股息率(2025) = 分红(2025) / 当前股价 × 100%</p>
         </div>
       </div>
+
+      {editTagState && (
+        <EditTagBubble 
+          stock={stocks.find(s => s.id === editTagState.id)!}
+          availableTags={availableTags}
+          onUpdate={(id, updates) => onStocksChange(stocks.map(s => s.id === id ? { ...s, ...updates } : s))}
+          onClose={() => setEditTagState(null)}
+          initialPosition={{ top: editTagState.top, left: editTagState.left }}
+          tagColors={tagColors}
+          onTagColorChange={handleTagColorChange}
+        />
+      )}
     </div>
   );
 };
