@@ -643,7 +643,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           className="overflow-x-auto custom-scrollbar"
           style={{ 
             maxHeight: maxRows > 0 ? `${maxRows * 40 + 56}px` : 'none',
-            overflowY: maxRows > 0 ? 'auto' : 'visible'
+            overflowY: maxRows > 0 ? 'auto' : 'visible',
+            touchAction: 'pan-y'
           }}
         >
           <table className="w-full text-sm border-separate border-spacing-0" style={{ tableLayout: 'auto' }}>

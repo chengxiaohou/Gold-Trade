@@ -93,4 +93,5 @@ export interface StockSettings {
   dividendRateColumns?: string[];
   dividendRateColorRanges?: DividendRateColorRange[];
   maxRows?: number; // 最大显示行数，用于固定高度内部滚动
+  tagColors?: Record<string, string>; // 标签颜色配置，与黄金页面独立
 }
