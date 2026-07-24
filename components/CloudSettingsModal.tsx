@@ -75,18 +75,18 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     { min: 4.5, max: 5.5, color: 'gray' },
     { min: 6, max: 7, color: 'green' }
   ]);
-  const [newRange, setNewRange] = useState({ min: '', max: '', color: 'red' });
+  const [newRange, setNewRange] = useState({ min: '', max: '', color: 'gray' });
   const [editingRangeIndex, setEditingRangeIndex] = useState<number | null>(null);
   const [maxRows, setMaxRows] = useState<number>(stockSettings?.maxRows || 10);
 
   const COLOR_OPTIONS = [
-    { key: 'indigo', label: '默认', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20' },
     { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20' },
+    { key: 'indigo', label: '默认', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20' },
     { key: 'red', label: '红色', bg: 'bg-red-500/10', text: 'text-red-500', border: 'border-red-500/20' },
     { key: 'green', label: '绿色', bg: 'bg-green-500/10', text: 'text-green-500', border: 'border-green-500/20' },
-    { key: 'yellow', label: '黄色', bg: 'bg-yellow-500/10', text: 'text-yellow-500', border: 'border-yellow-500/20' },
+    { key: 'yellow', label: '黄色', bg: 'bg-[var(--soft-yellow-bg)]', text: 'text-brand-softYellow', border: 'border-[var(--soft-yellow-border)]' },
     { key: 'blue', label: '蓝色', bg: 'bg-blue-500/10', text: 'text-blue-500', border: 'border-blue-500/20' },
-    { key: 'purple', label: '紫色', bg: 'bg-purple-500/10', text: 'text-purple-500', border: 'border-purple-500/20' },
+    { key: 'orange', label: '橙色', bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/20' },
     { key: 'pink', label: '粉色', bg: 'bg-pink-500/10', text: 'text-pink-500', border: 'border-pink-500/20' },
   ];
 
@@ -123,7 +123,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       setIsVerifying(false);
       setLogState(null);
       setEditingRangeIndex(null);
-      setNewRange({ min: '', max: '', color: 'red' });
+      setNewRange({ min: '', max: '', color: 'gray' });
       setActiveTab(initialTab);
     }
     wasOpenRef.current = isOpen;
@@ -653,7 +653,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                      setDividendRateColorRanges([...dividendRateColorRanges, { min, max, color: newRange.color }]);
                                    }
                                    setEditingRangeIndex(null);
-                                   setNewRange({ min: '', max: '', color: 'red' });
+                                   setNewRange({ min: '', max: '', color: 'gray' });
                                  }
                                }}
                                className="px-3 py-1.5 bg-app-input text-app-text border border-white/5 rounded-lg text-xs font-semibold hover:bg-app-card hover:border-app-text/50 transition-colors"
@@ -698,7 +698,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                          setDividendRateColorRanges(dividendRateColorRanges.filter((_, i) => i !== index));
                                          if (editingRangeIndex === index) {
                                            setEditingRangeIndex(null);
-                                           setNewRange({ min: '', max: '', color: 'red' });
+                                           setNewRange({ min: '', max: '', color: 'gray' });
                                          }
                                        }
                                      }}

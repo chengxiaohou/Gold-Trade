@@ -25,13 +25,13 @@ interface ColumnDef {
 const fmt = (n: number) => n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const TAG_PALETTE = [
-  { key: 'indigo', label: '默认', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20', hover: 'hover:border-indigo-500/50' },
   { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20', hover: 'hover:border-gray-500/50' },
+  { key: 'indigo', label: '默认', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20', hover: 'hover:border-indigo-500/50' },
   { key: 'red', label: '红色', bg: 'bg-red-500/10', text: 'text-red-500', border: 'border-red-500/20', hover: 'hover:border-red-500/50' },
   { key: 'green', label: '绿色', bg: 'bg-green-500/10', text: 'text-green-500', border: 'border-green-500/20', hover: 'hover:border-green-500/50' },
-  { key: 'yellow', label: '黄色', bg: 'bg-yellow-500/10', text: 'text-yellow-500', border: 'border-yellow-500/20', hover: 'hover:border-yellow-500/50' },
+  { key: 'yellow', label: '黄色', bg: 'bg-[var(--soft-yellow-bg)]', text: 'text-brand-softYellow', border: 'border-[var(--soft-yellow-border)]', hover: 'hover:border-[var(--soft-yellow-hover)]' },
   { key: 'blue', label: '蓝色', bg: 'bg-blue-500/10', text: 'text-blue-500', border: 'border-blue-500/20', hover: 'hover:border-blue-500/50' },
-  { key: 'purple', label: '紫色', bg: 'bg-purple-500/10', text: 'text-purple-500', border: 'border-purple-500/20', hover: 'hover:border-purple-500/50' },
+  { key: 'orange', label: '橙色', bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/20', hover: 'hover:border-orange-500/50' },
   { key: 'pink', label: '粉色', bg: 'bg-pink-500/10', text: 'text-pink-500', border: 'border-pink-500/20', hover: 'hover:border-pink-500/50' },
 ];
 
@@ -76,7 +76,7 @@ const EditBubble: React.FC<EditBubbleProps> = ({
   const [dividendRateStr, setDividendRateStr] = useState((trade.annualDividendRate || 0).toString());
   const [dividendPeriodStr, setDividendPeriodStr] = useState((trade.dividendPeriodMonths || 12).toString());
   
-  const currentTagColorKey = settings.tagColors?.[tagStr] || 'indigo';
+  const currentTagColorKey = settings.tagColors?.[tagStr] || 'gray';
   const [position, setPosition] = useState(initialPosition);
   
   const bubbleRef = useRef<HTMLDivElement>(null);
