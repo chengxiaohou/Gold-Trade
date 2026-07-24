@@ -1203,6 +1203,112 @@ export default function App() {
     </div>
   );
 
+  const renderStockActionButtons = () => (
+    <div className="relative">
+      {cloudConfirm && (
+        <div 
+          className="absolute bottom-full mb-3 z-[100] animate-in fade-in zoom-in slide-in-from-bottom-2 duration-200 pointer-events-none"
+          style={{ 
+            left: cloudConfirm === 'download' 
+              ? 'calc((100% / 6) * 1 + (100% / 12))' 
+              : 'calc((100% / 6) * 2 + (100% / 12))',
+            transform: 'translateX(-50%)'
+          }}
+        >
+           <div className="bg-app-card border border-app-border shadow-[0_8px_30px_rgba(0,0,0,0.5)] rounded-xl p-3 flex flex-col items-center text-center w-max min-w-[160px] max-w-[200px] pointer-events-auto">
+              <div className="text-brand-yellow mb-1.5">
+                 <AlertTriangle size={18} />
+              </div>
+              <h4 className="text-xs font-bold text-app-text mb-0.5 whitespace-nowrap">
+                {cloudConfirm === 'upload' ? '确定上传？' : '确定下载？'}
+              </h4>
+              <p className="text-[10px] text-app-subtext mb-3 leading-tight">
+                {cloudConfirm === 'upload' 
+                   ? '覆盖云端备份数据' 
+                   : '覆盖本地交易记录'}
+              </p>
+              <div className="grid grid-cols-2 gap-1.5 w-full">
+                 <button 
+                   onClick={() => setCloudConfirm(null)}
+                   className="py-1 rounded-lg border border-app-border text-[10px] text-app-subtext hover:bg-app-input transition-colors font-medium"
+                 >
+                   取消
+                 </button>
+                 <button 
+                   onClick={cloudConfirm === 'upload' ? handleCloudUpload : handleCloudDownload}
+                   className={`py-1 rounded-lg text-[10px] text-white font-bold transition-opacity hover:opacity-90 ${cloudConfirm === 'upload' ? 'bg-brand-yellow' : 'bg-indigo-600'}`}
+                 >
+                   确定
+                 </button>
+              </div>
+              <div 
+                className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-app-card border-r border-b border-app-border rotate-45"
+              ></div>
+           </div>
+        </div>
+      )}
+
+      <div className="flex gap-1 lg:gap-2">
+          <button 
+              onClick={() => openSettings('general')}
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors w-10"
+              title="设置"
+            >
+              <Settings size={16} />
+          </button>
+          <button 
+              onClick={() => requestCloudAction('download')}
+              disabled={isDownloading || downloadSuccess || !!cloudConfirm}
+              className={`flex items-center justify-center bg-app-card border border-app-border py-2.5 rounded-md transition-all w-10 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-indigo-400 hover:text-indigo-300 hover:border-indigo-500'} disabled:opacity-30`}
+              title="从云端下载"
+            >
+              {isDownloading ? (
+                <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+              ) : downloadSuccess ? (
+                <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
+              ) : (
+                <CloudDownload size={16} />
+              )}
+          </button>
+          <button 
+              onClick={() => requestCloudAction('upload')}
+              disabled={isSyncing || uploadSuccess || !!cloudConfirm}
+              className={`flex items-center justify-center bg-app-card border border-app-border py-2.5 rounded-md transition-all w-10 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-brand-yellow hover:bg-brand-yellow/10 hover:border-brand-yellow'} disabled:opacity-30`}
+              title="上传到云端"
+            >
+              {isSyncing ? (
+                <div className="w-4 h-4 border-2 border-brand-yellow border-t-transparent rounded-full animate-spin"></div>
+              ) : uploadSuccess ? (
+                <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
+              ) : (
+                <CloudUpload size={16} />
+              )}
+          </button>
+          <button 
+              onClick={() => setIsAddingStock(true)}
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors w-10"
+              title="添加股票"
+            >
+              <Plus size={16} />
+          </button>
+          <button 
+              onClick={() => { if (confirm('确定要重置所有股票数据吗？')) resetStockData(); }}
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-red-400 hover:border-red-400 transition-colors w-10"
+              title="重置数据"
+            >
+              <Trash2 size={16} />
+          </button>
+          <button
+              onClick={toggleTheme}
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-brand-yellow hover:border-brand-yellow transition-colors w-10"
+              title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+          >
+            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+      </div>
+    </div>
+  );
+
   return (
     <div 
       className="min-h-screen bg-app-bg text-app-text font-sans p-4 md:p-8 flex justify-center relative transition-colors duration-300"
@@ -1282,67 +1388,7 @@ export default function App() {
               [{currentPage === 'gold' ? '股票' : '黄金'}]
             </button>
           </div>
-          {currentPage === 'stocks' && (
-            <div className="flex gap-1 lg:gap-2">
-              <button 
-                  onClick={() => openSettings('general')}
-                  className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors w-10"
-                  title="设置"
-                >
-                <Settings size={16} />
-              </button>
-              <button 
-                  onClick={() => requestCloudAction('download')}
-                  disabled={isDownloading || downloadSuccess || !!cloudConfirm}
-                  className={`flex items-center justify-center bg-app-card border border-app-border py-2.5 rounded-md transition-all w-10 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-indigo-400 hover:text-indigo-300 hover:border-indigo-500'} disabled:opacity-30`}
-                  title="从云端下载"
-                >
-                {isDownloading ? (
-                  <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
-                ) : downloadSuccess ? (
-                  <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
-                ) : (
-                  <CloudDownload size={16} />
-                )}
-              </button>
-              <button 
-                  onClick={() => requestCloudAction('upload')}
-                  disabled={isSyncing || uploadSuccess || !!cloudConfirm}
-                  className={`flex items-center justify-center bg-app-card border border-app-border py-2.5 rounded-md transition-all w-10 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-brand-yellow hover:bg-brand-yellow/10 hover:border-brand-yellow'} disabled:opacity-30`}
-                  title="上传到云端"
-                >
-                {isSyncing ? (
-                  <div className="w-4 h-4 border-2 border-brand-yellow border-t-transparent rounded-full animate-spin"></div>
-                ) : uploadSuccess ? (
-                  <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
-                ) : (
-                  <CloudUpload size={16} />
-                )}
-              </button>
-              <button 
-                  onClick={() => setIsAddingStock(true)}
-                  className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors w-10"
-                  title="添加股票"
-                >
-                <Plus size={16} />
-              </button>
-              
-              <button 
-                  onClick={() => { if (confirm('确定要重置所有股票数据吗？')) resetStockData(); }}
-                  className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-red-400 hover:border-red-400 transition-colors w-10"
-                  title="重置数据"
-                >
-                <Trash2 size={16} />
-              </button>
-              <button
-                  onClick={toggleTheme}
-                  className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-brand-yellow hover:border-brand-yellow transition-colors w-10"
-                  title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
-              >
-                {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-              </button>
-            </div>
-          )}
+
         </header>
 
         {currentPage === 'gold' ? (
@@ -1701,6 +1747,7 @@ export default function App() {
             tagColors={stockSettings.tagColors || {}}
             onTagColorsChange={(colors) => setStockSettings(prev => ({ ...prev, tagColors: colors }))}
             maxRows={stockSettings.maxRows}
+            actionButtons={renderStockActionButtons()}
           />
         )}
         <div className="lg:hidden mt-2 order-3">{currentPage === 'gold' && renderActionButtons()}</div>

@@ -209,6 +209,7 @@ interface StockDividendPageProps {
   tagColors?: Record<string, string>;
   onTagColorsChange?: (colors: Record<string, string>) => void;
   maxRows?: number;
+  actionButtons?: React.ReactNode;
 }
 
 const DEFAULT_DIVIDEND_RATES: StockDividendRates = {
@@ -236,7 +237,7 @@ const formatPrice = (price: number): string => {
 };
 
 const getDividendRateColor = (rate: number, colorRanges: DividendRateColorRange[]): string => {
-  if (!rate || rate <= 0) return 'text-app-text';
+  if (!rate || rate <= 0) return 'text-app-rowtext';
   const COLOR_MAP: Record<string, string> = {
     'indigo': 'text-indigo-500',
     'gray': 'text-gray-500',
@@ -249,10 +250,10 @@ const getDividendRateColor = (rate: number, colorRanges: DividendRateColorRange[
   };
   for (const range of colorRanges) {
     if (rate >= range.min && rate <= range.max) {
-      return COLOR_MAP[range.color] || 'text-app-text';
+      return COLOR_MAP[range.color] || 'text-app-rowtext';
     }
   }
-  return 'text-app-text';
+  return 'text-app-rowtext';
 };
 
 const formatRelativeTime = (timestamp: number): string => {
@@ -272,7 +273,7 @@ const formatPercent = (percent: number): string => {
   return percent.toFixed(2) + '%';
 };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 10 }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 10, actionButtons }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
   const rateCols = dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'];
@@ -294,6 +295,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [editTagState, setEditTagState] = useState<{ id: string, top: number, left: number } | null>(null);
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const availableTags = useMemo(() => {
     const tags = new Set<string>();
@@ -640,29 +643,38 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
       <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm">
         <div 
+          ref={scrollContainerRef}
           className="overflow-x-auto custom-scrollbar"
           style={{ 
             maxHeight: maxRows > 0 ? `${maxRows * 40 + 56}px` : 'none',
-            overflowY: maxRows > 0 ? 'auto' : 'visible'
+            overflowY: maxRows > 0 ? 'auto' : 'visible',
+            WebkitOverflowScrolling: 'touch',
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none'
           }}
         >
-          <table className="w-full text-sm border-separate border-spacing-0" style={{ tableLayout: 'auto' }}>
+          <style>{`
+            .custom-scrollbar::-webkit-scrollbar {
+              display: none;
+            }
+          `}</style>
+          <table className="w-full text-sm border-separate border-spacing-0" style={{ tableLayout: 'auto', minWidth: '876px' }}>
             <colgroup>
-              {(cols.includes('code') || cols.includes('name')) && <col style={{ width: '120px' }} />}
+              {(cols.includes('code') || cols.includes('name')) && <col style={{ width: '140px' }} />}
               {cols.includes('dividendRate2025') && <col style={{ width: '80px' }} />}
-              {cols.includes('price') && <col style={{ width: '100px' }} />}
+              {cols.includes('price') && <col style={{ width: '120px' }} />}
               {cols.includes('changePercent') && <col style={{ width: '70px' }} />}
+              {cols.includes('dividendRates') && rateCols.map((_, idx) => <col key={idx} style={{ width: '34px' }} />)}
               {cols.includes('dividend2024') && <col style={{ width: '70px' }} />}
               {cols.includes('dividend2025') && <col style={{ width: '70px' }} />}
-              {cols.includes('dividendRates') && rateCols.map((_, idx) => <col key={idx} style={{ width: '34px' }} />)}
-              <col style={{ width: '40px' }} />
+              <col style={{ width: '50px' }} />
             </colgroup>
             <thead className="sticky top-0 z-30 overflow-hidden">
               <tr className="bg-app-input">
-                {(cols.includes('code') || cols.includes('name')) && <th className="px-3 py-2 text-left text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border bg-app-input">股票名称</th>}
-                {cols.includes('dividendRate2025') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border bg-app-input">股息率</th>}
-                {cols.includes('price') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border bg-app-input">
-                    <div className="flex items-center justify-center gap-1">
+                {(cols.includes('code') || cols.includes('name')) && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap sticky left-0 z-10">股票名称</th>}
+                {cols.includes('dividendRate2025') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">股息率</th>}
+                {cols.includes('price') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">
+                    <div className="flex items-center justify-center gap-1 whitespace-nowrap">
                       价格
                       <button
                         onClick={handleRefreshAll}
@@ -674,22 +686,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       </button>
                     </div>
                   </th>}
-                {cols.includes('changePercent') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border bg-app-input">涨跌幅</th>}
-                {cols.includes('dividend2024') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border bg-app-input">分红</th>}
-                {cols.includes('dividend2025') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border bg-app-input">分红</th>}
-                {cols.includes('dividendRates') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-l border-r bg-app-input" colSpan={rateCols.length}>股息率对应股价</th>}
-                <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider bg-app-input" rowSpan={2}>操作</th>
+                {cols.includes('changePercent') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">涨跌幅</th>}
+                {cols.includes('dividendRates') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-l border-r border-app-border bg-app-input whitespace-nowrap" colSpan={rateCols.length}>股息率对应股价</th>}
+                {cols.includes('dividend2024') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">分红</th>}
+                {cols.includes('dividend2025') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">分红</th>}
+                <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-l border-app-border" rowSpan={2}>操作</th>
               </tr>
               <tr className="bg-app-input">
-                {(cols.includes('code') || cols.includes('name')) && <th className="px-3 py-1 text-left text-xs font-bold text-app-subtext bg-app-input">股票代码</th>}
-                {cols.includes('dividendRate2025') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input"></th>}
-                {cols.includes('price') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input">{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</th>}
-                {cols.includes('changePercent') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input"></th>}
-                {cols.includes('dividend2024') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input">2024</th>}
-                {cols.includes('dividend2025') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input">2025</th>}
+                {(cols.includes('code') || cols.includes('name')) && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input border-r border-app-border sticky left-0 z-10">代码</th>}
+                {(cols.includes('dividendRate2025') || cols.includes('price') || cols.includes('changePercent')) && <th colSpan={3} className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input border-r border-app-border whitespace-nowrap">{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</th>}
                 {cols.includes('dividendRates') && rateCols.map((rate, idx) => (
-                  <th key={rate} className={`px-2 py-1 text-center text-xs font-bold text-app-subtext bg-app-input ${idx === 0 ? 'border-l border-app-border' : ''} ${idx === rateCols.length - 1 ? 'border-r border-app-border' : ''}`}>{rate}</th>
+                  <th key={rate} className={`px-2 py-1 text-center text-xs font-bold text-app-subtext bg-app-input border-l border-r border-app-border`}>{rate}</th>
                 ))}
+                {cols.includes('dividend2024') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input border-r border-app-border">2024</th>}
+                {cols.includes('dividend2025') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input border-r border-app-border">2025</th>}
               </tr>
             </thead>
             <tbody>
@@ -699,14 +709,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   className={`border-t border-app-border hover:bg-app-hover transition-colors ${dragOverId === stock.id ? 'bg-brand-yellow/10' : ''}`}
                 >
                   {(cols.includes('code') || cols.includes('name')) && <td 
-                    className={`px-3 py-2 text-left sticky left-0 z-10 bg-app-card cursor-move ${draggedId === stock.id ? 'opacity-50' : ''}`}
+                    className={`px-3 py-2 align-middle sticky left-0 z-10 bg-app-card cursor-move touch-none border-r border-app-border ${draggedId === stock.id ? 'opacity-50' : ''}`}
                     draggable
                     onDragStart={(e) => handleDragStart(e, stock.id)}
                     onDragOver={(e) => handleDragOver(e, stock.id)}
                     onDragLeave={handleDragLeave}
                     onDrop={(e) => handleDrop(e, stock.id)}
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-start gap-2 w-full">
                       <div 
                         onClick={(e) => handleEditTagClick(e, stock.id)}
                         className="cursor-pointer group/tag flex-shrink-0"
@@ -742,19 +752,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           />}
                         </div>
                       ) : (
-                        <div className="flex flex-col">
-                          <span className="text-xs text-app-text">{stock.name}</span>
-                          <span className="font-mono text-[10px] text-app-subtext/70">{stock.code}</span>
+                        <div className="relative flex items-center justify-start h-10 whitespace-nowrap">
+                          <span className={`text-xs font-bold leading-none ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>{stock.name.length > 4 ? stock.name.slice(0, 4) + '…' : stock.name}</span>
+                          <span className="font-mono text-[9px] leading-none text-app-rowtext absolute bottom-0 left-0" style={{ opacity: 0.6 }}>{stock.code}</span>
                         </div>
                       )}
                     </div>
                   </td>}
-                  {cols.includes('dividendRate2025') && <td className="px-3 py-2 text-center">
+                  {cols.includes('dividendRate2025') && <td className="px-3 py-2 text-center border-r border-app-border">
                     <span className={`font-mono text-sm font-bold ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>
                       {stock.dividendRate2025 > 0 ? formatPercent(stock.dividendRate2025) : '--'}
                     </span>
                   </td>}
-                  {cols.includes('price') && <td className="px-3 py-2 text-center">
+                  {cols.includes('price') && <td className="px-3 py-2 text-center border-r border-app-border">
                     <div className="flex items-center justify-center gap-1">
                       <span className={`font-mono text-sm font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                         {formatPrice(stock.price)}
@@ -770,39 +780,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       )}
                     </div>
                   </td>}
-                  {cols.includes('changePercent') && <td className="px-3 py-2 text-center">
+                  {cols.includes('changePercent') && <td className="px-3 py-2 text-center border-r border-app-border">
                     <span className={`font-mono text-sm font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                       {stock.changePercent >= 0 ? '+' : ''}{formatPercent(stock.changePercent)}
                     </span>
                   </td>}
-                  {cols.includes('dividend2024') && <td className="px-3 py-2 text-center">
-                    {editingId === stock.id ? (
-                      <input
-                        type="number"
-                        value={stock.dividend2024}
-                        onChange={(e) => handleUpdateField(stock.id, 'dividend2024', parseFloat(e.target.value) || 0)}
-                        step="0.01"
-                        className="w-full bg-app-input border border-brand-yellow rounded px-2 py-1 text-xs font-mono text-app-text outline-none text-center"
-                      />
-                    ) : (
-                      <span className="font-mono text-xs text-app-text">{formatPrice(stock.dividend2024)}</span>
-                    )}
-                  </td>}
-                  {cols.includes('dividend2025') && <td className="px-3 py-2 text-center">
-                    {editingId === stock.id ? (
-                      <input
-                        type="number"
-                        value={stock.dividend2025}
-                        onChange={(e) => handleUpdateField(stock.id, 'dividend2025', parseFloat(e.target.value) || 0)}
-                        step="0.01"
-                        className="w-full bg-app-input border border-brand-yellow rounded px-2 py-1 text-xs font-mono text-app-text outline-none text-center"
-                      />
-                    ) : (
-                      <span className="font-mono text-xs text-app-text">{formatPrice(stock.dividend2025)}</span>
-                    )}
-                  </td>}
                   {cols.includes('dividendRates') && rateCols.map((rate, idx) => (
-                    <td key={rate} className={`px-2 py-2 text-center min-w-[40px] ${idx === 0 ? 'border-l border-app-border' : ''} ${idx === rateCols.length - 1 ? 'border-r border-app-border' : ''}`}>
+                    <td key={rate} className={`px-2 py-2 text-center min-w-[40px] border-l border-r border-app-border`}>
                       {editingDividendRate === `${stock.id}-${rate}` ? (
                         <input
                           type="number"
@@ -821,7 +805,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         />
                       ) : (
                         <span 
-                          className="font-mono text-xs text-app-text cursor-pointer hover:text-brand-yellow"
+                          className="font-mono text-xs text-app-rowtext cursor-pointer hover:text-brand-yellow"
                           onClick={() => setEditingDividendRate(`${stock.id}-${rate}`)}
                         >
                           {formatPrice(stock.dividendRates[rate] || 0)}
@@ -829,7 +813,33 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       )}
                     </td>
                   ))}
-                  <td className="px-3 py-2 text-center sticky right-0 z-20 bg-app-card">
+                  {cols.includes('dividend2024') && <td className="px-3 py-2 text-center border-r border-app-border">
+                    {editingId === stock.id ? (
+                      <input
+                        type="number"
+                        value={stock.dividend2024}
+                        onChange={(e) => handleUpdateField(stock.id, 'dividend2024', parseFloat(e.target.value) || 0)}
+                        step="0.01"
+                        className="w-full bg-app-input border border-brand-yellow rounded px-2 py-1 text-xs font-mono text-app-text outline-none text-center"
+                      />
+                    ) : (
+                      <span className="font-mono text-xs text-app-rowtext">{formatPrice(stock.dividend2024)}</span>
+                    )}
+                  </td>}
+                  {cols.includes('dividend2025') && <td className="px-3 py-2 text-center border-r border-app-border">
+                    {editingId === stock.id ? (
+                      <input
+                        type="number"
+                        value={stock.dividend2025}
+                        onChange={(e) => handleUpdateField(stock.id, 'dividend2025', parseFloat(e.target.value) || 0)}
+                        step="0.01"
+                        className="w-full bg-app-input border border-brand-yellow rounded px-2 py-1 text-xs font-mono text-app-text outline-none text-center"
+                      />
+                    ) : (
+                      <span className="font-mono text-xs text-app-rowtext">{formatPrice(stock.dividend2025)}</span>
+                    )}
+                  </td>}
+                  <td className="px-3 py-2 text-center border-l border-app-border">
                     <div className="flex items-center justify-center gap-1">
                       {editingId === stock.id ? (
                         <button
@@ -869,6 +879,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             </tbody>
           </table>
         </div>
+        {actionButtons && (
+          <div className="flex justify-end p-3 border-t border-app-border bg-app-card">
+            {actionButtons}
+          </div>
+        )}
       </div>
 
       <div className="bg-app-card border border-app-border rounded-xl p-4">

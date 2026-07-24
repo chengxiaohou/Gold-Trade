@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GoldCost Pro - 黄金持仓成本预估</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script>
       tailwind.config = {
         darkMode: 'class',
@@ -13,6 +13,7 @@
           extend: {
             fontFamily: {
               sans: ['Inter', 'sans-serif'],
+              mono: ['Roboto Mono', 'Menlo', 'Consolas', 'Monaco', 'SF Mono', 'Courier New', 'monospace'],
             },
             colors: {
               app: {
@@ -22,6 +23,7 @@
                 border: 'var(--app-border)',
                 text: 'var(--app-text)',
                 subtext: 'var(--app-subtext)',
+                rowtext: 'var(--app-row-text)',
                 hover: 'var(--row-hover-bg)',
               },
               brand: {
@@ -45,6 +47,7 @@
         --app-border: #e2e8f0;
         --app-text: #0f172a;
         --app-subtext: #64748b;
+        --app-row-text: #475569;
         --row-hover-bg: #f1f5f9;
         
         --brand-yellow: #d97706; /* Darker amber for contrast on white */
@@ -65,6 +68,7 @@
         --app-border: #2a3044;
         --app-text: #e2e8f0;
         --app-subtext: #94a3b8;
+        --app-row-text: #7889a4;
         --row-hover-bg: #232940;
 
         --brand-yellow: #fec007;
@@ -81,6 +85,11 @@
         background-color: var(--app-bg);
         color: var(--app-text);
         transition: background-color 0.3s, color 0.3s;
+      }
+
+      .font-mono, [class*="font-mono"] {
+        font-variant-numeric: tabular-nums;
+        font-feature-settings: "zero" 0;
       }
       
       /* Custom scrollbar using vars */
