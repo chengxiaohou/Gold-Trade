@@ -1270,7 +1270,7 @@ export default function App() {
       <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".json" />
 
       <div className="max-w-[1400px] w-full pb-12 flex flex-col">
-        <header className="mb-4">
+        <header className="mb-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <h1 className="text-3xl font-bold text-app-subtext tracking-wide">{currentPage === 'gold' ? '黄金交易模拟' : '股息率一览表'}</h1>
             <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1">{APP_VERSION}</span>
@@ -1283,7 +1283,7 @@ export default function App() {
             </button>
           </div>
           {currentPage === 'stocks' && (
-            <div className="flex gap-1 lg:gap-2 mt-3">
+            <div className="flex gap-1 lg:gap-2">
               <button 
                   onClick={() => openSettings('general')}
                   className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors w-10"
