@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye } from 'lucide-react';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings } from '../types';
 
 const TAG_PALETTE = [
@@ -210,6 +210,8 @@ interface StockDividendPageProps {
   onTagColorsChange?: (colors: Record<string, string>) => void;
   maxRows?: number;
   actionButtons?: React.ReactNode;
+  appVersion?: string;
+  onTogglePage?: () => void;
 }
 
 const DEFAULT_DIVIDEND_RATES: StockDividendRates = {
@@ -273,7 +275,7 @@ const formatPercent = (percent: number): string => {
   return percent.toFixed(2) + '%';
 };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 10, actionButtons }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
   const rateCols = dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'];
@@ -285,6 +287,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   
   const latestUpdateTime = stocks.reduce((max, stock) => Math.max(max, stock.priceUpdatedAt || 0), 0);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [showRatesId, setShowRatesId] = useState<string | null>(null);
+  const [ratesPopupPos, setRatesPopupPos] = useState<{ top: number, left: number }>({ top: 0, left: 0 });
   const [newStock, setNewStock] = useState({
     code: '',
     name: '',
@@ -595,86 +599,59 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
 
   return (
-    <div className="flex flex-col gap-6">
-      {isAdding && (
-        <div className="bg-app-card border border-app-border rounded-xl p-4 mb-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">股票代码</label>
-              <input
-                type="text"
-                value={newStock.code}
-                onChange={(e) => setNewStock(prev => ({ ...prev, code: e.target.value }))}
-                placeholder="如 600519（自动识别市场）"
-                className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2.5 text-app-text font-mono text-sm focus:border-brand-yellow focus:ring-1 focus:ring-brand-yellow/50 outline-none transition-all"
-                autoFocus
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">股票名称</label>
-              <input
-                type="text"
-                value={newStock.name}
-                onChange={(e) => setNewStock(prev => ({ ...prev, name: e.target.value }))}
-                placeholder="可选"
-                className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2.5 text-app-text font-mono text-sm focus:border-brand-yellow focus:ring-1 focus:ring-brand-yellow/50 outline-none transition-all"
-              />
-            </div>
-          </div>
-          <div className="flex gap-2 mt-4">
-            <button
-              onClick={handleAddStock}
-              disabled={!newStock.code.trim() || isRefreshing.has('new')}
-              className="flex-1 py-2.5 rounded-lg font-semibold text-base flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 bg-brand-yellow text-slate-900 hover:bg-[#fdd835]"
-            >
-              <Plus size={16} />添加股票
-            </button>
-            <button
-              onClick={() => {
-                onCloseAdding();
-                setNewStock({ code: '', name: '' });
-              }}
-              className="flex-1 py-2.5 rounded-lg font-semibold text-base flex items-center justify-center gap-2 transform active:scale-[0.98] border border-app-border text-app-subtext hover:bg-app-input hover:text-app-text"
-            >
-              <X size={16} />取消
-            </button>
+    <div className="flex flex-col gap-3 w-full">
+      <div className="flex justify-center">
+        <div className="w-full max-w-[700px] flex items-center justify-between">
+          <h1 className="text-3xl font-bold text-app-subtext tracking-wide">股息率一览</h1>
+          <div className="flex items-center gap-3">
+            {appVersion && <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1">{appVersion}</span>}
+            {onTogglePage && (
+              <button
+                onClick={onTogglePage}
+                className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1 transition-colors"
+                title="切换到黄金交易模拟"
+              >
+                [黄金]
+              </button>
+            )}
           </div>
         </div>
-      )}
-
-      <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm">
-        <div 
-          ref={scrollContainerRef}
-          className="overflow-x-auto custom-scrollbar"
-          style={{ 
-            maxHeight: maxRows > 0 ? `${maxRows * 40 + 56}px` : 'none',
-            overflowY: maxRows > 0 ? 'auto' : 'visible',
-            WebkitOverflowScrolling: 'touch',
-            scrollbarWidth: 'none',
-            msOverflowStyle: 'none'
-          }}
-        >
-          <style>{`
-            .custom-scrollbar::-webkit-scrollbar {
-              display: none;
-            }
-          `}</style>
-          <table className="w-full text-sm border-separate border-spacing-0" style={{ tableLayout: 'auto', minWidth: '876px' }}>
+      </div>
+      <div className="flex justify-center">
+        <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full max-w-[700px]">
+          <div 
+            ref={scrollContainerRef}
+            className="overflow-x-auto custom-scrollbar"
+            style={{ 
+              maxHeight: maxRows > 0 ? `${maxRows * 32 + 48}px` : 'none',
+              overflowY: maxRows > 0 ? 'auto' : 'visible',
+              WebkitOverflowScrolling: 'touch',
+              scrollbarWidth: 'none',
+              msOverflowStyle: 'none'
+            }}
+          >
+            <style>{`
+              .custom-scrollbar::-webkit-scrollbar {
+                display: none;
+              }
+            `}</style>
+            <table className="text-sm border-separate border-spacing-0 w-full" style={{ tableLayout: 'auto' }}>
             <colgroup>
-              {(cols.includes('code') || cols.includes('name')) && <col style={{ width: '140px' }} />}
-              {cols.includes('dividendRate2025') && <col style={{ width: '80px' }} />}
-              {cols.includes('price') && <col style={{ width: '120px' }} />}
-              {cols.includes('changePercent') && <col style={{ width: '70px' }} />}
-              {cols.includes('dividendRates') && rateCols.map((_, idx) => <col key={idx} style={{ width: '34px' }} />)}
-              {cols.includes('dividend2024') && <col style={{ width: '70px' }} />}
-              {cols.includes('dividend2025') && <col style={{ width: '70px' }} />}
-              <col style={{ width: '50px' }} />
+              <col style={{ width: '36px' }} />
+              {(cols.includes('code') || cols.includes('name')) && <col style={{ width: '90px' }} />}
+              {cols.includes('dividendRate2025') && <col style={{ width: '55px' }} />}
+              {cols.includes('price') && <col style={{ width: '75px' }} />}
+              {cols.includes('changePercent') && <col style={{ width: '55px' }} />}
+              {cols.includes('dividend2024') && <col style={{ width: '50px' }} />}
+              {cols.includes('dividend2025') && <col style={{ width: '50px' }} />}
+              <col style={{ width: '60px' }} />
             </colgroup>
             <thead className="sticky top-0 z-30 overflow-hidden">
               <tr className="bg-app-input">
-                {(cols.includes('code') || cols.includes('name')) && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap sticky left-0 z-10">股票名称</th>}
-                {cols.includes('dividendRate2025') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">股息率</th>}
-                {cols.includes('price') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">
+                <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap sticky left-0 z-20" rowSpan={2}>标签</th>
+                {(cols.includes('code') || cols.includes('name')) && <th className="px-2 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap sticky left-[36px] z-10">股票名称</th>}
+                {cols.includes('dividendRate2025') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">股息率</th>}
+                {cols.includes('price') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">
                     <div className="flex items-center justify-center gap-1 whitespace-nowrap">
                       价格
                       <button
@@ -683,91 +660,91 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         className="p-0.5 hover:bg-app-card rounded transition-colors disabled:opacity-50"
                         title="刷新所有股价"
                       >
-                        <RefreshCw size={12} className={isRefreshing.size > 0 ? 'animate-spin' : ''} />
+                        <RefreshCw size={10} className={isRefreshing.size > 0 ? 'animate-spin' : ''} />
                       </button>
                     </div>
                   </th>}
-                {cols.includes('changePercent') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">涨跌幅</th>}
-                {cols.includes('dividendRates') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-l border-r border-app-border bg-app-input whitespace-nowrap" colSpan={rateCols.length}>股息率对应股价</th>}
-                {cols.includes('dividend2024') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">分红</th>}
-                {cols.includes('dividend2025') && <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">分红</th>}
-                <th className="px-3 py-2 text-center text-sm uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-l border-app-border" rowSpan={2}>操作</th>
+                {cols.includes('changePercent') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">涨跌幅</th>}
+                {cols.includes('dividend2024') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">分红</th>}
+                {cols.includes('dividend2025') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border bg-app-input whitespace-nowrap">分红</th>}
+                <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-l border-app-border" rowSpan={2}>操作</th>
               </tr>
               <tr className="bg-app-input">
-                {(cols.includes('code') || cols.includes('name')) && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input border-r border-app-border sticky left-0 z-10">代码</th>}
-                {(cols.includes('dividendRate2025') || cols.includes('price') || cols.includes('changePercent')) && <th colSpan={3} className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input border-r border-app-border whitespace-nowrap">{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</th>}
-                {cols.includes('dividendRates') && rateCols.map((rate, idx) => (
-                  <th key={rate} className={`px-2 py-1 text-center text-xs font-bold text-app-subtext bg-app-input border-l border-r border-app-border`}>{rate}</th>
-                ))}
-                {cols.includes('dividend2024') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input border-r border-app-border">2024</th>}
-                {cols.includes('dividend2025') && <th className="px-3 py-1 text-center text-xs font-bold text-app-subtext bg-app-input border-r border-app-border">2025</th>}
+                {(cols.includes('code') || cols.includes('name')) && <th className="px-2 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border sticky left-[36px] z-10">代码</th>}
+                {(cols.includes('dividendRate2025') || cols.includes('price') || cols.includes('changePercent')) && <th colSpan={3} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap">{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</th>}
+                {cols.includes('dividend2024') && <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">2024</th>}
+                {cols.includes('dividend2025') && <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border">2025</th>}
               </tr>
             </thead>
             <tbody>
               {stocks.map(stock => (
                 <tr 
                   key={stock.id} 
-                  className={`border-t border-app-border hover:bg-app-hover transition-colors ${dragOverId === stock.id ? 'bg-brand-yellow/10' : ''}`}
+                  className={`group border-t border-app-border hover:bg-app-hover transition-colors ${dragOverId === stock.id ? 'bg-brand-yellow/10' : ''}`}
                 >
+                  <td 
+                    className={`px-1 py-1.5 align-middle sticky left-0 z-20 bg-app-card group-hover:bg-app-hover border-r border-app-border transition-colors ${draggedId === stock.id ? 'opacity-50' : ''}`}
+                  >
+                    <div 
+                      onClick={(e) => handleEditTagClick(e, stock.id)}
+                      className="cursor-pointer group/tag flex justify-center"
+                      title="点击编辑标签"
+                    >
+                      {(() => {
+                        const displayTag = stock.tag || '-';
+                        let style = EMPTY_STYLE;
+                        if (stock.tag) {
+                          const colorKey = tagColors?.[stock.tag];
+                          style = getTagStyle(colorKey);
+                        }
+                        return (
+                          <span className={`inline-flex items-center justify-center w-[20px] h-[20px] rounded text-[9px] font-medium transition-colors border ${style.bg} ${style.text} ${style.border} ${style.hover || ''}`}>
+                            {displayTag}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  </td>
                   {(cols.includes('code') || cols.includes('name')) && <td 
-                    className={`px-3 py-2 align-middle sticky left-0 z-10 bg-app-card cursor-move touch-none border-r border-app-border ${draggedId === stock.id ? 'opacity-50' : ''}`}
+                    className={`px-1 py-1.5 align-middle sticky left-[36px] z-10 bg-app-card group-hover:bg-app-hover cursor-move touch-none border-r border-app-border transition-colors ${draggedId === stock.id ? 'opacity-50' : ''}`}
                     draggable
                     onDragStart={(e) => handleDragStart(e, stock.id)}
                     onDragOver={(e) => handleDragOver(e, stock.id)}
                     onDragLeave={handleDragLeave}
                     onDrop={(e) => handleDrop(e, stock.id)}
                   >
-                    <div className="flex items-center justify-start gap-2 w-full">
-                      <div 
-                        onClick={(e) => handleEditTagClick(e, stock.id)}
-                        className="cursor-pointer group/tag flex-shrink-0"
-                        title="点击编辑标签"
-                      >
-                        {(() => {
-                          const displayTag = stock.tag || '-';
-                          let style = EMPTY_STYLE;
-                          if (stock.tag) {
-                            const colorKey = tagColors?.[stock.tag];
-                            style = getTagStyle(colorKey);
-                          }
-                          return (
-                            <span className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[22px] transition-colors border ${style.bg} ${style.text} ${style.border} ${style.hover || ''}`}>
-                              {displayTag}
-                            </span>
-                          );
-                        })()}
-                      </div>
+                    <div className="flex items-center justify-center gap-1 w-full">
                       {editingId === stock.id ? (
-                        <div className="flex flex-col gap-1">
+                        <div className="flex flex-col gap-0.5">
                           {cols.includes('name') && <input
                             type="text"
                             value={stock.name}
                             onChange={(e) => handleUpdateField(stock.id, 'name', e.target.value)}
-                            className="w-full bg-app-input border border-brand-yellow rounded px-2 py-1 text-xs text-app-text outline-none"
+                            className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight text-app-text outline-none"
                           />}
                           {cols.includes('code') && <input
                             type="text"
                             value={getDisplayCode(stock.code)}
                             onChange={(e) => handleUpdateField(stock.id, 'code', e.target.value.toUpperCase())}
-                            className="w-full bg-app-input border border-brand-yellow rounded px-2 py-1 text-xs font-mono text-app-text outline-none"
+                            className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[9px] leading-tight font-mono text-app-text outline-none"
                           />}
                         </div>
                       ) : (
-                        <div className="relative flex items-center justify-start h-10 whitespace-nowrap">
-                          <span className={`text-xs font-bold leading-none ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>{(() => { const n = stock.name.replace(/\s/g, ''); return n.length > 4 ? n.slice(0, 4) + '…' : n; })()}</span>
-                          <span className="font-mono text-[9px] leading-none text-app-rowtext absolute bottom-0 left-0" style={{ opacity: 0.6 }}>{getDisplayCode(stock.code)}</span>
+                        <div className="relative flex items-center justify-center h-8 whitespace-nowrap">
+                          <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>{(() => { const n = stock.name.replace(/\s/g, ''); return n.length > 4 ? n.slice(0, 4) + '…' : n; })()}</span>
+                          <span className="font-mono text-[8px] leading-none text-app-rowtext absolute bottom-0 left-0 right-0 text-center" style={{ opacity: 0.6 }}>{getDisplayCode(stock.code)}</span>
                         </div>
                       )}
                     </div>
                   </td>}
-                  {cols.includes('dividendRate2025') && <td className="px-3 py-2 text-center border-r border-app-border">
-                    <span className={`font-mono text-sm font-bold ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>
+                  {cols.includes('dividendRate2025') && <td className="px-1 py-1.5 text-center border-r border-app-border">
+                    <span className={`font-mono text-xs font-bold ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>
                       {stock.dividendRate2025 > 0 ? formatPercent(stock.dividendRate2025) : '--'}
                     </span>
                   </td>}
-                  {cols.includes('price') && <td className="px-3 py-2 text-center border-r border-app-border">
-                    <div className="flex items-center justify-center gap-1">
-                      <span className={`font-mono text-sm font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                  {cols.includes('price') && <td className="px-1 py-1.5 text-center border-r border-app-border">
+                    <div className="flex items-center justify-center gap-0.5">
+                      <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                         {formatPrice(stock.price)}
                       </span>
                       {refreshFailed.has(stock.id) && (
@@ -776,74 +753,82 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           className="p-0.5 hover:bg-app-input rounded transition-colors"
                           title="重新刷新股价"
                         >
-                          <RefreshCw size={12} className="text-brand-yellow" />
+                          <RefreshCw size={10} className="text-brand-yellow" />
                         </button>
                       )}
                     </div>
                   </td>}
-                  {cols.includes('changePercent') && <td className="px-3 py-2 text-center border-r border-app-border">
-                    <span className={`font-mono text-sm font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                  {cols.includes('changePercent') && <td className="px-1 py-1.5 text-center border-r border-app-border">
+                    <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                       {stock.changePercent >= 0 ? '+' : ''}{formatPercent(stock.changePercent)}
                     </span>
                   </td>}
-                  {cols.includes('dividendRates') && rateCols.map((rate, idx) => (
-                    <td key={rate} className={`px-2 py-2 text-center min-w-[40px] border-l border-r border-app-border`}>
-                      <span className="font-mono text-xs text-app-rowtext">
-                        {formatPrice(stock.dividendRates[rate] || 0)}
-                      </span>
-                    </td>
-                  ))}
-                  {cols.includes('dividend2024') && <td className="px-3 py-2 text-center border-r border-app-border">
+                  {cols.includes('dividend2024') && <td className="px-1 py-1.5 text-center border-r border-app-border">
                     {editingId === stock.id ? (
                       <input
                         type="number"
                         value={stock.dividend2024}
                         onChange={(e) => handleUpdateField(stock.id, 'dividend2024', parseFloat(e.target.value) || 0)}
                         step="0.01"
-                        className="w-full bg-app-input border border-brand-yellow rounded px-2 py-1 text-xs font-mono text-app-text outline-none text-center"
+                        className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
                       />
                     ) : (
-                      <span className="font-mono text-xs text-app-rowtext">{formatPrice(stock.dividend2024)}</span>
+                      <span className="font-mono text-[11px] text-app-rowtext">{formatPrice(stock.dividend2024)}</span>
                     )}
                   </td>}
-                  {cols.includes('dividend2025') && <td className="px-3 py-2 text-center border-r border-app-border">
+                  {cols.includes('dividend2025') && <td className="px-1 py-1.5 text-center">
                     {editingId === stock.id ? (
                       <input
                         type="number"
                         value={stock.dividend2025}
                         onChange={(e) => handleUpdateField(stock.id, 'dividend2025', parseFloat(e.target.value) || 0)}
                         step="0.01"
-                        className="w-full bg-app-input border border-brand-yellow rounded px-2 py-1 text-xs font-mono text-app-text outline-none text-center"
+                        className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
                       />
                     ) : (
                       <span className="font-mono text-xs text-app-rowtext">{formatPrice(stock.dividend2025)}</span>
                     )}
                   </td>}
-                  <td className="px-3 py-2 text-center border-l border-app-border">
-                    <div className="flex items-center justify-center gap-1">
+                  <td className="px-1 py-1.5 text-center border-l border-app-border">
+                    <div className="flex items-center justify-center gap-0.5">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setShowRatesId(stock.id);
+                          setRatesPopupPos({
+                            top: rect.bottom + 8,
+                            left: Math.min(rect.right + 8, window.innerWidth - 280)
+                          });
+                        }}
+                        className={`p-0.5 rounded transition-colors ${showRatesId === stock.id ? 'bg-indigo-500/20 text-indigo-400' : 'text-app-subtext hover:bg-app-input'}`}
+                        title="股息率对应股价"
+                      >
+                        <Eye size={12} />
+                      </button>
                       {editingId === stock.id ? (
                         <button
                           onClick={() => setEditingId(null)}
-                          className="p-1 hover:bg-app-input rounded transition-colors"
+                          className="p-0.5 hover:bg-app-input rounded transition-colors"
                           title="保存"
                         >
-                          <Check size={14} className="text-brand-green" />
+                          <Check size={12} className="text-brand-green" />
                         </button>
                       ) : (
                         <button
                           onClick={() => setEditingId(stock.id)}
-                          className="p-1 hover:bg-app-input rounded transition-colors"
+                          className="p-0.5 hover:bg-app-input rounded transition-colors"
                           title="编辑"
                         >
-                          <Edit2 size={14} className="text-app-subtext" />
+                          <Edit2 size={12} className="text-app-subtext" />
                         </button>
                       )}
                       <button
                         onClick={() => handleDeleteStock(stock.id)}
-                        className="text-app-subtext hover:text-red-400 transition-colors p-1"
+                        className="text-app-subtext hover:text-red-400 transition-colors p-0.5"
                         title="删除"
                       >
-                        <Trash2 size={14} />
+                        <Trash2 size={12} />
                       </button>
                     </div>
                   </td>
@@ -851,7 +836,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               ))}
               {stocks.length === 0 && (
                 <tr>
-                  <td colSpan={16} className="px-3 py-8 text-center text-app-subtext text-sm">
+                  <td colSpan={8} className="px-3 py-8 text-center text-app-subtext text-sm">
                     暂无股票数据，点击上方按钮添加股票
                   </td>
                 </tr>
@@ -864,13 +849,73 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             {actionButtons}
           </div>
         )}
+        </div>
       </div>
 
-      <div className="bg-app-card border border-app-border rounded-xl p-4">
-        <div className="text-xs text-app-subtext">
-          <p className="mb-2">计算公式：<span className="font-mono">股价 = 分红金额 / 股息率</span></p>
-          <p>例如：分红 ¥2.00，股息率 5%，对应股价 = 2.00 / 0.05 = ¥40.00</p>
-          <p className="mt-2 text-[10px] opacity-70">股息率(2025) = 分红(2025) / 当前股价 × 100%</p>
+      {isAdding && createPortal(
+        <>
+          <div 
+            className="fixed inset-0 z-40"
+            onClick={() => {
+              onCloseAdding();
+              setNewStock({ code: '', name: '' });
+            }}
+          />
+          <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-app-card border border-app-border rounded-xl p-4 w-[320px] shadow-2xl">
+            <div className="text-sm font-bold text-app-text mb-3">添加股票</div>
+            <div className="space-y-2">
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">股票代码</label>
+                <input
+                  type="text"
+                  value={newStock.code}
+                  onChange={(e) => setNewStock(prev => ({ ...prev, code: e.target.value }))}
+                  placeholder="如 600519（自动识别市场）"
+                  className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text font-mono text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all"
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">股票名称</label>
+                <input
+                  type="text"
+                  value={newStock.name}
+                  onChange={(e) => setNewStock(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="可选"
+                  className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text font-mono text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={handleAddStock}
+                disabled={!newStock.code.trim() || isRefreshing.has('new')}
+                className="flex-1 py-2 rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 bg-brand-yellow text-slate-900 hover:bg-[#fdd835]"
+              >
+                <Plus size={14} />添加
+              </button>
+              <button
+                onClick={() => {
+                  onCloseAdding();
+                  setNewStock({ code: '', name: '' });
+                }}
+                className="flex-1 py-2 rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transform active:scale-[0.98] border border-app-border text-app-subtext hover:bg-app-input hover:text-app-text"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+
+      <div className="flex justify-center">
+        <div className="bg-app-card border border-app-border rounded-xl p-4 max-w-[700px] w-full">
+          <div className="text-xs text-app-subtext">
+            <p className="mb-2">计算公式：<span className="font-mono">股价 = 分红金额 / 股息率</span></p>
+            <p>例如：分红 ¥2.00，股息率 5%，对应股价 = 2.00 / 0.05 = ¥40.00</p>
+            <p className="mt-2 text-[10px] opacity-70">股息率(2025) = 分红(2025) / 当前股价 × 100%</p>
+          </div>
         </div>
       </div>
 
@@ -885,6 +930,50 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           onTagColorChange={handleTagColorChange}
         />
       )}
+
+      {showRatesId && (() => {
+        const stock = stocks.find(s => s.id === showRatesId);
+        if (!stock) return null;
+        return createPortal(
+          <>
+            <div 
+              className="fixed inset-0 z-40"
+              onClick={() => setShowRatesId(null)}
+            />
+            <div 
+              className="fixed z-50 bg-app-card border border-app-border rounded-lg shadow-xl p-3 w-64"
+              style={{ top: ratesPopupPos.top, left: ratesPopupPos.left }}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-bold text-app-text">{stock.name}</span>
+                <button
+                  onClick={() => setShowRatesId(null)}
+                  className="p-0.5 hover:bg-app-input rounded transition-colors"
+                >
+                  <X size={14} className="text-app-subtext" />
+                </button>
+              </div>
+              <div className="text-[10px] text-app-subtext mb-2">
+                股息率对应股价（基于2025年分红 ¥{formatPrice(stock.dividend2025)}）
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                {rateCols.map(rate => {
+                  const price = stock.dividendRates[rate] || 0;
+                  return (
+                    <div key={rate} className="flex flex-col items-center p-1 bg-app-input rounded">
+                      <span className="text-[10px] text-app-subtext">{rate}</span>
+                      <span className="font-mono text-xs font-bold text-app-text">
+                        {formatPrice(price)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </>,
+          document.body
+        );
+      })()}
     </div>
   );
 };

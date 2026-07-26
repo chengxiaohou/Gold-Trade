@@ -77,7 +77,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   ]);
   const [newRange, setNewRange] = useState({ min: '', max: '', color: 'gray' });
   const [editingRangeIndex, setEditingRangeIndex] = useState<number | null>(null);
-  const [maxRows, setMaxRows] = useState<number>(stockSettings?.maxRows || 10);
+  const [maxRows, setMaxRows] = useState<number>(stockSettings?.maxRows || 15);
 
   const COLOR_OPTIONS = [
     { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20' },
@@ -166,7 +166,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         { min: 4.5, max: 5.5, color: 'gray' },
         { min: 6, max: 7, color: 'green' }
       ],
-      maxRows: maxRows || stockSettings?.maxRows || 10,
+      maxRows: maxRows || stockSettings?.maxRows || 15,
     };
 
     // If Cloud tab is not active and no changes to cloud config, just save app settings
