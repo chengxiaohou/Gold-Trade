@@ -251,6 +251,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     };
     
     const newStockSettings: StockSettings = {
+      tagColors: stockSettings?.tagColors || {},
       visibleColumns: currentPage === 'stock' ? visibleColumns : stockSettings?.visibleColumns,
       dividendRateColumns: currentPage === 'stock' ? dividendRateColumns : stockSettings?.dividendRateColumns,
       dividendRateColorRanges: currentPage === 'stock' ? dividendRateColorRanges : stockSettings?.dividendRateColorRanges,

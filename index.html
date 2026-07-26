@@ -2,7 +2,7 @@
 <html lang="zh-CN" class="dark" style="color-scheme: dark;">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>GoldCost Pro - 黄金持仓成本预估</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -96,6 +96,12 @@
         background-color: var(--app-bg);
         color: var(--app-text);
         transition: background-color 0.3s, color 0.3s;
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+      }
+
+      input, select, textarea {
+        font-size: 16px !important;
       }
 
       .font-mono, [class*="font-mono"] {

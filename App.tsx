@@ -11,7 +11,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings } from './types';
 
-const APP_VERSION = 'v2.0.4';
+const APP_VERSION = 'v2.0.5';
 
 export default function App() {
   // --- Theme State ---
@@ -114,7 +114,9 @@ export default function App() {
             code = code.replace('.SH', '');
           }
           const res = await fetch(`https://qt.gtimg.cn/q=${market}${code}`);
-          const text = await res.text();
+          const buffer = await res.arrayBuffer();
+          const decoder = new TextDecoder('gb18030');
+          const text = decoder.decode(buffer);
           const match = text.match(/v_\w+="([^"]+)"/);
           if (match && match[1]) {
             const data = match[1].split('~');

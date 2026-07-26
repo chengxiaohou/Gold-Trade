@@ -285,7 +285,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   
   const latestUpdateTime = stocks.reduce((max, stock) => Math.max(max, stock.priceUpdatedAt || 0), 0);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editingDividendRate, setEditingDividendRate] = useState<string | null>(null);
   const [newStock, setNewStock] = useState({
     code: '',
     name: '',
@@ -370,6 +369,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setDragOverId(null);
   };
 
+  const getFullCode = (inputCode: string): string => {
+    const code = inputCode.trim().toUpperCase();
+    if (code.includes('.SH') || code.includes('.SZ')) {
+      return code;
+    }
+    const numCode = parseInt(code, 10);
+    if (isNaN(numCode)) return code;
+    if (numCode >= 600000) return `${code}.SH`;
+    if (numCode >= 1 && numCode <= 4999) return `${code}.SZ`;
+    if (numCode >= 300000 && numCode <= 399999) return `${code}.SZ`;
+    if (numCode >= 688000 && numCode <= 699999) return `${code}.SH`;
+    if (numCode >= 430000 && numCode <= 439999) return `${code}.SZ`;
+    return `${code}.SH`;
+  };
+
+  const getDisplayCode = (fullCode: string): string => {
+    return fullCode.replace('.SH', '').replace('.SZ', '');
+  };
+
   const fetchStockPrice = useCallback(async (stockCode: string): Promise<{
     price: number;
     name: string;
@@ -392,7 +410,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       
       const url = `https://qt.gtimg.cn/q=${market}${code}`;
       const response = await fetch(url);
-      const text = await response.text();
+      const buffer = await response.arrayBuffer();
+      const decoder = new TextDecoder('gb18030');
+      const text = decoder.decode(buffer);
       
       const match = text.match(/v_\w+="([^"]+)"/);
       if (match && match[1]) {
@@ -409,7 +429,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           }
           
           return {
-            name: data[1],
+            name: data[1].replace(/\s/g, ''),
             price: price,
             changePercent: changePercent,
             high: high || price,
@@ -497,7 +517,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const handleAddStock = useCallback(async () => {
     if (!newStock.code.trim()) return;
 
-    const existing = stocks.find(s => s.code.toLowerCase() === newStock.code.toLowerCase());
+    const stockCode = getFullCode(newStock.code);
+    const existing = stocks.find(s => s.code.toLowerCase() === stockCode.toLowerCase());
     if (existing) {
       alert('该股票已存在');
       return;
@@ -506,7 +527,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setIsRefreshing(new Set(['new']));
     try {
       let result = null;
-      const stockCode = newStock.code;
       result = await fetchStockPrice(stockCode);
 
       const dividend2024 = 0;
@@ -515,7 +535,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       const newEntry: StockEntry = {
         id: Date.now().toString(),
         code: stockCode,
-        name: result?.name || newStock.name || stockCode,
+        name: newStock.name || result?.name || stockCode,
         price: result?.price || 0,
         changePercent: result?.changePercent || 0,
         high: result?.high || 0,
@@ -548,7 +568,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     onStocksChange(stocks.map(s => {
       if (s.id !== id) return s;
       
-      let newStock = { ...s, [field]: value };
+      let newValue = value;
+      if (field === 'code' && typeof value === 'string') {
+        newValue = getFullCode(value);
+      }
+      
+      let newStock = { ...s, [field]: newValue };
       
       if (field === 'dividend2025') {
         const dividend = typeof value === 'number' ? value : parseFloat(value) || 0;
@@ -558,30 +583,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       
       return newStock;
     }));
-  }, [stocks, onStocksChange]);
-
-  const handleDividendRatePriceChange = useCallback((id: string, rateKey: string, price: string) => {
-    const stock = stocks.find(s => s.id === id);
-    if (!stock) return;
-    
-    const newPrice = parseFloat(price) || 0;
-    if (newPrice <= 0) return;
-    
-    const rate = parseFloat(rateKey) / 100;
-    const newDividend = newPrice * rate;
-    
-    onStocksChange(stocks.map(s => {
-      if (s.id !== id) return s;
-      
-      return {
-        ...s,
-        dividend2025: newDividend,
-        dividendRates: calculateDividendRates(newDividend),
-        dividendRate2025: s.price > 0 ? (newDividend / s.price) * 100 : 0,
-      };
-    }));
-    
-    setEditingDividendRate(null);
   }, [stocks, onStocksChange]);
 
   const formatUpdateTime = (timestamp: number | null): string => {
@@ -603,8 +604,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <input
                 type="text"
                 value={newStock.code}
-                onChange={(e) => setNewStock(prev => ({ ...prev, code: e.target.value.toUpperCase() }))}
-                placeholder="如 600519.SH"
+                onChange={(e) => setNewStock(prev => ({ ...prev, code: e.target.value }))}
+                placeholder="如 600519（自动识别市场）"
                 className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2.5 text-app-text font-mono text-sm focus:border-brand-yellow focus:ring-1 focus:ring-brand-yellow/50 outline-none transition-all"
                 autoFocus
               />
@@ -746,15 +747,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           />}
                           {cols.includes('code') && <input
                             type="text"
-                            value={stock.code}
+                            value={getDisplayCode(stock.code)}
                             onChange={(e) => handleUpdateField(stock.id, 'code', e.target.value.toUpperCase())}
                             className="w-full bg-app-input border border-brand-yellow rounded px-2 py-1 text-xs font-mono text-app-text outline-none"
                           />}
                         </div>
                       ) : (
                         <div className="relative flex items-center justify-start h-10 whitespace-nowrap">
-                          <span className={`text-xs font-bold leading-none ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>{stock.name.length > 4 ? stock.name.slice(0, 4) + '…' : stock.name}</span>
-                          <span className="font-mono text-[9px] leading-none text-app-rowtext absolute bottom-0 left-0" style={{ opacity: 0.6 }}>{stock.code}</span>
+                          <span className={`text-xs font-bold leading-none ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>{(() => { const n = stock.name.replace(/\s/g, ''); return n.length > 4 ? n.slice(0, 4) + '…' : n; })()}</span>
+                          <span className="font-mono text-[9px] leading-none text-app-rowtext absolute bottom-0 left-0" style={{ opacity: 0.6 }}>{getDisplayCode(stock.code)}</span>
                         </div>
                       )}
                     </div>
@@ -787,30 +788,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </td>}
                   {cols.includes('dividendRates') && rateCols.map((rate, idx) => (
                     <td key={rate} className={`px-2 py-2 text-center min-w-[40px] border-l border-r border-app-border`}>
-                      {editingDividendRate === `${stock.id}-${rate}` ? (
-                        <input
-                          type="number"
-                          defaultValue={formatPrice(stock.dividendRates[rate] || 0)}
-                          onBlur={(e) => handleDividendRatePriceChange(stock.id, rate, e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.target.blur();
-                            } else if (e.key === 'Escape') {
-                              setEditingDividendRate(null);
-                            }
-                          }}
-                          step="0.01"
-                          className="w-full bg-app-input border border-brand-yellow rounded px-1 py-0.5 text-xs font-mono text-app-text outline-none text-center"
-                          autoFocus
-                        />
-                      ) : (
-                        <span 
-                          className="font-mono text-xs text-app-rowtext cursor-pointer hover:text-brand-yellow"
-                          onClick={() => setEditingDividendRate(`${stock.id}-${rate}`)}
-                        >
-                          {formatPrice(stock.dividendRates[rate] || 0)}
-                        </span>
-                      )}
+                      <span className="font-mono text-xs text-app-rowtext">
+                        {formatPrice(stock.dividendRates[rate] || 0)}
+                      </span>
                     </td>
                   ))}
                   {cols.includes('dividend2024') && <td className="px-3 py-2 text-center border-r border-app-border">
@@ -860,10 +840,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       )}
                       <button
                         onClick={() => handleDeleteStock(stock.id)}
-                        className="p-1 hover:bg-brand-red/20 rounded transition-colors"
+                        className="text-app-subtext hover:text-red-400 transition-colors p-1"
                         title="删除"
                       >
-                        <X size={14} className="text-app-subtext hover:text-brand-red" />
+                        <Trash2 size={14} />
                       </button>
                     </div>
                   </td>
