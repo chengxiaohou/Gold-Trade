@@ -1378,20 +1378,22 @@ export default function App() {
       <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".json" />
 
       <div className="max-w-[1400px] w-full pb-12 flex flex-col">
+        {currentPage === 'gold' && (
         <header className="mb-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-bold text-app-subtext tracking-wide">{currentPage === 'gold' ? '黄金交易模拟' : '股息率一览表'}</h1>
+            <h1 className="text-3xl font-bold text-app-subtext tracking-wide">黄金交易模拟</h1>
             <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1">{APP_VERSION}</span>
             <button
               onClick={togglePage}
               className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1 transition-colors"
-              title={currentPage === 'gold' ? '切换到股票股息率计算器' : '切换到黄金交易模拟'}
+              title="切换到股票股息率计算器"
             >
-              [{currentPage === 'gold' ? '股票' : '黄金'}]
+              [股票]
             </button>
           </div>
 
         </header>
+        )}
 
         {currentPage === 'gold' ? (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6 items-start">
@@ -1750,6 +1752,8 @@ export default function App() {
             onTagColorsChange={(colors) => setStockSettings(prev => ({ ...prev, tagColors: colors }))}
             maxRows={stockSettings.maxRows}
             actionButtons={renderStockActionButtons()}
+            appVersion={APP_VERSION}
+            onTogglePage={togglePage}
           />
         )}
         <div className="lg:hidden mt-2 order-3">{currentPage === 'gold' && renderActionButtons()}</div>

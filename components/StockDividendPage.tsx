@@ -888,13 +888,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             </div>
             <div className="flex gap-2 mt-4">
               <button
-                onClick={handleAddStock}
-                disabled={!newStock.code.trim() || isRefreshing.has('new')}
-                className="flex-1 py-2 rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 bg-brand-yellow text-slate-900 hover:bg-[#fdd835]"
-              >
-                <Plus size={14} />添加
-              </button>
-              <button
                 onClick={() => {
                   onCloseAdding();
                   setNewStock({ code: '', name: '' });
@@ -902,6 +895,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 className="flex-1 py-2 rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transform active:scale-[0.98] border border-app-border text-app-subtext hover:bg-app-input hover:text-app-text"
               >
                 取消
+              </button>
+              <button
+                onClick={handleAddStock}
+                disabled={!newStock.code.trim() || isRefreshing.has('new')}
+                className="flex-1 py-2 rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 bg-brand-yellow text-slate-900 hover:bg-[#fdd835]"
+              >
+                <Plus size={14} />添加
               </button>
             </div>
           </div>
@@ -957,17 +957,29 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 股息率对应股价（基于2025年分红 ¥{formatPrice(stock.dividend2025)}）
               </div>
               <div className="grid grid-cols-3 gap-1">
-                {rateCols.map(rate => {
-                  const price = stock.dividendRates[rate] || 0;
-                  return (
-                    <div key={rate} className="flex flex-col items-center p-1 bg-app-input rounded">
-                      <span className="text-[10px] text-app-subtext">{rate}</span>
-                      <span className="font-mono text-xs font-bold text-app-text">
-                        {formatPrice(price)}
-                      </span>
-                    </div>
-                  );
-                })}
+                {(() => {
+                  const minRate = Math.min(...rateCols.map(r => parseFloat(r.replace('%', ''))));
+                  const maxRate = Math.max(...rateCols.map(r => parseFloat(r.replace('%', ''))));
+                  const currentRate = stock.dividendRate2025;
+                  const highlightIdx = currentRate <= minRate ? 0 : currentRate >= maxRate ? rateCols.length - 1 : rateCols.findIndex((rate, idx) => {
+                    const rateNum = parseFloat(rate.replace('%', ''));
+                    const nextRateNum = idx < rateCols.length - 1 ? parseFloat(rateCols[idx + 1].replace('%', '')) : Infinity;
+                    return currentRate >= rateNum && currentRate < nextRateNum;
+                  });
+                  const rateColorClass = highlightIdx >= 0 ? getDividendRateColor(currentRate, ranges) : '';
+                  return rateCols.map((rate, idx) => {
+                    const price = stock.dividendRates[rate] || 0;
+                    const isCurrentRate = idx === highlightIdx;
+                    return (
+                      <div key={rate} className={`flex flex-col items-center p-1 rounded ${isCurrentRate ? 'bg-indigo-500/10 ring-1 ring-indigo-500/30' : 'bg-app-input'}`}>
+                        <span className={`text-[10px] ${isCurrentRate ? rateColorClass : 'text-app-subtext'}`}>{rate}</span>
+                        <span className={`font-mono text-xs font-bold ${isCurrentRate ? rateColorClass : 'text-app-text'}`}>
+                          {formatPrice(price)}
+                        </span>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             </div>
           </>,
