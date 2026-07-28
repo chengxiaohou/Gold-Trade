@@ -298,6 +298,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [editTagState, setEditTagState] = useState<{ id: string, top: number, left: number } | null>(null);
+  const [deletingStockId, setDeletingStockId] = useState<string | null>(null);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -790,7 +791,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     )}
                   </td>}
                   <td className="px-1 py-1.5 text-center border-l border-app-border">
-                    <div className="flex items-center justify-center gap-0.5">
+                    <div className="flex items-center justify-center gap-2">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -824,8 +825,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         </button>
                       )}
                       <button
-                        onClick={() => handleDeleteStock(stock.id)}
-                        className="text-app-subtext hover:text-red-400 transition-colors p-0.5"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeletingStockId(stock.id);
+                        }}
+                        className={`p-0.5 rounded transition-colors ${deletingStockId === stock.id ? 'bg-red-500/20 text-red-400' : 'text-app-subtext hover:bg-app-input'}`}
                         title="删除"
                       >
                         <Trash2 size={12} />
@@ -958,15 +962,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               </div>
               <div className="grid grid-cols-3 gap-1">
                 {(() => {
-                  const minRate = Math.min(...rateCols.map(r => parseFloat(r.replace('%', ''))));
-                  const maxRate = Math.max(...rateCols.map(r => parseFloat(r.replace('%', ''))));
                   const currentRate = stock.dividendRate2025;
-                  const highlightIdx = currentRate <= minRate ? 0 : currentRate >= maxRate ? rateCols.length - 1 : rateCols.findIndex((rate, idx) => {
-                    const rateNum = parseFloat(rate.replace('%', ''));
-                    const nextRateNum = idx < rateCols.length - 1 ? parseFloat(rateCols[idx + 1].replace('%', '')) : Infinity;
-                    return currentRate >= rateNum && currentRate < nextRateNum;
-                  });
-                  const rateColorClass = highlightIdx >= 0 ? getDividendRateColor(currentRate, ranges) : '';
+                  const rateNums = rateCols.map(r => parseFloat(r.replace('%', '')));
+                  const highlightIdx = rateNums.reduce((closestIdx, val, idx) => 
+                    Math.abs(val - currentRate) < Math.abs(rateNums[closestIdx] - currentRate) ? idx : closestIdx
+                  , 0);
+                  const rateColorClass = getDividendRateColor(currentRate, ranges);
                   return rateCols.map((rate, idx) => {
                     const price = stock.dividendRates[rate] || 0;
                     const isCurrentRate = idx === highlightIdx;
@@ -980,6 +981,48 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     );
                   });
                 })()}
+              </div>
+            </div>
+          </>,
+          document.body
+        );
+      })()}
+      {deletingStockId && (() => {
+        const stock = stocks.find(s => s.id === deletingStockId);
+        if (!stock) return null;
+        return createPortal(
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/40"
+              onClick={() => setDeletingStockId(null)}
+            />
+            <div className="fixed inset-0 z-50 flex items-center justify-center">
+              <div className="bg-app-card border border-app-border rounded-xl shadow-xl p-5 w-72">
+                <div className="text-sm font-bold text-app-text mb-1">确认删除</div>
+                <div className="text-xs text-app-subtext mb-4">
+                  确定要删除 <span className="text-app-text font-medium">{stock.name}</span> 吗？此操作无法撤销。
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeletingStockId(null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium border border-app-border text-app-subtext hover:bg-app-input transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteStock(stock.id);
+                      setDeletingStockId(null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/90 text-white hover:bg-red-500 transition-colors"
+                  >
+                    删除
+                  </button>
+                </div>
               </div>
             </div>
           </>,

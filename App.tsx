@@ -278,6 +278,7 @@ export default function App() {
     ];
     setStocks(defaultStocks);
     setStockSettings({
+      tagColors: {},
       visibleColumns: ['code', 'name', 'price', 'changePercent', 'high', 'low', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'],
       dividendRateColumns: ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'],
       dividendRateColorRanges: [
