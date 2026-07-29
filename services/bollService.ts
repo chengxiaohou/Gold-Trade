@@ -19,6 +19,9 @@ export interface BollResult {
   unsupported?: boolean; // 数据源不支持该周期
 }
 
+// 检测是否为生产环境（非开发服务器）
+const isProduction = typeof window !== 'undefined' && !window.location.origin.includes('localhost');
+
 // 请求频率限制：每个数据源最多5次/秒
 const MIN_REQUEST_INTERVAL = 200;
 const lastRequestTime: Record<string, number> = {};
@@ -207,7 +210,10 @@ async function fetchBollFromTencent(
   const adjustParam = adjustMap[adjust];
   const count = 80;
 
-  const url = `/api/tencent/appstock/app/fqkline/get?param=${code},${periodParam},,,${count},${adjustParam}`;
+  // 生产环境直接请求腾讯真实URL，开发环境使用代理
+  const url = isProduction
+    ? `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},${periodParam},,,${count},${adjustParam}`
+    : `/api/tencent/appstock/app/fqkline/get?param=${code},${periodParam},,,${count},${adjustParam}`;
 
   const response = await fetch(url);
   if (!response.ok) {
@@ -287,7 +293,10 @@ async function fetchBollFromSina(
   const scale = getScaleParam(period);
   const fullCode = `${market}${code}`;
 
-  const url = `/api/sina/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${fullCode}&scale=${scale}&ma=no&datalen=80`;
+  // 生产环境直接请求新浪真实URL，开发环境使用代理
+  const url = isProduction
+    ? `https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${fullCode}&scale=${scale}&ma=no&datalen=80`
+    : `/api/sina/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${fullCode}&scale=${scale}&ma=no&datalen=80`;
 
   const response = await fetch(url);
   if (!response.ok) {
