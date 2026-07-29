@@ -50,6 +50,8 @@ export interface GithubConfig {
   gistId: string;
 }
 
+export type ApiSource = 'sina' | 'tencent';
+
 export interface AppSettings {
   priceStep: number;
   gramsStep: number;
@@ -62,6 +64,7 @@ export interface AppSettings {
   sellTaxFee?: number; // New: Tax fee per sell transaction
   dividendRate?: number; // New: Dividend annual rate (%)
   dividendPeriod?: number; // New: Dividend period in months
+  apiSource?: ApiSource; // New: API source for stock data ('sina' or 'tencent')
 }
 
 export type StockDividendRates = Record<string, number>;

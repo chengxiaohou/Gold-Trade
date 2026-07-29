@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye } from 'lucide-react';
-import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings } from '../types';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, ArrowUpDown } from 'lucide-react';
+import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
+import { fetchBollData, BollData, BollPeriod, BollAdjust } from '../services/bollService';
 
 const TAG_PALETTE = [
   { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20', hover: 'hover:border-gray-500/50' },
   { key: 'indigo', label: '默认', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20', hover: 'hover:border-indigo-500/50' },
   { key: 'red', label: '红色', bg: 'bg-red-500/10', text: 'text-red-500', border: 'border-red-500/20', hover: 'hover:border-red-500/50' },
-  { key: 'green', label: '绿色', bg: 'bg-green-500/10', text: 'text-green-500', border: 'border-green-500/20', hover: 'hover:border-green-500/50' },
+  { key: 'green', label: '绿色', bg: 'bg-brand-green/10', text: 'text-brand-green', border: 'border-brand-green/20', hover: 'hover:border-brand-green/50' },
   { key: 'yellow', label: '黄色', bg: 'bg-[var(--soft-yellow-bg)]', text: 'text-brand-softYellow', border: 'border-[var(--soft-yellow-border)]', hover: 'hover:border-[var(--soft-yellow-hover)]' },
   { key: 'blue', label: '蓝色', bg: 'bg-blue-500/10', text: 'text-blue-500', border: 'border-blue-500/20', hover: 'hover:border-blue-500/50' },
   { key: 'orange', label: '橙色', bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/20', hover: 'hover:border-orange-500/50' },
@@ -212,6 +213,7 @@ interface StockDividendPageProps {
   actionButtons?: React.ReactNode;
   appVersion?: string;
   onTogglePage?: () => void;
+  apiSource?: ApiSource;
 }
 
 const DEFAULT_DIVIDEND_RATES: StockDividendRates = {
@@ -238,13 +240,61 @@ const formatPrice = (price: number): string => {
   return price.toFixed(2);
 };
 
+const formatFetchTime = (timestamp: number): string => {
+  if (!timestamp || timestamp < 1000000000000) return '-';
+  const now = Date.now();
+  const diff = now - timestamp;
+  
+  if (diff < 60 * 1000) return '刚刚';
+  if (diff < 60 * 60 * 1000) return `${Math.floor(diff / (60 * 1000))}分钟前`;
+  if (diff < 24 * 60 * 60 * 1000) return `${Math.floor(diff / (60 * 60 * 1000))}小时前`;
+  
+  const date = new Date(timestamp);
+  return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+};
+
+interface BollPosition {
+  band: 'upper' | 'mid' | 'lower';
+  percent: number;
+}
+
+const getBollPosition = (data: BollData | null, currentPrice: number): BollPosition | null => {
+  if (!data || !currentPrice) return null;
+  
+  const { upper, mid, lower } = data;
+  
+  if (currentPrice >= upper) {
+    return { band: 'upper', percent: ((currentPrice - upper) / upper) * 100 };
+  } else if (currentPrice <= lower) {
+    return { band: 'lower', percent: ((currentPrice - lower) / lower) * 100 };
+  } else {
+    const distToUpper = Math.abs(currentPrice - upper);
+    const distToMid = Math.abs(currentPrice - mid);
+    const distToLower = Math.abs(currentPrice - lower);
+    
+    if (distToUpper <= distToMid && distToUpper <= distToLower) {
+      return { band: 'upper', percent: ((currentPrice - upper) / upper) * 100 };
+    } else if (distToMid <= distToLower) {
+      return { band: 'mid', percent: ((currentPrice - mid) / mid) * 100 };
+    } else {
+      return { band: 'lower', percent: ((currentPrice - lower) / lower) * 100 };
+    }
+  }
+};
+
+const getBollBandLabel = (period: BollPeriod, band: BollPosition['band']): string => {
+  const periodMap: Record<BollPeriod, string> = { daily: '日', weekly: '周', monthly: '月' };
+  const bandMap = { upper: '上', mid: '中', lower: '下' };
+  return `${periodMap[period]}${bandMap[band]}`;
+};
+
 const getDividendRateColor = (rate: number, colorRanges: DividendRateColorRange[]): string => {
   if (!rate || rate <= 0) return 'text-app-rowtext';
   const COLOR_MAP: Record<string, string> = {
     'indigo': 'text-indigo-500',
     'gray': 'text-gray-500',
     'red': 'text-red-500',
-    'green': 'text-green-500',
+    'green': 'text-brand-green',
     'yellow': 'text-brand-softYellow',
     'blue': 'text-blue-500',
     'orange': 'text-orange-500',
@@ -275,7 +325,7 @@ const formatPercent = (percent: number): string => {
   return percent.toFixed(2) + '%';
 };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'sina' as ApiSource }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
   const rateCols = dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'];
@@ -299,6 +349,51 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [editTagState, setEditTagState] = useState<{ id: string, top: number, left: number } | null>(null);
   const [deletingStockId, setDeletingStockId] = useState<string | null>(null);
+  const [sortMode, setSortMode] = useState<'default' | 'dividendRate' | 'tag'>('default');
+  const [bollData, setBollData] = useState<BollData | null>(null);
+  const [bollError, setBollError] = useState<string | null>(null);
+  const [bollPeriod, setBollPeriod] = useState<BollPeriod>('daily');
+  const [bollAdjust, setBollAdjust] = useState<BollAdjust>('qfq');
+  const [bollPopupApiSource, setBollPopupApiSource] = useState<ApiSource>('sina');
+  const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
+  const [stockBollErrorMap, setStockBollErrorMap] = useState<Map<string, { daily?: string; weekly?: string; monthly?: string }>>(new Map());
+
+  useEffect(() => {
+    const fetchAllBoll = async () => {
+      // 只在前复权模式下批量获取所有股票的BOLL数据
+      // 不复权模式需要实时价格，请求量太大，只在用户点击时获取
+      if (bollAdjust === 'none') {
+        setStockBollMap(new Map());
+        setStockBollErrorMap(new Map());
+        return;
+      }
+      
+      const newMap = new Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>();
+      const newErrorMap = new Map<string, { daily?: string; weekly?: string; monthly?: string }>();
+      for (const stock of stocks) {
+        const [dailyR, weeklyR, monthlyR] = await Promise.all([
+          fetchBollData(stock.code, 'daily', bollAdjust, apiSource),
+          fetchBollData(stock.code, 'weekly', bollAdjust, apiSource),
+          fetchBollData(stock.code, 'monthly', bollAdjust, apiSource),
+        ]);
+        newMap.set(stock.id, {
+          daily: dailyR.data,
+          weekly: weeklyR.data,
+          monthly: monthlyR.data,
+        });
+        const errors: { daily?: string; weekly?: string; monthly?: string } = {};
+        if (dailyR.error) errors.daily = dailyR.error;
+        if (weeklyR.error) errors.weekly = weeklyR.error;
+        if (monthlyR.error) errors.monthly = monthlyR.error;
+        if (Object.keys(errors).length > 0) {
+          newErrorMap.set(stock.id, errors);
+        }
+      }
+      setStockBollMap(newMap);
+      setStockBollErrorMap(newErrorMap);
+    };
+    fetchAllBoll();
+  }, [stocks, bollAdjust]);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -307,6 +402,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     stocks.forEach(s => { if (s.tag && s.tag.trim()) tags.add(s.tag.trim()); });
     return Array.from(tags).sort();
   }, [stocks]);
+
+  const sortedStocks = useMemo(() => {
+    if (sortMode === 'dividendRate') {
+      return [...stocks].sort((a, b) => b.dividendRate2025 - a.dividendRate2025);
+    } else if (sortMode === 'tag') {
+      return [...stocks].sort((a, b) => {
+        const aHasTag = a.tag && a.tag.trim() ? 0 : 1;
+        const bHasTag = b.tag && b.tag.trim() ? 0 : 1;
+        if (aHasTag !== bHasTag) return aHasTag - bHasTag;
+        const aTag = (a.tag || '').trim();
+        const bTag = (b.tag || '').trim();
+        return aTag.localeCompare(bTag);
+      });
+    }
+    return stocks;
+  }, [stocks, sortMode]);
 
   const handleEditTagClick = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -643,15 +754,37 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               {cols.includes('dividendRate2025') && <col style={{ width: '55px' }} />}
               {cols.includes('price') && <col style={{ width: '75px' }} />}
               {cols.includes('changePercent') && <col style={{ width: '55px' }} />}
+              <col style={{ width: '65px' }} />
+              <col style={{ width: '65px' }} />
+              <col style={{ width: '65px' }} />
               {cols.includes('dividend2024') && <col style={{ width: '50px' }} />}
               {cols.includes('dividend2025') && <col style={{ width: '50px' }} />}
               <col style={{ width: '60px' }} />
             </colgroup>
             <thead className="sticky top-0 z-30 overflow-hidden">
               <tr className="bg-app-input">
-                <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap sticky left-0 z-20" rowSpan={2}>标签</th>
+                <th
+                  className={`px-1 py-2 text-center text-xs uppercase font-bold tracking-wider border-b border-app-border border-r border-app-border sticky left-0 z-20 cursor-pointer select-none whitespace-nowrap ${sortMode === 'tag' ? 'text-indigo-400' : 'text-app-subtext'} bg-app-input`}
+                  rowSpan={2}
+                  onClick={() => setSortMode(sortMode === 'tag' ? 'default' : 'tag')}
+                >
+                  <div className="flex items-center justify-center gap-0.5">
+                    标签
+                    <ArrowUpDown size={10} className={sortMode === 'tag' ? 'text-indigo-400' : 'opacity-50'} />
+                  </div>
+                </th>
                 {(cols.includes('code') || cols.includes('name')) && <th className="px-2 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap sticky left-[36px] z-10">股票名称</th>}
-                {cols.includes('dividendRate2025') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">股息率</th>}
+                {cols.includes('dividendRate2025') && (
+                  <th
+                    className={`px-1 py-2 text-center text-xs uppercase font-bold tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none ${sortMode === 'dividendRate' ? 'text-indigo-400' : 'text-app-subtext'}`}
+                    onClick={() => setSortMode(sortMode === 'dividendRate' ? 'default' : 'dividendRate')}
+                  >
+                    <div className="flex items-center justify-center gap-0.5">
+                      股息率
+                      <ArrowUpDown size={10} className={sortMode === 'dividendRate' ? 'text-indigo-400' : 'opacity-50'} />
+                    </div>
+                  </th>
+                )}
                 {cols.includes('price') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">
                     <div className="flex items-center justify-center gap-1 whitespace-nowrap">
                       价格
@@ -666,6 +799,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </div>
                   </th>}
                 {cols.includes('changePercent') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">涨跌幅</th>}
+                <th
+                className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none hover:bg-app-card transition-colors"
+                colSpan={3}
+                onClick={() => setBollAdjust(bollAdjust === 'qfq' ? 'none' : 'qfq')}
+                title="点击切换前复权/除权"
+              >
+                <div className="flex items-center justify-center gap-1">
+                  <span>布林线 - {bollAdjust === 'qfq' ? '前复权' : '除权'}</span>
+                </div>
+              </th>
                 {cols.includes('dividend2024') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">分红</th>}
                 {cols.includes('dividend2025') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border bg-app-input whitespace-nowrap">分红</th>}
                 <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-l border-app-border" rowSpan={2}>操作</th>
@@ -673,12 +816,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <tr className="bg-app-input">
                 {(cols.includes('code') || cols.includes('name')) && <th className="px-2 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border sticky left-[36px] z-10">代码</th>}
                 {(cols.includes('dividendRate2025') || cols.includes('price') || cols.includes('changePercent')) && <th colSpan={3} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap">{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</th>}
+                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">日线</th>
+                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">周线</th>
+                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">月线</th>
                 {cols.includes('dividend2024') && <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">2024</th>}
                 {cols.includes('dividend2025') && <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border">2025</th>}
               </tr>
             </thead>
             <tbody>
-              {stocks.map(stock => (
+              {sortedStocks.map(stock => (
                 <tr 
                   key={stock.id} 
                   className={`group border-t border-app-border hover:bg-app-hover transition-colors ${dragOverId === stock.id ? 'bg-brand-yellow/10' : ''}`}
@@ -764,6 +910,32 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       {stock.changePercent >= 0 ? '+' : ''}{formatPercent(stock.changePercent)}
                     </span>
                   </td>}
+                  {(() => {
+                    const bollInfo = stockBollMap.get(stock.id);
+                    const price = stock.price || 0;
+                    const periods: { key: BollPeriod; data: BollData | null }[] = [
+                      { key: 'daily', data: bollInfo?.daily ?? null },
+                      { key: 'weekly', data: bollInfo?.weekly ?? null },
+                      { key: 'monthly', data: bollInfo?.monthly ?? null },
+                    ];
+                    return periods.map(({ key, data }, idx) => {
+                      const pos = getBollPosition(data, price);
+                      const bandColor = pos?.band === 'upper' ? 'text-brand-red' : pos?.band === 'lower' ? 'text-brand-green' : 'text-blue-500';
+                      const percentStr = pos ? `${pos.percent >= 0 ? '+' : ''}${pos.percent.toFixed(2)}%` : '-';
+                      return (
+                        <td key={key} className={`px-1 py-1.5 text-center ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}>
+                          {pos ? (
+                            <div className="flex flex-col items-center leading-tight">
+                              <span className={`text-[11px] font-bold ${bandColor}`}>{getBollBandLabel(key, pos.band)}</span>
+                              <span className="font-mono text-[10px] text-app-rowtext">{percentStr}</span>
+                            </div>
+                          ) : (
+                            <span className="text-app-subtext text-[11px]">-</span>
+                          )}
+                        </td>
+                      );
+                    });
+                  })()}
                   {cols.includes('dividend2024') && <td className="px-1 py-1.5 text-center border-r border-app-border">
                     {editingId === stock.id ? (
                       <input
@@ -796,10 +968,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         onClick={(e) => {
                           e.stopPropagation();
                           const rect = e.currentTarget.getBoundingClientRect();
+                          const popupW = 340;
+                          const popupH = 280;
+                          const centerY = rect.top + rect.height / 2;
+                          let top = centerY - popupH / 2;
+                          top = Math.max(12, Math.min(top, window.innerHeight - popupH - 12));
                           setShowRatesId(stock.id);
                           setRatesPopupPos({
-                            top: rect.bottom + 8,
-                            left: Math.min(rect.right + 8, window.innerWidth - 280)
+                            top,
+                            left: Math.min(Math.max(12, rect.right + 8), window.innerWidth - popupW - 12)
+                          });
+                          setBollPopupApiSource(apiSource);
+                          setBollData(null);
+                          setBollError(null);
+                          fetchBollData(stock.code, bollPeriod, bollAdjust, apiSource).then(result => {
+                            setBollData(result.data);
+                            setBollError(result.error || null);
                           });
                         }}
                         className={`p-0.5 rounded transition-colors ${showRatesId === stock.id ? 'bg-indigo-500/20 text-indigo-400' : 'text-app-subtext hover:bg-app-input'}`}
@@ -938,6 +1122,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {showRatesId && (() => {
         const stock = stocks.find(s => s.id === showRatesId);
         if (!stock) return null;
+        
+        const reloadBoll = (period: BollPeriod, adjust: BollAdjust, source?: ApiSource) => {
+          setBollData(null);
+          setBollError(null);
+          const useSource = source || bollPopupApiSource;
+          fetchBollData(stock.code, period, adjust, useSource).then(result => {
+            setBollData(result.data);
+            setBollError(result.error || null);
+          });
+        };
+        
         return createPortal(
           <>
             <div 
@@ -945,7 +1140,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               onClick={() => setShowRatesId(null)}
             />
             <div 
-              className="fixed z-50 bg-app-card border border-app-border rounded-lg shadow-xl p-3 w-64"
+              className="fixed z-50 bg-app-card border border-app-border rounded-lg shadow-xl p-3 w-[340px]"
               style={{ top: ratesPopupPos.top, left: ratesPopupPos.left }}
             >
               <div className="flex items-center justify-between mb-2">
@@ -960,7 +1155,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <div className="text-[10px] text-app-subtext mb-2">
                 股息率对应股价（基于2025年分红 ¥{formatPrice(stock.dividend2025)}）
               </div>
-              <div className="grid grid-cols-3 gap-1">
+              <div className="grid grid-cols-3 gap-1 mb-3">
                 {(() => {
                   const currentRate = stock.dividendRate2025;
                   const rateNums = rateCols.map(r => parseFloat(r.replace('%', '')));
@@ -981,6 +1176,63 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     );
                   });
                 })()}
+              </div>
+              <div className="border-t border-app-border pt-2">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] text-app-subtext">BOLL (20, 2)</span>
+                </div>
+                <div className="flex items-center gap-1 mb-2">
+                  {(['daily', 'weekly', 'monthly'] as BollPeriod[]).map(p => (
+                    <button
+                      key={p}
+                      onClick={() => { setBollPeriod(p); reloadBoll(p, bollAdjust); }}
+                      className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${bollPeriod === p ? 'bg-indigo-500/20 text-indigo-400' : 'bg-app-input text-app-subtext hover:bg-app-input/80'}`}
+                    >
+                      {p === 'daily' ? '日线' : p === 'weekly' ? '周线' : '月线'}
+                    </button>
+                  ))}
+                  <div className="w-px h-3 bg-app-border mx-0.5" />
+                  {(['qfq', 'none'] as BollAdjust[]).map(a => (
+                    <button
+                      key={a}
+                      onClick={() => { setBollAdjust(a); reloadBoll(bollPeriod, a); }}
+                      className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${bollAdjust === a ? 'bg-indigo-500/20 text-indigo-400' : 'bg-app-input text-app-subtext hover:bg-app-input/80'}`}
+                    >
+                      {a === 'qfq' ? '前复权' : '除权'}
+                    </button>
+                  ))}
+                  <div className="w-px h-3 bg-app-border mx-0.5" />
+                  {(['sina', 'tencent'] as ApiSource[]).map(s => (
+                    <button
+                      key={s}
+                      onClick={() => { setBollPopupApiSource(s); reloadBoll(bollPeriod, bollAdjust, s); }}
+                      className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${bollPopupApiSource === s ? 'bg-indigo-500/20 text-indigo-400' : 'bg-app-input text-app-subtext hover:bg-app-input/80'}`}
+                    >
+                      {s === 'sina' ? '新浪' : '腾讯'}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-3 gap-1">
+                    <div className="flex flex-col items-center p-1 rounded bg-app-input">
+                      <span className="text-[10px] text-app-subtext">上轨</span>
+                      <span className="font-mono text-xs font-bold text-red-400">{bollData ? formatPrice(bollData.upper) : '-'}</span>
+                    </div>
+                    <div className="flex flex-col items-center p-1 rounded bg-app-input">
+                      <span className="text-[10px] text-app-subtext">中轨</span>
+                      <span className="font-mono text-xs font-bold text-blue-400">{bollData ? formatPrice(bollData.mid) : '-'}</span>
+                    </div>
+                    <div className="flex flex-col items-center p-1 rounded bg-app-input">
+                      <span className="text-[10px] text-app-subtext">下轨</span>
+                      <span className="font-mono text-xs font-bold text-brand-green">{bollData ? formatPrice(bollData.lower) : '-'}</span>
+                    </div>
+                    <div className="col-span-3 flex justify-between items-center text-[10px] text-app-subtext mt-1 px-1">
+                      <span>价格 {formatPrice(stock.price || 0)} - {formatFetchTime(stock.priceUpdatedAt || 0)}</span>
+                      <span className="font-mono whitespace-nowrap">
+                        {bollError ? <span className="text-red-400">{bollError}</span> : 
+                         <span>BOLL数据 {formatFetchTime(bollData?.fetchedAt || 0)}</span>}
+                      </span>
+                    </div>
+                  </div>
               </div>
             </div>
           </>,

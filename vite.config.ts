@@ -15,6 +15,44 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        proxy: {
+          '/api/tencent-realtime': {
+            target: 'https://qt.gtimg.cn',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/api\/tencent-realtime/, ''),
+            headers: {
+              'Referer': 'https://gu.qq.com/',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+          },
+          '/api/tencent': {
+            target: 'https://web.ifzq.gtimg.cn',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/api\/tencent/, ''),
+            headers: {
+              'Referer': 'https://gu.qq.com/',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+          },
+          '/api/sina-realtime': {
+            target: 'https://hq.sinajs.cn',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/api\/sina-realtime/, ''),
+            headers: {
+              'Referer': 'https://finance.sina.com.cn/',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+          },
+          '/api/sina': {
+            target: 'https://money.finance.sina.com.cn',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/api\/sina/, ''),
+            headers: {
+              'Referer': 'https://finance.sina.com.cn/',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+          }
+        }
       },
       plugins: [react()],
       define: {

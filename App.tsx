@@ -11,7 +11,7 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings } from './types';
 
-const APP_VERSION = 'v2.0.6';
+const APP_VERSION = 'v2.0.7';
 
 export default function App() {
   // --- Theme State ---
@@ -1755,6 +1755,7 @@ export default function App() {
             actionButtons={renderStockActionButtons()}
             appVersion={APP_VERSION}
             onTogglePage={togglePage}
+            apiSource={appSettings.apiSource || 'sina'}
           />
         )}
         <div className="lg:hidden mt-2 order-3">{currentPage === 'gold' && renderActionButtons()}</div>

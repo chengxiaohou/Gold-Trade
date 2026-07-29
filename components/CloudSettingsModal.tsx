@@ -1,8 +1,8 @@
 
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3 } from 'lucide-react';
-import { GithubConfig, AppSettings, StockSettings, DividendRateColorRange } from '../types';
+import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, TrendingUp } from 'lucide-react';
+import { GithubConfig, AppSettings, StockSettings, DividendRateColorRange, ApiSource } from '../types';
 import { validateConnection } from '../services/githubService';
 
 // All available columns in gold trade list
@@ -78,12 +78,13 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [newRange, setNewRange] = useState({ min: '', max: '', color: 'gray' });
   const [editingRangeIndex, setEditingRangeIndex] = useState<number | null>(null);
   const [maxRows, setMaxRows] = useState<number>(stockSettings?.maxRows || 15);
+  const [apiSource, setApiSource] = useState<ApiSource>(appSettings.apiSource || 'sina');
 
   const COLOR_OPTIONS = [
     { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20' },
     { key: 'indigo', label: '默认', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20' },
     { key: 'red', label: '红色', bg: 'bg-red-500/10', text: 'text-red-500', border: 'border-red-500/20' },
-    { key: 'green', label: '绿色', bg: 'bg-green-500/10', text: 'text-green-500', border: 'border-green-500/20' },
+    { key: 'green', label: '绿色', bg: 'bg-brand-green/10', text: 'text-brand-green', border: 'border-brand-green/20' },
     { key: 'yellow', label: '黄色', bg: 'bg-[var(--soft-yellow-bg)]', text: 'text-brand-softYellow', border: 'border-[var(--soft-yellow-border)]' },
     { key: 'blue', label: '蓝色', bg: 'bg-blue-500/10', text: 'text-blue-500', border: 'border-blue-500/20' },
     { key: 'orange', label: '橙色', bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/20' },
@@ -120,6 +121,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       }
       setBuyTaxFee((appSettings.buyTaxFee ?? 5).toString());
       setSellTaxFee((appSettings.sellTaxFee ?? 5).toString());
+      setApiSource(appSettings.apiSource || 'sina');
       setIsVerifying(false);
       setLogState(null);
       setEditingRangeIndex(null);
@@ -155,7 +157,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         totalCapital: appSettings.totalCapital, // Preserve existing total capital
         visibleColumns: currentPage === 'gold' ? visibleColumns : appSettings.visibleColumns,
         buyTaxFee: parseFloat(buyTaxFee) || 5,
-        sellTaxFee: parseFloat(sellTaxFee) || 5
+        sellTaxFee: parseFloat(sellTaxFee) || 5,
+        apiSource: apiSource,
     };
 
     const newStockSettings: StockSettings = {
@@ -248,7 +251,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       totalCapital: appSettings.totalCapital,
       visibleColumns: currentPage === 'gold' ? visibleColumns : appSettings.visibleColumns,
       buyTaxFee: parseFloat(buyTaxFee) || 5,
-      sellTaxFee: parseFloat(sellTaxFee) || 5
+      sellTaxFee: parseFloat(sellTaxFee) || 5,
+      apiSource: apiSource,
     };
     
     const newStockSettings: StockSettings = {
@@ -733,6 +737,39 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                              className="w-20 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
                              min="0"
                            />
+                        </div>
+
+                        <div className="space-y-2 pt-4 border-t border-white/5">
+                           <label className="text-sm font-medium text-app-text block flex items-center gap-2">
+                              <TrendingUp size={16} className="text-indigo-400"/> 行情数据来源
+                           </label>
+                           <p className="text-xs text-app-subtext">
+                              选择股票实时行情数据的来源接口。
+                           </p>
+                           <div className="flex gap-2">
+                             <button
+                               type="button"
+                               onClick={() => setApiSource('sina')}
+                               className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                                 apiSource === 'sina'
+                                   ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50'
+                                   : 'bg-app-input text-app-subtext border border-app-border hover:border-app-text/30'
+                               }`}
+                             >
+                               新浪财经
+                             </button>
+                             <button
+                               type="button"
+                               onClick={() => setApiSource('tencent')}
+                               className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                                 apiSource === 'tencent'
+                                   ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50'
+                                   : 'bg-app-input text-app-subtext border border-app-border hover:border-app-text/30'
+                               }`}
+                             >
+                               腾讯财经
+                             </button>
+                           </div>
                         </div>
                      </div>
                    </>
