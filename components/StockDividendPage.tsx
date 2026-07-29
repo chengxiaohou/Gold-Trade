@@ -214,6 +214,8 @@ interface StockDividendPageProps {
   appVersion?: string;
   onTogglePage?: () => void;
   apiSource?: ApiSource;
+  onResetStocks?: () => void;
+  resetSignal?: number;
 }
 
 const DEFAULT_DIVIDEND_RATES: StockDividendRates = {
@@ -325,7 +327,7 @@ const formatPercent = (percent: number): string => {
   return percent.toFixed(2) + '%';
 };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'sina' as ApiSource }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
   const rateCols = dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'];
@@ -349,9 +351,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [editTagState, setEditTagState] = useState<{ id: string, top: number, left: number } | null>(null);
   const [deletingStockId, setDeletingStockId] = useState<string | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  useEffect(() => {
+    if (resetSignal !== undefined && resetSignal > 0) {
+      setShowResetConfirm(true);
+    }
+  }, [resetSignal]);
   const [sortMode, setSortMode] = useState<'default' | 'dividendRate' | 'tag'>('default');
   const [bollData, setBollData] = useState<BollData | null>(null);
   const [bollError, setBollError] = useState<string | null>(null);
+  const [bollUnsupported, setBollUnsupported] = useState<boolean>(false);
   const [bollPeriod, setBollPeriod] = useState<BollPeriod>('daily');
   const [bollAdjust, setBollAdjust] = useState<BollAdjust>('qfq');
   const [bollPopupApiSource, setBollPopupApiSource] = useState<ApiSource>('sina');
@@ -361,7 +371,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     const fetchAllBoll = async () => {
       // 只在前复权模式下批量获取所有股票的BOLL数据
-      // 不复权模式需要实时价格，请求量太大，只在用户点击时获取
+      // 新浪不支持不复权模式，跳过批量获取
+      if (apiSource === 'sina' && bollAdjust === 'none') {
+        setStockBollMap(new Map());
+        setStockBollErrorMap(new Map());
+        return;
+      }
+      
+      // 不复权模式下腾讯也需要处理实时价格，减少批量请求
       if (bollAdjust === 'none') {
         setStockBollMap(new Map());
         setStockBollErrorMap(new Map());
@@ -393,7 +410,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       setStockBollErrorMap(newErrorMap);
     };
     fetchAllBoll();
-  }, [stocks, bollAdjust]);
+  }, [stocks, bollAdjust, apiSource]);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -1126,10 +1143,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const reloadBoll = (period: BollPeriod, adjust: BollAdjust, source?: ApiSource) => {
           setBollData(null);
           setBollError(null);
+          setBollUnsupported(false);
           const useSource = source || bollPopupApiSource;
           fetchBollData(stock.code, period, adjust, useSource).then(result => {
             setBollData(result.data);
             setBollError(result.error || null);
+            setBollUnsupported(result.unsupported || false);
           });
         };
         
@@ -1228,8 +1247,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     <div className="col-span-3 flex justify-between items-center text-[10px] text-app-subtext mt-1 px-1">
                       <span>价格 {formatPrice(stock.price || 0)} - {formatFetchTime(stock.priceUpdatedAt || 0)}</span>
                       <span className="font-mono whitespace-nowrap">
-                        {bollError ? <span className="text-red-400">{bollError}</span> : 
-                         <span>BOLL数据 {formatFetchTime(bollData?.fetchedAt || 0)}</span>}
+                        {bollUnsupported ? (
+                          <span className="text-brand-yellow">
+                            {bollError}
+                            <button 
+                              onClick={() => { setBollPopupApiSource('tencent'); reloadBoll(bollPeriod, bollAdjust, 'tencent'); }}
+                              className="ml-1 text-indigo-400 hover:text-indigo-300 underline"
+                            >
+                              切换腾讯
+                            </button>
+                          </span>
+                        ) : bollError ? (
+                          <span className="text-red-400">{bollError}</span>
+                        ) : (
+                          <span>BOLL数据 {formatFetchTime(bollData?.fetchedAt || 0)}</span>
+                        )}
                       </span>
                     </div>
                   </div>
@@ -1281,6 +1313,45 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           document.body
         );
       })()}
+
+      {showResetConfirm && createPortal(
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/40"
+            onClick={() => setShowResetConfirm(false)}
+          />
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="bg-app-card border border-app-border rounded-xl shadow-xl p-5 w-72">
+              <div className="text-sm font-bold text-app-text mb-1">确认重置</div>
+              <div className="text-xs text-app-subtext mb-4">
+                确定要重置所有股票数据吗？此操作无法撤销。
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowResetConfirm(false);
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium border border-app-border text-app-subtext hover:bg-app-input transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onResetStocks?.();
+                    setShowResetConfirm(false);
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/90 text-white hover:bg-red-500 transition-colors"
+                >
+                  重置
+                </button>
+              </div>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
     </div>
   );
 };

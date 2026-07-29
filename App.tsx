@@ -9,9 +9,86 @@ import { CloudSettingsModal } from './components/CloudSettingsModal';
 import { StockDividendPage } from './components/StockDividendPage';
 import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
+import { clearAllCache } from './services/bollService';
+import { clearCacheRecord } from './services/cacheService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings } from './types';
 
-const APP_VERSION = 'v2.0.7';
+const APP_VERSION = 'v2.0.8';
+
+// 生成股息率对应股价的辅助函数
+function calcDividendRates(dividend2025: number): Record<string, number> {
+  const rates = ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'];
+  const result: Record<string, number> = {};
+  rates.forEach(rate => {
+    const rateValue = parseFloat(rate) / 100;
+    result[rate] = Math.round((dividend2025 / rateValue) * 100) / 100;
+  });
+  return result;
+}
+
+// 默认股票数据（基于 price.md）
+function createDefaultStocks(): StockEntry[] {
+  const stockData: Array<[string, string, number, number]> = [
+    // 金融
+    ['601318.SH', '中国平安', 2.550, 2.700],
+    ['600036.SH', '招商银行', 2.000, 2.016],
+    ['601166.SH', '兴业银行', 1.060, 1.066],
+    ['002142.SZ', '宁波银行', 0.900, 1.200],
+    ['600030.SH', '中信证券', 0.520, 0.700],
+    ['601066.SH', '中信建投', 0.255, 0.340],
+    ['000001.SZ', '平安银行', 0.608, 0.596],
+    // 家电
+    ['000333.SZ', '美的集团', 3.4788, 4.300],
+    ['600690.SH', '海尔智家', 0.965, 1.1559],
+    ['000651.SZ', '格力电器', 2.9971, 3.000],
+    // 医药
+    ['600329.SH', '达仁堂', 1.280, 2.340],
+    ['000423.SZ', '东阿阿胶', 1.270, 1.431],
+    ['000538.SZ', '云南白药', 2.398, 2.602],
+    // 白酒
+    ['000858.SZ', '五粮液', 5.745, 5.1577],
+    ['000568.SZ', '泸州老窖', 4.592, 5.775],
+    // 食品
+    ['600887.SH', '伊利股份', 1.220, 0.900],
+    // 港口航运
+    ['601919.SH', '中远海控', 1.550, 0.440],
+    ['601000.SH', '唐山港', 0.200, 0.200],
+    ['601298.SH', '青岛港', 0.3141, 0.3454],
+    ['000429.SZ', '粤高速A', 0.523, 0.604],
+    // 电力/公用事业
+    ['600886.SH', '国投电力', 0.4565, 0.5081],
+    ['600900.SH', '长江电力', 0.943, 1.000],
+    ['600795.SH', '国电电力', 0.200, 0.241],
+    ['600011.SH', '华能国际', 0.270, 0.400],
+    ['601985.SH', '中国核电', 0.160, 0.180],
+    ['003816.SZ', '中国广核', 0.095, 0.086],
+    // 能源/资源
+    ['600938.SH', '中国海油', 1.2816, 1.1449],
+    ['601857.SH', '中国石油', 0.470, 0.470],
+    ['601088.SH', '中国神华', 2.260, 2.010],
+    // 通信
+    ['600941.SH', '中国移动', 4.5716, 4.7941],
+    ['601728.SH', '中国电信', 0.2598, 0.2720],
+    // ETF
+    ['561580.SH', '央企红利ETF华泰柏瑞', 0, 0.120],
+    ['515080.SH', '中证红利ETF招商', 0.070, 0.070],
+  ];
+  
+  return stockData.map(([code, name, div2024, div2025], index) => ({
+    id: (index + 1).toString(),
+    code,
+    name,
+    price: 0,
+    changePercent: 0,
+    high: 0,
+    low: 0,
+    dividend2024: div2024,
+    dividend2025: div2025,
+    dividendRate2025: 0,
+    priceUpdatedAt: null,
+    dividendRates: calcDividendRates(div2025),
+  }));
+}
 
 export default function App() {
   // --- Theme State ---
@@ -60,40 +137,7 @@ export default function App() {
         return parsed;
       }
     }
-    return [
-      { id: '1', code: '601318.SH', name: '中国平安', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.550, dividend2025: 2.700, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 90, '3.5%': 77.14, '4%': 67.5, '4.5%': 60, '5%': 54, '5.5%': 49.09, '6%': 45, '6.5%': 41.54, '7%': 38.57 } },
-      { id: '2', code: '600036.SH', name: '招商银行', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.000, dividend2025: 2.016, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 67.2, '3.5%': 57.6, '4%': 50.4, '4.5%': 44.8, '5%': 40.32, '5.5%': 36.65, '6%': 33.6, '6.5%': 31.02, '7%': 28.8 } },
-      { id: '3', code: '601166.SH', name: '兴业银行', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.060, dividend2025: 1.066, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 35.53, '3.5%': 30.46, '4%': 26.65, '4.5%': 23.69, '5%': 21.32, '5.5%': 19.38, '6%': 17.77, '6.5%': 16.40, '7%': 15.23 } },
-      { id: '4', code: '002142.SZ', name: '宁波银行', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.900, dividend2025: 1.200, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 40, '3.5%': 34.29, '4%': 30, '4.5%': 26.67, '5%': 24, '5.5%': 21.82, '6%': 20, '6.5%': 18.46, '7%': 17.14 } },
-      { id: '5', code: '600030.SH', name: '中信证券', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.280, dividend2025: 0.700, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 23.33, '3.5%': 20, '4%': 17.5, '4.5%': 15.56, '5%': 14, '5.5%': 12.73, '6%': 11.67, '6.5%': 10.77, '7%': 10 } },
-      { id: '6', code: '601066.SH', name: '中信建投', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.255, dividend2025: 0.340, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 11.33, '3.5%': 9.71, '4%': 8.5, '4.5%': 7.56, '5%': 6.8, '5.5%': 6.18, '6%': 5.67, '6.5%': 5.23, '7%': 4.86 } },
-      { id: '7', code: '000333.SZ', name: '美的集团', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 3.500, dividend2025: 4.300, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 143.33, '3.5%': 122.86, '4%': 107.5, '4.5%': 95.56, '5%': 86, '5.5%': 78.18, '6%': 71.67, '6.5%': 66.15, '7%': 61.43 } },
-      { id: '8', code: '600690.SH', name: '海尔智家', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.965, dividend2025: 1.156, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 38.53, '3.5%': 33.03, '4%': 28.9, '4.5%': 25.69, '5%': 23.12, '5.5%': 21.02, '6%': 19.27, '6.5%': 17.79, '7%': 16.51 } },
-      { id: '9', code: '000651.SZ', name: '格力电器', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 3.000, dividend2025: 3.000, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 100, '3.5%': 85.71, '4%': 75, '4.5%': 66.67, '5%': 60, '5.5%': 54.55, '6%': 50, '6.5%': 46.15, '7%': 42.86 } },
-      { id: '10', code: '600329.SH', name: '达仁堂', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.280, dividend2025: 4.790, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 159.67, '3.5%': 136.86, '4%': 119.75, '4.5%': 106.44, '5%': 95.8, '5.5%': 87.09, '6%': 79.83, '6.5%': 73.69, '7%': 68.43 } },
-      { id: '11', code: '000423.SZ', name: '东阿阿胶', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.270, dividend2025: 2.701, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 90.03, '3.5%': 77.17, '4%': 67.53, '4.5%': 60.02, '5%': 54.02, '5.5%': 49.10, '6%': 45.02, '6.5%': 41.55, '7%': 38.59 } },
-      { id: '12', code: '000538.SZ', name: '云南白药', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.398, dividend2025: 2.602, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 86.73, '3.5%': 74.34, '4%': 65.05, '4.5%': 57.82, '5%': 52.04, '5.5%': 47.31, '6%': 43.37, '6.5%': 40.03, '7%': 37.17 } },
-      { id: '13', code: '000858.SZ', name: '五粮液', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 3.169, dividend2025: 2.580, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 86, '3.5%': 73.71, '4%': 64.5, '4.5%': 56.67, '5%': 51.6, '5.5%': 46.91, '6%': 43, '6.5%': 39.69, '7%': 36.86 } },
-      { id: '14', code: '000568.SZ', name: '泸州老窖', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 5.950, dividend2025: 5.775, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 192.33, '3.5%': 164.43, '4%': 144.25, '4.5%': 128.17, '5%': 115.4, '5.5%': 104.91, '6%': 96.17, '6.5%': 88.54, '7%': 82.43 } },
-      { id: '15', code: '600887.SH', name: '伊利股份', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.220, dividend2025: 0.900, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 30, '3.5%': 25.71, '4%': 22.5, '4.5%': 20, '5%': 18, '5.5%': 16.36, '6%': 15, '6.5%': 13.85, '7%': 12.86 } },
-      { id: '16', code: '601919.SH', name: '中远海控', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.030, dividend2025: 1.000, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 33.33, '3.5%': 28.57, '4%': 25, '4.5%': 22.22, '5%': 20, '5.5%': 18.18, '6%': 16.67, '6.5%': 15.38, '7%': 14.29 } },
-      { id: '17', code: '601000.SH', name: '唐山港', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.200, dividend2025: 0.200, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 6.67, '3.5%': 5.71, '4%': 5, '4.5%': 4.44, '5%': 4, '5.5%': 3.64, '6%': 3.33, '6.5%': 3.08, '7%': 2.86 } },
-      { id: '18', code: '601298.SH', name: '青岛港', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.201, dividend2025: 0.199, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 6.63, '3.5%': 5.69, '4%': 4.98, '4.5%': 4.42, '5%': 3.98, '5.5%': 3.62, '6%': 3.32, '6.5%': 3.06, '7%': 2.84 } },
-      { id: '19', code: '000429.SZ', name: '粤高速A', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.523, dividend2025: 0.604, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 20.13, '3.5%': 17.26, '4%': 15.1, '4.5%': 13.42, '5%': 12.08, '5.5%': 10.98, '6%': 10.07, '6.5%': 9.32, '7%': 8.63 } },
-      { id: '20', code: '600886.SH', name: '国投电力', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.457, dividend2025: 0.508, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 16.93, '3.5%': 14.51, '4%': 12.7, '4.5%': 11.29, '5%': 10.16, '5.5%': 9.24, '6%': 8.47, '6.5%': 7.82, '7%': 7.26 } },
-      { id: '21', code: '600900.SH', name: '长江电力', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.943, dividend2025: 1.000, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 33.33, '3.5%': 28.57, '4%': 25, '4.5%': 22.22, '5%': 20, '5.5%': 18.18, '6%': 16.67, '6.5%': 15.38, '7%': 14.29 } },
-      { id: '22', code: '600795.SH', name: '国电电力', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.110, dividend2025: 0.241, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 8.03, '3.5%': 6.88, '4%': 6.03, '4.5%': 5.36, '5%': 4.82, '5.5%': 4.38, '6%': 4.02, '6.5%': 3.70, '7%': 3.44 } },
-      { id: '23', code: '600011.SH', name: '华能国际', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.270, dividend2025: 0.400, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 13.33, '3.5%': 11.43, '4%': 10, '4.5%': 8.89, '5%': 8, '5.5%': 7.27, '6%': 6.67, '6.5%': 6.15, '7%': 5.71 } },
-      { id: '24', code: '601985.SH', name: '中国核电', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.160, dividend2025: 0.180, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 6, '3.5%': 5.14, '4%': 4.5, '4.5%': 4, '5%': 3.6, '5.5%': 3.27, '6%': 3, '6.5%': 2.77, '7%': 2.57 } },
-      { id: '25', code: '003816.SZ', name: '中国广核', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.095, dividend2025: 0.086, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 2.87, '3.5%': 2.46, '4%': 2.15, '4.5%': 1.91, '5%': 1.72, '5.5%': 1.56, '6%': 1.43, '6.5%': 1.32, '7%': 1.23 } },
-      { id: '26', code: '600938.SH', name: '中国海油', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.290, dividend2025: 1.145, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 38.17, '3.5%': 32.71, '4%': 28.63, '4.5%': 25.44, '5%': 22.9, '5.5%': 20.82, '6%': 19.08, '6.5%': 17.62, '7%': 16.36 } },
-      { id: '27', code: '600941.SH', name: '中国移动', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.290, dividend2025: 2.200, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 73.33, '3.5%': 62.86, '4%': 55, '4.5%': 48.89, '5%': 44, '5.5%': 40, '6%': 36.67, '6.5%': 33.85, '7%': 31.43 } },
-      { id: '28', code: '601088.SH', name: '中国神华', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.260, dividend2025: 2.010, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 67, '3.5%': 57.43, '4%': 50.25, '4.5%': 44.67, '5%': 40.2, '5.5%': 36.55, '6%': 33.5, '6.5%': 30.92, '7%': 28.71 } },
-      { id: '29', code: '561580.SH', name: '央企红利ETF华泰柏瑞', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0, dividend2025: 0.0095, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 0.32, '3.5%': 0.27, '4%': 0.24, '4.5%': 0.21, '5%': 0.19, '5.5%': 0.17, '6%': 0.16, '6.5%': 0.15, '7%': 0.14 } },
-      { id: '30', code: '515080.SH', name: '中证红利ETF招商', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.070, dividend2025: 0.065, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 2.17, '3.5%': 1.86, '4%': 1.63, '4.5%': 1.44, '5%': 1.3, '5.5%': 1.18, '6%': 1.08, '6.5%': 1, '7%': 0.93 } },
-      { id: '31', code: '000001.SZ', name: '平安银行', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.608, dividend2025: 0.596, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 19.87, '3.5%': 17.03, '4%': 14.9, '4.5%': 13.25, '5%': 11.92, '5.5%': 10.84, '6%': 9.93, '6.5%': 9.17, '7%': 8.51 } },
-      { id: '32', code: '000768.SZ', name: '中航西飞', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.120, dividend2025: 0.150, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 5, '3.5%': 4.29, '4%': 3.75, '4.5%': 3.33, '5%': 3, '5.5%': 2.73, '6%': 2.5, '6.5%': 2.31, '7%': 2.14 } },
-    ];
+    return createDefaultStocks();
   });
 
   const [isAddingStock, setIsAddingStock] = useState(false);
@@ -242,41 +286,7 @@ export default function App() {
   }, [stockSettings]);
 
   const resetStockData = () => {
-    const defaultStocks = [
-      { id: '1', code: '601318.SH', name: '中国平安', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.550, dividend2025: 2.700, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 90, '3.5%': 77.14, '4%': 67.5, '4.5%': 60, '5%': 54, '5.5%': 49.09, '6%': 45, '6.5%': 41.54, '7%': 38.57 } },
-      { id: '2', code: '600036.SH', name: '招商银行', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.000, dividend2025: 2.016, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 67.2, '3.5%': 57.6, '4%': 50.4, '4.5%': 44.8, '5%': 40.32, '5.5%': 36.65, '6%': 33.6, '6.5%': 31.02, '7%': 28.8 } },
-      { id: '3', code: '601166.SH', name: '兴业银行', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.060, dividend2025: 1.066, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 35.53, '3.5%': 30.46, '4%': 26.65, '4.5%': 23.69, '5%': 21.32, '5.5%': 19.38, '6%': 17.77, '6.5%': 16.40, '7%': 15.23 } },
-      { id: '4', code: '002142.SZ', name: '宁波银行', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.900, dividend2025: 1.200, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 40, '3.5%': 34.29, '4%': 30, '4.5%': 26.67, '5%': 24, '5.5%': 21.82, '6%': 20, '6.5%': 18.46, '7%': 17.14 } },
-      { id: '5', code: '600030.SH', name: '中信证券', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.280, dividend2025: 0.700, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 23.33, '3.5%': 20, '4%': 17.5, '4.5%': 15.56, '5%': 14, '5.5%': 12.73, '6%': 11.67, '6.5%': 10.77, '7%': 10 } },
-      { id: '6', code: '601066.SH', name: '中信建投', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.255, dividend2025: 0.340, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 11.33, '3.5%': 9.71, '4%': 8.5, '4.5%': 7.56, '5%': 6.8, '5.5%': 6.18, '6%': 5.67, '6.5%': 5.23, '7%': 4.86 } },
-      { id: '7', code: '000333.SZ', name: '美的集团', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 3.500, dividend2025: 4.300, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 143.33, '3.5%': 122.86, '4%': 107.5, '4.5%': 95.56, '5%': 86, '5.5%': 78.18, '6%': 71.67, '6.5%': 66.15, '7%': 61.43 } },
-      { id: '8', code: '600690.SH', name: '海尔智家', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.965, dividend2025: 1.156, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 38.53, '3.5%': 33.03, '4%': 28.9, '4.5%': 25.69, '5%': 23.12, '5.5%': 21.02, '6%': 19.27, '6.5%': 17.79, '7%': 16.51 } },
-      { id: '9', code: '000651.SZ', name: '格力电器', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 3.000, dividend2025: 3.000, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 100, '3.5%': 85.71, '4%': 75, '4.5%': 66.67, '5%': 60, '5.5%': 54.55, '6%': 50, '6.5%': 46.15, '7%': 42.86 } },
-      { id: '10', code: '600329.SH', name: '达仁堂', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.280, dividend2025: 4.790, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 159.67, '3.5%': 136.86, '4%': 119.75, '4.5%': 106.44, '5%': 95.8, '5.5%': 87.09, '6%': 79.83, '6.5%': 73.69, '7%': 68.43 } },
-      { id: '11', code: '000423.SZ', name: '东阿阿胶', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.270, dividend2025: 2.701, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 90.03, '3.5%': 77.17, '4%': 67.53, '4.5%': 60.02, '5%': 54.02, '5.5%': 49.10, '6%': 45.02, '6.5%': 41.55, '7%': 38.59 } },
-      { id: '12', code: '000538.SZ', name: '云南白药', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.398, dividend2025: 2.602, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 86.73, '3.5%': 74.34, '4%': 65.05, '4.5%': 57.82, '5%': 52.04, '5.5%': 47.31, '6%': 43.37, '6.5%': 40.03, '7%': 37.17 } },
-      { id: '13', code: '000858.SZ', name: '五粮液', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 3.169, dividend2025: 2.580, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 86, '3.5%': 73.71, '4%': 64.5, '4.5%': 56.67, '5%': 51.6, '5.5%': 46.91, '6%': 43, '6.5%': 39.69, '7%': 36.86 } },
-      { id: '14', code: '000568.SZ', name: '泸州老窖', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 5.950, dividend2025: 5.775, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 192.33, '3.5%': 164.43, '4%': 144.25, '4.5%': 128.17, '5%': 115.4, '5.5%': 104.91, '6%': 96.17, '6.5%': 88.54, '7%': 82.43 } },
-      { id: '15', code: '600887.SH', name: '伊利股份', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.220, dividend2025: 0.900, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 30, '3.5%': 25.71, '4%': 22.5, '4.5%': 20, '5%': 18, '5.5%': 16.36, '6%': 15, '6.5%': 13.85, '7%': 12.86 } },
-      { id: '16', code: '601919.SH', name: '中远海控', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.030, dividend2025: 1.000, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 33.33, '3.5%': 28.57, '4%': 25, '4.5%': 22.22, '5%': 20, '5.5%': 18.18, '6%': 16.67, '6.5%': 15.38, '7%': 14.29 } },
-      { id: '17', code: '601000.SH', name: '唐山港', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.200, dividend2025: 0.200, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 6.67, '3.5%': 5.71, '4%': 5, '4.5%': 4.44, '5%': 4, '5.5%': 3.64, '6%': 3.33, '6.5%': 3.08, '7%': 2.86 } },
-      { id: '18', code: '601298.SH', name: '青岛港', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.201, dividend2025: 0.199, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 6.63, '3.5%': 5.69, '4%': 4.98, '4.5%': 4.42, '5%': 3.98, '5.5%': 3.62, '6%': 3.32, '6.5%': 3.06, '7%': 2.84 } },
-      { id: '19', code: '000429.SZ', name: '粤高速A', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.523, dividend2025: 0.604, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 20.13, '3.5%': 17.26, '4%': 15.1, '4.5%': 13.42, '5%': 12.08, '5.5%': 10.98, '6%': 10.07, '6.5%': 9.32, '7%': 8.63 } },
-      { id: '20', code: '600886.SH', name: '国投电力', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.457, dividend2025: 0.508, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 16.93, '3.5%': 14.51, '4%': 12.7, '4.5%': 11.29, '5%': 10.16, '5.5%': 9.24, '6%': 8.47, '6.5%': 7.82, '7%': 7.26 } },
-      { id: '21', code: '600900.SH', name: '长江电力', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.943, dividend2025: 1.000, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 33.33, '3.5%': 28.57, '4%': 25, '4.5%': 22.22, '5%': 20, '5.5%': 18.18, '6%': 16.67, '6.5%': 15.38, '7%': 14.29 } },
-      { id: '22', code: '600795.SH', name: '国电电力', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.110, dividend2025: 0.241, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 8.03, '3.5%': 6.88, '4%': 6.03, '4.5%': 5.36, '5%': 4.82, '5.5%': 4.38, '6%': 4.02, '6.5%': 3.70, '7%': 3.44 } },
-      { id: '23', code: '600011.SH', name: '华能国际', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.270, dividend2025: 0.400, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 13.33, '3.5%': 11.43, '4%': 10, '4.5%': 8.89, '5%': 8, '5.5%': 7.27, '6%': 6.67, '6.5%': 6.15, '7%': 5.71 } },
-      { id: '24', code: '601985.SH', name: '中国核电', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.160, dividend2025: 0.180, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 6, '3.5%': 5.14, '4%': 4.5, '4.5%': 4, '5%': 3.6, '5.5%': 3.27, '6%': 3, '6.5%': 2.77, '7%': 2.57 } },
-      { id: '25', code: '003816.SZ', name: '中国广核', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.095, dividend2025: 0.086, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 2.87, '3.5%': 2.46, '4%': 2.15, '4.5%': 1.91, '5%': 1.72, '5.5%': 1.56, '6%': 1.43, '6.5%': 1.32, '7%': 1.23 } },
-      { id: '26', code: '600938.SH', name: '中国海油', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 1.290, dividend2025: 1.145, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 38.17, '3.5%': 32.71, '4%': 28.63, '4.5%': 25.44, '5%': 22.9, '5.5%': 20.82, '6%': 19.08, '6.5%': 17.62, '7%': 16.36 } },
-      { id: '27', code: '600941.SH', name: '中国移动', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.290, dividend2025: 2.200, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 73.33, '3.5%': 62.86, '4%': 55, '4.5%': 48.89, '5%': 44, '5.5%': 40, '6%': 36.67, '6.5%': 33.85, '7%': 31.43 } },
-      { id: '28', code: '601088.SH', name: '中国神华', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 2.260, dividend2025: 2.010, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 67, '3.5%': 57.43, '4%': 50.25, '4.5%': 44.67, '5%': 40.2, '5.5%': 36.55, '6%': 33.5, '6.5%': 30.92, '7%': 28.71 } },
-      { id: '29', code: '561580.SH', name: '央企红利ETF华泰柏瑞', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0, dividend2025: 0.0095, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 0.32, '3.5%': 0.27, '4%': 0.24, '4.5%': 0.21, '5%': 0.19, '5.5%': 0.17, '6%': 0.16, '6.5%': 0.15, '7%': 0.14 } },
-      { id: '30', code: '515080.SH', name: '中证红利ETF招商', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.070, dividend2025: 0.065, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 2.17, '3.5%': 1.86, '4%': 1.63, '4.5%': 1.44, '5%': 1.3, '5.5%': 1.18, '6%': 1.08, '6.5%': 1, '7%': 0.93 } },
-      { id: '31', code: '000001.SZ', name: '平安银行', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.608, dividend2025: 0.596, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 19.87, '3.5%': 17.03, '4%': 14.9, '4.5%': 13.25, '5%': 11.92, '5.5%': 10.84, '6%': 9.93, '6.5%': 9.17, '7%': 8.51 } },
-      { id: '32', code: '000768.SZ', name: '中航西飞', price: 0, changePercent: 0, high: 0, low: 0, dividend2024: 0.120, dividend2025: 0.150, dividendRate2025: 0, priceUpdatedAt: null, dividendRates: { '3%': 5, '3.5%': 4.29, '4%': 3.75, '4.5%': 3.33, '5%': 3, '5.5%': 2.73, '6%': 2.5, '6.5%': 2.31, '7%': 2.14 } },
-    ];
-    setStocks(defaultStocks);
+    setStocks(createDefaultStocks());
     setStockSettings({
       tagColors: {},
       visibleColumns: ['code', 'name', 'price', 'changePercent', 'high', 'low', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'],
@@ -287,12 +297,16 @@ export default function App() {
         { min: 5.5, max: 100, color: 'green' }
       ]
     });
+    clearAllCache();
+    clearCacheRecord('sina');
+    clearCacheRecord('tencent');
   };
 
   // Modal States
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportFileName, setExportFileName] = useState('');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [stockResetSignal, setStockResetSignal] = useState(0);
   const [isEditingCapital, setIsEditingCapital] = useState(false);
 
   // 5. Preview Type
@@ -1295,7 +1309,7 @@ export default function App() {
               <Plus size={16} />
           </button>
           <button 
-              onClick={() => { if (confirm('确定要重置所有股票数据吗？')) resetStockData(); }}
+              onClick={() => setStockResetSignal(s => s + 1)}
               className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-red-400 hover:border-red-400 transition-colors w-10"
               title="重置数据"
             >
@@ -1755,7 +1769,9 @@ export default function App() {
             actionButtons={renderStockActionButtons()}
             appVersion={APP_VERSION}
             onTogglePage={togglePage}
-            apiSource={appSettings.apiSource || 'sina'}
+            apiSource={appSettings.apiSource || 'tencent'}
+            onResetStocks={resetStockData}
+            resetSignal={stockResetSignal}
           />
         )}
         <div className="lg:hidden mt-2 order-3">{currentPage === 'gold' && renderActionButtons()}</div>

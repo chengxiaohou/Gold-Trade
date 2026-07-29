@@ -65,6 +65,16 @@ export interface AppSettings {
   dividendRate?: number; // New: Dividend annual rate (%)
   dividendPeriod?: number; // New: Dividend period in months
   apiSource?: ApiSource; // New: API source for stock data ('sina' or 'tencent')
+  cacheTTLMinutes?: number; // New: Cache TTL in minutes during trading hours, default 10
+}
+
+export type MarketStatus = 'pre_open' | 'morning_session' | 'midday_break' | 'afternoon_session' | 'closed' | 'full_day_closed';
+
+export interface CacheInfo {
+  lastFetchAt: number | null; // Timestamp of last full fetch for this source
+  expiresAt: number | null; // When the cache expires
+  marketStatus: MarketStatus; // Current market status
+  isTradingHours: boolean; // Whether currently in trading hours
 }
 
 export type StockDividendRates = Record<string, number>;
