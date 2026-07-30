@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, ArrowUpDown } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, ArrowUpDown, Download, BarChart3 } from 'lucide-react';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
-import { fetchBollData, BollData, BollPeriod, BollAdjust } from '../services/bollService';
+import { fetchBollData, checkAllBollCache, BollData, BollPeriod, BollAdjust } from '../services/bollService';
+import { getDynamicCacheTTL } from '../services/cacheService';
+import { requestLogService, RequestLogEntry, RequestLogStats } from '../services/requestLogService';
 
 const TAG_PALETTE = [
   { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20', hover: 'hover:border-gray-500/50' },
@@ -327,7 +329,7 @@ const formatPercent = (percent: number): string => {
   return percent.toFixed(2) + '%';
 };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'sina' as ApiSource, onResetStocks, resetSignal }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
   const rateCols = dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'];
@@ -369,7 +371,32 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [stockBollErrorMap, setStockBollErrorMap] = useState<Map<string, { daily?: string; weekly?: string; monthly?: string }>>(new Map());
   const [isRefreshingBoll, setIsRefreshingBoll] = useState(false);
 
+  // 请求日志状态
+  const [requestLogs, setRequestLogs] = useState<RequestLogEntry[]>([]);
+  const [requestStats, setRequestStats] = useState<RequestLogStats>({ total: 0, success: 0, failed: 0, cached: 0, pending: 0 });
+  const [showLogPanel, setShowLogPanel] = useState(false);
+
+  // 订阅请求日志更新
+  useEffect(() => {
+    const unsubscribe = requestLogService.subscribe((logs, stats) => {
+      setRequestLogs(logs);
+      setRequestStats(stats);
+    });
+    return unsubscribe;
+  }, []);
+
+  // 防止 StrictMode 双重调用
+  const isFetchingRef = useRef(false);
+
   const fetchAllBoll = useCallback(async () => {
+    // 防止重复调用
+    if (isFetchingRef.current) {
+      return;
+    }
+    
+    // 清空之前的请求日志，只显示本次请求的统计
+    requestLogService.reset();
+    
     // 只在前复权模式下批量获取所有股票的BOLL数据
     // 新浪不支持不复权模式，跳过批量获取
     if (apiSource === 'sina' && bollAdjust === 'none') {
@@ -385,15 +412,40 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       return;
     }
     
+    isFetchingRef.current = true;
     setIsRefreshingBoll(true);
-    // 清空之前的数据
-    setStockBollMap(new Map());
-    setStockBollErrorMap(new Map());
     
+    // 先检查缓存
+    const dynamicTTL = getDynamicCacheTTL();
+    const { allCached, cachedData } = checkAllBollCache(stocks, bollAdjust, apiSource, dynamicTTL);
+    
+    if (allCached) {
+      // 所有数据都在缓存中，一次性批量更新
+      setStockBollMap(cachedData);
+      setStockBollErrorMap(new Map());
+      
+      isFetchingRef.current = false;
+      setIsRefreshingBoll(false);
+      return;
+    }
+    
+    // 部分或全部数据不在缓存中，逐个获取
     for (let i = 0; i < stocks.length; i++) {
       const stock = stocks[i];
       
-      // 每只股票的3个周期并发请求，股票之间间隔250ms
+      // 先检查这只股票是否已缓存
+      const cachedStockData = cachedData.get(stock.id);
+      if (cachedStockData?.daily && cachedStockData?.weekly && cachedStockData?.monthly) {
+        // 已缓存，直接更新UI
+        setStockBollMap(prev => {
+          const newMap = new Map(prev);
+          newMap.set(stock.id, cachedStockData);
+          return newMap;
+        });
+        continue; // 跳过网络请求
+      }
+      
+      // 未缓存，发起网络请求
       const [dailyR, weeklyR, monthlyR] = await Promise.all([
         fetchBollData(stock.code, 'daily', bollAdjust, apiSource),
         fetchBollData(stock.code, 'weekly', bollAdjust, apiSource),
@@ -423,11 +475,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         });
       }
       
-      // 股票之间间隔250ms（最后一只股票不需要）
+      // 网络请求后，等待250ms再请求下一只股票
       if (i < stocks.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 250));
       }
     }
+    isFetchingRef.current = false;
     setIsRefreshingBoll(false);
   }, [stocks, bollAdjust, apiSource]);
 
@@ -1386,6 +1439,83 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         </>,
         document.body
       )}
+
+      {/* 页面底部请求计数器 */}
+      <div className="fixed bottom-0 left-0 right-0 z-30 bg-app-card border-t border-app-border px-4 py-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setShowLogPanel(!showLogPanel)}
+              className="flex items-center gap-2 text-xs text-app-subtext hover:text-app-text transition-colors"
+            >
+              <BarChart3 size={14} />
+              <span>请求统计</span>
+            </button>
+            <div className="flex items-center gap-3 text-xs">
+              <span className="text-app-subtext">总计: <span className="text-app-text font-medium">{requestStats.total}</span></span>
+              <span className="text-green-400">成功: <span className="font-medium">{requestStats.success}</span></span>
+              <span className="text-red-400">失败: <span className="font-medium">{requestStats.failed}</span></span>
+              <span className="text-blue-400">缓存: <span className="font-medium">{requestStats.cached}</span></span>
+              <span className="text-yellow-400">进行中: <span className="font-medium">{requestStats.pending}</span></span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                const csvContent = requestLogService.exportLogs();
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `request_logs_${new Date().toISOString().slice(0, 10)}.csv`;
+                link.click();
+                URL.revokeObjectURL(url);
+              }}
+              disabled={requestLogs.length === 0}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-app-subtext hover:text-app-text border border-app-border rounded hover:border-app-text/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Download size={12} />
+              <span>下载日志</span>
+            </button>
+            <button
+              onClick={() => requestLogService.reset()}
+              disabled={requestLogs.length === 0}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-app-subtext hover:text-red-400 border border-app-border rounded hover:border-red-400/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RotateCcw size={12} />
+              <span>重置</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 日志面板 */}
+        {showLogPanel && (
+          <div className="mt-2 pt-2 border-t border-app-border max-h-48 overflow-y-auto">
+            <div className="space-y-1">
+              {requestLogs.length === 0 ? (
+                <div className="text-xs text-app-subtext text-center py-2">暂无请求记录</div>
+              ) : (
+                requestLogs.slice().reverse().map(log => (
+                  <div key={log.id} className="flex items-center gap-2 text-xs px-2 py-1 bg-app-input/50 rounded">
+                    <span className="text-app-subtext shrink-0">{new Date(log.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}</span>
+                    <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                      log.status === 'success' ? 'bg-green-500/20 text-green-400' :
+                      log.status === 'failed' ? 'bg-red-500/20 text-red-400' :
+                      log.status === 'cached' ? 'bg-blue-500/20 text-blue-400' :
+                      'bg-yellow-500/20 text-yellow-400'
+                    }`}>
+                      {log.status === 'success' ? '成功' : log.status === 'failed' ? '失败' : log.status === 'cached' ? '缓存' : '进行中'}
+                    </span>
+                    <span className="text-app-text truncate flex-1" title={log.url}>{log.url}</span>
+                    {log.duration && <span className="text-app-subtext shrink-0">{log.duration}ms</span>}
+                    {log.error && <span className="text-red-400 truncate" title={log.error}>{log.error}</span>}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

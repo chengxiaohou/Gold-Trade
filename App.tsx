@@ -1769,7 +1769,7 @@ export default function App() {
             actionButtons={renderStockActionButtons()}
             appVersion={APP_VERSION}
             onTogglePage={togglePage}
-            apiSource={appSettings.apiSource || 'tencent'}
+            apiSource={appSettings.apiSource || 'sina'}
             onResetStocks={resetStockData}
             resetSignal={stockResetSignal}
           />

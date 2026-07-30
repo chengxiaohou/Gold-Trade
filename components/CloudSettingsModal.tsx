@@ -79,7 +79,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [newRange, setNewRange] = useState({ min: '', max: '', color: 'gray' });
   const [editingRangeIndex, setEditingRangeIndex] = useState<number | null>(null);
   const [maxRows, setMaxRows] = useState<number>(stockSettings?.maxRows || 15);
-  const [apiSource, setApiSource] = useState<ApiSource>(appSettings.apiSource || 'tencent');
+  const [apiSource, setApiSource] = useState<ApiSource>(appSettings.apiSource || 'sina');
   const [cacheTTLMinutes, setCacheTTLMinutes] = useState<number>(appSettings.cacheTTLMinutes || 10);
   const [cacheInfo, setCacheInfo] = useState<{ sina: CacheInfo; tencent: CacheInfo }>({
     sina: getCacheInfo('sina'),
