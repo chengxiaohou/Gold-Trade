@@ -367,50 +367,73 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [bollPopupApiSource, setBollPopupApiSource] = useState<ApiSource>('sina');
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
   const [stockBollErrorMap, setStockBollErrorMap] = useState<Map<string, { daily?: string; weekly?: string; monthly?: string }>>(new Map());
+  const [isRefreshingBoll, setIsRefreshingBoll] = useState(false);
 
-  useEffect(() => {
-    const fetchAllBoll = async () => {
-      // 只在前复权模式下批量获取所有股票的BOLL数据
-      // 新浪不支持不复权模式，跳过批量获取
-      if (apiSource === 'sina' && bollAdjust === 'none') {
-        setStockBollMap(new Map());
-        setStockBollErrorMap(new Map());
-        return;
-      }
+  const fetchAllBoll = useCallback(async () => {
+    // 只在前复权模式下批量获取所有股票的BOLL数据
+    // 新浪不支持不复权模式，跳过批量获取
+    if (apiSource === 'sina' && bollAdjust === 'none') {
+      setStockBollMap(new Map());
+      setStockBollErrorMap(new Map());
+      return;
+    }
+    
+    // 不复权模式下腾讯也需要处理实时价格，减少批量请求
+    if (bollAdjust === 'none') {
+      setStockBollMap(new Map());
+      setStockBollErrorMap(new Map());
+      return;
+    }
+    
+    setIsRefreshingBoll(true);
+    // 清空之前的数据
+    setStockBollMap(new Map());
+    setStockBollErrorMap(new Map());
+    
+    for (let i = 0; i < stocks.length; i++) {
+      const stock = stocks[i];
       
-      // 不复权模式下腾讯也需要处理实时价格，减少批量请求
-      if (bollAdjust === 'none') {
-        setStockBollMap(new Map());
-        setStockBollErrorMap(new Map());
-        return;
-      }
+      // 每只股票的3个周期并发请求，股票之间间隔250ms
+      const [dailyR, weeklyR, monthlyR] = await Promise.all([
+        fetchBollData(stock.code, 'daily', bollAdjust, apiSource),
+        fetchBollData(stock.code, 'weekly', bollAdjust, apiSource),
+        fetchBollData(stock.code, 'monthly', bollAdjust, apiSource),
+      ]);
       
-      const newMap = new Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>();
-      const newErrorMap = new Map<string, { daily?: string; weekly?: string; monthly?: string }>();
-      for (const stock of stocks) {
-        const [dailyR, weeklyR, monthlyR] = await Promise.all([
-          fetchBollData(stock.code, 'daily', bollAdjust, apiSource),
-          fetchBollData(stock.code, 'weekly', bollAdjust, apiSource),
-          fetchBollData(stock.code, 'monthly', bollAdjust, apiSource),
-        ]);
+      // 立即更新状态
+      setStockBollMap(prev => {
+        const newMap = new Map(prev);
         newMap.set(stock.id, {
           daily: dailyR.data,
           weekly: weeklyR.data,
           monthly: monthlyR.data,
         });
-        const errors: { daily?: string; weekly?: string; monthly?: string } = {};
-        if (dailyR.error) errors.daily = dailyR.error;
-        if (weeklyR.error) errors.weekly = weeklyR.error;
-        if (monthlyR.error) errors.monthly = monthlyR.error;
-        if (Object.keys(errors).length > 0) {
+        return newMap;
+      });
+      
+      const errors: { daily?: string; weekly?: string; monthly?: string } = {};
+      if (dailyR.error) errors.daily = dailyR.error;
+      if (weeklyR.error) errors.weekly = weeklyR.error;
+      if (monthlyR.error) errors.monthly = monthlyR.error;
+      if (Object.keys(errors).length > 0) {
+        setStockBollErrorMap(prev => {
+          const newErrorMap = new Map(prev);
           newErrorMap.set(stock.id, errors);
-        }
+          return newErrorMap;
+        });
       }
-      setStockBollMap(newMap);
-      setStockBollErrorMap(newErrorMap);
-    };
-    fetchAllBoll();
+      
+      // 股票之间间隔250ms（最后一只股票不需要）
+      if (i < stocks.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+    }
+    setIsRefreshingBoll(false);
   }, [stocks, bollAdjust, apiSource]);
+
+  useEffect(() => {
+    fetchAllBoll();
+  }, [fetchAllBoll]);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -824,6 +847,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               >
                 <div className="flex items-center justify-center gap-1">
                   <span>布林线 - {bollAdjust === 'qfq' ? '前复权' : '除权'}</span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      fetchAllBoll();
+                    }}
+                    disabled={isRefreshingBoll || bollAdjust === 'none'}
+                    className="p-0.5 hover:bg-app-card rounded transition-colors disabled:opacity-50"
+                    title="刷新所有BOLL数据"
+                  >
+                    <RefreshCw size={10} className={isRefreshingBoll ? 'animate-spin' : ''} />
+                  </button>
                 </div>
               </th>
                 {cols.includes('dividend2024') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">分红</th>}
