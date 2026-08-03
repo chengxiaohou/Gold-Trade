@@ -2,12 +2,23 @@ import { ApiSource } from '../types';
 import { getDynamicCacheTTL, setLastFetchTime } from './cacheService';
 import { requestLogService } from './requestLogService';
 
-// 开发环境使用 Vite proxy，生产环境优先 JSONP（绕过 CORS），失败后回退 CORS 代理
+// 生产环境配置
 const isDev = import.meta.env.DEV;
-const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+const PROD_CONFIG = {
+  // Cloudflare Worker 代理（需部署 workers/cors-proxy.js，替换下方 URL）
+  cfWorker: 'https://cors-proxy.gold-trade.workers.dev',
+  // 备用 CORS 代理（CF Worker 不可用时回退）
+  fallbackProxies: [
+    'https://corsproxy.io/?url=',
+    'https://api.allorigins.win/raw?url=',
+  ],
+  // 超时配置
+  jsonpTimeout: 12000,
+  proxyTimeout: 12000,
+};
 
-// JSONP 请求：通过 <script> 标签加载，不受 CORS 限制，速度与直连相当
-function jsonpRequest<T>(url: string, timeoutMs = 8000): Promise<T> {
+// JSONP 请求：通过 <script> 标签加载，不受 CORS 限制
+function jsonpRequest<T>(url: string, timeoutMs: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const cbName = `__jsonp_cb_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const script = document.createElement('script');
@@ -39,23 +50,67 @@ function jsonpRequest<T>(url: string, timeoutMs = 8000): Promise<T> {
   });
 }
 
-// 生产环境统一请求函数：JSONP 优先 → CORS 代理回退
+// 代理请求（单个代理）
+async function singleProxyFetch<T>(proxyUrl: string, timeoutMs: number): Promise<T> {
+  const response = await fetch(proxyUrl, { signal: AbortSignal.timeout(timeoutMs) });
+  if (!response.ok) throw new Error(`代理返回 ${response.status}`);
+  return response.json() as Promise<T>;
+}
+
+// 生产环境请求：JSONP + CF Worker 并行竞争，失败后回退到备用代理
 async function prodFetchJson<T>(realUrl: string): Promise<{ data: T | null; error?: string }> {
-  // 1. 尝试 JSONP（最快，无第三方依赖）
-  try {
-    const data = await jsonpRequest<T>(realUrl);
-    return { data };
-  } catch {
-    // 2. 回退到 CORS 代理
+  const { cfWorker, fallbackProxies, jsonpTimeout, proxyTimeout } = PROD_CONFIG;
+
+  // 第一组：JSONP + CF Worker 并行（两条最快路径竞争）
+  const primaryTasks: Promise<{ data: T | null; error?: string }>[] = [
+    jsonpRequest<T>(realUrl, jsonpTimeout).then(data => ({ data })).catch(e => ({ data: null, error: e.message })),
+    singleProxyFetch<T>(`${cfWorker}/?url=${encodeURIComponent(realUrl)}`, proxyTimeout)
+      .then(data => ({ data })).catch(e => ({ data: null, error: e.message })),
+  ];
+
+  const firstSuccess = await raceFirstSuccess(primaryTasks);
+  if (firstSuccess.data !== null) return firstSuccess;
+
+  // 第二组：回退到备用代理链
+  for (const proxyBase of fallbackProxies) {
     try {
-      const proxyUrl = `${CORS_PROXY}${encodeURIComponent(realUrl)}`;
-      const response = await fetch(proxyUrl);
-      if (!response.ok) return { data: null, error: `代理请求失败 (${response.status})` };
-      return { data: await response.json() as T };
+      const url = `${proxyBase}${encodeURIComponent(realUrl)}`;
+      const data = await singleProxyFetch<T>(url, proxyTimeout);
+      return { data };
     } catch (e) {
-      return { data: null, error: e instanceof Error ? e.message : '请求失败' };
+      // 继续下一个代理
     }
   }
+
+  return firstSuccess.data !== null
+    ? firstSuccess
+    : { data: null, error: '所有请求均失败' };
+}
+
+// 并行竞争：第一个成功（有 data）的结果返回
+function raceFirstSuccess<T>(tasks: Promise<{ data: T | null; error?: string }>[]): Promise<{ data: T | null; error?: string }> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let lastError = '';
+
+    const finalize = (result: { data: T | null; error?: string }) => {
+      if (!settled) {
+        settled = true;
+        resolve(result);
+      }
+    };
+
+    for (const task of tasks) {
+      task.then(result => {
+        if (result.data !== null) finalize(result);
+        else lastError = result.error || lastError;
+      });
+    }
+
+    Promise.all(tasks).then(() => {
+      if (!settled) finalize({ data: null, error: lastError || '所有请求均失败' });
+    });
+  });
 }
 
 // 生成用于日志显示的 URL（始终用 proxy 路径格式，便于阅读）
@@ -368,12 +423,13 @@ async function fetchBollFromTencent(
       }
       result = await response.json();
     } else {
-      const res = await prodFetchJson<TencentKlineResponse>(realUrl);
-      if (!res.data) {
-        requestLogService.failed(requestId, res.error || '腾讯接口请求失败');
-        return { data: null, error: res.error || '腾讯接口请求失败' };
+      // 腾讯接口支持 CORS（access-control-allow-origin: *），可直接 fetch
+      const response = await fetch(realUrl);
+      if (!response.ok) {
+        requestLogService.failed(requestId, `腾讯接口请求失败 (${response.status})`);
+        return { data: null, error: `腾讯接口请求失败 (${response.status})` };
       }
-      result = res.data;
+      result = await response.json();
     }
 
     if (!result || !result.data || !result.data[code]) {
