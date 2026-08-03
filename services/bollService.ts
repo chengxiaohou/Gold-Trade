@@ -2,15 +2,18 @@ import { ApiSource } from '../types';
 import { getDynamicCacheTTL, setLastFetchTime } from './cacheService';
 import { requestLogService } from './requestLogService';
 
-// 开发环境使用 Vite proxy，生产环境直接请求真实 API（GitHub Pages 无 proxy）
+// 开发环境使用 Vite proxy，生产环境通过 CORS 代理转发（GitHub Pages 无 server-side proxy）
 const isDev = import.meta.env.DEV;
+const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 
 function buildTencentUrl(path: string): string {
-  return isDev ? `/api/tencent${path}` : `https://web.ifzq.gtimg.cn${path}`;
+  const realUrl = `https://web.ifzq.gtimg.cn${path}`;
+  return isDev ? `/api/tencent${path}` : `${CORS_PROXY}${encodeURIComponent(realUrl)}`;
 }
 
 function buildSinaUrl(path: string): string {
-  return isDev ? `/api/sina${path}` : `https://money.finance.sina.com.cn${path}`;
+  const realUrl = `https://money.finance.sina.com.cn${path}`;
+  return isDev ? `/api/sina${path}` : `${CORS_PROXY}${encodeURIComponent(realUrl)}`;
 }
 
 // 生成用于日志显示的 URL（始终用 proxy 路径格式，便于阅读）
