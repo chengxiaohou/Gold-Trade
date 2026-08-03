@@ -2,18 +2,60 @@ import { ApiSource } from '../types';
 import { getDynamicCacheTTL, setLastFetchTime } from './cacheService';
 import { requestLogService } from './requestLogService';
 
-// 开发环境使用 Vite proxy，生产环境通过 CORS 代理转发（GitHub Pages 无 server-side proxy）
+// 开发环境使用 Vite proxy，生产环境优先 JSONP（绕过 CORS），失败后回退 CORS 代理
 const isDev = import.meta.env.DEV;
 const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 
-function buildTencentUrl(path: string): string {
-  const realUrl = `https://web.ifzq.gtimg.cn${path}`;
-  return isDev ? `/api/tencent${path}` : `${CORS_PROXY}${encodeURIComponent(realUrl)}`;
+// JSONP 请求：通过 <script> 标签加载，不受 CORS 限制，速度与直连相当
+function jsonpRequest<T>(url: string, timeoutMs = 8000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const cbName = `__jsonp_cb_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const script = document.createElement('script');
+    let settled = false;
+
+    const cleanup = () => {
+      settled = true;
+      delete (window as unknown as Record<string, unknown>)[cbName];
+      if (script.parentNode) script.parentNode.removeChild(script);
+    };
+
+    const timer = setTimeout(() => {
+      if (!settled) { cleanup(); reject(new Error('JSONP 超时')); }
+    }, timeoutMs);
+
+    (window as unknown as Record<string, unknown>)[cbName] = (data: T) => {
+      clearTimeout(timer);
+      if (!settled) { cleanup(); resolve(data); }
+    };
+
+    script.onerror = () => {
+      clearTimeout(timer);
+      if (!settled) { cleanup(); reject(new Error('JSONP 请求失败')); }
+    };
+
+    const sep = url.includes('?') ? '&' : '?';
+    script.src = `${url}${sep}callback=${cbName}`;
+    document.head.appendChild(script);
+  });
 }
 
-function buildSinaUrl(path: string): string {
-  const realUrl = `https://money.finance.sina.com.cn${path}`;
-  return isDev ? `/api/sina${path}` : `${CORS_PROXY}${encodeURIComponent(realUrl)}`;
+// 生产环境统一请求函数：JSONP 优先 → CORS 代理回退
+async function prodFetchJson<T>(realUrl: string): Promise<{ data: T | null; error?: string }> {
+  // 1. 尝试 JSONP（最快，无第三方依赖）
+  try {
+    const data = await jsonpRequest<T>(realUrl);
+    return { data };
+  } catch {
+    // 2. 回退到 CORS 代理
+    try {
+      const proxyUrl = `${CORS_PROXY}${encodeURIComponent(realUrl)}`;
+      const response = await fetch(proxyUrl);
+      if (!response.ok) return { data: null, error: `代理请求失败 (${response.status})` };
+      return { data: await response.json() as T };
+    } catch (e) {
+      return { data: null, error: e instanceof Error ? e.message : '请求失败' };
+    }
+  }
 }
 
 // 生成用于日志显示的 URL（始终用 proxy 路径格式，便于阅读）
@@ -178,6 +220,11 @@ interface TencentKlineItem {
   volume: number;
 }
 
+// 腾讯 K线接口响应类型
+interface TencentKlineResponse {
+  data: Record<string, unknown>;
+}
+
 function parseTencentKlineData(data: any, code: string, period: BollPeriod, adjust: BollAdjust): TencentKlineItem[] | null {
   if (!data || !data[code]) return null;
 
@@ -303,21 +350,32 @@ async function fetchBollFromTencent(
   const count = 80;
 
   const urlPath = `/appstock/app/fqkline/get?param=${code},${periodParam},,,${count},${adjustParam}`;
-  const fetchUrl = buildTencentUrl(urlPath);
+  const realUrl = `https://web.ifzq.gtimg.cn${urlPath}`;
+  const devUrl = `/api/tencent${urlPath}`;
   const logUrl = logTencentUrl(urlPath);
 
   // 开始请求，记录日志
   const requestId = requestLogService.startRequest(logUrl);
 
   try {
-    const response = await fetch(fetchUrl);
-    if (!response.ok) {
-      requestLogService.failed(requestId, `腾讯接口请求失败 (${response.status})`);
-      return { data: null, error: `腾讯接口请求失败 (${response.status})` };
+    let result: TencentKlineResponse | null = null;
+
+    if (isDev) {
+      const response = await fetch(devUrl);
+      if (!response.ok) {
+        requestLogService.failed(requestId, `腾讯接口请求失败 (${response.status})`);
+        return { data: null, error: `腾讯接口请求失败 (${response.status})` };
+      }
+      result = await response.json();
+    } else {
+      const res = await prodFetchJson<TencentKlineResponse>(realUrl);
+      if (!res.data) {
+        requestLogService.failed(requestId, res.error || '腾讯接口请求失败');
+        return { data: null, error: res.error || '腾讯接口请求失败' };
+      }
+      result = res.data;
     }
 
-    const result = await response.json();
-    
     if (!result || !result.data || !result.data[code]) {
       requestLogService.failed(requestId, '腾讯接口无数据');
       return { data: null, error: '腾讯接口无数据' };
@@ -400,21 +458,32 @@ async function fetchBollFromSina(
   const fullCode = `${market}${code}`;
 
   const urlPath = `/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${fullCode}&scale=${scale}&ma=no&datalen=80`;
-  const fetchUrl = buildSinaUrl(urlPath);
+  const realUrl = `https://money.finance.sina.com.cn${urlPath}`;
+  const devUrl = `/api/sina${urlPath}`;
   const logUrl = logSinaUrl(urlPath);
 
   // 开始请求，记录日志
   const requestId = requestLogService.startRequest(logUrl);
 
   try {
-    const response = await fetch(fetchUrl);
-    if (!response.ok) {
-      requestLogService.failed(requestId, `新浪接口请求失败 (${response.status})`);
-      return { data: null, error: `新浪接口请求失败 (${response.status})` };
+    let klines: SinaKline[];
+
+    if (isDev) {
+      const response = await fetch(devUrl);
+      if (!response.ok) {
+        requestLogService.failed(requestId, `新浪接口请求失败 (${response.status})`);
+        return { data: null, error: `新浪接口请求失败 (${response.status})` };
+      }
+      klines = await response.json();
+    } else {
+      const res = await prodFetchJson<SinaKline[]>(realUrl);
+      if (!res.data) {
+        requestLogService.failed(requestId, res.error || '新浪接口请求失败');
+        return { data: null, error: res.error || '新浪接口请求失败' };
+      }
+      klines = res.data;
     }
 
-    const klines: SinaKline[] = await response.json();
-    
     if (!klines || !Array.isArray(klines)) {
       requestLogService.failed(requestId, '新浪接口无K线数据');
       return { data: null, error: '新浪接口无K线数据' };
