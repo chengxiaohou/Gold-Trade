@@ -2,6 +2,26 @@ import { ApiSource } from '../types';
 import { getDynamicCacheTTL, setLastFetchTime } from './cacheService';
 import { requestLogService } from './requestLogService';
 
+// 开发环境使用 Vite proxy，生产环境直接请求真实 API（GitHub Pages 无 proxy）
+const isDev = import.meta.env.DEV;
+
+function buildTencentUrl(path: string): string {
+  return isDev ? `/api/tencent${path}` : `https://web.ifzq.gtimg.cn${path}`;
+}
+
+function buildSinaUrl(path: string): string {
+  return isDev ? `/api/sina${path}` : `https://money.finance.sina.com.cn${path}`;
+}
+
+// 生成用于日志显示的 URL（始终用 proxy 路径格式，便于阅读）
+function logTencentUrl(path: string): string {
+  return `/api/tencent${path}`;
+}
+
+function logSinaUrl(path: string): string {
+  return `/api/sina${path}`;
+}
+
 export type BollPeriod = 'daily' | 'weekly' | 'monthly';
 export type BollAdjust = 'qfq' | 'none';
 
@@ -114,9 +134,9 @@ export function checkAllBollCache(
       if (cached && Date.now() - cached.timestamp < dynamicTTL) {
         data[period] = cached.data;
         // 记录缓存命中日志（配合 fetchAllBoll 开始时的 reset，只显示本次缓存命中）
-        const url = apiSource === 'tencent' 
-          ? `/api/tencent/appstock/app/fqkline/get?param=${fullCode},${period}`
-          : `/api/sina/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${fullCode}&scale=${period}`;
+        const url = apiSource === 'tencent'
+          ? logTencentUrl(`/appstock/app/fqkline/get?param=${fullCode},${period}`)
+          : logSinaUrl(`/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${fullCode}&scale=${period}`);
         requestLogService.cacheHit(url);
       } else {
         allCached = false;
@@ -230,9 +250,9 @@ export async function fetchBollData(
   
   if (cached && Date.now() - cached.timestamp < dynamicTTL) {
     // 缓存命中，记录日志
-    const url = apiSource === 'tencent' 
-      ? `/api/tencent/appstock/app/fqkline/get?param=${fullCode},${period}`
-      : `/api/sina/...getKLineData?symbol=${fullCode}&scale=${period}`;
+    const url = apiSource === 'tencent'
+      ? logTencentUrl(`/appstock/app/fqkline/get?param=${fullCode},${period}`)
+      : logSinaUrl(`/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${fullCode}&scale=${period}`);
     requestLogService.cacheHit(url);
     return { data: cached.data };
   }
@@ -279,13 +299,15 @@ async function fetchBollFromTencent(
   const adjustParam = adjustMap[adjust];
   const count = 80;
 
-  const url = `/api/tencent/appstock/app/fqkline/get?param=${code},${periodParam},,,${count},${adjustParam}`;
+  const urlPath = `/appstock/app/fqkline/get?param=${code},${periodParam},,,${count},${adjustParam}`;
+  const fetchUrl = buildTencentUrl(urlPath);
+  const logUrl = logTencentUrl(urlPath);
 
   // 开始请求，记录日志
-  const requestId = requestLogService.startRequest(url);
+  const requestId = requestLogService.startRequest(logUrl);
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(fetchUrl);
     if (!response.ok) {
       requestLogService.failed(requestId, `腾讯接口请求失败 (${response.status})`);
       return { data: null, error: `腾讯接口请求失败 (${response.status})` };
@@ -374,13 +396,15 @@ async function fetchBollFromSina(
   const scale = getScaleParam(period);
   const fullCode = `${market}${code}`;
 
-  const url = `/api/sina/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${fullCode}&scale=${scale}&ma=no&datalen=80`;
+  const urlPath = `/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${fullCode}&scale=${scale}&ma=no&datalen=80`;
+  const fetchUrl = buildSinaUrl(urlPath);
+  const logUrl = logSinaUrl(urlPath);
 
   // 开始请求，记录日志
-  const requestId = requestLogService.startRequest(url);
+  const requestId = requestLogService.startRequest(logUrl);
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(fetchUrl);
     if (!response.ok) {
       requestLogService.failed(requestId, `新浪接口请求失败 (${response.status})`);
       return { data: null, error: `新浪接口请求失败 (${response.status})` };
