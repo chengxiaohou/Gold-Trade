@@ -5,6 +5,7 @@ import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, Tren
 import { GithubConfig, AppSettings, StockSettings, DividendRateColorRange, ApiSource, CacheInfo } from '../types';
 import { validateConnection } from '../services/githubService';
 import { getCacheInfo, getMarketStatusText, formatDatePart, formatTimePart, formatRelativeTime, clearCacheRecord } from '../services/cacheService';
+import { clearAllCache } from '../services/bollService';
 
 // All available columns in gold trade list
 const GOLD_COLUMNS = [
@@ -79,7 +80,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [newRange, setNewRange] = useState({ min: '', max: '', color: 'gray' });
   const [editingRangeIndex, setEditingRangeIndex] = useState<number | null>(null);
   const [maxRows, setMaxRows] = useState<number>(stockSettings?.maxRows || 15);
-  const [apiSource, setApiSource] = useState<ApiSource>(appSettings.apiSource || 'sina');
+  const [apiSource, setApiSource] = useState<ApiSource>(appSettings.apiSource || 'tencent');
   const [cacheTTLMinutes, setCacheTTLMinutes] = useState<number>(appSettings.cacheTTLMinutes || 10);
   const [cacheInfo, setCacheInfo] = useState<{ sina: CacheInfo; tencent: CacheInfo }>({
     sina: getCacheInfo('sina'),
@@ -127,7 +128,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       }
       setBuyTaxFee((appSettings.buyTaxFee ?? 5).toString());
       setSellTaxFee((appSettings.sellTaxFee ?? 5).toString());
-      setApiSource(appSettings.apiSource || 'sina');
+      setApiSource(appSettings.apiSource || 'tencent');
       setIsVerifying(false);
       setLogState(null);
       setEditingRangeIndex(null);
@@ -232,11 +233,14 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "未知错误";
+      // GitHub 验证失败不阻止保存本地设置（保留现有云端配置，不覆盖）
+      onSave(githubConfig, newAppSettings, newStockSettings);
       setLogState({
         type: 'error',
         lines: [
           `[System] Connection Failed`,
           `[Error] ${errorMsg}`,
+          `[Notice] 云端配置未变更，本地设置已保存`,
           `--------------------------------`,
           `❌ 请检查 Token 是否正确，或网络是否通畅。`
         ]
@@ -258,7 +262,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     onClose();
   };
 
-  const saveGeneralSettings = () => {
+  const saveGeneralSettings = (sourceOverride?: ApiSource) => {
     const newPriceStep = parseFloat(priceStep);
     const newGramsStep = parseFloat(gramsStep);
     
@@ -276,7 +280,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       visibleColumns: currentPage === 'gold' ? visibleColumns : appSettings.visibleColumns,
       buyTaxFee: parseFloat(buyTaxFee) || 5,
       sellTaxFee: parseFloat(sellTaxFee) || 5,
-      apiSource: apiSource,
+      apiSource: sourceOverride || apiSource,
+      cacheTTLMinutes: cacheTTLMinutes,
     };
     
     const newStockSettings: StockSettings = {
@@ -287,7 +292,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       maxRows: currentPage === 'stock' ? maxRows : stockSettings?.maxRows,
     };
     
-    onSave({ token: '', gistId: '' }, newAppSettings, newStockSettings);
+    // 保留现有云端配置，避免关闭弹窗时意外清空 GitHub token/gistId
+    onSave(githubConfig, newAppSettings, newStockSettings);
   };
 
   if (!isOpen) return null;
@@ -501,7 +507,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                         <div className="flex gap-2">
                           <button
                             type="button"
-                            onClick={() => setApiSource('sina')}
+                            onClick={() => { setApiSource('sina'); saveGeneralSettings('sina'); }}
                             className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
                               apiSource === 'sina'
                                 ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50'
@@ -512,7 +518,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => setApiSource('tencent')}
+                            onClick={() => { setApiSource('tencent'); saveGeneralSettings('tencent'); }}
                             className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
                               apiSource === 'tencent'
                                 ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50'
@@ -535,6 +541,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                             onClick={() => {
                               clearCacheRecord('sina');
                               clearCacheRecord('tencent');
+                              clearAllCache();
                               setCacheInfo({
                                 sina: getCacheInfo('sina'),
                                 tencent: getCacheInfo('tencent')

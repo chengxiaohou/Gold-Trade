@@ -329,7 +329,7 @@ const formatPercent = (percent: number): string => {
   return percent.toFixed(2) + '%';
 };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'sina' as ApiSource, onResetStocks, resetSignal }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
   const rateCols = dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'];
@@ -366,7 +366,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [bollUnsupported, setBollUnsupported] = useState<boolean>(false);
   const [bollPeriod, setBollPeriod] = useState<BollPeriod>('daily');
   const [bollAdjust, setBollAdjust] = useState<BollAdjust>('qfq');
-  const [bollPopupApiSource, setBollPopupApiSource] = useState<ApiSource>('sina');
+  const [bollPopupApiSource, setBollPopupApiSource] = useState<ApiSource>('tencent');
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
   const [stockBollErrorMap, setStockBollErrorMap] = useState<Map<string, { daily?: string; weekly?: string; monthly?: string }>>(new Map());
   const [isRefreshingBoll, setIsRefreshingBoll] = useState(false);

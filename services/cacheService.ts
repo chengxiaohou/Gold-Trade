@@ -141,7 +141,8 @@ function calculateCacheExpiry(fromTime: number, ttlMinutes: number): number {
 
 // 获取缓存TTL设置
 function getCacheTTLMinutes(): number {
-  const settings = localStorage.getItem('app_settings');
+  // 设置实际保存在 gold_app_settings（由 App.tsx 写入），读取该 key 才能让缓存 TTL 生效
+  const settings = localStorage.getItem('gold_app_settings');
   if (settings) {
     try {
       const parsed = JSON.parse(settings);

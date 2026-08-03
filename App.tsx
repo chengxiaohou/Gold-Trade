@@ -225,8 +225,11 @@ export default function App() {
       touchMode: parsed.touchMode ?? true,
       priceDisplayMode: parsed.priceDisplayMode || 'both',
       totalCapital: parsed.totalCapital || 0,
+      visibleColumns: parsed.visibleColumns,
       buyTaxFee: parsed.buyTaxFee ?? 5,
-      sellTaxFee: parsed.sellTaxFee ?? 5
+      sellTaxFee: parsed.sellTaxFee ?? 5,
+      apiSource: parsed.apiSource,
+      cacheTTLMinutes: parsed.cacheTTLMinutes,
     };
   });
 
@@ -1769,7 +1772,7 @@ export default function App() {
             actionButtons={renderStockActionButtons()}
             appVersion={APP_VERSION}
             onTogglePage={togglePage}
-            apiSource={appSettings.apiSource || 'sina'}
+            apiSource={appSettings.apiSource || 'tencent'}
             onResetStocks={resetStockData}
             resetSignal={stockResetSignal}
           />
