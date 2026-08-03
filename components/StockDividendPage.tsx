@@ -387,12 +387,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 防止 StrictMode 双重调用
   const isFetchingRef = useRef(false);
+  // 请求版本号：每次切换数据源递增，用于取消旧请求
+  const fetchVersionRef = useRef(0);
 
   const fetchAllBoll = useCallback(async () => {
     // 防止重复调用
     if (isFetchingRef.current) {
       return;
     }
+    
+    // 递增版本号，标记本次请求
+    const currentVersion = ++fetchVersionRef.current;
     
     // 清空之前的请求日志，只显示本次请求的统计
     requestLogService.reset();
@@ -415,9 +420,18 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     isFetchingRef.current = true;
     setIsRefreshingBoll(true);
     
+    // 清空旧数据，显示加载状态
+    setStockBollMap(new Map());
+    setStockBollErrorMap(new Map());
+    
     // 先检查缓存
     const dynamicTTL = getDynamicCacheTTL();
     const { allCached, cachedData } = checkAllBollCache(stocks, bollAdjust, apiSource, dynamicTTL);
+    
+    if (fetchVersionRef.current !== currentVersion) {
+      // 已被新请求取消
+      return;
+    }
     
     if (allCached) {
       // 所有数据都在缓存中，一次性批量更新
@@ -431,6 +445,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     
     // 部分或全部数据不在缓存中，逐个获取
     for (let i = 0; i < stocks.length; i++) {
+      // 检查版本号，如果已被新请求替代则取消
+      if (fetchVersionRef.current !== currentVersion) {
+        isFetchingRef.current = false;
+        setIsRefreshingBoll(false);
+        return;
+      }
+      
       const stock = stocks[i];
       
       // 先检查这只股票是否已缓存
@@ -451,6 +472,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         fetchBollData(stock.code, 'weekly', bollAdjust, apiSource),
         fetchBollData(stock.code, 'monthly', bollAdjust, apiSource),
       ]);
+      
+      // 请求完成后再次检查版本号
+      if (fetchVersionRef.current !== currentVersion) {
+        isFetchingRef.current = false;
+        setIsRefreshingBoll(false);
+        return;
+      }
       
       // 立即更新状态
       setStockBollMap(prev => {
@@ -475,9 +503,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         });
       }
       
-      // 网络请求后，等待250ms再请求下一只股票
+      // 网络请求后，等待250ms再请求下一只股票（但期间要检查是否被取消）
       if (i < stocks.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 250));
+        for (let w = 0; w < 25; w++) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+          if (fetchVersionRef.current !== currentVersion) {
+            isFetchingRef.current = false;
+            setIsRefreshingBoll(false);
+            return;
+          }
+        }
       }
     }
     isFetchingRef.current = false;
