@@ -13,7 +13,7 @@ import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings } from './types';
 
-const APP_VERSION = 'v2.2.0';
+const APP_VERSION = 'v2.3.0';
 
 // 生成股息率对应股价的辅助函数
 function calcDividendRates(dividend2025: number): Record<string, number> {
@@ -666,7 +666,6 @@ export default function App() {
     setUploadSuccess(false);
     try {
       let existingTrades: TradeRecord[] = [];
-      let existingSettings: AppSettings | undefined;
       let existingStocks: StockEntry[] = [];
       let existingStockSettings: StockSettings | undefined;
       
@@ -675,7 +674,6 @@ export default function App() {
           const existing = await loadFromGist(githubConfig.token, githubConfig.gistId);
           if (existing) {
             existingTrades = existing.trades || [];
-            existingSettings = existing.settings;
             existingStocks = existing.stocks || [];
             existingStockSettings = existing.stockSettings;
           }
@@ -694,7 +692,7 @@ export default function App() {
       } else {
         dataToUpload = {
           trades: existingTrades,
-          settings: existingSettings,
+          settings: appSettings,
           stocks,
           stockSettings
         };
@@ -740,6 +738,13 @@ export default function App() {
         } else {
           if (result.stocks) {
             setStocks(result.stocks);
+          }
+
+          if (result.settings) {
+            setAppSettings(prev => ({
+              ...prev,
+              ...result.settings
+            }));
           }
           
           if (result.stockSettings) {

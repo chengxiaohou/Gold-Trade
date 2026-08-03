@@ -62,8 +62,6 @@ export interface AppSettings {
   visibleColumns?: string[]; // New: Which columns to show in trade list
   buyTaxFee?: number; // New: Tax fee per buy transaction
   sellTaxFee?: number; // New: Tax fee per sell transaction
-  dividendRate?: number; // New: Dividend annual rate (%)
-  dividendPeriod?: number; // New: Dividend period in months
   apiSource?: ApiSource; // New: API source for stock data ('sina' or 'tencent')
   cacheTTLMinutes?: number; // New: Cache TTL in minutes during trading hours, default 10
 }
