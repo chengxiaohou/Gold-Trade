@@ -127,7 +127,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       }
       setBuyTaxFee((appSettings.buyTaxFee ?? 5).toString());
       setSellTaxFee((appSettings.sellTaxFee ?? 5).toString());
-      setApiSource(appSettings.apiSource || 'tencent');
+      setApiSource(appSettings.apiSource || 'sina');
       setIsVerifying(false);
       setLogState(null);
       setEditingRangeIndex(null);
@@ -501,17 +501,6 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                         <div className="flex gap-2">
                           <button
                             type="button"
-                            onClick={() => setApiSource('tencent')}
-                            className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                              apiSource === 'tencent'
-                                ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50'
-                                : 'bg-app-input text-app-subtext border border-app-border hover:border-app-text/30'
-                            }`}
-                          >
-                            腾讯财经
-                          </button>
-                          <button
-                            type="button"
                             onClick={() => setApiSource('sina')}
                             className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
                               apiSource === 'sina'
@@ -520,6 +509,17 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                             }`}
                           >
                             新浪财经
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setApiSource('tencent')}
+                            className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                              apiSource === 'tencent'
+                                ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50'
+                                : 'bg-app-input text-app-subtext border border-app-border hover:border-app-text/30'
+                            }`}
+                          >
+                            腾讯财经
                           </button>
                         </div>
                      </div>
@@ -585,7 +585,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
 
                         {/* Cache Status by Source */}
                         <div className="grid grid-cols-2 gap-2">
-                          {(['tencent', 'sina'] as ApiSource[]).map(source => {
+                          {(['sina', 'tencent'] as ApiSource[]).map(source => {
                             const info = cacheInfo[source];
                             const isExpired = info.expiresAt ? Date.now() >= info.expiresAt : true;
                             return (
