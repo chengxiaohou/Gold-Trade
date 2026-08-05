@@ -523,6 +523,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     fetchAllBoll();
   }, [fetchAllBoll]);
 
+  // 打开股息页时，自动刷新一次所有股价（组件每次挂载只执行一次）
+  const didAutoRefreshPricesRef = useRef(false);
+  useEffect(() => {
+    if (didAutoRefreshPricesRef.current) return;
+    didAutoRefreshPricesRef.current = true;
+    handleRefreshAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const availableTags = useMemo(() => {
