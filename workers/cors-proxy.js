@@ -19,6 +19,8 @@ const ALLOWED_HOSTS = [
   'web.ifzq.gtimg.cn',
   'qt.gtimg.cn',
   'hq.sinajs.cn',
+  'datacenter-web.eastmoney.com', // 股息页分红数据（东方财富 datacenter 接口）
+  'basic.10jqka.com.cn',          // 股息页分红数据（同花顺 F10 分红融资，主数据源）
 ];
 
 addEventListener('fetch', (event) => {
@@ -56,7 +58,11 @@ async function handleRequest(request: Request) {
       ? 'https://finance.sina.com.cn/'
       : targetUrl.includes('gtimg')
         ? 'https://gu.qq.com/'
-        : '',
+        : targetUrl.includes('eastmoney')
+          ? 'https://data.eastmoney.com/'
+          : targetUrl.includes('10jqka')
+            ? 'https://basic.10jqka.com.cn/'
+            : '',
   });
 
   try {

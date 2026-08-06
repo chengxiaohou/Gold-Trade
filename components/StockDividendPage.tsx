@@ -5,6 +5,7 @@ import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, 
 import { fetchBollData, checkAllBollCache, BollData, BollPeriod, BollAdjust } from '../services/bollService';
 import { getDynamicCacheTTL, isStockPriceFresh } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats } from '../services/requestLogService';
+import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
 
 const TAG_PALETTE = [
   { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20', hover: 'hover:border-gray-500/50' },
@@ -220,6 +221,20 @@ interface StockDividendPageProps {
   resetSignal?: number;
 }
 
+// 分红核对弹窗里的单只股票差异条目
+interface DividendDiffEntry {
+  stockId: string;
+  code: string;
+  name: string;
+  current2024: number;
+  current2025: number;
+  fetched2024: number | null; // null = 查不到
+  fetched2025: number | null;
+  hasData: boolean;
+  error?: string;
+  records: DividendRecord[];
+}
+
 const DEFAULT_DIVIDEND_RATES: StockDividendRates = {
   '2%': 0,
   '3%': 0,
@@ -238,6 +253,19 @@ const calculateDividendRates = (dividend: number, rateColumns: string[] = ['3%',
     }
   });
   return rates;
+};
+
+// 分红核对弹窗：单个年份的单元格（现值 → 查到值）
+const formatDividendCell = (current: number, fetched: number | null, hasData: boolean) => {
+  if (!hasData) return <span className="text-app-subtext">-</span>;
+  const diff = Math.abs((fetched ?? 0) - current) > 0.0001;
+  if (!diff) return <span className="text-app-rowtext">{current.toFixed(4)}</span>;
+  return (
+    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+      <span className="text-app-subtext line-through">{current.toFixed(4)}</span>
+      <span className="text-indigo-400 font-bold">→{(fetched ?? 0).toFixed(4)}</span>
+    </span>
+  );
 };
 
 const formatPrice = (price: number): string => {
@@ -332,6 +360,8 @@ const formatPercent = (percent: number): string => {
 export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
+  // 分红年份列（dividend2024 / dividend2025 / 未来新增 dividend2026...）：表头合并为一格，年份各自成列
+  const dividendYearCols = cols.filter(c => /^dividend\d{4}$/.test(c));
   const rateCols = dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'];
   const ranges = colorRanges || [
     { min: 3, max: 4, color: 'red' },
@@ -354,6 +384,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [editTagState, setEditTagState] = useState<{ id: string, top: number, left: number } | null>(null);
   const [deletingStockId, setDeletingStockId] = useState<string | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  // 分红自动获取状态
+  const [isFetchingDividends, setIsFetchingDividends] = useState(false);
+  const [dividendDiff, setDividendDiff] = useState<DividendDiffEntry[] | null>(null);
+  const [selectedDividendIds, setSelectedDividendIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (resetSignal !== undefined && resetSignal > 0) {
@@ -782,6 +816,74 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     }
   }, [stocks, onStocksChange, fetchStockPrice]);
 
+  // 批量获取所有股票的 2024/2025 全年分红（东方财富，按报告期年度汇总）
+  const handleFetchAllDividends = useCallback(async () => {
+    if (isFetchingDividends || stocks.length === 0) return;
+    setIsFetchingDividends(true);
+    const entries: DividendDiffEntry[] = [];
+    const selected = new Set<string>();
+    for (let i = 0; i < stocks.length; i++) {
+      const stock = stocks[i];
+      const result = await fetchYearlyDividends(stock.code);
+      const changed = result.found && (
+        Math.abs((result.dividend2024 || 0) - (stock.dividend2024 || 0)) > 0.0001 ||
+        Math.abs((result.dividend2025 || 0) - (stock.dividend2025 || 0)) > 0.0001
+      );
+      entries.push({
+        stockId: stock.id,
+        code: getDisplayCode(stock.code),
+        name: stock.name,
+        current2024: stock.dividend2024 || 0,
+        current2025: stock.dividend2025 || 0,
+        fetched2024: result.found ? result.dividend2024 : null,
+        fetched2025: result.found ? result.dividend2025 : null,
+        hasData: result.found,
+        error: result.error,
+        records: result.records || [],
+      });
+      if (changed) selected.add(stock.id);
+    }
+    setDividendDiff(entries);
+    setSelectedDividendIds(selected);
+    setIsFetchingDividends(false);
+  }, [stocks, isFetchingDividends]);
+
+  const toggleDividendRow = (id: string) => {
+    setSelectedDividendIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllDividends = () => {
+    if (!dividendDiff) return;
+    const selectable = dividendDiff.filter(e => e.hasData && !e.error);
+    const allSelected = selectable.length > 0 && selectable.every(e => selectedDividendIds.has(e.stockId));
+    setSelectedDividendIds(allSelected ? new Set() : new Set(selectable.map(e => e.stockId)));
+  };
+
+  const handleApplyDividends = () => {
+    if (!dividendDiff) return;
+    const updatedStocks = stocks.map(stock => {
+      const entry = dividendDiff.find(e => e.stockId === stock.id);
+      if (!entry || !selectedDividendIds.has(stock.id) || !entry.hasData) return stock;
+      const dividend2024 = entry.fetched2024 ?? stock.dividend2024;
+      const dividend2025 = entry.fetched2025 ?? stock.dividend2025;
+      const dividendRate2025 = stock.price > 0 ? (dividend2025 / stock.price) * 100 : 0;
+      return {
+        ...stock,
+        dividend2024,
+        dividend2025,
+        dividendRate2025,
+        dividendRates: calculateDividendRates(dividend2025, rateCols),
+      };
+    });
+    onStocksChange(updatedStocks);
+    setDividendDiff(null);
+    setSelectedDividendIds(new Set());
+  };
+
   const handleAddStock = useCallback(async () => {
     if (!newStock.code.trim()) return;
 
@@ -794,11 +896,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
     setIsRefreshing(new Set(['new']));
     try {
-      let result = null;
-      result = await fetchStockPrice(stockCode);
+      const result = await fetchStockPrice(stockCode);
 
-      const dividend2024 = 0;
-      const dividend2025 = 0;
+      // 自动查询该股票的 2024/2025 全年分红（查不到则保持 0，可稍后用"自动获取分红"批量补）
+      let dividend2024 = 0;
+      let dividend2025 = 0;
+      try {
+        const divResult = await fetchYearlyDividends(stockCode);
+        if (divResult.found) {
+          dividend2024 = divResult.dividend2024;
+          dividend2025 = divResult.dividend2025;
+        }
+      } catch {
+        // 分红获取失败不影响添加股票
+      }
 
       const newEntry: StockEntry = {
         id: Date.now().toString(),
@@ -909,8 +1020,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <col style={{ width: '65px' }} />
               <col style={{ width: '65px' }} />
               <col style={{ width: '65px' }} />
-              {cols.includes('dividend2024') && <col style={{ width: '50px' }} />}
-              {cols.includes('dividend2025') && <col style={{ width: '50px' }} />}
+              {dividendYearCols.map(yearCol => <col key={yearCol} style={{ width: '50px' }} />)}
               <col style={{ width: '60px' }} />
             </colgroup>
             <thead className="sticky top-0 z-30 overflow-hidden">
@@ -972,8 +1082,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </button>
                 </div>
               </th>
-                {cols.includes('dividend2024') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">分红</th>}
-                {cols.includes('dividend2025') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border bg-app-input whitespace-nowrap">分红</th>}
+                {dividendYearCols.length > 0 && <th
+                  colSpan={dividendYearCols.length}
+                  className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border bg-app-input whitespace-nowrap"
+                >
+                  <div className="flex items-center justify-center gap-1 whitespace-nowrap">
+                    <span>分红</span>
+                    <button
+                      onClick={handleFetchAllDividends}
+                      disabled={isFetchingDividends || stocks.length === 0}
+                      className="p-0.5 hover:bg-app-card rounded transition-colors disabled:opacity-50"
+                      title="批量获取全年分红（同花顺 F10）"
+                    >
+                      <RefreshCw size={10} className={isFetchingDividends ? 'animate-spin' : ''} />
+                    </button>
+                  </div>
+                </th>}
                 <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-l border-app-border" rowSpan={2}>操作</th>
               </tr>
               <tr className="bg-app-input">
@@ -982,8 +1106,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">日线</th>
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">周线</th>
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">月线</th>
-                {cols.includes('dividend2024') && <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">2024</th>}
-                {cols.includes('dividend2025') && <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border">2025</th>}
+                {dividendYearCols.map((yearCol, idx) => (
+                  <th key={yearCol} className={`px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border ${idx < dividendYearCols.length - 1 ? 'border-r border-app-border' : ''}`}>
+                    {yearCol.replace('dividend', '')}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -1099,32 +1226,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       );
                     });
                   })()}
-                  {cols.includes('dividend2024') && <td className="px-1 py-1.5 text-center border-r border-app-border">
-                    {editingId === stock.id ? (
-                      <input
-                        type="number"
-                        value={stock.dividend2024}
-                        onChange={(e) => handleUpdateField(stock.id, 'dividend2024', parseFloat(e.target.value) || 0)}
-                        step="0.01"
-                        className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
-                      />
-                    ) : (
-                      <span className="font-mono text-[11px] text-app-rowtext">{formatPrice(stock.dividend2024)}</span>
-                    )}
-                  </td>}
-                  {cols.includes('dividend2025') && <td className="px-1 py-1.5 text-center">
-                    {editingId === stock.id ? (
-                      <input
-                        type="number"
-                        value={stock.dividend2025}
-                        onChange={(e) => handleUpdateField(stock.id, 'dividend2025', parseFloat(e.target.value) || 0)}
-                        step="0.01"
-                        className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
-                      />
-                    ) : (
-                      <span className="font-mono text-xs text-app-rowtext">{formatPrice(stock.dividend2025)}</span>
-                    )}
-                  </td>}
+                  {dividendYearCols.map((yearCol, idx) => {
+                    const field = yearCol as keyof StockEntry;
+                    const value = Number(stock[field]) || 0;
+                    return (
+                      <td key={yearCol} className={`px-1 py-1.5 text-center ${idx < dividendYearCols.length - 1 ? 'border-r border-app-border' : ''}`}>
+                        {editingId === stock.id ? (
+                          <input
+                            type="number"
+                            value={value}
+                            onChange={(e) => handleUpdateField(stock.id, field, parseFloat(e.target.value) || 0)}
+                            step="0.01"
+                            className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
+                          />
+                        ) : (
+                          <span className="font-mono text-xs text-app-rowtext">{formatPrice(value)}</span>
+                        )}
+                      </td>
+                    );
+                  })}
                   <td className="px-1 py-1.5 text-center border-l border-app-border">
                     <div className="flex items-center justify-center gap-2">
                       <button
@@ -1498,6 +1618,133 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         </>,
         document.body
       )}
+
+      {dividendDiff && (() => {
+        const selectable = dividendDiff.filter(e => e.hasData && !e.error);
+        const selectedCount = dividendDiff.filter(e => selectedDividendIds.has(e.stockId)).length;
+        const allSelected = selectable.length > 0 && selectable.every(e => selectedDividendIds.has(e.stockId));
+        return createPortal(
+          <>
+            <div
+              className="fixed inset-0 z-[9998] bg-black/40"
+              onClick={() => setDividendDiff(null)}
+            />
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+              <div className="bg-app-card border border-app-border rounded-xl shadow-2xl w-full max-w-[700px] max-h-[85vh] flex flex-col">
+                <div className="flex items-start justify-between px-4 py-3 border-b border-app-border">
+                  <div>
+                    <h3 className="text-sm font-bold text-app-text">分红数据核对</h3>
+                    <p className="text-[10px] text-app-subtext mt-0.5">
+                      数据来源：同花顺 F10 · 按分红所属年度汇总（含中期/特别分红）· 每股税前派息（送转不计入）
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setDividendDiff(null)}
+                    className="p-1 hover:bg-app-input rounded transition-colors shrink-0"
+                  >
+                    <X size={16} className="text-app-subtext" />
+                  </button>
+                </div>
+                <div className="overflow-y-auto custom-scrollbar min-h-0">
+                  <table className="w-full text-xs border-separate border-spacing-0">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="bg-app-input">
+                        <th className="px-2 py-2 text-center border-b border-app-border w-14">
+                          <label className="flex items-center justify-center gap-1 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={allSelected}
+                              disabled={selectable.length === 0}
+                              onChange={toggleSelectAllDividends}
+                              className="accent-indigo-500 w-3.5 h-3.5"
+                            />
+                            <span className="text-[10px] text-app-subtext">全选</span>
+                          </label>
+                        </th>
+                        <th className="px-2 py-2 text-left border-b border-app-border border-r border-app-border whitespace-nowrap">股票</th>
+                        <th className="px-2 py-2 text-center border-b border-app-border border-r border-app-border whitespace-nowrap">2024 分红</th>
+                        <th className="px-2 py-2 text-center border-b border-app-border border-r border-app-border whitespace-nowrap">2025 分红</th>
+                        <th className="px-2 py-2 text-center border-b border-app-border whitespace-nowrap">状态</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dividendDiff.map(entry => {
+                        const changed = entry.hasData && (
+                          Math.abs((entry.fetched2024 ?? 0) - entry.current2024) > 0.0001 ||
+                          Math.abs((entry.fetched2025 ?? 0) - entry.current2025) > 0.0001
+                        );
+                        const recordTooltip = entry.records
+                          .map(r => `${r.reportDate} ${r.planProfile}`)
+                          .join('\n');
+                        return (
+                          <tr key={entry.stockId} className="hover:bg-app-hover/50 transition-colors">
+                            <td className="px-2 py-1.5 text-center border-b border-app-border">
+                              <input
+                                type="checkbox"
+                                checked={selectedDividendIds.has(entry.stockId)}
+                                disabled={!entry.hasData || !!entry.error}
+                                onChange={() => toggleDividendRow(entry.stockId)}
+                                className="accent-indigo-500 w-4 h-4"
+                              />
+                            </td>
+                            <td
+                              className="px-2 py-1.5 border-b border-app-border border-r border-app-border"
+                              title={recordTooltip || undefined}
+                            >
+                              <div className="text-app-text font-medium whitespace-nowrap">{entry.name}</div>
+                              <div className="text-[10px] text-app-subtext font-mono">{entry.code}</div>
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-b border-app-border border-r border-app-border font-mono">
+                              {formatDividendCell(entry.current2024, entry.fetched2024, entry.hasData)}
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-b border-app-border border-r border-app-border font-mono">
+                              {formatDividendCell(entry.current2025, entry.fetched2025, entry.hasData)}
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-b border-app-border whitespace-nowrap">
+                              {!entry.hasData ? (
+                                <span className={entry.error ? 'text-red-400' : 'text-app-subtext'}>
+                                  {entry.error ? '获取失败' : '查不到，保持手动'}
+                                </span>
+                              ) : changed ? (
+                                <span className="text-indigo-400 font-medium">有差异</span>
+                              ) : (
+                                <span className="text-brand-green">无变化</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex items-center justify-between gap-2 flex-wrap px-4 py-3 border-t border-app-border">
+                  <span className="text-[10px] text-app-subtext">
+                    {selectable.length > 0
+                      ? `已勾选 ${selectedCount} 只将更新`
+                      : '本次没有可更新的股票'}
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setDividendDiff(null)}
+                      className="px-3 py-2 rounded-lg text-xs font-semibold border border-app-border text-app-subtext hover:bg-app-input transition-colors"
+                    >
+                      取消
+                    </button>
+                    <button
+                      onClick={handleApplyDividends}
+                      disabled={selectedCount === 0}
+                      className="px-3 py-2 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      应用勾选（{selectedCount}）
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>,
+          document.body
+        );
+      })()}
 
       {/* 页面底部请求计数器 */}
       <div className="fixed bottom-0 left-0 right-0 z-30 bg-app-card border-t border-app-border px-4 py-2">

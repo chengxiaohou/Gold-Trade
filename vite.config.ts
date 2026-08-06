@@ -51,6 +51,24 @@ export default defineConfig(({ mode }) => {
               'Referer': 'https://finance.sina.com.cn/',
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
+          },
+          '/api/eastmoney': {
+            target: 'https://datacenter-web.eastmoney.com',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/api\/eastmoney/, ''),
+            headers: {
+              'Referer': 'https://data.eastmoney.com/',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+          },
+          '/api/ths': {
+            target: 'https://basic.10jqka.com.cn',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/api\/ths/, ''),
+            headers: {
+              'Referer': 'https://basic.10jqka.com.cn/',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
           }
         }
       },
