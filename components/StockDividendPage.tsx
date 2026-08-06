@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, ArrowUpDown, Download, BarChart3 } from 'lucide-react';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
 import { fetchBollData, checkAllBollCache, BollData, BollPeriod, BollAdjust } from '../services/bollService';
-import { getDynamicCacheTTL } from '../services/cacheService';
+import { getDynamicCacheTTL, isStockPriceFresh } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats } from '../services/requestLogService';
 
 const TAG_PALETTE = [
@@ -528,7 +528,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     if (didAutoRefreshPricesRef.current) return;
     didAutoRefreshPricesRef.current = true;
-    handleRefreshAll();
+    handleRefreshAll(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -741,14 +741,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     }
   }, [stocks, onStocksChange, fetchStockPrice]);
 
-  const handleRefreshAll = useCallback(async () => {
+  const handleRefreshAll = useCallback(async (skipFresh = false) => {
     setIsRefreshing(new Set(stocks.map(s => s.id)));
     setRefreshFailed(new Set());
     try {
       const updatedStocks = [...stocks];
       const failedIds = new Set<string>();
+      let changed = false;
       for (let i = 0; i < updatedStocks.length; i++) {
         const stock = updatedStocks[i];
+        // 跳过仍新鲜的股价（主要用于打开页面时的自动刷新：休市时拿到收盘价后不再重复请求）
+        if (skipFresh && isStockPriceFresh(stock.priceUpdatedAt)) {
+          continue;
+        }
         const result = await fetchStockPrice(stock.code);
         if (result) {
           const dividendRate = result.price > 0 ? (stock.dividend2025 / result.price) * 100 : 0;
@@ -759,11 +764,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             priceUpdatedAt: Date.now(),
             dividendRate2025: dividendRate,
           };
+          changed = true;
         } else {
           failedIds.add(stock.id);
         }
       }
-      onStocksChange(updatedStocks);
+      if (changed) {
+        onStocksChange(updatedStocks);
+      }
       if (failedIds.size > 0) {
         setRefreshFailed(failedIds);
       }

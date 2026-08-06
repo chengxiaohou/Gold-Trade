@@ -271,3 +271,41 @@ export function getDynamicCacheTTL(): number {
     return nextOpen.getTime() - Date.now();
   }
 }
+
+// 判断某只股票的股价是否仍然新鲜（无需重新拉取）
+// 交易时段：按设置的缓存 TTL 判断
+// 午间休市：拿到早盘收盘(11:30)后的价格即视为最新
+// 已收盘：拿到当日收盘(15:00)后的价格即视为最新
+// 盘前/全天休市：拿到最近一个交易日收盘(15:00)后的价格即视为最新
+export function isStockPriceFresh(priceUpdatedAt: number | null): boolean {
+  if (!priceUpdatedAt) return false;
+
+  const status = getMarketStatus();
+  const now = Date.now();
+
+  if (status === 'morning_session' || status === 'afternoon_session') {
+    // 交易时段：在缓存 TTL 内视为新鲜
+    return now - priceUpdatedAt < getDynamicCacheTTL();
+  }
+
+  let latestCloseTime: number;
+  if (status === 'midday_break') {
+    const t = new Date(now);
+    t.setHours(11, 30, 0, 0);
+    latestCloseTime = t.getTime();
+  } else if (status === 'closed') {
+    const t = new Date(now);
+    t.setHours(15, 0, 0, 0);
+    latestCloseTime = t.getTime();
+  } else {
+    // pre_open 或 full_day_closed：向前找最近一个交易日（简化为最近工作日，与 isTradingDay 一致）的 15:00
+    const d = new Date(now);
+    d.setHours(15, 0, 0, 0);
+    do {
+      d.setDate(d.getDate() - 1);
+    } while (!isTradingDay(d));
+    latestCloseTime = d.getTime();
+  }
+
+  return priceUpdatedAt >= latestCloseTime;
+}
