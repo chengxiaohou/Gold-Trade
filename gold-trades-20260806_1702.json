@@ -1,0 +1,1023 @@
+{
+  "version": 1,
+  "timestamp": 1786006946572,
+  "trades": [
+    {
+      "id": "1769823311000",
+      "type": "BUY",
+      "price": 1117.59,
+      "grams": 1,
+      "timestamp": 1769823311000,
+      "isDisabled": false,
+      "historicalBreakEven": 1117.59,
+      "breakEvenChange": 0,
+      "breakEvenAbsChange": 0
+    },
+    {
+      "id": "1770030979000",
+      "type": "BUY",
+      "price": 1054.07,
+      "grams": 1,
+      "timestamp": 1770030979000,
+      "isDisabled": false,
+      "historicalBreakEven": 1085.83,
+      "breakEvenChange": -2.8418292933902407,
+      "breakEvenAbsChange": -31.75999999999999
+    },
+    {
+      "id": "1770032459000",
+      "type": "BUY",
+      "price": 1050,
+      "grams": 1,
+      "timestamp": 1770032459000,
+      "isDisabled": false,
+      "historicalBreakEven": 1073.8866666666665,
+      "breakEvenChange": -1.099926630626653,
+      "breakEvenAbsChange": -11.943333333333385
+    },
+    {
+      "id": "1770039526000",
+      "type": "BUY",
+      "price": 1040,
+      "grams": 1,
+      "timestamp": 1770039526000,
+      "isDisabled": false,
+      "historicalBreakEven": 1065.415,
+      "breakEvenChange": -0.788879025098854,
+      "breakEvenAbsChange": -8.471666666666579
+    },
+    {
+      "id": "1770046336000",
+      "type": "BUY",
+      "price": 1020,
+      "grams": 1,
+      "timestamp": 1770046336000,
+      "isDisabled": false,
+      "historicalBreakEven": 1056.3319999999999,
+      "breakEvenChange": -0.8525316425993705,
+      "breakEvenAbsChange": -9.083000000000084
+    },
+    {
+      "id": "1770046766000",
+      "type": "SELL",
+      "price": 1025,
+      "grams": 1,
+      "timestamp": 1770046766000,
+      "isDisabled": false,
+      "historicalBreakEven": 1064.165,
+      "breakEvenChange": 0.7415282316544499,
+      "breakEvenAbsChange": 7.833000000000084
+    },
+    {
+      "id": "1770053252000",
+      "type": "SELL",
+      "price": 1050,
+      "grams": 1,
+      "timestamp": 1770053252000,
+      "isDisabled": false,
+      "historicalBreakEven": 1068.8866666666665,
+      "breakEvenChange": 0.44369685778676987,
+      "breakEvenAbsChange": 4.721666666666579
+    },
+    {
+      "id": "1770061231000",
+      "type": "SELL",
+      "price": 1070,
+      "grams": 3,
+      "timestamp": 1770061231000,
+      "isDisabled": false,
+      "historicalBreakEven": 0,
+      "breakEvenChange": -100,
+      "breakEvenAbsChange": -1068.8866666666665
+    },
+    {
+      "id": "1770068519000",
+      "type": "BUY",
+      "price": 1045,
+      "grams": 1,
+      "timestamp": 1770068519000,
+      "isDisabled": false,
+      "historicalBreakEven": 1041.6599999999994,
+      "breakEvenChange": 0,
+      "breakEvenAbsChange": 0
+    },
+    {
+      "id": "1770071917000",
+      "type": "SELL",
+      "price": 1070,
+      "grams": 1,
+      "timestamp": 1770071917000,
+      "isDisabled": false,
+      "historicalBreakEven": 0,
+      "breakEvenChange": -100,
+      "breakEvenAbsChange": -1041.6599999999994
+    },
+    {
+      "id": "1770214936000",
+      "type": "BUY",
+      "price": 1135,
+      "grams": 1,
+      "timestamp": 1770214936000,
+      "isDisabled": false,
+      "historicalBreakEven": 1106.6599999999994,
+      "breakEvenChange": 0,
+      "breakEvenAbsChange": 0
+    },
+    {
+      "id": "1770244725000",
+      "type": "BUY",
+      "price": 1120,
+      "grams": 1,
+      "timestamp": 1770244725000,
+      "isDisabled": false,
+      "historicalBreakEven": 1113.3299999999997,
+      "breakEvenChange": 0.6027144741836069,
+      "breakEvenAbsChange": 6.6700000000003
+    },
+    {
+      "id": "1770247403000",
+      "type": "BUY",
+      "price": 1115,
+      "grams": 1,
+      "timestamp": 1770247403000,
+      "isDisabled": false,
+      "historicalBreakEven": 1113.8866666666665,
+      "breakEvenChange": 0.05000014970106282,
+      "breakEvenAbsChange": 0.5566666666668425
+    },
+    {
+      "id": "1770248177000",
+      "type": "BUY",
+      "price": 1105,
+      "grams": 1,
+      "timestamp": 1770248177000,
+      "isDisabled": false,
+      "historicalBreakEven": 1111.665,
+      "breakEvenChange": -0.19945176947983148,
+      "breakEvenAbsChange": -2.2216666666665787
+    },
+    {
+      "id": "1770252563000",
+      "type": "BUY",
+      "price": 1100,
+      "grams": 1,
+      "timestamp": 1770252563000,
+      "isDisabled": false,
+      "historicalBreakEven": 1109.3319999999999,
+      "breakEvenChange": -0.20986538210702718,
+      "breakEvenAbsChange": -2.3330000000000837
+    },
+    {
+      "id": "1770288347000",
+      "type": "BUY",
+      "price": 1100,
+      "grams": 1,
+      "timestamp": 1770288347000,
+      "isDisabled": false,
+      "historicalBreakEven": 1107.7766666666666,
+      "breakEvenChange": -0.14020449543808686,
+      "breakEvenAbsChange": -1.5553333333332375
+    },
+    {
+      "id": "1770325718000",
+      "type": "BUY",
+      "price": 1080,
+      "grams": 1,
+      "timestamp": 1770325718000,
+      "isDisabled": false,
+      "historicalBreakEven": 1103.8085714285714,
+      "breakEvenChange": -0.35820354025286705,
+      "breakEvenAbsChange": -3.968095238095202
+    },
+    {
+      "id": "1770372764000",
+      "type": "SELL",
+      "price": 1075,
+      "grams": 5,
+      "timestamp": 1770372764000,
+      "isDisabled": false,
+      "historicalBreakEven": 1175.8299999999997,
+      "breakEvenChange": 6.524811496817485,
+      "breakEvenAbsChange": 72.02142857142826
+    },
+    {
+      "id": "1770650420000",
+      "type": "BUY",
+      "price": 1120,
+      "grams": 1,
+      "timestamp": 1770650420000,
+      "isDisabled": false,
+      "historicalBreakEven": 1157.2199999999998,
+      "breakEvenChange": -1.5827117865677782,
+      "breakEvenAbsChange": -18.6099999999999
+    },
+    {
+      "id": "1770667663000",
+      "type": "SELL",
+      "price": 1120,
+      "grams": 3,
+      "timestamp": 1770667663000,
+      "isDisabled": false,
+      "historicalBreakEven": 0,
+      "breakEvenChange": -100,
+      "breakEvenAbsChange": -1157.2199999999998
+    },
+    {
+      "id": "1770845490000",
+      "type": "BUY",
+      "price": 1120,
+      "grams": 5,
+      "timestamp": 1770845490000,
+      "isDisabled": false,
+      "historicalBreakEven": 1142.3319999999999,
+      "breakEvenChange": 0,
+      "breakEvenAbsChange": 0
+    },
+    {
+      "id": "1770860668000",
+      "type": "SELL",
+      "price": 1130,
+      "grams": 5,
+      "timestamp": 1770860668000,
+      "isDisabled": false,
+      "historicalBreakEven": 0,
+      "breakEvenChange": -100,
+      "breakEvenAbsChange": -1142.3319999999999
+    },
+    {
+      "id": "1772558816000",
+      "type": "BUY",
+      "price": 1175,
+      "grams": 2,
+      "timestamp": 1772558816000,
+      "isDisabled": false,
+      "historicalBreakEven": 1205.8299999999997,
+      "breakEvenChange": 0,
+      "breakEvenAbsChange": 0
+    },
+    {
+      "id": "1772558987000",
+      "type": "BUY",
+      "price": 1165,
+      "grams": 2,
+      "timestamp": 1772558987000,
+      "isDisabled": false,
+      "historicalBreakEven": 1185.415,
+      "breakEvenChange": -1.6930247215610608,
+      "breakEvenAbsChange": -20.414999999999736
+    },
+    {
+      "id": "1772564990000",
+      "type": "BUY",
+      "price": 1160,
+      "grams": 2,
+      "timestamp": 1772564990000,
+      "isDisabled": false,
+      "historicalBreakEven": 1176.9433333333334,
+      "breakEvenChange": -0.71465829828934,
+      "breakEvenAbsChange": -8.471666666666579
+    },
+    {
+      "id": "1772566203000",
+      "type": "BUY",
+      "price": 1150,
+      "grams": 4,
+      "timestamp": 1772566203000,
+      "isDisabled": false,
+      "historicalBreakEven": 1166.166,
+      "breakEvenChange": -0.9157053723912036,
+      "breakEvenAbsChange": -10.777333333333445
+    },
+    {
+      "id": "1772578434000",
+      "type": "BUY",
+      "price": 1130,
+      "grams": 5,
+      "timestamp": 1772578434000,
+      "isDisabled": false,
+      "historicalBreakEven": 1154.1106666666667,
+      "breakEvenChange": -1.0337579155397463,
+      "breakEvenAbsChange": -12.055333333333238
+    },
+    {
+      "id": "1772750379000",
+      "type": "BUY",
+      "price": 1140,
+      "grams": 5,
+      "timestamp": 1772750379000,
+      "isDisabled": false,
+      "historicalBreakEven": 1150.583,
+      "breakEvenChange": -0.30566104001580024,
+      "breakEvenAbsChange": -3.5276666666666188
+    },
+    {
+      "id": "1773177748000",
+      "type": "SELL",
+      "price": 1155,
+      "grams": 5,
+      "timestamp": 1773177748000,
+      "isDisabled": false,
+      "historicalBreakEven": 1149.1106666666667,
+      "breakEvenChange": -0.12796411326548202,
+      "breakEvenAbsChange": -1.4723333333333812
+    },
+    {
+      "id": "1773442773000",
+      "type": "BUY",
+      "price": 1125,
+      "grams": 5,
+      "timestamp": 1773442773000,
+      "isDisabled": false,
+      "historicalBreakEven": 1143.083,
+      "breakEvenChange": -0.5245505799847492,
+      "breakEvenAbsChange": -6.027666666666619
+    },
+    {
+      "id": "1773683202000",
+      "type": "BUY",
+      "price": 1110,
+      "grams": 10,
+      "timestamp": 1773683202000,
+      "isDisabled": false,
+      "historicalBreakEven": 1132.0553333333332,
+      "breakEvenChange": -0.9647301785318166,
+      "breakEvenAbsChange": -11.027666666666846
+    },
+    {
+      "id": "1773862120000",
+      "type": "BUY",
+      "price": 1100,
+      "grams": 5,
+      "timestamp": 1773862120000,
+      "isDisabled": false,
+      "historicalBreakEven": 1127.4759999999999,
+      "breakEvenChange": -0.40451497364969957,
+      "breakEvenAbsChange": -4.579333333333352
+    },
+    {
+      "id": "1773868422000",
+      "type": "BUY",
+      "price": 1080,
+      "grams": 5,
+      "timestamp": 1773868422000,
+      "isDisabled": false,
+      "historicalBreakEven": 1121.5414999999998,
+      "breakEvenChange": -0.5263526673738573,
+      "breakEvenAbsChange": -5.934500000000071
+    },
+    {
+      "id": "1773931198000",
+      "type": "BUY",
+      "price": 1070,
+      "grams": 5,
+      "timestamp": 1773931198000,
+      "isDisabled": false,
+      "historicalBreakEven": 1115.8146666666667,
+      "breakEvenChange": -0.5106216161714178,
+      "breakEvenAbsChange": -5.726833333333161
+    },
+    {
+      "id": "1773931626000",
+      "type": "BUY",
+      "price": 1065,
+      "grams": 5,
+      "timestamp": 1773931626000,
+      "isDisabled": false,
+      "historicalBreakEven": 1110.7332,
+      "breakEvenChange": -0.4554041830124796,
+      "breakEvenAbsChange": -5.081466666666756
+    },
+    {
+      "id": "1773944455000",
+      "type": "BUY",
+      "price": 1045,
+      "grams": 5,
+      "timestamp": 1773944455000,
+      "isDisabled": false,
+      "historicalBreakEven": 1104.7574545454545,
+      "breakEvenChange": -0.5380000754947637,
+      "breakEvenAbsChange": -5.975745454545404,
+      "tag": "T"
+    },
+    {
+      "id": "1773953213000",
+      "type": "BUY",
+      "price": 1015,
+      "grams": 10,
+      "timestamp": 1773953213000,
+      "isDisabled": false,
+      "historicalBreakEven": 1090.9486153846156,
+      "breakEvenChange": -1.2499430625268335,
+      "breakEvenAbsChange": -13.808839160838943,
+      "tag": "T"
+    },
+    {
+      "id": "1773957260000",
+      "type": "SELL",
+      "price": 1022,
+      "grams": 5,
+      "timestamp": 1773957260000,
+      "isDisabled": false,
+      "historicalBreakEven": 1096.6943333333334,
+      "breakEvenChange": 0.5266717302438804,
+      "breakEvenAbsChange": 5.745717948717811
+    },
+    {
+      "id": "1774044071000",
+      "type": "BUY",
+      "price": 1030,
+      "grams": 5,
+      "timestamp": 1774044071000,
+      "isDisabled": false,
+      "historicalBreakEven": 1091.5639999999999,
+      "breakEvenChange": -0.4677997485169988,
+      "breakEvenAbsChange": -5.13033333333351,
+      "tag": "T"
+    },
+    {
+      "id": "1774044915000",
+      "type": "BUY",
+      "price": 1025,
+      "grams": 5,
+      "timestamp": 1774044915000,
+      "isDisabled": false,
+      "historicalBreakEven": 1086.8094285714285,
+      "breakEvenChange": -0.4355742245595635,
+      "breakEvenAbsChange": -4.754571428571353,
+      "tag": "T"
+    },
+    {
+      "id": "1774231100142",
+      "type": "BUY",
+      "price": 990,
+      "grams": 5,
+      "timestamp": 1774231100142,
+      "isDisabled": false,
+      "historicalBreakEven": 1080.3554666666664,
+      "breakEvenChange": -0.5938448577176572,
+      "breakEvenAbsChange": -6.453961904762082,
+      "tag": "T"
+    },
+    {
+      "id": "1774231103688",
+      "type": "BUY",
+      "price": 985,
+      "grams": 5,
+      "timestamp": 1774231103688,
+      "isDisabled": false,
+      "historicalBreakEven": 1074.39575,
+      "breakEvenChange": -0.5516440514763761,
+      "breakEvenAbsChange": -5.959716666666509,
+      "tag": "T"
+    },
+    {
+      "id": "1774237124081",
+      "type": "BUY",
+      "price": 960,
+      "grams": 5,
+      "timestamp": 1774237124081,
+      "isDisabled": false,
+      "historicalBreakEven": 1067.666588235294,
+      "breakEvenChange": -0.6263205866838035,
+      "breakEvenAbsChange": -6.72916176470585,
+      "tag": "T"
+    },
+    {
+      "id": "1774237127728",
+      "type": "BUY",
+      "price": 950,
+      "grams": 5,
+      "timestamp": 1774237127728,
+      "isDisabled": false,
+      "historicalBreakEven": 1061.1295555555555,
+      "breakEvenChange": -0.6122728529459158,
+      "breakEvenAbsChange": -6.537032679738559,
+      "tag": "T"
+    },
+    {
+      "id": "1774246121686",
+      "type": "BUY",
+      "price": 920,
+      "grams": 5,
+      "timestamp": 1774246121686,
+      "isDisabled": false,
+      "historicalBreakEven": 1053.7016842105263,
+      "breakEvenChange": -0.6999966503751108,
+      "breakEvenAbsChange": -7.427871345029189,
+      "tag": "T"
+    },
+    {
+      "id": "1774404757552",
+      "type": "SELL",
+      "price": 1014.79,
+      "grams": 5,
+      "timestamp": 1774404757552,
+      "isDisabled": false,
+      "historicalBreakEven": 1055.8634444444444,
+      "breakEvenChange": 0.20515865793057017,
+      "breakEvenAbsChange": 2.1617602339181303
+    },
+    {
+      "id": "1774921874846",
+      "type": "SELL",
+      "price": 1025,
+      "grams": 5,
+      "timestamp": 1774921874846,
+      "isDisabled": false,
+      "historicalBreakEven": 1057.6789411764705,
+      "breakEvenChange": 0.1719442738148135,
+      "breakEvenAbsChange": 1.8154967320260766
+    },
+    {
+      "id": "1775006584327",
+      "type": "SELL",
+      "price": 1045,
+      "grams": 5,
+      "timestamp": 1775006584327,
+      "isDisabled": false,
+      "historicalBreakEven": 1058.4713749999999,
+      "breakEvenChange": 0.07492196286407116,
+      "breakEvenAbsChange": 0.7924338235293362
+    },
+    {
+      "id": "1775021899303",
+      "type": "SELL",
+      "price": 1042,
+      "grams": 5,
+      "timestamp": 1775021899303,
+      "isDisabled": false,
+      "historicalBreakEven": 1059.5694666666668,
+      "breakEvenChange": 0.10374316137429415,
+      "breakEvenAbsChange": 1.09809166666696
+    },
+    {
+      "id": "1775029110345",
+      "type": "SELL",
+      "price": 1045,
+      "grams": 5,
+      "timestamp": 1775029110345,
+      "isDisabled": false,
+      "historicalBreakEven": 1060.610142857143,
+      "breakEvenChange": 0.09821689121999048,
+      "breakEvenAbsChange": 1.0406761904762334
+    },
+    {
+      "id": "1775029118855",
+      "type": "SELL",
+      "price": 1050,
+      "grams": 5,
+      "timestamp": 1775029118855,
+      "isDisabled": false,
+      "historicalBreakEven": 1061.4263076923078,
+      "breakEvenChange": 0.07695238827021657,
+      "breakEvenAbsChange": 0.8161648351647273
+    },
+    {
+      "id": "1775043911384",
+      "type": "SELL",
+      "price": 1055,
+      "grams": 5,
+      "timestamp": 1775043911384,
+      "isDisabled": false,
+      "historicalBreakEven": 1061.9618333333335,
+      "breakEvenChange": 0.05045339814405502,
+      "breakEvenAbsChange": 0.5355256410257425
+    },
+    {
+      "id": "1775091432285",
+      "type": "SELL",
+      "price": 1060,
+      "grams": 5,
+      "timestamp": 1775091432285,
+      "isDisabled": false,
+      "historicalBreakEven": 1062.140181818182,
+      "breakEvenChange": 0.016794246200805153,
+      "breakEvenAbsChange": 0.17834848484858412
+    },
+    {
+      "id": "1775110115019",
+      "type": "BUY",
+      "price": 1025,
+      "grams": 5,
+      "timestamp": 1775110115019,
+      "isDisabled": false,
+      "historicalBreakEven": 1059.045166666667,
+      "breakEvenChange": -0.2913942250275309,
+      "breakEvenAbsChange": -3.095015151515099
+    },
+    {
+      "id": "1775110118003",
+      "type": "BUY",
+      "price": 1020,
+      "grams": 5,
+      "timestamp": 1775110118003,
+      "isDisabled": false,
+      "historicalBreakEven": 1056.0416923076925,
+      "breakEvenChange": -0.2836021024889689,
+      "breakEvenAbsChange": -3.003474358974472
+    },
+    {
+      "id": "1776216104642",
+      "type": "SELL",
+      "price": 1065,
+      "grams": 10,
+      "timestamp": 1776216104642,
+      "isDisabled": false,
+      "historicalBreakEven": 1054.4129090909094,
+      "breakEvenChange": -0.1542347455263734,
+      "breakEvenAbsChange": -1.6287832167831766
+    },
+    {
+      "id": "1776431696419",
+      "type": "SELL",
+      "price": 1070,
+      "grams": 10,
+      "timestamp": 1776431696419,
+      "isDisabled": false,
+      "historicalBreakEven": 1050.9491111111113,
+      "breakEvenChange": -0.3285048911990731,
+      "breakEvenAbsChange": -3.4637979797980734
+    },
+    {
+      "id": "1776917587367",
+      "type": "BUY",
+      "price": 1050,
+      "grams": 10,
+      "timestamp": 1776917587367,
+      "isDisabled": false,
+      "historicalBreakEven": 1049.1186153846154,
+      "breakEvenChange": 0.015277226800118547,
+      "breakEvenAbsChange": 0.16025174825153954
+    },
+    {
+      "id": "1776917579682",
+      "type": "BUY",
+      "price": 1040,
+      "grams": 10,
+      "timestamp": 1776917579682,
+      "isDisabled": false,
+      "historicalBreakEven": 1048.9583636363639,
+      "breakEvenChange": -0.1894237745386847,
+      "breakEvenAbsChange": -1.9907474747474225
+    },
+    {
+      "id": "1776993042586",
+      "type": "BUY",
+      "price": 1035,
+      "grams": 5,
+      "timestamp": 1776993042586,
+      "isDisabled": false
+    },
+    {
+      "id": "1777359828882",
+      "type": "BUY",
+      "price": 1025,
+      "grams": 10,
+      "timestamp": 1777359828882,
+      "isDisabled": false
+    },
+    {
+      "id": "1777448761859",
+      "type": "BUY",
+      "price": 1015,
+      "grams": 10,
+      "timestamp": 1777448761859,
+      "isDisabled": false
+    },
+    {
+      "id": "1777470501221",
+      "type": "BUY",
+      "price": 1005,
+      "grams": 5,
+      "timestamp": 1777470501221,
+      "isDisabled": false
+    },
+    {
+      "id": "1777470506868",
+      "type": "BUY",
+      "price": 1000,
+      "grams": 10,
+      "timestamp": 1777470506868,
+      "isDisabled": false
+    },
+    {
+      "id": "1779932443349",
+      "type": "BUY",
+      "price": 965,
+      "grams": 5,
+      "timestamp": 1779932443349,
+      "isDisabled": false
+    },
+    {
+      "id": "1779932452352",
+      "type": "SELL",
+      "price": 988.44,
+      "grams": 5,
+      "timestamp": 1779932452352,
+      "isDisabled": false
+    },
+    {
+      "id": "1780841566261",
+      "type": "BUY",
+      "price": 968,
+      "grams": 5,
+      "timestamp": 1780841566261,
+      "isDisabled": false
+    },
+    {
+      "id": "1780841574685",
+      "type": "BUY",
+      "price": 965,
+      "grams": 5,
+      "timestamp": 1780841574685,
+      "isDisabled": false
+    },
+    {
+      "id": "1780841579865",
+      "type": "BUY",
+      "price": 960,
+      "grams": 5,
+      "timestamp": 1780841579865,
+      "isDisabled": false
+    },
+    {
+      "id": "1780913179796",
+      "type": "SELL",
+      "price": 940,
+      "grams": 10,
+      "timestamp": 1780913179796,
+      "isDisabled": false
+    },
+    {
+      "id": "1780913189283",
+      "type": "SELL",
+      "price": 938,
+      "grams": 5,
+      "timestamp": 1780913189283,
+      "isDisabled": false
+    },
+    {
+      "id": "1780918604715",
+      "type": "SELL",
+      "price": 942,
+      "grams": 10,
+      "timestamp": 1780918604715,
+      "isDisabled": false
+    },
+    {
+      "id": "1781023121136",
+      "type": "SELL",
+      "price": 950,
+      "grams": 5,
+      "timestamp": 1781023121136,
+      "isDisabled": false
+    },
+    {
+      "id": "1781058927346",
+      "type": "BUY",
+      "price": 918.77,
+      "grams": 5,
+      "timestamp": 1781058927346,
+      "isDisabled": false
+    },
+    {
+      "id": "1781108091286",
+      "type": "BUY",
+      "price": 906,
+      "grams": 5,
+      "timestamp": 1781108091286,
+      "isDisabled": false
+    },
+    {
+      "id": "1781195964635",
+      "type": "BUY",
+      "price": 896,
+      "grams": 5,
+      "timestamp": 1781195964635,
+      "isDisabled": false
+    },
+    {
+      "id": "1781229194090",
+      "type": "SELL",
+      "price": 911.24,
+      "grams": 5,
+      "timestamp": 1781229194090,
+      "isDisabled": false
+    },
+    {
+      "id": "1781486918483",
+      "type": "SELL",
+      "price": 934.2,
+      "grams": 10,
+      "timestamp": 1781486918483,
+      "isDisabled": false
+    },
+    {
+      "id": "1781491918712",
+      "type": "SELL",
+      "price": 942,
+      "grams": 5,
+      "timestamp": 1781491918712,
+      "isDisabled": false
+    },
+    {
+      "id": "1781513159360",
+      "type": "SELL",
+      "price": 940,
+      "grams": 5,
+      "timestamp": 1781513159360,
+      "isDisabled": false
+    },
+    {
+      "id": "1781513586618",
+      "type": "SELL",
+      "price": 942,
+      "grams": 10,
+      "timestamp": 1781513586618,
+      "isDisabled": false
+    },
+    {
+      "id": "1781572374653",
+      "type": "SELL",
+      "price": 945,
+      "grams": 5,
+      "timestamp": 1781572374653,
+      "isDisabled": false
+    },
+    {
+      "id": "1782263902855",
+      "type": "BUY",
+      "price": 910,
+      "grams": 5,
+      "timestamp": 1782263902855,
+      "isDisabled": false
+    },
+    {
+      "id": "1782263908237",
+      "type": "BUY",
+      "price": 905,
+      "grams": 5,
+      "timestamp": 1782263908237,
+      "isDisabled": false
+    },
+    {
+      "id": "1782263914389",
+      "type": "BUY",
+      "price": 900,
+      "grams": 10,
+      "timestamp": 1782263914389,
+      "isDisabled": false
+    },
+    {
+      "id": "1782264045862",
+      "type": "BUY",
+      "price": 895,
+      "grams": 5,
+      "timestamp": 1782264045862,
+      "isDisabled": false
+    },
+    {
+      "id": "1782264050780",
+      "type": "BUY",
+      "price": 890,
+      "grams": 5,
+      "timestamp": 1782264050780,
+      "isDisabled": false
+    },
+    {
+      "id": "1782264054013",
+      "type": "BUY",
+      "price": 885,
+      "grams": 5,
+      "timestamp": 1782264054013,
+      "isDisabled": false
+    },
+    {
+      "id": "1782264057565",
+      "type": "BUY",
+      "price": 880,
+      "grams": 5,
+      "timestamp": 1782264057565,
+      "isDisabled": false
+    },
+    {
+      "id": "1782805933138",
+      "type": "BUY",
+      "price": 869.62,
+      "grams": 5,
+      "timestamp": 1782805933138,
+      "isDisabled": false
+    },
+    {
+      "id": "1783041148666",
+      "type": "SELL",
+      "price": 908.32,
+      "grams": 10,
+      "timestamp": 1783041148666,
+      "isDisabled": false
+    },
+    {
+      "id": "1783070304117",
+      "type": "SELL",
+      "price": 910,
+      "grams": 5,
+      "timestamp": 1783070304117,
+      "isDisabled": false
+    },
+    {
+      "id": "1783910233299",
+      "type": "BUY",
+      "price": 890,
+      "grams": 5,
+      "timestamp": 1783910233299,
+      "isDisabled": false
+    },
+    {
+      "id": "1783951718532",
+      "type": "BUY",
+      "price": 885,
+      "grams": 5,
+      "timestamp": 1783951718532,
+      "isDisabled": false
+    },
+    {
+      "id": "1783952274961",
+      "type": "BUY",
+      "price": 880,
+      "grams": 10,
+      "timestamp": 1783952274961,
+      "isDisabled": false
+    },
+    {
+      "id": "1783991017239",
+      "type": "BUY",
+      "price": 870,
+      "grams": 5,
+      "timestamp": 1783991017239,
+      "isDisabled": false
+    },
+    {
+      "id": "1784686122801",
+      "type": "BUY",
+      "price": 870,
+      "grams": 5,
+      "timestamp": 1784686122801,
+      "isDisabled": false
+    },
+    {
+      "id": "1784720243147",
+      "type": "SELL",
+      "price": 900,
+      "grams": 5,
+      "timestamp": 1784720243147,
+      "isDisabled": false
+    },
+    {
+      "id": "1785296627948",
+      "type": "BUY",
+      "price": 880,
+      "grams": 5,
+      "timestamp": 1785296627948,
+      "isDisabled": false
+    },
+    {
+      "id": "1786004884941",
+      "type": "SELL",
+      "price": 920.53,
+      "grams": 5,
+      "timestamp": 1786004884941,
+      "isDisabled": false
+    },
+    {
+      "id": "1786004892675",
+      "type": "SELL",
+      "price": 930.19,
+      "grams": 10,
+      "timestamp": 1786004892675,
+      "isDisabled": false
+    }
+  ],
+  "settings": {
+    "priceStep": 5,
+    "gramsStep": 1,
+    "tagColors": {
+      "T": "red"
+    },
+    "touchMode": true,
+    "priceDisplayMode": "both",
+    "totalCapital": 150000,
+    "visibleColumns": [
+      "tag",
+      "price",
+      "grams",
+      "tradeTotal",
+      "holdingTotal",
+      "historicalAvg",
+      "pnl"
+    ],
+    "buyTaxFee": 1,
+    "sellTaxFee": 1,
+    "apiSource": "tencent",
+    "cacheTTLMinutes": 10
+  }
+}
