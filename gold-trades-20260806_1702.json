@@ -717,19 +717,19 @@
       "isDisabled": false
     },
     {
-      "id": "1780841566261",
-      "type": "BUY",
-      "price": 968,
-      "grams": 5,
-      "timestamp": 1780841566261,
-      "isDisabled": false
-    },
-    {
       "id": "1780841574685",
       "type": "BUY",
       "price": 965,
       "grams": 5,
       "timestamp": 1780841574685,
+      "isDisabled": false
+    },
+    {
+      "id": "1780841566261",
+      "type": "BUY",
+      "price": 968,
+      "grams": 5,
+      "timestamp": 1780841566261,
       "isDisabled": false
     },
     {
@@ -802,6 +802,14 @@
       "price": 911.24,
       "grams": 5,
       "timestamp": 1781229194090,
+      "isDisabled": false
+    },
+    {
+      "id": "1781229195090",
+      "type": "SELL",
+      "price": 915,
+      "grams": 5,
+      "timestamp": 1781229195090,
       "isDisabled": false
     },
     {
