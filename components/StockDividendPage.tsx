@@ -532,6 +532,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 每30秒触发一次重渲染，让"刚刚/x分钟前"等相对时间自动更新（不发网络请求）
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setNowTick(t => t + 1), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const availableTags = useMemo(() => {
