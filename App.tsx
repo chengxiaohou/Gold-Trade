@@ -13,7 +13,7 @@ import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings } from './types';
 
-const APP_VERSION = 'v2.4.1';
+const APP_VERSION = 'v2.4.2';
 
 // 生成股息率对应股价的辅助函数
 function calcDividendRates(dividend2025: number): Record<string, number> {
@@ -26,16 +26,16 @@ function calcDividendRates(dividend2025: number): Record<string, number> {
   return result;
 }
 
-// 默认股票数据（基于 price.md）
+// 默认股票数据（分红值已于 2026-08-09 从同花顺 F10 分红融资校准：按分红所属年度汇总，含中期/特别分红）
 function createDefaultStocks(): StockEntry[] {
   const stockData: Array<[string, string, number, number]> = [
     ['601318.SH', '中国平安', 2.550, 2.700],
     ['600036.SH', '招商银行', 2.000, 2.016],
-    ['000333.SZ', '美的集团', 3.4788, 4.300],
-    ['600690.SH', '海尔智家', 0.965, 1.1559],
+    ['000333.SZ', '美的集团', 3.500, 4.300],
+    ['600690.SH', '海尔智家', 0.965, 1.1607],
     ['000858.SZ', '五粮液', 5.745, 5.1577],
-    ['000568.SZ', '泸州老窖', 4.592, 5.775],
-    ['600887.SH', '伊利股份', 1.220, 0.900],
+    ['000568.SZ', '泸州老窖', 5.950, 5.775],
+    ['600887.SH', '伊利股份', 1.220, 1.380],
   ];
   
   return stockData.map(([code, name, div2024, div2025], index) => ({
