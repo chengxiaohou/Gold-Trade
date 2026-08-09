@@ -13,7 +13,7 @@ import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings } from './types';
 
-const APP_VERSION = 'v2.4.0';
+const APP_VERSION = 'v2.4.1';
 
 // 生成股息率对应股价的辅助函数
 function calcDividendRates(dividend2025: number): Record<string, number> {
@@ -29,49 +29,13 @@ function calcDividendRates(dividend2025: number): Record<string, number> {
 // 默认股票数据（基于 price.md）
 function createDefaultStocks(): StockEntry[] {
   const stockData: Array<[string, string, number, number]> = [
-    // 金融
     ['601318.SH', '中国平安', 2.550, 2.700],
     ['600036.SH', '招商银行', 2.000, 2.016],
-    ['601166.SH', '兴业银行', 1.060, 1.066],
-    ['002142.SZ', '宁波银行', 0.900, 1.200],
-    ['600030.SH', '中信证券', 0.520, 0.700],
-    ['601066.SH', '中信建投', 0.255, 0.340],
-    ['000001.SZ', '平安银行', 0.608, 0.596],
-    // 家电
     ['000333.SZ', '美的集团', 3.4788, 4.300],
     ['600690.SH', '海尔智家', 0.965, 1.1559],
-    ['000651.SZ', '格力电器', 2.9971, 3.000],
-    // 医药
-    ['600329.SH', '达仁堂', 1.280, 2.340],
-    ['000423.SZ', '东阿阿胶', 1.270, 1.431],
-    ['000538.SZ', '云南白药', 2.398, 2.602],
-    // 白酒
     ['000858.SZ', '五粮液', 5.745, 5.1577],
     ['000568.SZ', '泸州老窖', 4.592, 5.775],
-    // 食品
     ['600887.SH', '伊利股份', 1.220, 0.900],
-    // 港口航运
-    ['601919.SH', '中远海控', 1.550, 0.440],
-    ['601000.SH', '唐山港', 0.200, 0.200],
-    ['601298.SH', '青岛港', 0.3141, 0.3454],
-    ['000429.SZ', '粤高速A', 0.523, 0.604],
-    // 电力/公用事业
-    ['600886.SH', '国投电力', 0.4565, 0.5081],
-    ['600900.SH', '长江电力', 0.943, 1.000],
-    ['600795.SH', '国电电力', 0.200, 0.241],
-    ['600011.SH', '华能国际', 0.270, 0.400],
-    ['601985.SH', '中国核电', 0.160, 0.180],
-    ['003816.SZ', '中国广核', 0.095, 0.086],
-    // 能源/资源
-    ['600938.SH', '中国海油', 1.2816, 1.1449],
-    ['601857.SH', '中国石油', 0.470, 0.470],
-    ['601088.SH', '中国神华', 2.260, 2.010],
-    // 通信
-    ['600941.SH', '中国移动', 4.5716, 4.7941],
-    ['601728.SH', '中国电信', 0.2598, 0.2720],
-    // ETF
-    ['561580.SH', '央企红利ETF华泰柏瑞', 0, 0.120],
-    ['515080.SH', '中证红利ETF招商', 0.070, 0.070],
   ];
   
   return stockData.map(([code, name, div2024, div2025], index) => ({
