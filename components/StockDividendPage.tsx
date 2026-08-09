@@ -358,7 +358,7 @@ const formatPercent = (percent: number): string => {
 };
 
 export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal }) => {
-  const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'];
+  const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividend2024', 'dividend2025', 'position', 'dividendRate2025', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
   // 分红年份列（dividend2024 / dividend2025 / 未来新增 dividend2026...）：表头合并为一格，年份各自成列
   const dividendYearCols = cols.filter(c => /^dividend\d{4}$/.test(c));
@@ -922,6 +922,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         dividend2024,
         dividend2025,
         dividendRate2025: 0,
+        positionShares: 0,
+        positionCost: 0,
         priceUpdatedAt: result ? Date.now() : null,
         dividendRates: calculateDividendRates(dividend2025),
       };
@@ -1021,6 +1023,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <col style={{ width: '65px' }} />
               <col style={{ width: '65px' }} />
               {dividendYearCols.map(yearCol => <col key={yearCol} style={{ width: '50px' }} />)}
+              {cols.includes('position') && <col style={{ width: '62px' }} />}
               <col style={{ width: '60px' }} />
             </colgroup>
             <thead className="sticky top-0 z-30 overflow-hidden">
@@ -1098,7 +1101,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </button>
                   </div>
                 </th>}
-                <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-l border-app-border" rowSpan={2}>操作</th>
+                {cols.includes('position') && <th
+                  className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-l border-app-border"
+                  rowSpan={2}
+                  title="点击行内编辑按钮可录入持仓股数和每股成本"
+                >持仓</th>}
+                <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border" rowSpan={2}>操作</th>
               </tr>
               <tr className="bg-app-input">
                 {(cols.includes('code') || cols.includes('name')) && <th className="px-2 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border sticky left-[36px] z-10">代码</th>}
@@ -1245,7 +1253,51 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       </td>
                     );
                   })}
-                  <td className="px-1 py-1.5 text-center border-l border-app-border">
+                  {cols.includes('position') && (() => {
+                    const shares = stock.positionShares || 0;
+                    const cost = stock.positionCost || 0;
+                    const dividend = stock.dividend2025 || 0;
+                    const yieldPct = shares > 0 && cost > 0 && dividend > 0
+                      ? ((dividend / cost) * 100).toFixed(2) + '%'
+                      : '-';
+                    const sharesText = shares > 0
+                      ? `${Number.isInteger(shares) ? shares : shares.toFixed(2)}股`
+                      : '-';
+                    return (
+                      <td className="px-1 py-1.5 text-center border-l border-app-border">
+                        {editingId === stock.id ? (
+                          <div className="flex flex-col gap-0.5">
+                            <input
+                              type="number"
+                              value={shares || ''}
+                              onChange={(e) => handleUpdateField(stock.id, 'positionShares', parseFloat(e.target.value) || 0)}
+                              step="1"
+                              min="0"
+                              placeholder="股数"
+                              className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
+                              title="持仓股数"
+                            />
+                            <input
+                              type="number"
+                              value={cost || ''}
+                              onChange={(e) => handleUpdateField(stock.id, 'positionCost', parseFloat(e.target.value) || 0)}
+                              step="0.01"
+                              min="0"
+                              placeholder="成本价"
+                              className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
+                              title="每股成本（买入均价）"
+                            />
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center leading-tight">
+                            <span className="font-mono text-[11px] text-app-text whitespace-nowrap">{sharesText}</span>
+                            <span className={`font-mono text-[10px] whitespace-nowrap ${yieldPct !== '-' ? 'text-indigo-400' : 'text-app-subtext'}`}>{yieldPct}</span>
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })()}
+                  <td className="px-1 py-1.5 text-center">
                     <div className="flex items-center justify-center gap-2">
                       <button
                         onClick={(e) => {

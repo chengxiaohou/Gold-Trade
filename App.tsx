@@ -13,7 +13,7 @@ import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings } from './types';
 
-const APP_VERSION = 'v2.4.2';
+const APP_VERSION = 'v2.5.0';
 
 // 生成股息率对应股价的辅助函数
 function calcDividendRates(dividend2025: number): Record<string, number> {
@@ -49,6 +49,8 @@ function createDefaultStocks(): StockEntry[] {
     dividend2024: div2024,
     dividend2025: div2025,
     dividendRate2025: 0,
+    positionShares: 0,
+    positionCost: 0,
     priceUpdatedAt: null,
     dividendRates: calcDividendRates(div2025),
   }));
