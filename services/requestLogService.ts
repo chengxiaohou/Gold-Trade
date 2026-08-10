@@ -9,6 +9,7 @@ export interface RequestLogEntry {
   duration?: number; // 毫秒
   error?: string;
   cached?: boolean;
+  reason?: string; // 触发原因（一次批量请求共用同一个原因）
 }
 
 export interface RequestLogStats {
@@ -25,6 +26,13 @@ class RequestLogService {
   private logs: RequestLogEntry[] = [];
   private listeners: Set<RequestLogListener> = new Set();
   private pendingRequests: Map<string, number> = new Map(); // id -> startTime
+  private batchReason: string | null = null; // 当前批量请求的触发原因
+
+  // 设置/清除批量触发原因：一次批量请求共用同一个原因，
+  // 直到下一次 setBatchReason 或 reset 才会改变
+  setBatchReason(reason: string | null): void {
+    this.batchReason = reason;
+  }
 
   // 添加监听器
   subscribe(listener: RequestLogListener): () => void {
@@ -47,6 +55,7 @@ class RequestLogService {
       url,
       method,
       status: 'pending',
+      reason: this.batchReason || undefined,
     };
     
     this.logs.push(entry);
@@ -92,6 +101,7 @@ class RequestLogService {
       method: 'GET',
       status: 'cached',
       cached: true,
+      reason: this.batchReason || undefined,
     };
     
     this.logs.push(entry);
@@ -118,19 +128,20 @@ class RequestLogService {
   reset(): void {
     this.logs = [];
     this.pendingRequests.clear();
+    this.batchReason = null;
     this.notifyListeners();
   }
 
   // 导出日志为文本
   exportLogs(): string {
     const lines = [
-      '时间,URL,方法,状态,耗时(ms),错误信息',
+      '时间,触发原因,URL,方法,状态,耗时(ms),错误信息',
       ...this.logs.map(log => {
         const time = new Date(log.timestamp).toLocaleString('zh-CN', { hour12: false });
         const status = log.status === 'success' ? '成功' : 
                        log.status === 'failed' ? '失败' : 
                        log.status === 'cached' ? '缓存' : '进行中';
-        return `${time},"${log.url}",${log.method},${status},${log.duration || ''},${log.error || ''}`;
+        return `${time},"${log.reason || ''}","${log.url}",${log.method},${status},${log.duration || ''},${log.error || ''}`;
       })
     ];
     return lines.join('\n');

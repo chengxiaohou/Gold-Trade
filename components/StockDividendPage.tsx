@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, Download, BarChart3 } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, Download, BarChart3, List, ChevronDown } from 'lucide-react';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
 import { fetchBollData, checkAllBollCache, BollData, BollPeriod, BollAdjust } from '../services/bollService';
-import { getDynamicCacheTTL, isStockPriceFresh } from '../services/cacheService';
+import { getDynamicCacheTTL, isStockPriceFresh, isTradingHours } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats } from '../services/requestLogService';
 import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
 import { getNickname } from '../services/nicknameService';
@@ -422,6 +422,24 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [requestLogs, setRequestLogs] = useState<RequestLogEntry[]>([]);
   const [requestStats, setRequestStats] = useState<RequestLogStats>({ total: 0, success: 0, failed: 0, cached: 0, pending: 0 });
   const [showLogPanel, setShowLogPanel] = useState(false);
+  // 页面底部轻提示（自动消失）
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+  const showNotice = (msg: string) => {
+    setNotice(msg);
+    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setNotice(null), 3000);
+  };
+  // 日志面板中已展开的触发原因分组
+  const [expandedLogReasons, setExpandedLogReasons] = useState<Set<string>>(new Set());
+
+  const toggleLogReason = (reason: string) => {
+    setExpandedLogReasons(prev => {
+      const next = new Set(prev);
+      if (next.has(reason)) next.delete(reason); else next.add(reason);
+      return next;
+    });
+  };
 
   // 订阅请求日志更新
   useEffect(() => {
@@ -437,7 +455,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 请求版本号：每次切换数据源递增，用于取消旧请求
   const fetchVersionRef = useRef(0);
 
-  const fetchAllBoll = useCallback(async () => {
+  const fetchAllBoll = useCallback(async (trigger = '打开股息页自动刷新布林线') => {
     // 防止重复调用
     if (isFetchingRef.current) {
       return;
@@ -446,8 +464,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // 递增版本号，标记本次请求
     const currentVersion = ++fetchVersionRef.current;
     
-    // 清空之前的请求日志，只显示本次请求的统计
-    requestLogService.reset();
+    const ttlMinutes = Math.round(getDynamicCacheTTL() / 60000);
+    requestLogService.setBatchReason(
+      `${trigger}：缓存超过 ${ttlMinutes} 分钟即过期，过期部分重新请求（预计最多 ${stocks.length * 3} 条请求）`
+    );
     
     // 只在前复权模式下批量获取所有股票的BOLL数据
     // 新浪不支持不复权模式，跳过批量获取
@@ -568,7 +588,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   useEffect(() => {
     fetchAllBoll();
-  }, [fetchAllBoll]);
+    // 只在挂载时自动刷新一次布林线；之后由「布林线」列头按钮手动刷新
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 打开股息页时，自动刷新一次所有股价（组件每次挂载只执行一次）
   const didAutoRefreshPricesRef = useRef(false);
@@ -716,35 +738,43 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       }
       
       const url = `https://qt.gtimg.cn/q=${market}${code}`;
-      const response = await fetch(url);
-      const buffer = await response.arrayBuffer();
-      const decoder = new TextDecoder('gb18030');
-      const text = decoder.decode(buffer);
-      
-      const match = text.match(/v_\w+="([^"]+)"/);
-      if (match && match[1]) {
-        const data = match[1].split('~');
-        if (data.length >= 11) {
-          const price = parseFloat(data[3]);
-          const prevClose = parseFloat(data[4]);
-          const high = parseFloat(data[5]);
-          const low = parseFloat(data[6]);
-          let changePercent = 0;
-          
-          if (prevClose > 0) {
-            changePercent = ((price - prevClose) / prevClose) * 100;
+      const logId = requestLogService.startRequest(url);
+      try {
+        const response = await fetch(url);
+        const buffer = await response.arrayBuffer();
+        const decoder = new TextDecoder('gb18030');
+        const text = decoder.decode(buffer);
+        
+        const match = text.match(/v_\w+="([^"]+)"/);
+        if (match && match[1]) {
+          const data = match[1].split('~');
+          if (data.length >= 11) {
+            const price = parseFloat(data[3]);
+            const prevClose = parseFloat(data[4]);
+            const high = parseFloat(data[5]);
+            const low = parseFloat(data[6]);
+            let changePercent = 0;
+            
+            if (prevClose > 0) {
+              changePercent = ((price - prevClose) / prevClose) * 100;
+            }
+            
+            requestLogService.success(logId);
+            return {
+              name: data[1].replace(/\s/g, ''),
+              price: price,
+              changePercent: changePercent,
+              high: high || price,
+              low: low || price,
+            };
           }
-          
-          return {
-            name: data[1].replace(/\s/g, ''),
-            price: price,
-            changePercent: changePercent,
-            high: high || price,
-            low: low || price,
-          };
         }
+        requestLogService.failed(logId, '股价解析失败');
+        return null;
+      } catch (error) {
+        requestLogService.failed(logId, error instanceof Error ? error.message : '获取股价失败');
+        throw error;
       }
-      return null;
     } catch (error) {
       console.error('获取股价失败:', error);
       return null;
@@ -755,6 +785,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const stock = stocks.find(s => s.id === id);
     if (!stock) return;
 
+    requestLogService.setBatchReason('点击行内重试按钮，重新刷新单只股价（预计 1 条请求）');
     setIsRefreshing(prev => new Set(prev).add(id));
     setRefreshFailed(prev => {
       const next = new Set(prev);
@@ -789,16 +820,27 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   }, [stocks, onStocksChange, fetchStockPrice]);
 
   const handleRefreshAll = useCallback(async (skipFresh = false) => {
+    const ttlMinutes = Math.round(getDynamicCacheTTL() / 60000);
+    const marketClosed = !isTradingHours();
+    // 休市时股价已是当日/最近收盘价，手动刷新也视为无需请求（除非缓存已过期）
+    const effectiveSkip = skipFresh || marketClosed;
+    requestLogService.setBatchReason(effectiveSkip
+      ? (marketClosed
+          ? `点击「价格」列头刷新按钮：休市中，股价已是最新收盘价（缓存超过 ${ttlMinutes} 分钟即过期），仅刷新过期股票（预计最多 ${stocks.length} 条请求）`
+          : `打开股息页自动刷新股价：缓存超过 ${ttlMinutes} 分钟即过期，过期股票重新请求（预计最多 ${stocks.length} 条请求）`)
+      : `点击「价格」列头刷新按钮，刷新全部股价（预计 ${stocks.length} 条请求）`);
     setIsRefreshing(new Set(stocks.map(s => s.id)));
     setRefreshFailed(new Set());
     try {
       const updatedStocks = [...stocks];
       const failedIds = new Set<string>();
       let changed = false;
+      let skippedCount = 0;
       for (let i = 0; i < updatedStocks.length; i++) {
         const stock = updatedStocks[i];
         // 跳过仍新鲜的股价（主要用于打开页面时的自动刷新：休市时拿到收盘价后不再重复请求）
-        if (skipFresh && isStockPriceFresh(stock.priceUpdatedAt)) {
+        if (effectiveSkip && isStockPriceFresh(stock.priceUpdatedAt)) {
+          skippedCount++;
           continue;
         }
         const result = await fetchStockPrice(stock.code);
@@ -816,6 +858,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           failedIds.add(stock.id);
         }
       }
+      if (skippedCount > 0) {
+        showNotice(skippedCount >= stocks.length
+          ? (marketClosed
+              ? '休市中，股价已是最新收盘价，无需重新请求'
+              : '全部股价数据仍新鲜（缓存未过期），无需重新请求')
+          : `已跳过 ${skippedCount} 只仍新鲜的股票，刷新其余 ${stocks.length - skippedCount} 只`);
+      }
       if (changed) {
         onStocksChange(updatedStocks);
       }
@@ -832,6 +881,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 批量获取所有股票的 2024/2025 全年分红（东方财富，按报告期年度汇总）
   const handleFetchAllDividends = useCallback(async () => {
     if (isFetchingDividends || stocks.length === 0) return;
+    requestLogService.setBatchReason(
+      `点击「分红」列头刷新按钮，批量查询 ${stocks.length} 只股票的全年分红（预计 ${stocks.length} 条请求；同花顺为主，失败回退东方财富）`
+    );
     setIsFetchingDividends(true);
     const entries: DividendDiffEntry[] = [];
     const selected = new Set<string>();
@@ -914,12 +966,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
     setIsRefreshing(new Set(['new']));
     try {
+      requestLogService.setBatchReason('添加股票时查询实时股价（预计 1 条请求）');
       const result = await fetchStockPrice(stockCode);
 
       // 自动查询该股票的 2024/2025 全年分红（查不到则保持 0，可稍后用"自动获取分红"批量补）
       let dividend2024 = 0;
       let dividend2025 = 0;
       try {
+        requestLogService.setBatchReason('添加股票时自动查询全年分红（预计 1~2 条请求；同花顺为主，失败回退东方财富）');
         const divResult = await fetchYearlyDividends(stockCode);
         if (divResult.found) {
           dividend2024 = divResult.dividend2024;
@@ -1068,7 +1122,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     <div className="flex items-center justify-center gap-1 whitespace-nowrap">
                       价格
                       <button
-                        onClick={handleRefreshAll}
+                        onClick={() => handleRefreshAll(false)}
                         disabled={isRefreshing.size > 0}
                         className="p-0.5 hover:bg-app-card rounded transition-colors disabled:opacity-50"
                         title="刷新所有股价"
@@ -1089,7 +1143,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      fetchAllBoll();
+                      fetchAllBoll('点击「布林线」列头刷新按钮');
                     }}
                     disabled={isRefreshingBoll || bollAdjust === 'none'}
                     className="p-0.5 hover:bg-app-card rounded transition-colors disabled:opacity-50"
@@ -1352,6 +1406,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           setBollPopupApiSource(apiSource);
                           setBollData(null);
                           setBollError(null);
+                          requestLogService.setBatchReason('点击行内「股息率对应股价」按钮打开弹窗，刷新单只布林线（预计 1 条请求）');
                           fetchBollData(stock.code, bollPeriod, bollAdjust, apiSource).then(result => {
                             setBollData(result.data);
                             setBollError(result.error || null);
@@ -1499,6 +1554,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           setBollError(null);
           setBollUnsupported(false);
           const useSource = source || bollPopupApiSource;
+          requestLogService.setBatchReason('切换布林线弹窗的周期/复权/数据源，刷新单只布林线（预计 1 条请求）');
           fetchBollData(stock.code, period, adjust, useSource).then(result => {
             setBollData(result.data);
             setBollError(result.error || null);
@@ -1834,6 +1890,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         );
       })()}
 
+      {/* 页面底部轻提示 */}
+      {notice && (
+        <div className="fixed bottom-14 left-1/2 -translate-x-1/2 z-40 bg-app-card border border-app-border rounded-lg px-4 py-2 text-xs text-app-text shadow-xl">
+          {notice}
+        </div>
+      )}
+
       {/* 页面底部请求计数器 */}
       <div className="fixed bottom-0 left-0 right-0 z-30 bg-app-card border-t border-app-border px-4 py-2">
         <div className="flex items-center justify-between">
@@ -1854,6 +1917,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowLogPanel(prev => !prev)}
+              disabled={requestLogs.length === 0}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-app-subtext hover:text-app-text border border-app-border rounded hover:border-app-text/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="展开/收起当前请求日志"
+            >
+              <List size={12} />
+              <span>{showLogPanel ? '收起日志' : '查看日志'}</span>
+            </button>
             <button
               onClick={() => {
                 const csvContent = requestLogService.exportLogs();
@@ -1888,24 +1960,67 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <div className="space-y-1">
               {requestLogs.length === 0 ? (
                 <div className="text-xs text-app-subtext text-center py-2">暂无请求记录</div>
-              ) : (
-                requestLogs.slice().reverse().map(log => (
-                  <div key={log.id} className="flex items-center gap-2 text-xs px-2 py-1 bg-app-input/50 rounded">
-                    <span className="text-app-subtext shrink-0">{new Date(log.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}</span>
-                    <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                      log.status === 'success' ? 'bg-green-500/20 text-green-400' :
-                      log.status === 'failed' ? 'bg-red-500/20 text-red-400' :
-                      log.status === 'cached' ? 'bg-blue-500/20 text-blue-400' :
-                      'bg-yellow-500/20 text-yellow-400'
-                    }`}>
-                      {log.status === 'success' ? '成功' : log.status === 'failed' ? '失败' : log.status === 'cached' ? '缓存' : '进行中'}
-                    </span>
-                    <span className="text-app-text truncate flex-1" title={log.url}>{log.url}</span>
-                    {log.duration && <span className="text-app-subtext shrink-0">{log.duration}ms</span>}
-                    {log.error && <span className="text-red-400 truncate" title={log.error}>{log.error}</span>}
-                  </div>
-                ))
-              )}
+              ) : (() => {
+                // 按触发原因分组（保持新到旧顺序），第一层级只展示原因，点开再展开请求明细
+                const groups: { reason: string; logs: RequestLogEntry[] }[] = [];
+                const groupIndex = new Map<string, number>();
+                requestLogs.slice().reverse().forEach(log => {
+                  const reason = log.reason || '（无触发原因）';
+                  const idx = groupIndex.get(reason);
+                  if (idx === undefined) {
+                    groupIndex.set(reason, groups.length);
+                    groups.push({ reason, logs: [log] });
+                  } else {
+                    groups[idx].logs.push(log);
+                  }
+                });
+                return groups.map(group => {
+                  const expanded = expandedLogReasons.has(group.reason);
+                  const triggerAt = Math.min(...group.logs.map(l => l.timestamp));
+                  const success = group.logs.filter(l => l.status === 'success').length;
+                  const failed = group.logs.filter(l => l.status === 'failed').length;
+                  const cached = group.logs.filter(l => l.status === 'cached').length;
+                  return (
+                    <div key={group.reason} className="bg-app-input/50 rounded overflow-hidden">
+                      <button
+                        onClick={() => toggleLogReason(group.reason)}
+                        className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-app-input transition-colors"
+                        title={expanded ? '收起本条请求明细' : '展开本条请求明细'}
+                      >
+                        <ChevronDown size={12} className={`shrink-0 text-app-subtext transition-transform ${expanded ? '' : '-rotate-90'}`} />
+                        <span className="text-app-subtext shrink-0 font-mono text-[10px]">{new Date(triggerAt).toLocaleString('zh-CN', { hour12: false })}</span>
+                        <span className="text-indigo-400/80 truncate flex-1" title={group.reason}>{group.reason}</span>
+                        <span className="text-app-subtext shrink-0 whitespace-nowrap">
+                          {group.logs.length} 条
+                          {success > 0 && <span className="text-green-400"> · 成功 {success}</span>}
+                          {failed > 0 && <span className="text-red-400"> · 失败 {failed}</span>}
+                          {cached > 0 && <span className="text-blue-400"> · 缓存 {cached}</span>}
+                        </span>
+                      </button>
+                      {expanded && (
+                        <div className="space-y-1 px-2 pb-2">
+                          {group.logs.map(log => (
+                            <div key={log.id} className="flex items-center gap-2 text-xs px-2 py-1 bg-app-card/70 rounded">
+                              <span className="text-app-subtext shrink-0">{new Date(log.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}</span>
+                              <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                log.status === 'success' ? 'bg-green-500/20 text-green-400' :
+                                log.status === 'failed' ? 'bg-red-500/20 text-red-400' :
+                                log.status === 'cached' ? 'bg-blue-500/20 text-blue-400' :
+                                'bg-yellow-500/20 text-yellow-400'
+                              }`}>
+                                {log.status === 'success' ? '成功' : log.status === 'failed' ? '失败' : log.status === 'cached' ? '缓存' : '进行中'}
+                              </span>
+                              <span className="text-app-text truncate flex-1" title={log.url}>{log.url}</span>
+                              {log.duration && <span className="text-app-subtext shrink-0">{log.duration}ms</span>}
+                              {log.error && <span className="text-red-400 truncate" title={log.error}>{log.error}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </div>
         )}
