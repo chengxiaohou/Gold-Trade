@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, ArrowUpDown, Download, BarChart3 } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, Download, BarChart3 } from 'lucide-react';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
 import { fetchBollData, checkAllBollCache, BollData, BollPeriod, BollAdjust } from '../services/bollService';
 import { getDynamicCacheTTL, isStockPriceFresh } from '../services/cacheService';
@@ -235,6 +235,14 @@ interface DividendDiffEntry {
   records: DividendRecord[];
 }
 
+// 持仓列展示模式（表头按钮循环切换）
+type PositionDisplayMode = 'yield' | 'shares' | 'cost';
+const POSITION_MODE_LABEL: Record<PositionDisplayMode, string> = {
+  yield: '股息率',
+  shares: '股数',
+  cost: '成本',
+};
+
 const DEFAULT_DIVIDEND_RATES: StockDividendRates = {
   '2%': 0,
   '3%': 0,
@@ -388,6 +396,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [isFetchingDividends, setIsFetchingDividends] = useState(false);
   const [dividendDiff, setDividendDiff] = useState<DividendDiffEntry[] | null>(null);
   const [selectedDividendIds, setSelectedDividendIds] = useState<Set<string>>(new Set());
+  // 持仓列当前展示的数据类型（默认股息率）
+  const [positionDisplayMode, setPositionDisplayMode] = useState<PositionDisplayMode>('yield');
 
   useEffect(() => {
     if (resetSignal !== undefined && resetSignal > 0) {
@@ -884,6 +894,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setSelectedDividendIds(new Set());
   };
 
+  // 持仓列展示模式循环：股息率 → 股数 → 成本 → 股息率
+  const cyclePositionMode = () => {
+    setPositionDisplayMode(prev => prev === 'yield' ? 'shares' : prev === 'shares' ? 'cost' : 'yield');
+  };
+
   const handleAddStock = useCallback(async () => {
     if (!newStock.code.trim()) return;
 
@@ -978,20 +993,18 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   return (
     <div className="flex flex-col gap-3 w-full">
       <div className="flex justify-center">
-        <div className="w-full max-w-[700px] flex items-center justify-between">
+        <div className="w-full max-w-[700px] flex items-center gap-3">
           <h1 className="text-3xl font-bold text-app-subtext tracking-wide">股息率一览</h1>
-          <div className="flex items-center gap-3">
-            {appVersion && <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1">{appVersion}</span>}
-            {onTogglePage && (
-              <button
-                onClick={onTogglePage}
-                className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1 transition-colors"
-                title="切换到黄金交易模拟"
-              >
-                [黄金]
-              </button>
-            )}
-          </div>
+          {appVersion && <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1">{appVersion}</span>}
+          {onTogglePage && (
+            <button
+              onClick={onTogglePage}
+              className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1 transition-colors"
+              title="切换到黄金交易模拟"
+            >
+              [黄金]
+            </button>
+          )}
         </div>
       </div>
       <div className="flex justify-center">
@@ -1033,10 +1046,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   rowSpan={2}
                   onClick={() => setSortMode(sortMode === 'tag' ? 'default' : 'tag')}
                 >
-                  <div className="flex items-center justify-center gap-0.5">
-                    标签
-                    <ArrowUpDown size={10} className={sortMode === 'tag' ? 'text-indigo-400' : 'opacity-50'} />
-                  </div>
+                  标签
                 </th>
                 {(cols.includes('code') || cols.includes('name')) && <th className="px-2 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap sticky left-[36px] z-10">股票名称</th>}
                 {cols.includes('dividendRate2025') && (
@@ -1044,10 +1054,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     className={`px-1 py-2 text-center text-xs uppercase font-bold tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none ${sortMode === 'dividendRate' ? 'text-indigo-400' : 'text-app-subtext'}`}
                     onClick={() => setSortMode(sortMode === 'dividendRate' ? 'default' : 'dividendRate')}
                   >
-                    <div className="flex items-center justify-center gap-0.5">
-                      股息率
-                      <ArrowUpDown size={10} className={sortMode === 'dividendRate' ? 'text-indigo-400' : 'opacity-50'} />
-                    </div>
+                    股息率
                   </th>
                 )}
                 {cols.includes('price') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">
@@ -1102,10 +1109,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </div>
                 </th>}
                 {cols.includes('position') && <th
-                  className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-l border-app-border"
+                  className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-l border-app-border border-r border-app-border cursor-pointer select-none"
                   rowSpan={2}
-                  title="点击行内编辑按钮可录入持仓股数和每股成本"
-                >持仓</th>}
+                  onClick={cyclePositionMode}
+                  title={`点击切换展示（当前：${POSITION_MODE_LABEL[positionDisplayMode]}）：股息率 / 持仓股数 / 成本`}
+                >
+                  持仓
+                </th>}
                 <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border" rowSpan={2}>操作</th>
               </tr>
               <tr className="bg-app-input">
@@ -1165,13 +1175,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             type="text"
                             value={stock.name}
                             onChange={(e) => handleUpdateField(stock.id, 'name', e.target.value)}
-                            className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight text-app-text outline-none"
+                            className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight text-app-text outline-none text-center"
                           />}
                           {cols.includes('code') && <input
                             type="text"
                             value={getDisplayCode(stock.code)}
                             onChange={(e) => handleUpdateField(stock.id, 'code', e.target.value.toUpperCase())}
-                            className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[9px] leading-tight font-mono text-app-text outline-none"
+                            className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[9px] leading-tight font-mono text-app-text outline-none text-center"
                           />}
                         </div>
                       ) : (
@@ -1263,8 +1273,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const sharesText = shares > 0
                       ? `${Number.isInteger(shares) ? shares : shares.toFixed(2)}股`
                       : '-';
+                    const costText = cost > 0 ? `¥${cost.toFixed(2)}` : '-';
+                    const displayValue = positionDisplayMode === 'shares'
+                      ? sharesText
+                      : positionDisplayMode === 'cost'
+                        ? costText
+                        : yieldPct;
                     return (
-                      <td className="px-1 py-1.5 text-center border-l border-app-border">
+                      <td className="px-1 py-1.5 text-center border-l border-app-border border-r border-app-border">
                         {editingId === stock.id ? (
                           <div className="flex flex-col gap-0.5">
                             <input
@@ -1289,10 +1305,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             />
                           </div>
                         ) : (
-                          <div className="flex flex-col items-center leading-tight">
-                            <span className="font-mono text-[11px] text-app-text whitespace-nowrap">{sharesText}</span>
-                            <span className={`font-mono text-[10px] whitespace-nowrap ${yieldPct !== '-' ? 'text-indigo-400' : 'text-app-subtext'}`}>{yieldPct}</span>
-                          </div>
+                          <span className="font-mono text-[11px] text-app-subtext whitespace-nowrap">{displayValue}</span>
                         )}
                       </td>
                     );
