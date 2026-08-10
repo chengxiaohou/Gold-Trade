@@ -22,11 +22,46 @@ export interface RequestLogStats {
 
 type RequestLogListener = (logs: RequestLogEntry[], stats: RequestLogStats) => void;
 
+const STORAGE_KEY = 'gold_request_logs';
+const MAX_LOGS = 500;
+
 class RequestLogService {
   private logs: RequestLogEntry[] = [];
   private listeners: Set<RequestLogListener> = new Set();
   private pendingRequests: Map<string, number> = new Map(); // id -> startTime
   private batchReason: string | null = null; // 当前批量请求的触发原因
+
+  constructor() {
+    // 从 localStorage 恢复日志（刷新页面后仍然保留，只有点「重置」才清空）
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          this.logs = parsed
+            .filter((l): l is RequestLogEntry => l && typeof l.id === 'string' && typeof l.url === 'string')
+            .map(l => l.status === 'pending'
+              ? { ...l, status: 'failed' as const, error: '页面刷新，请求中断' }
+              : l);
+        }
+      }
+    } catch {
+      // 忽略读取失败
+    }
+    if (this.logs.length > 0) {
+      this.notifyListeners();
+    }
+  }
+
+  // 持久化日志到 localStorage（最多保留最近 MAX_LOGS 条）
+  private persist(): void {
+    try {
+      const trimmed = this.logs.slice(-MAX_LOGS);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+    } catch {
+      // 存储失败不影响功能
+    }
+  }
 
   // 设置/清除批量触发原因：一次批量请求共用同一个原因，
   // 直到下一次 setBatchReason 或 reset 才会改变
@@ -61,6 +96,7 @@ class RequestLogService {
     this.logs.push(entry);
     this.pendingRequests.set(id, Date.now());
     this.notifyListeners();
+    this.persist();
     
     return id;
   }
@@ -75,6 +111,7 @@ class RequestLogService {
       entry.cached = cached;
       this.pendingRequests.delete(id);
       this.notifyListeners();
+      this.persist();
     }
   }
 
@@ -88,6 +125,7 @@ class RequestLogService {
       entry.error = error;
       this.pendingRequests.delete(id);
       this.notifyListeners();
+      this.persist();
     }
   }
 
@@ -106,6 +144,7 @@ class RequestLogService {
     
     this.logs.push(entry);
     this.notifyListeners();
+    this.persist();
   }
 
   // 获取统计信息
@@ -130,6 +169,11 @@ class RequestLogService {
     this.pendingRequests.clear();
     this.batchReason = null;
     this.notifyListeners();
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // 忽略
+    }
   }
 
   // 导出日志为文本

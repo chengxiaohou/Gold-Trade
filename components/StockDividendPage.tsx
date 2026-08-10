@@ -824,11 +824,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const marketClosed = !isTradingHours();
     // 休市时股价已是当日/最近收盘价，手动刷新也视为无需请求（除非缓存已过期）
     const effectiveSkip = skipFresh || marketClosed;
-    requestLogService.setBatchReason(effectiveSkip
-      ? (marketClosed
-          ? `点击「价格」列头刷新按钮：休市中，股价已是最新收盘价（缓存超过 ${ttlMinutes} 分钟即过期），仅刷新过期股票（预计最多 ${stocks.length} 条请求）`
-          : `打开股息页自动刷新股价：缓存超过 ${ttlMinutes} 分钟即过期，过期股票重新请求（预计最多 ${stocks.length} 条请求）`)
-      : `点击「价格」列头刷新按钮，刷新全部股价（预计 ${stocks.length} 条请求）`);
+    let refreshReason: string;
+    if (skipFresh) {
+      refreshReason = `打开股息页自动刷新股价：缓存超过 ${ttlMinutes} 分钟即过期，过期股票重新请求（预计最多 ${stocks.length} 条请求）`;
+    } else if (marketClosed) {
+      refreshReason = `点击「价格」列头刷新按钮：休市中，股价已是最新收盘价（缓存超过 ${ttlMinutes} 分钟即过期），仅刷新过期股票（预计最多 ${stocks.length} 条请求）`;
+    } else {
+      refreshReason = `点击「价格」列头刷新按钮，刷新全部股价（预计 ${stocks.length} 条请求）`;
+    }
+    requestLogService.setBatchReason(refreshReason);
     setIsRefreshing(new Set(stocks.map(s => s.id)));
     setRefreshFailed(new Set());
     try {
@@ -1099,7 +1103,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <thead className="sticky top-0 z-30 overflow-hidden">
               <tr className="bg-app-input">
                 <th
-                  className={`px-1 py-2 text-center text-xs uppercase font-bold tracking-wider border-b border-app-border border-r border-app-border sticky left-0 z-20 cursor-pointer select-none whitespace-nowrap ${sortMode === 'tag' ? 'text-indigo-400' : 'text-app-subtext'} bg-app-input`}
+                  className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border sticky left-0 z-20 cursor-pointer select-none whitespace-nowrap bg-app-input"
                   rowSpan={2}
                   onClick={() => setSortMode(sortMode === 'tag' ? 'default' : 'tag')}
                 >
@@ -1112,7 +1116,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 >{showNickname ? '代号' : '股票名称'}</th>}
                 {cols.includes('dividendRate2025') && (
                   <th
-                    className={`px-1 py-2 text-center text-xs uppercase font-bold tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none ${sortMode === 'dividendRate' ? 'text-indigo-400' : 'text-app-subtext'}`}
+                    className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none"
                     onClick={() => setSortMode(sortMode === 'dividendRate' ? 'default' : 'dividendRate')}
                   >
                     股息率
@@ -1262,7 +1266,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>{(() => {
                             const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
                             const n = raw.replace(/\s/g, '');
-                            return n.length > 4 ? n.slice(0, 4) + '…' : n;
+                            return n.length > 5 ? n.slice(0, 5) + '…' : n;
                           })()}</span>
                           <span className="font-mono text-[8px] leading-none text-app-rowtext absolute bottom-0 left-0 right-0 text-center" style={{ opacity: 0.6 }}>{getDisplayCode(stock.code)}</span>
                         </div>
