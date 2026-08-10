@@ -1082,7 +1082,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 display: none;
               }
             `}</style>
-            <table className="text-sm border-separate border-spacing-0 w-full" style={{ tableLayout: 'auto' }}>
+            <table className="text-sm border-separate border-spacing-0" style={{ tableLayout: 'fixed', width: 'max-content' }}>
             <colgroup>
               <col style={{ width: '36px' }} />
               {(cols.includes('code') || cols.includes('name')) && <col style={{ width: '90px' }} />}
