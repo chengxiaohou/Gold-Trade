@@ -6,6 +6,7 @@ import { fetchBollData, checkAllBollCache, BollData, BollPeriod, BollAdjust } fr
 import { getDynamicCacheTTL, isStockPriceFresh } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats } from '../services/requestLogService';
 import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
+import { getNickname } from '../services/nicknameService';
 
 const TAG_PALETTE = [
   { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20', hover: 'hover:border-gray-500/50' },
@@ -398,6 +399,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [selectedDividendIds, setSelectedDividendIds] = useState<Set<string>>(new Set());
   // 持仓列当前展示的数据类型（默认股息率）
   const [positionDisplayMode, setPositionDisplayMode] = useState<PositionDisplayMode>('yield');
+  // 股票名称/代号显示切换（默认显示股票名称）
+  const [showNickname, setShowNickname] = useState(false);
 
   useEffect(() => {
     if (resetSignal !== undefined && resetSignal > 0) {
@@ -1048,7 +1051,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 >
                   标签
                 </th>
-                {(cols.includes('code') || cols.includes('name')) && <th className="px-2 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap sticky left-[36px] z-10">股票名称</th>}
+                {(cols.includes('code') || cols.includes('name')) && <th
+                  className="px-2 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap sticky left-[36px] z-10 cursor-pointer select-none"
+                  onClick={() => setShowNickname(prev => !prev)}
+                  title="点击在股票名称/代号之间切换"
+                >{showNickname ? '代号' : '股票名称'}</th>}
                 {cols.includes('dividendRate2025') && (
                   <th
                     className={`px-1 py-2 text-center text-xs uppercase font-bold tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none ${sortMode === 'dividendRate' ? 'text-indigo-400' : 'text-app-subtext'}`}
@@ -1173,9 +1180,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         <div className="flex flex-col gap-0.5">
                           {cols.includes('name') && <input
                             type="text"
-                            value={stock.name}
-                            onChange={(e) => handleUpdateField(stock.id, 'name', e.target.value)}
+                            value={[stock.name, getNickname(stock.code, stock.nickname)].filter(Boolean).join('-')}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              const idx = v.indexOf('-');
+                              if (idx >= 0) {
+                                handleUpdateField(stock.id, 'name', v.slice(0, idx));
+                                handleUpdateField(stock.id, 'nickname', v.slice(idx + 1));
+                              } else {
+                                handleUpdateField(stock.id, 'name', v);
+                                handleUpdateField(stock.id, 'nickname', '');
+                              }
+                            }}
+                            placeholder="名称-代号"
                             className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight text-app-text outline-none text-center"
+                            title="股票名称-代号，如：中国平安-星星人"
                           />}
                           {cols.includes('code') && <input
                             type="text"
@@ -1186,7 +1205,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         </div>
                       ) : (
                         <div className="relative flex items-center justify-center h-8 whitespace-nowrap">
-                          <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>{(() => { const n = stock.name.replace(/\s/g, ''); return n.length > 4 ? n.slice(0, 4) + '…' : n; })()}</span>
+                          <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>{(() => {
+                            const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
+                            const n = raw.replace(/\s/g, '');
+                            return n.length > 4 ? n.slice(0, 4) + '…' : n;
+                          })()}</span>
                           <span className="font-mono text-[8px] leading-none text-app-rowtext absolute bottom-0 left-0 right-0 text-center" style={{ opacity: 0.6 }}>{getDisplayCode(stock.code)}</span>
                         </div>
                       )}

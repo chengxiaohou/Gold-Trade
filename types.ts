@@ -90,6 +90,7 @@ export interface StockEntry {
   dividendRate2025: number;
   positionShares: number; // 持仓股数（0 = 未持仓）
   positionCost: number;   // 每股成本（买入均价，元；仅编辑模式展示）
+  nickname?: string;      // 自定义代号（为空时使用内置默认代号）
   priceUpdatedAt: number | null;
   dividendRates: StockDividendRates;
   tag?: string; // User defined tag for filtering or categorization
