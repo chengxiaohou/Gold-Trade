@@ -1928,7 +1928,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               title="展开/收起当前请求日志"
             >
               <List size={12} />
-              <span>{showLogPanel ? '收起日志' : '查看日志'}</span>
+              <span className="hidden sm:inline">{showLogPanel ? '收起日志' : '查看日志'}</span>
             </button>
             <button
               onClick={() => {
@@ -1943,17 +1943,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               }}
               disabled={requestLogs.length === 0}
               className="flex items-center gap-1 px-2 py-1 text-xs text-app-subtext hover:text-app-text border border-app-border rounded hover:border-app-text/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="下载当前请求日志（CSV）"
             >
               <Download size={12} />
-              <span>下载日志</span>
+              <span className="hidden sm:inline">下载日志</span>
             </button>
             <button
               onClick={() => requestLogService.reset()}
               disabled={requestLogs.length === 0}
               className="flex items-center gap-1 px-2 py-1 text-xs text-app-subtext hover:text-red-400 border border-app-border rounded hover:border-red-400/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="清空当前请求日志"
             >
               <RotateCcw size={12} />
-              <span>重置</span>
+              <span className="hidden sm:inline">重置</span>
             </button>
           </div>
         </div>
