@@ -1421,7 +1421,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
                           />
                         ) : (
-                          <span className={`font-mono text-xs text-app-rowtext ${isSelected ? 'underline decoration-2 underline-offset-2' : ''}`}>{formatPrice(value)}</span>
+                          <span className={`font-mono text-xs font-normal ${isSelected ? 'text-brand-red' : 'text-app-rowtext'}`}>{formatPrice(value)}</span>
                         )}
                       </td>
                     );
