@@ -223,6 +223,8 @@ interface StockDividendPageProps {
   resetSignal?: number;
   dividendYearLeft?: number;
   dividendYearRight?: number;
+  sortMode?: 'default' | 'dividendRate' | 'tag';
+  onSortModeChange?: (mode: 'default' | 'dividendRate' | 'tag') => void;
 }
 
 // 分红核对弹窗里的单只股票差异条目
@@ -370,7 +372,7 @@ const formatPercent = (percent: number): string => {
   return percent.toFixed(2) + '%';
 };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025 }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
   // 分红年份列（dividendLeft / dividendRight）：表头合并为一格，年份各自成列
@@ -433,7 +435,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       setShowResetConfirm(true);
     }
   }, [resetSignal]);
-  const [sortMode, setSortMode] = useState<'default' | 'dividendRate' | 'tag'>('default');
+  const handleSortModeChange = (mode: 'default' | 'dividendRate' | 'tag') => {
+    if (onSortModeChange) onSortModeChange(mode);
+  };
   const [bollData, setBollData] = useState<BollData | null>(null);
   const [bollError, setBollError] = useState<string | null>(null);
   const [bollUnsupported, setBollUnsupported] = useState<boolean>(false);
@@ -1156,7 +1160,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <th
                   className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border sticky left-0 z-20 cursor-pointer select-none whitespace-nowrap bg-app-input"
                   rowSpan={2}
-                  onClick={() => setSortMode(sortMode === 'tag' ? 'default' : 'tag')}
+                  onClick={() => handleSortModeChange(sortMode === 'tag' ? 'default' : 'tag')}
                 >
                   标签
                 </th>
@@ -1168,7 +1172,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 {cols.includes('dividendRate') && (
                   <th
                     className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none"
-                    onClick={() => setSortMode(sortMode === 'dividendRate' ? 'default' : 'dividendRate')}
+                    onClick={() => handleSortModeChange(sortMode === 'dividendRate' ? 'default' : 'dividendRate')}
                   >
                     股息率
                   </th>

@@ -257,7 +257,8 @@ export default function App() {
           { min: 4.5, max: 5.5, color: 'yellow' },
           { min: 5.5, max: 100, color: 'green' }
         ],
-        tagColors: parsed.tagColors || {}
+        tagColors: parsed.tagColors || {},
+        sortMode: parsed.sortMode || 'default'
       };
     } catch {
       return {
@@ -268,7 +269,8 @@ export default function App() {
           { min: 4.5, max: 5.5, color: 'yellow' },
           { min: 5.5, max: 100, color: 'green' }
         ],
-        tagColors: {}
+        tagColors: {},
+        sortMode: 'default'
       };
     }
   });
@@ -1771,6 +1773,8 @@ export default function App() {
             resetSignal={stockResetSignal}
             dividendYearLeft={appSettings.dividendYearLeft ?? 2024}
             dividendYearRight={appSettings.dividendYearRight ?? 2025}
+            sortMode={stockSettings.sortMode}
+            onSortModeChange={(mode) => setStockSettings(prev => ({ ...prev, sortMode: mode }))}
           />
         )}
         <div className="lg:hidden mt-2 order-3">{currentPage === 'gold' && renderActionButtons()}</div>
