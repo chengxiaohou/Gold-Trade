@@ -82,6 +82,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [maxRows, setMaxRows] = useState<number>(stockSettings?.maxRows || 15);
   const [apiSource, setApiSource] = useState<ApiSource>(appSettings.apiSource || 'tencent');
   const [cacheTTLMinutes, setCacheTTLMinutes] = useState<number>(appSettings.cacheTTLMinutes || 10);
+  const [bollCacheTTLMinutes, setBollCacheTTLMinutes] = useState<number>(appSettings.bollCacheTTLMinutes || 120);
   const [cacheInfo, setCacheInfo] = useState<{ sina: CacheInfo; tencent: CacheInfo }>({
     sina: getCacheInfo('sina'),
     tencent: getCacheInfo('tencent')
@@ -129,6 +130,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       setBuyTaxFee((appSettings.buyTaxFee ?? 5).toString());
       setSellTaxFee((appSettings.sellTaxFee ?? 5).toString());
       setApiSource(appSettings.apiSource || 'tencent');
+      setCacheTTLMinutes(appSettings.cacheTTLMinutes || 10);
+      setBollCacheTTLMinutes(appSettings.bollCacheTTLMinutes || 120);
       setIsVerifying(false);
       setLogState(null);
       setEditingRangeIndex(null);
@@ -183,7 +186,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         buyTaxFee: parseFloat(buyTaxFee) || 5,
         sellTaxFee: parseFloat(sellTaxFee) || 5,
         apiSource: apiSource,
-        cacheTTLMinutes: cacheTTLMinutes, // New: Cache TTL in minutes
+        cacheTTLMinutes: cacheTTLMinutes,
+        bollCacheTTLMinutes: bollCacheTTLMinutes,
     };
 
     const newStockSettings: StockSettings = {
@@ -282,6 +286,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       sellTaxFee: parseFloat(sellTaxFee) || 5,
       apiSource: sourceOverride || apiSource,
       cacheTTLMinutes: cacheTTLMinutes,
+      bollCacheTTLMinutes: bollCacheTTLMinutes,
     };
     
     const newStockSettings: StockSettings = {
@@ -574,9 +579,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                           </p>
                         </div>
 
-                        {/* Cache TTL Setting */}
+                        {/* Price Cache TTL Setting */}
                         <div className="space-y-2">
-                          <label className="text-xs text-app-subtext">交易时段缓存有效期（分钟）</label>
+                          <label className="text-xs text-app-subtext">价格缓存有效期（分钟）</label>
                           <div className="flex items-center gap-3">
                             <input
                               type="range"
@@ -587,6 +592,23 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                               className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-indigo-500"
                             />
                             <span className="text-sm font-medium text-app-text w-12 text-right">{cacheTTLMinutes}分钟</span>
+                          </div>
+                        </div>
+
+                        {/* BOLL Cache TTL Setting */}
+                        <div className="space-y-2">
+                          <label className="text-xs text-app-subtext">BOLL缓存有效期（分钟）</label>
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="range"
+                              min="10"
+                              max="240"
+                              step="10"
+                              value={bollCacheTTLMinutes}
+                              onChange={(e) => setBollCacheTTLMinutes(Number(e.target.value))}
+                              className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                            />
+                            <span className="text-sm font-medium text-app-text w-12 text-right">{bollCacheTTLMinutes}分钟</span>
                           </div>
                         </div>
 

@@ -63,7 +63,8 @@ export interface AppSettings {
   buyTaxFee?: number; // New: Tax fee per buy transaction
   sellTaxFee?: number; // New: Tax fee per sell transaction
   apiSource?: ApiSource; // New: API source for stock data ('sina' or 'tencent')
-  cacheTTLMinutes?: number; // New: Cache TTL in minutes during trading hours, default 10
+  cacheTTLMinutes?: number; // Cache TTL for real-time price during trading hours, default 10
+  bollCacheTTLMinutes?: number; // Cache TTL for BOLL data during trading hours, default 120
 }
 
 export type MarketStatus = 'pre_open' | 'morning_session' | 'midday_break' | 'afternoon_session' | 'closed' | 'full_day_closed';

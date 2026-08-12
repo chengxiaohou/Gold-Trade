@@ -4,7 +4,7 @@ import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, C
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
 import { fetchBollData, checkAllBollCache, BollData, BollPeriod, BollAdjust } from '../services/bollService';
-import { getDynamicCacheTTL, isStockPriceFresh, isTradingHours } from '../services/cacheService';
+import { getDynamicCacheTTL, getDynamicBollCacheTTL, isStockPriceFresh, isTradingHours } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats } from '../services/requestLogService';
 import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
 import { getNickname } from '../services/nicknameService';
@@ -466,9 +466,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // 递增版本号，标记本次请求
     const currentVersion = ++fetchVersionRef.current;
     
-    const ttlMinutes = Math.round(getDynamicCacheTTL() / 60000);
+    const ttlMinutes = Math.round(getDynamicBollCacheTTL() / 60000);
     requestLogService.setBatchReason(
-      `${trigger}：缓存超过 ${ttlMinutes} 分钟即过期，过期部分重新请求（预计最多 ${stocks.length * 3} 条请求）`
+      `${trigger}：BOLL缓存超过 ${ttlMinutes} 分钟即过期，过期部分重新请求（预计最多 ${stocks.length * 3} 条请求）`
     );
     
     // 只在前复权模式下批量获取所有股票的BOLL数据
@@ -494,7 +494,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setStockBollErrorMap(new Map());
     
     // 先检查缓存
-    const dynamicTTL = getDynamicCacheTTL();
+    const dynamicTTL = getDynamicBollCacheTTL();
     const { allCached, cachedData } = checkAllBollCache(stocks, bollAdjust, apiSource, dynamicTTL);
     
     if (fetchVersionRef.current !== currentVersion) {

@@ -209,6 +209,7 @@ export default function App() {
       sellTaxFee: parsed.sellTaxFee ?? 5,
       apiSource: parsed.apiSource,
       cacheTTLMinutes: parsed.cacheTTLMinutes,
+      bollCacheTTLMinutes: parsed.bollCacheTTLMinutes,
     };
   });
 

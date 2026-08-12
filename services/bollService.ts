@@ -1,5 +1,5 @@
 import { ApiSource } from '../types';
-import { getDynamicCacheTTL, setLastFetchTime } from './cacheService';
+import { getDynamicBollCacheTTL, setLastFetchTime } from './cacheService';
 import { requestLogService } from './requestLogService';
 
 // 生产环境配置
@@ -159,13 +159,27 @@ function restoreCacheFromStorage(): void {
       const parsed = JSON.parse(stored);
       const now = Date.now();
       
+      // 各数据源最新的拉取时间
+      let latestTencent = 0;
+      let latestSina = 0;
+      
       // 只恢复未过期的缓存
       for (const [key, value] of Object.entries(parsed)) {
         const entry = value as { data: BollData; timestamp: number };
         if (now - entry.timestamp < CACHE_EXPIRY_MS) {
           cache.set(key, entry);
+          // 从 cache key 中提取数据源，记录最新拉取时间
+          if (key.endsWith('_tencent') && entry.timestamp > latestTencent) {
+            latestTencent = entry.timestamp;
+          } else if (key.endsWith('_sina') && entry.timestamp > latestSina) {
+            latestSina = entry.timestamp;
+          }
         }
       }
+      
+      // 恢复缓存管理中的"上次拉取时间"
+      if (latestTencent > 0) setLastFetchTime('tencent', latestTencent);
+      if (latestSina > 0) setLastFetchTime('sina', latestSina);
     }
   } catch (e) {
     console.warn('Failed to restore BOLL cache from localStorage:', e);
@@ -356,7 +370,7 @@ export async function fetchBollData(
   
   const cacheKey = getCacheKey(fullCode, period, adjust, apiSource);
   const cached = cache.get(cacheKey);
-  const dynamicTTL = getDynamicCacheTTL();
+  const dynamicTTL = getDynamicBollCacheTTL();
   
   if (cached && Date.now() - cached.timestamp < dynamicTTL) {
     // 缓存命中，记录日志

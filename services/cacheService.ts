@@ -117,9 +117,9 @@ export function getLastFetchTime(source: ApiSource): number | null {
   return sourceLastFetch.get(source) || null;
 }
 
-// 更新缓存过期时间
+// 更新缓存过期时间（用于BOLL数据缓存管理）
 function updateCacheExpiry(source: ApiSource, fromTime: number): void {
-  const ttlMinutes = getCacheTTLMinutes();
+  const ttlMinutes = getBollCacheTTLMinutes();
   const expiry = calculateCacheExpiry(fromTime, ttlMinutes);
   sourceCacheExpiry.set(source, expiry);
 }
@@ -139,9 +139,8 @@ function calculateCacheExpiry(fromTime: number, ttlMinutes: number): number {
   }
 }
 
-// 获取缓存TTL设置
+// 获取价格缓存TTL设置
 function getCacheTTLMinutes(): number {
-  // 设置实际保存在 gold_app_settings（由 App.tsx 写入），读取该 key 才能让缓存 TTL 生效
   const settings = localStorage.getItem('gold_app_settings');
   if (settings) {
     try {
@@ -154,12 +153,25 @@ function getCacheTTLMinutes(): number {
   return 10;
 }
 
-// 获取缓存过期时间
+// 获取BOLL缓存TTL设置
+function getBollCacheTTLMinutes(): number {
+  const settings = localStorage.getItem('gold_app_settings');
+  if (settings) {
+    try {
+      const parsed = JSON.parse(settings);
+      return parsed.bollCacheTTLMinutes || 120;
+    } catch {
+      return 120;
+    }
+  }
+  return 120;
+}
+
+// 获取缓存过期时间（用于BOLL数据缓存管理）
 export function getCacheExpiry(source: ApiSource): number | null {
-  // 重新计算，确保非交易时段的缓存能正确延续到下次开盘
   const lastFetch = sourceLastFetch.get(source);
   if (lastFetch) {
-    const ttlMinutes = getCacheTTLMinutes();
+    const ttlMinutes = getBollCacheTTLMinutes();
     return calculateCacheExpiry(lastFetch, ttlMinutes);
   }
   return null;
@@ -257,16 +269,27 @@ export function clearCacheRecord(source: ApiSource): void {
   sourceCacheExpiry.delete(source);
 }
 
-// 根据当前市场状态获取实际的缓存TTL（用于bollService）
+// 根据当前市场状态获取价格缓存TTL（毫秒）
 export function getDynamicCacheTTL(): number {
   const ttlMinutes = getCacheTTLMinutes();
   const marketStatus = getMarketStatus();
-  
+
   if (marketStatus === 'morning_session' || marketStatus === 'afternoon_session') {
-    // 交易时段：使用设定的分钟数
     return ttlMinutes * 60 * 1000;
   } else {
-    // 非交易时段：计算到下次开盘的毫秒数
+    const nextOpen = getNextTradingOpen();
+    return nextOpen.getTime() - Date.now();
+  }
+}
+
+// 根据当前市场状态获取BOLL缓存TTL（毫秒）
+export function getDynamicBollCacheTTL(): number {
+  const ttlMinutes = getBollCacheTTLMinutes();
+  const marketStatus = getMarketStatus();
+
+  if (marketStatus === 'morning_session' || marketStatus === 'afternoon_session') {
+    return ttlMinutes * 60 * 1000;
+  } else {
     const nextOpen = getNextTradingOpen();
     return nextOpen.getTime() - Date.now();
   }
