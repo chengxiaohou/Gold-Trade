@@ -110,6 +110,7 @@ export default function App() {
                   ...(s.dividend2024 ? { 2024: s.dividend2024 } : {}),
                   ...(s.dividend2025 ? { 2025: s.dividend2025 } : {}),
                 },
+            selectedDividendYear: s.selectedDividendYear ?? 2025,
           }));
         }
       } catch {
@@ -210,6 +211,8 @@ export default function App() {
       apiSource: parsed.apiSource,
       cacheTTLMinutes: parsed.cacheTTLMinutes,
       bollCacheTTLMinutes: parsed.bollCacheTTLMinutes,
+      dividendYearRight: parsed.dividendYearRight ?? 2025,
+      dividendYearLeft: parsed.dividendYearLeft ?? (parsed.dividendYearRight ? parsed.dividendYearRight - 1 : 2024),
     };
   });
 
@@ -237,11 +240,17 @@ export default function App() {
 
   // Stock Settings
   const [stockSettings, setStockSettings] = useState<StockSettings>(() => {
+    const migrateCols = (cols: string[]) => cols.map(c =>
+      c === 'dividend2024' ? 'dividendLeft' :
+      c === 'dividend2025' ? 'dividendRight' :
+      c === 'dividendRate2025' ? 'dividendRate' : c
+    );
+    const defaultCols = ['code', 'name', 'price', 'changePercent', 'high', 'low', 'dividendLeft', 'dividendRight', 'dividendRate', 'dividendRates'];
     try {
       const saved = localStorage.getItem('stock_dividend_settings');
       const parsed = saved ? JSON.parse(saved) : {};
       return {
-        visibleColumns: parsed.visibleColumns || ['code', 'name', 'price', 'changePercent', 'high', 'low', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'],
+        visibleColumns: parsed.visibleColumns ? migrateCols(parsed.visibleColumns) : defaultCols,
         dividendRateColumns: parsed.dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'],
         dividendRateColorRanges: parsed.dividendRateColorRanges || [
           { min: 0, max: 4.5, color: 'red' },
@@ -252,7 +261,7 @@ export default function App() {
       };
     } catch {
       return {
-        visibleColumns: ['code', 'name', 'price', 'changePercent', 'high', 'low', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'],
+        visibleColumns: defaultCols,
         dividendRateColumns: ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'],
         dividendRateColorRanges: [
           { min: 0, max: 4.5, color: 'red' },
@@ -1760,6 +1769,8 @@ export default function App() {
             apiSource={appSettings.apiSource || 'tencent'}
             onResetStocks={resetStockData}
             resetSignal={stockResetSignal}
+            dividendYearLeft={appSettings.dividendYearLeft ?? 2024}
+            dividendYearRight={appSettings.dividendYearRight ?? 2025}
           />
         )}
         <div className="lg:hidden mt-2 order-3">{currentPage === 'gold' && renderActionButtons()}</div>

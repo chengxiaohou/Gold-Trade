@@ -65,6 +65,8 @@ export interface AppSettings {
   apiSource?: ApiSource; // New: API source for stock data ('sina' or 'tencent')
   cacheTTLMinutes?: number; // Cache TTL for real-time price during trading hours, default 10
   bollCacheTTLMinutes?: number; // Cache TTL for BOLL data during trading hours, default 120
+  dividendYearLeft?: number; // Left dividend year column, default = right - 1
+  dividendYearRight?: number; // Right dividend year column, default 2025
 }
 
 export type MarketStatus = 'pre_open' | 'morning_session' | 'midday_break' | 'afternoon_session' | 'closed' | 'full_day_closed';
@@ -96,6 +98,7 @@ export interface StockEntry {
   priceUpdatedAt: number | null;
   dividendRates: StockDividendRates;
   tag?: string; // User defined tag for filtering or categorization
+  selectedDividendYear?: number; // Which dividend year this stock uses for rate calc, default = right year
 }
 
 export interface DividendRateColorRange {

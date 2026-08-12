@@ -1,7 +1,7 @@
 
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, TrendingUp, Database, RefreshCw } from 'lucide-react';
+import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, TrendingUp, Database, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
 import { GithubConfig, AppSettings, StockSettings, DividendRateColorRange, ApiSource, CacheInfo } from '../types';
 import { validateConnection } from '../services/githubService';
 import { getCacheInfo, getMarketStatusText, formatDatePart, formatTimePart, formatRelativeTime, clearCacheRecord } from '../services/cacheService';
@@ -20,15 +20,15 @@ const GOLD_COLUMNS = [
   { key: 'pnl', label: '盈亏' },
 ];
 
-// All available columns in stock dividend list
-const STOCK_COLUMNS = [
+// Get stock dividend columns dynamically based on configured years
+const getStockColumns = (leftYear: number, rightYear: number) => [
   { key: 'code', label: '股票代码' },
   { key: 'name', label: '股票名称' },
   { key: 'price', label: '实时价格' },
   { key: 'changePercent', label: '涨跌幅' },
-  { key: 'dividend2024', label: '分红(2024)' },
-  { key: 'dividend2025', label: '分红(2025)' },
-  { key: 'dividendRate2025', label: '股息率(2025)' },
+  { key: 'dividendLeft', label: `分红(${leftYear})` },
+  { key: 'dividendRight', label: `分红(${rightYear})` },
+  { key: 'dividendRate', label: `股息率(${rightYear})` },
   { key: 'dividendRates', label: '股息率对应股价' },
 ];
 
@@ -60,11 +60,14 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [gramsStep, setGramsStep] = useState(appSettings.gramsStep.toString());
   const [touchMode, setTouchMode] = useState(appSettings.touchMode ?? true);
   const [priceDisplayMode, setPriceDisplayMode] = useState<'breakEven' | 'avgCost' | 'both'>(appSettings.priceDisplayMode || 'both');
+  const [dividendYearRight, setDividendYearRight] = useState<number>(appSettings.dividendYearRight ?? 2025);
+  const [dividendYearLeft, setDividendYearLeft] = useState<number>(appSettings.dividendYearLeft ?? (dividendYearRight - 1));
+  const stockColumns = getStockColumns(dividendYearLeft, dividendYearRight);
   const [visibleColumns, setVisibleColumns] = useState<string[]>(() => {
     if (currentPage === 'gold') {
       return appSettings.visibleColumns || GOLD_COLUMNS.filter(c => c.key !== 'absChange' && c.key !== 'avgChange').map(c => c.key);
     } else {
-      return stockSettings?.visibleColumns || STOCK_COLUMNS.map(c => c.key);
+      return stockSettings?.visibleColumns || stockColumns.map(c => c.key);
     }
   });
   const [buyTaxFee, setBuyTaxFee] = useState((appSettings.buyTaxFee ?? 5).toString());
@@ -115,8 +118,12 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       setGramsStep(appSettings.gramsStep.toString());
       setTouchMode(appSettings.touchMode ?? true);
       setPriceDisplayMode(appSettings.priceDisplayMode || 'both');
+      const yr = appSettings.dividendYearRight ?? 2025;
+      const yl = appSettings.dividendYearLeft ?? (yr - 1);
+      setDividendYearRight(yr);
+      setDividendYearLeft(yl);
       if (currentPage === 'stock') {
-        setVisibleColumns(stockSettings?.visibleColumns || STOCK_COLUMNS.map(c => c.key));
+        setVisibleColumns(stockSettings?.visibleColumns || getStockColumns(yl, yr).map(c => c.key));
         setDividendRateColumns(stockSettings?.dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%']);
         console.log('设置 dividendRateColorRanges:', stockSettings?.dividendRateColorRanges);
         setDividendRateColorRanges(stockSettings?.dividendRateColorRanges || [
@@ -188,11 +195,13 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         apiSource: apiSource,
         cacheTTLMinutes: cacheTTLMinutes,
         bollCacheTTLMinutes: bollCacheTTLMinutes,
+        dividendYearLeft: dividendYearLeft,
+        dividendYearRight: dividendYearRight,
     };
 
     const newStockSettings: StockSettings = {
       tagColors: stockSettings?.tagColors || {},
-      visibleColumns: (currentPage === 'stock' ? visibleColumns : stockSettings?.visibleColumns) || STOCK_COLUMNS.map(c => c.key),
+      visibleColumns: (currentPage === 'stock' ? visibleColumns : stockSettings?.visibleColumns) || stockColumns.map(c => c.key),
       dividendRateColumns: dividendRateColumns || stockSettings?.dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'],
       dividendRateColorRanges: dividendRateColorRanges || stockSettings?.dividendRateColorRanges || [
         { min: 3, max: 4, color: 'red' },
@@ -287,6 +296,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       apiSource: sourceOverride || apiSource,
       cacheTTLMinutes: cacheTTLMinutes,
       bollCacheTTLMinutes: bollCacheTTLMinutes,
+      dividendYearLeft: dividendYearLeft,
+      dividendYearRight: dividendYearRight,
     };
     
     const newStockSettings: StockSettings = {
@@ -532,6 +543,58 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                           >
                             新浪财经
                           </button>
+                        </div>
+                     </div>
+
+                     {/* Dividend Year Settings */}
+                     <div className="space-y-2 pt-4 border-t border-app-border">
+                        <label className="text-sm font-medium text-app-text block flex items-center gap-2">
+                           <TrendingUp size={16} className="text-indigo-400"/> 分红年份设置
+                        </label>
+                        <p className="text-xs text-app-subtext">
+                           调整右侧年份，左侧自动跟随为前一年。各股票可单独选择使用哪一年计算股息率。
+                        </p>
+                        <div className="flex items-center justify-center gap-4 mt-2">
+                           <div className="flex flex-col items-center gap-1">
+                             <span className="text-xs text-app-subtext">左年份</span>
+                             <div className="px-3 py-1.5 bg-app-input border border-app-border rounded-lg text-sm font-mono text-app-subtext">
+                               {dividendYearLeft}
+                             </div>
+                             <span className="text-[10px] text-app-subtext">自动跟随</span>
+                           </div>
+                           <span className="text-app-subtext text-lg mt-5">←</span>
+                           <div className="flex flex-col items-center gap-1">
+                             <span className="text-xs text-app-text font-medium">右年份</span>
+                             <div className="flex items-center gap-1">
+                               <button
+                                 type="button"
+                                 onClick={() => {
+                                   if (dividendYearRight > 2000) {
+                                     setDividendYearRight(dividendYearRight - 1);
+                                     setDividendYearLeft(dividendYearLeft - 1);
+                                   }
+                                 }}
+                                 disabled={dividendYearRight <= 2000}
+                                 className="p-1.5 bg-app-input border border-app-border rounded-lg text-app-subtext hover:text-indigo-400 hover:border-indigo-500/50 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                               >
+                                 <ChevronDown size={14} />
+                               </button>
+                               <div className="px-3 py-1.5 bg-indigo-500/10 border border-indigo-500/30 rounded-lg text-sm font-mono text-indigo-400 min-w-[60px] text-center">
+                                 {dividendYearRight}
+                               </div>
+                               <button
+                                 type="button"
+                                 onClick={() => {
+                                   setDividendYearRight(dividendYearRight + 1);
+                                   setDividendYearLeft(dividendYearLeft + 1);
+                                 }}
+                                 className="p-1.5 bg-app-input border border-app-border rounded-lg text-app-subtext hover:text-indigo-400 hover:border-indigo-500/50 transition-all"
+                               >
+                                 <ChevronUp size={14} />
+                               </button>
+                             </div>
+                             <span className="text-[10px] text-app-subtext">可调整</span>
+                           </div>
                         </div>
                      </div>
 
@@ -897,7 +960,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                               勾选需要在股票列表表格中显示的列。
                            </span>
                            <div className="grid grid-cols-2 gap-2 mt-2">
-                             {STOCK_COLUMNS.map(col => (
+                             {stockColumns.map(col => (
                                <button
                                  key={col.key}
                                  type="button"

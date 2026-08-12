@@ -221,6 +221,8 @@ interface StockDividendPageProps {
   apiSource?: ApiSource;
   onResetStocks?: () => void;
   resetSignal?: number;
+  dividendYearLeft?: number;
+  dividendYearRight?: number;
 }
 
 // 分红核对弹窗里的单只股票差异条目
@@ -368,11 +370,33 @@ const formatPercent = (percent: number): string => {
   return percent.toFixed(2) + '%';
 };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal }) => {
-  const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividend2024', 'dividend2025', 'position', 'dividendRate2025', 'dividendRates'];
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025 }) => {
+  const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
-  // 分红年份列（dividend2024 / dividend2025 / 未来新增 dividend2026...）：表头合并为一格，年份各自成列
-  const dividendYearCols = cols.filter(c => /^dividend\d{4}$/.test(c));
+  // 分红年份列（dividendLeft / dividendRight）：表头合并为一格，年份各自成列
+  const dividendYearCols = cols.filter(c => c === 'dividendLeft' || c === 'dividendRight');
+  // 获取某年的分红金额（优先从 dividendByYear 取，兼容旧数据）
+  const getDividendForYear = (stock: StockEntry, year: number): number => {
+    if (stock.dividendByYear && stock.dividendByYear[year] !== undefined) {
+      return stock.dividendByYear[year];
+    }
+    // 兼容旧数据
+    if (year === 2024) return stock.dividend2024 || 0;
+    if (year === 2025) return stock.dividend2025 || 0;
+    return 0;
+  };
+
+  // 获取该股票选中的分红年份（默认使用右年份）
+  const getSelectedYear = (stock: StockEntry): number => {
+    return stock.selectedDividendYear ?? dividendYearRight;
+  };
+
+  // 计算股息率（基于选中年份的分红）
+  const getDividendRate = (stock: StockEntry): number => {
+    const year = getSelectedYear(stock);
+    const dividend = getDividendForYear(stock, year);
+    return stock.price > 0 ? (dividend / stock.price) * 100 : 0;
+  };
   const rateCols = dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'];
   const ranges = colorRanges || [
     { min: 3, max: 4, color: 'red' },
@@ -620,7 +644,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   const sortedStocks = useMemo(() => {
     if (sortMode === 'dividendRate') {
-      return [...stocks].sort((a, b) => b.dividendRate2025 - a.dividendRate2025);
+      return [...stocks].sort((a, b) => getDividendRate(b) - getDividendRate(a));
     } else if (sortMode === 'tag') {
       return [...stocks].sort((a, b) => {
         const aHasTag = a.tag && a.tag.trim() ? 0 : 1;
@@ -797,8 +821,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     try {
       const result = await fetchStockPrice(stock.code);
       if (result) {
-        const dividendRate = result.price > 0 ? (stock.dividend2025 / result.price) * 100 : 0;
-        onStocksChange(stocks.map(s => 
+        const year = getSelectedYear(stock);
+        const dividend = getDividendForYear(stock, year);
+        const dividendRate = result.price > 0 ? (dividend / result.price) * 100 : 0;
+        onStocksChange(stocks.map(s =>
           s.id === id ? {
             ...s,
             price: result.price,
@@ -851,7 +877,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         }
         const result = await fetchStockPrice(stock.code);
         if (result) {
-          const dividendRate = result.price > 0 ? (stock.dividend2025 / result.price) * 100 : 0;
+          const year = getSelectedYear(updatedStocks[i]);
+          const dividend = getDividendForYear(updatedStocks[i], year);
+          const dividendRate = result.price > 0 ? (dividend / result.price) * 100 : 0;
           updatedStocks[i] = {
             ...updatedStocks[i],
             price: result.price,
@@ -896,18 +924,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     for (let i = 0; i < stocks.length; i++) {
       const stock = stocks[i];
       const result = await fetchYearlyDividends(stock.code);
-      const changed = result.found && (
-        Math.abs((result.dividend2024 || 0) - (stock.dividend2024 || 0)) > 0.0001 ||
-        Math.abs((result.dividend2025 || 0) - (stock.dividend2025 || 0)) > 0.0001
+      const fetchedByYear = result.found ? result.dividendByYear : {};
+      const existingByYear = stock.dividendByYear || {};
+      const changed = result.found && Object.keys(fetchedByYear).some(yr =>
+        Math.abs((fetchedByYear[Number(yr)] || 0) - (existingByYear[Number(yr)] || 0)) > 0.0001
       );
       entries.push({
         stockId: stock.id,
         code: getDisplayCode(stock.code),
         name: stock.name,
-        current2024: stock.dividend2024 || 0,
-        current2025: stock.dividend2025 || 0,
-        fetched2024: result.found ? result.dividend2024 : null,
-        fetched2025: result.found ? result.dividend2025 : null,
+        current2024: getDividendForYear(stock, dividendYearLeft),
+        current2025: getDividendForYear(stock, dividendYearRight),
+        fetched2024: result.found ? (result.dividend2024 ?? null) : null,
+        fetched2025: result.found ? (result.dividend2025 ?? null) : null,
         fetchedDividendByYear: result.found ? result.dividendByYear : stock.dividendByYear || {},
         hasData: result.found,
         error: result.error,
@@ -940,19 +969,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const updatedStocks = stocks.map(stock => {
       const entry = dividendDiff.find(e => e.stockId === stock.id);
       if (!entry || !selectedDividendIds.has(stock.id) || !entry.hasData) return stock;
-      const dividend2024 = entry.fetched2024 ?? stock.dividend2024;
-      const dividend2025 = entry.fetched2025 ?? stock.dividend2025;
       const dividendByYear = Object.keys(entry.fetchedDividendByYear).length > 0
         ? entry.fetchedDividendByYear
         : (stock.dividendByYear || {});
-      const dividendRate2025 = stock.price > 0 ? (dividend2025 / stock.price) * 100 : 0;
+      const dividend2024 = dividendByYear[dividendYearLeft] ?? entry.fetched2024 ?? stock.dividend2024;
+      const dividend2025 = dividendByYear[dividendYearRight] ?? entry.fetched2025 ?? stock.dividend2025;
+      const selectedYear = getSelectedYear(stock);
+      const selectedDividend = dividendByYear[selectedYear] ?? 0;
+      const dividendRate2025 = stock.price > 0 ? (selectedDividend / stock.price) * 100 : 0;
       return {
         ...stock,
         dividend2024,
         dividend2025,
         dividendByYear,
         dividendRate2025,
-        dividendRates: calculateDividendRates(dividend2025, rateCols),
+        dividendRates: calculateDividendRates(selectedDividend, rateCols),
       };
     });
     onStocksChange(updatedStocks);
@@ -1042,10 +1073,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       
       let newStock = { ...s, [field]: newValue };
       
-      if (field === 'dividend2025') {
+      if ((field as string) === 'dividendLeft' || (field as string) === 'dividendRight') {
         const dividend = typeof value === 'number' ? value : parseFloat(value) || 0;
-        newStock.dividendRates = calculateDividendRates(dividend);
-        newStock.dividendRate2025 = s.price > 0 ? (dividend / s.price) * 100 : 0;
+        const year = (field as string) === 'dividendLeft' ? dividendYearLeft : dividendYearRight;
+        // Update dividendByYear
+        newStock.dividendByYear = { ...(s.dividendByYear || {}), [year]: dividend };
+        // Keep legacy fields in sync
+        if (year === 2024) newStock.dividend2024 = dividend;
+        if (year === 2025) newStock.dividend2025 = dividend;
+        // Recalculate rate if this is the selected year
+        const selectedYear = getSelectedYear(s);
+        if (selectedYear === year) {
+          newStock.dividendRates = calculateDividendRates(dividend);
+          newStock.dividendRate2025 = s.price > 0 ? (dividend / s.price) * 100 : 0;
+        }
       }
       
       return newStock;
@@ -1100,7 +1141,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <colgroup>
               <col style={{ width: '36px' }} />
               {(cols.includes('code') || cols.includes('name')) && <col style={{ width: '90px' }} />}
-              {cols.includes('dividendRate2025') && <col style={{ width: '55px' }} />}
+              {cols.includes('dividendRate') && <col style={{ width: '55px' }} />}
               {cols.includes('price') && <col style={{ width: '75px' }} />}
               {cols.includes('changePercent') && <col style={{ width: '55px' }} />}
               <col style={{ width: '65px' }} />
@@ -1124,7 +1165,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   onClick={() => setShowNickname(prev => !prev)}
                   title="点击在股票名称/代号之间切换"
                 >{showNickname ? '代号' : '股票名称'}</th>}
-                {cols.includes('dividendRate2025') && (
+                {cols.includes('dividendRate') && (
                   <th
                     className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none"
                     onClick={() => setSortMode(sortMode === 'dividendRate' ? 'default' : 'dividendRate')}
@@ -1195,13 +1236,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               </tr>
               <tr className="bg-app-input">
                 {(cols.includes('code') || cols.includes('name')) && <th className="px-2 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border sticky left-[36px] z-10">代码</th>}
-                {(cols.includes('dividendRate2025') || cols.includes('price') || cols.includes('changePercent')) && <th colSpan={3} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap">{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</th>}
+                {(cols.includes('dividendRate') || cols.includes('price') || cols.includes('changePercent')) && <th colSpan={3} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap">{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</th>}
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">日线</th>
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">周线</th>
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">月线</th>
                 {dividendYearCols.map((yearCol, idx) => (
                   <th key={yearCol} className={`px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border ${idx < dividendYearCols.length - 1 ? 'border-r border-app-border' : ''}`}>
-                    {yearCol.replace('dividend', '')}
+                    {yearCol === 'dividendLeft' ? dividendYearLeft : dividendYearRight}
                   </th>
                 ))}
               </tr>
@@ -1273,7 +1314,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         </div>
                       ) : (
                         <div className="relative flex items-center justify-center h-8 whitespace-nowrap">
-                          <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>{(() => {
+                          <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
                             const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
                             const n = raw.replace(/\s/g, '');
                             return n.length > 5 ? n.slice(0, 5) + '…' : n;
@@ -1283,9 +1324,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       )}
                     </div>
                   </td>}
-                  {cols.includes('dividendRate2025') && <td className="px-1 py-1.5 text-center border-r border-app-border">
-                    <span className={`font-mono text-xs font-bold ${getDividendRateColor(stock.dividendRate2025, ranges)}`}>
-                      {stock.dividendRate2025 > 0 ? formatPercent(stock.dividendRate2025) : '--'}
+                  {cols.includes('dividendRate') && <td className="px-1 py-1.5 text-center border-r border-app-border">
+                    <span className={`font-mono text-xs font-bold ${getDividendRateColor(getDividendRate(stock), ranges)}`}>
+                      {getDividendRate(stock) > 0 ? formatPercent(getDividendRate(stock)) : '--'}
                     </span>
                   </td>}
                   {cols.includes('price') && <td className="px-1 py-1.5 text-center border-r border-app-border">
@@ -1362,20 +1403,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     });
                   })()}
                   {dividendYearCols.map((yearCol, idx) => {
-                    const field = yearCol as keyof StockEntry;
-                    const value = Number(stock[field]) || 0;
+                    const year = yearCol === 'dividendLeft' ? dividendYearLeft : dividendYearRight;
+                    const value = getDividendForYear(stock, year);
+                    const isSelected = getSelectedYear(stock) === year;
                     return (
-                      <td key={yearCol} className={`px-1 py-1.5 text-center ${idx < dividendYearCols.length - 1 ? 'border-r border-app-border' : ''}`}>
+                      <td key={yearCol} className={`px-1 py-1.5 text-center cursor-pointer ${idx < dividendYearCols.length - 1 ? 'border-r border-app-border' : ''}`} onClick={() => {
+                        if (editingId !== stock.id) {
+                          onStocksChange(stocks.map(s => s.id === stock.id ? { ...s, selectedDividendYear: year } : s));
+                        }
+                      }}>
                         {editingId === stock.id ? (
                           <input
                             type="number"
                             value={value}
-                            onChange={(e) => handleUpdateField(stock.id, field, parseFloat(e.target.value) || 0)}
+                            onChange={(e) => handleUpdateField(stock.id, yearCol as keyof StockEntry, parseFloat(e.target.value) || 0)}
                             step="0.01"
                             className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
                           />
                         ) : (
-                          <span className="font-mono text-xs text-app-rowtext">{formatPrice(value)}</span>
+                          <span className={`font-mono text-xs text-app-rowtext ${isSelected ? 'underline decoration-2 underline-offset-2' : ''}`}>{formatPrice(value)}</span>
                         )}
                       </td>
                     );
@@ -1383,7 +1429,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   {cols.includes('position') && (() => {
                     const shares = stock.positionShares || 0;
                     const cost = stock.positionCost || 0;
-                    const dividend = stock.dividend2025 || 0;
+                    const dividend = getDividendForYear(stock, getSelectedYear(stock)) || 0;
                     const yieldPct = shares > 0 && cost > 0 && dividend > 0
                       ? ((dividend / cost) * 100).toFixed(2) + '%'
                       : '-';
@@ -1567,7 +1613,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div className="text-xs text-app-subtext">
             <p className="mb-2">计算公式：<span className="font-mono">股价 = 分红金额 / 股息率</span></p>
             <p>例如：分红 ¥2.00，股息率 5%，对应股价 = 2.00 / 0.05 = ¥40.00</p>
-            <p className="mt-2 text-[10px] opacity-70">股息率(2025) = 分红(2025) / 当前股价 × 100%</p>
+            <p className="mt-2 text-[10px] opacity-70">股息率 = 选中年份分红 / 当前股价 × 100%</p>
           </div>
         </div>
       </div>
@@ -1620,11 +1666,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 </button>
               </div>
               <div className="text-[10px] text-app-subtext mb-2">
-                股息率对应股价（基于2025年分红 ¥{formatPrice(stock.dividend2025)}）
+                股息率对应股价（基于{getSelectedYear(stock)}年分红 ¥{formatPrice(getDividendForYear(stock, getSelectedYear(stock)))}）
               </div>
               <div className="grid grid-cols-3 gap-1 mb-3">
                 {(() => {
-                  const currentRate = stock.dividendRate2025;
+                  const currentRate = getDividendRate(stock);
                   const rateNums = rateCols.map(r => parseFloat(r.replace('%', '')));
                   const highlightIdx = rateNums.reduce((closestIdx, val, idx) => 
                     Math.abs(val - currentRate) < Math.abs(rateNums[closestIdx] - currentRate) ? idx : closestIdx
@@ -1968,8 +2014,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           </label>
                         </th>
                         <th className="px-2 py-2 text-left border-b border-app-border border-r border-app-border whitespace-nowrap">股票</th>
-                        <th className="px-2 py-2 text-center border-b border-app-border border-r border-app-border whitespace-nowrap">2024 分红</th>
-                        <th className="px-2 py-2 text-center border-b border-app-border border-r border-app-border whitespace-nowrap">2025 分红</th>
+                        <th className="px-2 py-2 text-center border-b border-app-border border-r border-app-border whitespace-nowrap">{dividendYearLeft} 分红</th>
+                        <th className="px-2 py-2 text-center border-b border-app-border border-r border-app-border whitespace-nowrap">{dividendYearRight} 分红</th>
                         <th className="px-2 py-2 text-center border-b border-app-border whitespace-nowrap">状态</th>
                       </tr>
                     </thead>
