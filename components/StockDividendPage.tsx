@@ -415,7 +415,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [bollUnsupported, setBollUnsupported] = useState<boolean>(false);
   const [bollPeriod, setBollPeriod] = useState<BollPeriod>('daily');
   const [bollAdjust, setBollAdjust] = useState<BollAdjust>('qfq');
-  const [bollPopupApiSource, setBollPopupApiSource] = useState<ApiSource>('tencent');
+
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
   const [stockBollErrorMap, setStockBollErrorMap] = useState<Map<string, { daily?: string; weekly?: string; monthly?: string }>>(new Map());
   const [isRefreshingBoll, setIsRefreshingBoll] = useState(false);
@@ -1325,7 +1325,30 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       const arrowCount = absPct <= 0.5 ? 0 : absPct <= 3 ? 1 : absPct <= 6 ? 2 : 3;
                       const arrow = pos ? (arrowCount === 0 ? '' : (pos.percent >= 0 ? '↑' : '↓').repeat(arrowCount)) : '';
                       return (
-                        <td key={key} className={`px-1 py-1.5 text-center ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}>
+                        <td key={key} className={`px-1 py-1.5 text-center cursor-pointer hover:bg-app-input/50 ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const popupW = 340;
+                            const popupH = 500;
+                            const centerY = rect.top + rect.height / 2;
+                            let top = centerY - popupH / 2;
+                            top = Math.max(12, Math.min(top, window.innerHeight - popupH - 12));
+                            setBollPeriod(key);
+                            setShowRatesId(stock.id);
+                            setRatesPopupPos({
+                              top,
+                              left: Math.min(Math.max(12, rect.right + 8), window.innerWidth - popupW - 12)
+                            });
+                            setBollData(null);
+                            setBollError(null);
+                            requestLogService.setBatchReason('点击BOLL单元格打开弹窗，刷新单只布林线（预计 1 条请求）');
+                            fetchBollData(stock.code, key, bollAdjust, apiSource).then(result => {
+                              setBollData(result.data);
+                              setBollError(result.error || null);
+                            });
+                          }}
+                        >
                           {pos ? (
                             <div className="flex flex-col items-center leading-tight">
                               <span className={`text-[11px] font-bold ${bandColor}`}>{getBollBandLabel(key, pos.band)}{arrow}</span>
@@ -1420,7 +1443,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             top,
                             left: Math.min(Math.max(12, rect.right + 8), window.innerWidth - popupW - 12)
                           });
-                          setBollPopupApiSource(apiSource);
                           setBollData(null);
                           setBollError(null);
                           requestLogService.setBatchReason('点击行内「股息率对应股价」按钮打开弹窗，刷新单只布林线（预计 1 条请求）');
@@ -1566,13 +1588,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const stock = stocks.find(s => s.id === showRatesId);
         if (!stock) return null;
         
-        const reloadBoll = (period: BollPeriod, adjust: BollAdjust, source?: ApiSource) => {
+        const reloadBoll = (period: BollPeriod, adjust: BollAdjust) => {
           setBollData(null);
           setBollError(null);
           setBollUnsupported(false);
-          const useSource = source || bollPopupApiSource;
-          requestLogService.setBatchReason('切换布林线弹窗的周期/复权/数据源，刷新单只布林线（预计 1 条请求）');
-          fetchBollData(stock.code, period, adjust, useSource).then(result => {
+          requestLogService.setBatchReason('切换布林线弹窗的周期/复权，刷新单只布林线（预计 1 条请求）');
+          fetchBollData(stock.code, period, adjust, apiSource).then(result => {
             setBollData(result.data);
             setBollError(result.error || null);
             setBollUnsupported(result.unsupported || false);
@@ -1645,16 +1666,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${bollAdjust === a ? 'bg-indigo-500/20 text-indigo-400' : 'bg-app-input text-app-subtext hover:bg-app-input/80'}`}
                     >
                       {a === 'qfq' ? '前复权' : '除权'}
-                    </button>
-                  ))}
-                  <div className="w-px h-3 bg-app-border mx-0.5" />
-                  {(['sina', 'tencent'] as ApiSource[]).map(s => (
-                    <button
-                      key={s}
-                      onClick={() => { setBollPopupApiSource(s); reloadBoll(bollPeriod, bollAdjust, s); }}
-                      className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${bollPopupApiSource === s ? 'bg-indigo-500/20 text-indigo-400' : 'bg-app-input text-app-subtext hover:bg-app-input/80'}`}
-                    >
-                      {s === 'sina' ? '新浪' : '腾讯'}
                     </button>
                   ))}
                 </div>
@@ -1817,13 +1828,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       <span className="font-mono whitespace-nowrap">
                         {bollUnsupported ? (
                           <span className="text-brand-yellow">
-                            {bollError}
-                            <button 
-                              onClick={() => { setBollPopupApiSource('tencent'); reloadBoll(bollPeriod, bollAdjust, 'tencent'); }}
-                              className="ml-1 text-indigo-400 hover:text-indigo-300 underline"
-                            >
-                              切换腾讯
-                            </button>
+                            {bollError}（请在设置中切换数据源）
                           </span>
                         ) : bollError ? (
                           <span className="text-red-400">{bollError}</span>

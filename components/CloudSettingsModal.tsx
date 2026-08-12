@@ -512,17 +512,6 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                         <div className="flex gap-2">
                           <button
                             type="button"
-                            onClick={() => { setApiSource('sina'); saveGeneralSettings('sina'); }}
-                            className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                              apiSource === 'sina'
-                                ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50'
-                                : 'bg-app-input text-app-subtext border border-app-border hover:border-app-text/30'
-                            }`}
-                          >
-                            新浪财经
-                          </button>
-                          <button
-                            type="button"
                             onClick={() => { setApiSource('tencent'); saveGeneralSettings('tencent'); }}
                             className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
                               apiSource === 'tencent'
@@ -531,6 +520,17 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                             }`}
                           >
                             腾讯财经
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setApiSource('sina'); saveGeneralSettings('sina'); }}
+                            className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                              apiSource === 'sina'
+                                ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50'
+                                : 'bg-app-input text-app-subtext border border-app-border hover:border-app-text/30'
+                            }`}
+                          >
+                            新浪财经
                           </button>
                         </div>
                      </div>
@@ -558,63 +558,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                           </button>
                         </div>
 
-                        {/* Market Status */}
-                        <div className="bg-app-input rounded-lg p-3">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs text-app-subtext">当前市场状态</span>
-                            <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-                              cacheInfo.sina.marketStatus === 'morning_session' || cacheInfo.sina.marketStatus === 'afternoon_session'
-                                ? 'bg-green-500/20 text-green-400'
-                                : cacheInfo.sina.marketStatus === 'pre_open'
-                                ? 'bg-yellow-500/20 text-yellow-400'
-                                : 'bg-gray-500/20 text-gray-400'
-                            }`}>
-                              {getMarketStatusText(cacheInfo.sina.marketStatus)}
-                            </span>
-                          </div>
-                          <p className="text-xs text-app-subtext">
-                            {cacheInfo.sina.isTradingHours 
-                              ? '交易时段内，缓存按设定分钟数有效' 
-                              : '非交易时段，缓存将持续到下次开盘'}
-                          </p>
-                        </div>
-
-                        {/* Price Cache TTL Setting */}
-                        <div className="space-y-2">
-                          <label className="text-xs text-app-subtext">价格缓存有效期（分钟）</label>
-                          <div className="flex items-center gap-3">
-                            <input
-                              type="range"
-                              min="1"
-                              max="60"
-                              value={cacheTTLMinutes}
-                              onChange={(e) => setCacheTTLMinutes(Number(e.target.value))}
-                              className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                            />
-                            <span className="text-sm font-medium text-app-text w-12 text-right">{cacheTTLMinutes}分钟</span>
-                          </div>
-                        </div>
-
-                        {/* BOLL Cache TTL Setting */}
-                        <div className="space-y-2">
-                          <label className="text-xs text-app-subtext">BOLL缓存有效期（分钟）</label>
-                          <div className="flex items-center gap-3">
-                            <input
-                              type="range"
-                              min="10"
-                              max="240"
-                              step="10"
-                              value={bollCacheTTLMinutes}
-                              onChange={(e) => setBollCacheTTLMinutes(Number(e.target.value))}
-                              className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                            />
-                            <span className="text-sm font-medium text-app-text w-12 text-right">{bollCacheTTLMinutes}分钟</span>
-                          </div>
-                        </div>
-
                         {/* Cache Status by Source */}
                         <div className="grid grid-cols-2 gap-2">
-                          {(['sina', 'tencent'] as ApiSource[]).map(source => {
+                          {(['tencent', 'sina'] as ApiSource[]).map(source => {
                             const info = cacheInfo[source];
                             const isExpired = info.expiresAt ? Date.now() >= info.expiresAt : true;
                             return (
@@ -659,6 +605,54 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                               </div>
                             );
                           })}
+                        </div>
+
+                        {/* Market Status */}
+                        <div className="bg-app-input rounded-lg p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs text-app-subtext">当前市场状态</span>
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                              cacheInfo.sina.marketStatus === 'morning_session' || cacheInfo.sina.marketStatus === 'afternoon_session'
+                                ? 'bg-green-500/20 text-green-400'
+                                : cacheInfo.sina.marketStatus === 'pre_open'
+                                ? 'bg-yellow-500/20 text-yellow-400'
+                                : 'bg-gray-500/20 text-gray-400'
+                            }`}>
+                              {getMarketStatusText(cacheInfo.sina.marketStatus)}
+                            </span>
+                          </div>
+                          <p className="text-xs text-app-subtext">
+                            {cacheInfo.sina.isTradingHours
+                              ? '交易时段内，缓存按设定分钟数有效'
+                              : '非交易时段，缓存将持续到下次开盘'}
+                          </p>
+                        </div>
+
+                        {/* Cache TTL Settings */}
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs text-app-subtext">价格缓存: {cacheTTLMinutes}分钟</label>
+                            <input
+                              type="range"
+                              min="1"
+                              max="60"
+                              value={cacheTTLMinutes}
+                              onChange={(e) => setCacheTTLMinutes(Number(e.target.value))}
+                              className="w-full h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs text-app-subtext">BOLL缓存: {bollCacheTTLMinutes}分钟</label>
+                            <input
+                              type="range"
+                              min="10"
+                              max="240"
+                              step="10"
+                              value={bollCacheTTLMinutes}
+                              onChange={(e) => setBollCacheTTLMinutes(Number(e.target.value))}
+                              className="w-full h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                            />
+                          </div>
                         </div>
                      </div>
 
