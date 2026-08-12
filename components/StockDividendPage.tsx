@@ -1365,6 +1365,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       const absPct = pos ? Math.abs(pos.percent) : 0;
                       const arrowCount = absPct <= 0.5 ? 0 : absPct <= 3 ? 1 : absPct <= 6 ? 2 : 3;
                       const arrow = pos ? (arrowCount === 0 ? '' : (pos.percent >= 0 ? '↑' : '↓').repeat(arrowCount)) : '';
+                      // 上轨+下箭头 或 下轨+上箭头 → 箭头放左边避免反直觉
+                      const isCounterArrow = pos && ((pos.band === 'upper' && pos.percent < 0) || (pos.band === 'lower' && pos.percent >= 0));
                       return (
                         <td key={key} className={`px-1 py-1.5 text-center cursor-pointer hover:bg-app-input/50 ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
                           onClick={(e) => {
@@ -1392,7 +1394,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         >
                           {pos ? (
                             <div className="flex flex-col items-center leading-tight">
-                              <span className={`text-[11px] font-bold ${bandColor}`}>{getBollBandLabel(key, pos.band)}{arrow}</span>
+                              <span className={`text-[11px] font-bold ${bandColor}`}>{isCounterArrow ? arrow : ''}{getBollBandLabel(key, pos.band)}{!isCounterArrow ? arrow : ''}</span>
                               <span className="font-mono text-[10px] text-app-rowtext">{percentStr}</span>
                             </div>
                           ) : (
