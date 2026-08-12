@@ -1321,7 +1321,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       const pos = getBollPosition(data, price);
                       const bandColor = pos?.band === 'upper' ? 'text-brand-red' : pos?.band === 'lower' ? 'text-brand-green' : 'text-blue-500';
                       const percentStr = pos ? `${pos.percent >= 0 ? '+' : ''}${pos.percent.toFixed(2)}%` : '-';
-                      const arrow = pos ? (Math.abs(pos.percent) <= 0.5 ? '' : (pos.percent >= 0 ? '↑' : '↓')) : '';
+                      const absPct = pos ? Math.abs(pos.percent) : 0;
+                      const arrowCount = absPct <= 0.5 ? 0 : absPct <= 3 ? 1 : absPct <= 6 ? 2 : 3;
+                      const arrow = pos ? (arrowCount === 0 ? '' : (pos.percent >= 0 ? '↑' : '↓').repeat(arrowCount)) : '';
                       return (
                         <td key={key} className={`px-1 py-1.5 text-center ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}>
                           {pos ? (
