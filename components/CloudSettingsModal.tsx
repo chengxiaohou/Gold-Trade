@@ -546,58 +546,6 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                         </div>
                      </div>
 
-                     {/* Dividend Year Settings */}
-                     <div className="space-y-2 pt-4 border-t border-app-border">
-                        <label className="text-sm font-medium text-app-text block flex items-center gap-2">
-                           <TrendingUp size={16} className="text-indigo-400"/> 分红年份设置
-                        </label>
-                        <p className="text-xs text-app-subtext">
-                           调整右侧年份，左侧自动跟随为前一年。各股票可单独选择使用哪一年计算股息率。
-                        </p>
-                        <div className="flex items-center justify-center gap-4 mt-2">
-                           <div className="flex flex-col items-center gap-1">
-                             <span className="text-xs text-app-subtext">左年份</span>
-                             <div className="px-3 py-1.5 bg-app-input border border-app-border rounded-lg text-sm font-mono text-app-subtext">
-                               {dividendYearLeft}
-                             </div>
-                             <span className="text-[10px] text-app-subtext">自动跟随</span>
-                           </div>
-                           <span className="text-app-subtext text-lg mt-5">←</span>
-                           <div className="flex flex-col items-center gap-1">
-                             <span className="text-xs text-app-text font-medium">右年份</span>
-                             <div className="flex items-center gap-1">
-                               <button
-                                 type="button"
-                                 onClick={() => {
-                                   if (dividendYearRight > 2000) {
-                                     setDividendYearRight(dividendYearRight - 1);
-                                     setDividendYearLeft(dividendYearLeft - 1);
-                                   }
-                                 }}
-                                 disabled={dividendYearRight <= 2000}
-                                 className="p-1.5 bg-app-input border border-app-border rounded-lg text-app-subtext hover:text-indigo-400 hover:border-indigo-500/50 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                               >
-                                 <ChevronDown size={14} />
-                               </button>
-                               <div className="px-3 py-1.5 bg-indigo-500/10 border border-indigo-500/30 rounded-lg text-sm font-mono text-indigo-400 min-w-[60px] text-center">
-                                 {dividendYearRight}
-                               </div>
-                               <button
-                                 type="button"
-                                 onClick={() => {
-                                   setDividendYearRight(dividendYearRight + 1);
-                                   setDividendYearLeft(dividendYearLeft + 1);
-                                 }}
-                                 className="p-1.5 bg-app-input border border-app-border rounded-lg text-app-subtext hover:text-indigo-400 hover:border-indigo-500/50 transition-all"
-                               >
-                                 <ChevronUp size={14} />
-                               </button>
-                             </div>
-                             <span className="text-[10px] text-app-subtext">可调整</span>
-                           </div>
-                        </div>
-                     </div>
-
                      {/* Cache Management */}
                      <div className="space-y-3 pt-4 border-t border-app-border">
                         <div className="flex items-center justify-between">
@@ -993,6 +941,43 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                  {col.label}
                                </button>
                              ))}
+                           </div>
+                        </div>
+                     </div>
+
+                     {/* Dividend Year Settings */}
+                     <div className="pt-4 border-t border-app-border">
+                        <div className="flex items-center justify-between">
+                           <span className="text-sm font-medium text-app-text flex items-center gap-2">
+                              <TrendingUp size={16} className="text-indigo-400"/> 分红年份
+                           </span>
+                           <div className="flex items-center gap-2">
+                              <span className="text-xs text-app-subtext font-mono">{dividendYearLeft}</span>
+                              <span className="text-app-subtext text-xs">/</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (dividendYearRight > 2000) {
+                                    setDividendYearRight(dividendYearRight - 1);
+                                    setDividendYearLeft(dividendYearLeft - 1);
+                                  }
+                                }}
+                                disabled={dividendYearRight <= 2000}
+                                className="p-1 bg-app-input border border-app-border rounded text-app-subtext hover:text-indigo-400 hover:border-indigo-500/50 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                              >
+                                <ChevronDown size={12} />
+                              </button>
+                              <span className="text-sm font-mono text-indigo-400 min-w-[40px] text-center">{dividendYearRight}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDividendYearRight(dividendYearRight + 1);
+                                  setDividendYearLeft(dividendYearLeft + 1);
+                                }}
+                                className="p-1 bg-app-input border border-app-border rounded text-app-subtext hover:text-indigo-400 hover:border-indigo-500/50 transition-all"
+                              >
+                                <ChevronUp size={12} />
+                              </button>
                            </div>
                         </div>
                      </div>
