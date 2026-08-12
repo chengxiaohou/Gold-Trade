@@ -1779,12 +1779,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   <div className="flex flex-col gap-1 mb-2">
                     {(() => {
                       const byYear = stock.dividendByYear || {};
-                      const calcDividendForDate = (dateStr: string): number => {
-                        if (!dateStr) return 0;
+                      // 返回 { amount, usedYear, isApproximate }：当年有数据就用(=)；当年无则回退前一年(≈)；前一年也无 → amount=0
+                      const calcDividendForDate = (dateStr: string): { amount: number; isApproximate: boolean } => {
+                        if (!dateStr) return { amount: 0, isApproximate: false };
                         const y = parseInt(dateStr.slice(0, 4), 10);
-                        if (isNaN(y)) return 0;
-                        // 仅使用当年分红，无数据则返回0（显示-）
-                        return byYear[y] || 0;
+                        if (isNaN(y)) return { amount: 0, isApproximate: false };
+                        if (byYear[y] && byYear[y] > 0) return { amount: byYear[y], isApproximate: false };
+                        // 回退到前一年
+                        if (byYear[y - 1] && byYear[y - 1] > 0) return { amount: byYear[y - 1], isApproximate: true };
+                        return { amount: 0, isApproximate: false };
                       };
                       const calcRate = (price: number, dividend: number): string => {
                         if (!dividend || !price) return '-';
@@ -1799,13 +1802,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       const highPrice = bollData?.rangePriceHigh ?? 0;
                       const highDate = bollData?.rangePriceHighDate ?? '';
                       const highDiv = calcDividendForDate(highDate);
-                      const highRate = calcRate(highPrice, highDiv);
-                      const highRateColor = calcRateColor(highPrice, highDiv);
+                      const highRate = calcRate(highPrice, highDiv.amount);
+                      const highRateColor = calcRateColor(highPrice, highDiv.amount);
+                      const highSymbol = !highDiv.amount ? '' : (highDiv.isApproximate ? '≈' : '=');
                       const lowPrice = bollData?.rangePriceLow ?? 0;
                       const lowDate = bollData?.rangePriceLowDate ?? '';
                       const lowDiv = calcDividendForDate(lowDate);
-                      const lowRate = calcRate(lowPrice, lowDiv);
-                      const lowRateColor = calcRateColor(lowPrice, lowDiv);
+                      const lowRate = calcRate(lowPrice, lowDiv.amount);
+                      const lowRateColor = calcRateColor(lowPrice, lowDiv.amount);
+                      const lowSymbol = !lowDiv.amount ? '' : (lowDiv.isApproximate ? '≈' : '=');
                       return (
                         <>
                           <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
@@ -1814,8 +1819,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                               {bollData ? formatPrice(highPrice) : '-'}
                             </span>
                             <span className="text-[10px] shrink-0">
-                              <span className="text-app-subtext">股息率 </span>
-                              <span className={`font-mono font-bold ${highRateColor}`}>{bollData && highDiv ? highRate : '-'}</span>
+                              <span className="text-app-subtext">股息率</span>
+                              {highSymbol && <span className="text-app-subtext mx-0.5">{highSymbol}</span>}
+                              <span className={`font-mono font-bold ${highRateColor}`}>{bollData && highDiv.amount ? highRate : '-'}</span>
                             </span>
                             <span className="text-[10px] text-app-subtext ml-auto shrink-0">
                               {bollData && highDate ? highDate : '-'}
@@ -1827,8 +1833,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                               {bollData ? formatPrice(lowPrice) : '-'}
                             </span>
                             <span className="text-[10px] shrink-0">
-                              <span className="text-app-subtext">股息率 </span>
-                              <span className={`font-mono font-bold ${lowRateColor}`}>{bollData && lowDiv ? lowRate : '-'}</span>
+                              <span className="text-app-subtext">股息率</span>
+                              {lowSymbol && <span className="text-app-subtext mx-0.5">{lowSymbol}</span>}
+                              <span className={`font-mono font-bold ${lowRateColor}`}>{bollData && lowDiv.amount ? lowRate : '-'}</span>
                             </span>
                             <span className="text-[10px] text-app-subtext ml-auto shrink-0">
                               {bollData && lowDate ? lowDate : '-'}
