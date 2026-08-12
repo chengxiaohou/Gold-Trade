@@ -178,7 +178,8 @@ function parseTonghuashunHtml(html: string, code: string): YearlyDividends | nul
 
 async function fetchFromTonghuashun(code: string): Promise<YearlyDividends | null> {
   const secCode = code.replace(/\.(SH|SZ|BJ)$/i, '');
-  const realUrl = `https://${THS_HOST}/pad/${secCode}/equitybonus.html`;
+  // 附加时间戳避免 CF Worker / 代理层命中缓存（点击刷新必须拿最新数据）
+  const realUrl = `https://${THS_HOST}/pad/${secCode}/equitybonus.html?_=${Date.now()}`;
   const localPath = `/api/ths/pad/${secCode}/equitybonus.html`;
   try {
     const html = await fetchText(realUrl, localPath, true);
@@ -201,6 +202,7 @@ function buildEastmoneyUrl(code: string): string {
     sortTypes: '-1',
     pageSize: '100',
     client: 'WEB',
+    _: Date.now().toString(), // 避免代理层缓存
   });
   return `https://${EASTMONEY_HOST}/api/data/v1/get?${params.toString()}`;
 }

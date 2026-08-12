@@ -423,6 +423,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   // 分红自动获取状态
   const [isFetchingDividends, setIsFetchingDividends] = useState(false);
+  const [isFetchingSingleDividend, setIsFetchingSingleDividend] = useState<string | null>(null);
   const [dividendDiff, setDividendDiff] = useState<DividendDiffEntry[] | null>(null);
   const [selectedDividendIds, setSelectedDividendIds] = useState<Set<string>>(new Set());
   // 持仓列当前展示的数据类型（默认股息率）
@@ -952,6 +953,37 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setSelectedDividendIds(selected);
     setIsFetchingDividends(false);
   }, [stocks, isFetchingDividends]);
+
+  // 单只股票拉取年度分红（与批量拉取流程一致，仅拉取当前这一只，弹窗只展示这一只的结果）
+  const handleFetchSingleDividend = useCallback(async (stock: StockEntry) => {
+    if (isFetchingSingleDividend) return;
+    requestLogService.setBatchReason(
+      `小眼睛详情页刷新按钮，单只查询 ${stock.name}(${getDisplayCode(stock.code)}) 的全年分红（预计 1 条请求；同花顺为主，失败回退东方财富）`
+    );
+    setIsFetchingSingleDividend(stock.id);
+    const result = await fetchYearlyDividends(stock.code);
+    const fetchedByYear = result.found ? result.dividendByYear : {};
+    const existingByYear = stock.dividendByYear || {};
+    const changed = result.found && Object.keys(fetchedByYear).some(yr =>
+      Math.abs((fetchedByYear[Number(yr)] || 0) - (existingByYear[Number(yr)] || 0)) > 0.0001
+    );
+    const entry: DividendDiffEntry = {
+      stockId: stock.id,
+      code: getDisplayCode(stock.code),
+      name: stock.name,
+      current2024: getDividendForYear(stock, dividendYearLeft),
+      current2025: getDividendForYear(stock, dividendYearRight),
+      fetched2024: result.found ? (result.dividend2024 ?? null) : null,
+      fetched2025: result.found ? (result.dividend2025 ?? null) : null,
+      fetchedDividendByYear: result.found ? result.dividendByYear : stock.dividendByYear || {},
+      hasData: result.found,
+      error: result.error,
+      records: result.records || [],
+    };
+    setDividendDiff([entry]);
+    setSelectedDividendIds(changed ? new Set([stock.id]) : new Set());
+    setIsFetchingSingleDividend(null);
+  }, [isFetchingSingleDividend, dividendYearLeft, dividendYearRight]);
 
   const toggleDividendRow = (id: string) => {
     setSelectedDividendIds(prev => {
@@ -1747,17 +1779,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   <div className="flex flex-col gap-1 mb-2">
                     {(() => {
                       const byYear = stock.dividendByYear || {};
-                      const calcDividendForDate = (dateStr: string): { amount: number; year: number | null } => {
-                        if (!dateStr) return { amount: 0, year: null };
+                      const calcDividendForDate = (dateStr: string): number => {
+                        if (!dateStr) return 0;
                         const y = parseInt(dateStr.slice(0, 4), 10);
-                        if (isNaN(y)) return { amount: 0, year: null };
-                        // 优先取当年分红，若当年为空，回退到最近一年（对未来年份/未公告年份的兜底）
-                        if (byYear[y] && byYear[y] > 0) return { amount: byYear[y], year: y };
-                        const years = Object.keys(byYear).map(Number).filter(k => byYear[k] > 0).sort((a, b) => b - a);
-                        if (years.length === 0) return { amount: 0, year: y };
-                        // 找 ≤ y 的最大年份，否则用最近一年
-                        const latestBefore = years.find(k => k <= y) || years[0];
-                        return { amount: byYear[latestBefore] || 0, year: latestBefore };
+                        if (isNaN(y)) return 0;
+                        // 仅使用当年分红，无数据则返回0（显示-）
+                        return byYear[y] || 0;
                       };
                       const calcRate = (price: number, dividend: number): string => {
                         if (!dividend || !price) return '-';
@@ -1772,13 +1799,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       const highPrice = bollData?.rangePriceHigh ?? 0;
                       const highDate = bollData?.rangePriceHighDate ?? '';
                       const highDiv = calcDividendForDate(highDate);
-                      const highRate = calcRate(highPrice, highDiv.amount);
-                      const highRateColor = calcRateColor(highPrice, highDiv.amount);
+                      const highRate = calcRate(highPrice, highDiv);
+                      const highRateColor = calcRateColor(highPrice, highDiv);
                       const lowPrice = bollData?.rangePriceLow ?? 0;
                       const lowDate = bollData?.rangePriceLowDate ?? '';
                       const lowDiv = calcDividendForDate(lowDate);
-                      const lowRate = calcRate(lowPrice, lowDiv.amount);
-                      const lowRateColor = calcRateColor(lowPrice, lowDiv.amount);
+                      const lowRate = calcRate(lowPrice, lowDiv);
+                      const lowRateColor = calcRateColor(lowPrice, lowDiv);
                       return (
                         <>
                           <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
@@ -1788,7 +1815,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             </span>
                             <span className="text-[10px] shrink-0">
                               <span className="text-app-subtext">股息率 </span>
-                              <span className={`font-mono font-bold ${highRateColor}`}>{bollData && highDiv.amount ? highRate : '-'}</span>
+                              <span className={`font-mono font-bold ${highRateColor}`}>{bollData && highDiv ? highRate : '-'}</span>
                             </span>
                             <span className="text-[10px] text-app-subtext ml-auto shrink-0">
                               {bollData && highDate ? highDate : '-'}
@@ -1801,7 +1828,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             </span>
                             <span className="text-[10px] shrink-0">
                               <span className="text-app-subtext">股息率 </span>
-                              <span className={`font-mono font-bold ${lowRateColor}`}>{bollData && lowDiv.amount ? lowRate : '-'}</span>
+                              <span className={`font-mono font-bold ${lowRateColor}`}>{bollData && lowDiv ? lowRate : '-'}</span>
                             </span>
                             <span className="text-[10px] text-app-subtext ml-auto shrink-0">
                               {bollData && lowDate ? lowDate : '-'}
@@ -1812,7 +1839,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     })()}
                   </div>
                   <div className="border-t border-app-border pt-2">
-                    <div className="text-[10px] text-app-subtext mb-1">年度分红（元/股）</div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] text-app-subtext">年度分红（元/股）</span>
+                      <button
+                        type="button"
+                        onClick={() => handleFetchSingleDividend(stock)}
+                        disabled={isFetchingSingleDividend !== null}
+                        className="p-0.5 hover:bg-app-card rounded transition-colors disabled:opacity-50 shrink-0 text-app-subtext"
+                        title="刷新该股票年度分红数据"
+                      >
+                        <RefreshCw
+                          size={10}
+                          className={isFetchingSingleDividend === stock.id ? 'animate-spin' : ''}
+                        />
+                      </button>
+                    </div>
                     {(() => {
                       const byYear = stock.dividendByYear || {};
                       const years = Object.keys(byYear).map(Number).sort((a, b) => a - b);
@@ -1823,7 +1864,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       if (chartData.length === 0) {
                         return (
                           <div className="h-[120px] flex items-center justify-center text-[10px] text-app-subtext">
-                            暂无分红数据（点击列头"自动获取分红"补全）
+                            暂无分红数据（点击右上方刷新按钮拉取）
                           </div>
                         );
                       }
