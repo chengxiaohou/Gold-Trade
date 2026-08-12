@@ -51,6 +51,7 @@ export interface YearlyDividends {
   name?: string;
   dividend2024: number;   // 每股派息（税前），按分红所属年度汇总（含中期/特别/年度）
   dividend2025: number;
+  dividendByYear: Record<number, number>; // key=年份, value=每股税前派息（全年汇总）
   records: DividendRecord[];
   source: '同花顺' | '东方财富';
   error?: string;
@@ -150,11 +151,26 @@ function parseTonghuashunHtml(html: string, code: string): YearlyDividends | nul
     return Math.round((totalPer10 / 10) * 10000) / 10000;
   };
 
+  const buildDividendByYear = (): Record<number, number> => {
+    const map: Record<number, number> = {};
+    for (const r of records) {
+      const y = r.planProfile.match(/【(\d{4})年/);
+      if (!y) continue;
+      const year = parseInt(y[1], 10);
+      map[year] = (map[year] || 0) + r.pretaxPer10;
+    }
+    for (const y of Object.keys(map)) {
+      map[+y] = Math.round((map[+y] / 10) * 10000) / 10000;
+    }
+    return map;
+  };
+
   return {
     found: true,
     code,
     dividend2024: sumPerShare(2024),
     dividend2025: sumPerShare(2025),
+    dividendByYear: buildDividendByYear(),
     records,
     source: '同花顺',
   };
@@ -193,7 +209,7 @@ function parseEastmoneyJson(json: unknown, code: string): YearlyDividends {
   const result = (json as { result?: { data?: Array<Record<string, unknown>> } })?.result;
   const data = result?.data;
   if (!Array.isArray(data) || data.length === 0) {
-    return { found: false, code, dividend2024: 0, dividend2025: 0, records: [], source: '东方财富' };
+    return { found: false, code, dividend2024: 0, dividend2025: 0, dividendByYear: {}, records: [], source: '东方财富' };
   }
 
   const records: DividendRecord[] = data
@@ -215,12 +231,27 @@ function parseEastmoneyJson(json: unknown, code: string): YearlyDividends {
     return Math.round((totalPer10 / 10) * 10000) / 10000;
   };
 
+  const buildDividendByYear = (): Record<number, number> => {
+    const map: Record<number, number> = {};
+    for (const r of records) {
+      if (!r.reportDate) continue;
+      const year = parseInt(r.reportDate.slice(0, 4), 10);
+      if (isNaN(year)) continue;
+      map[year] = (map[year] || 0) + r.pretaxPer10;
+    }
+    for (const y of Object.keys(map)) {
+      map[+y] = Math.round((map[+y] / 10) * 10000) / 10000;
+    }
+    return map;
+  };
+
   return {
     found: true,
     code,
     name: data[0]?.SECURITY_NAME_ABBR ? String(data[0].SECURITY_NAME_ABBR) : undefined,
     dividend2024: sumPerShare(2024),
     dividend2025: sumPerShare(2025),
+    dividendByYear: buildDividendByYear(),
     records,
     source: '东方财富',
   };
@@ -270,6 +301,7 @@ export async function fetchYearlyDividends(code: string): Promise<YearlyDividend
     code,
     dividend2024: 0,
     dividend2025: 0,
+    dividendByYear: {},
     records: [],
     source: '同花顺',
     error: '同花顺与东方财富均未返回分红数据',

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, Download, BarChart3, List, ChevronDown } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
 import { fetchBollData, checkAllBollCache, BollData, BollPeriod, BollAdjust } from '../services/bollService';
 import { getDynamicCacheTTL, isStockPriceFresh, isTradingHours } from '../services/cacheService';
@@ -231,6 +232,7 @@ interface DividendDiffEntry {
   current2025: number;
   fetched2024: number | null; // null = 查不到
   fetched2025: number | null;
+  fetchedDividendByYear: Record<number, number>;
   hasData: boolean;
   error?: string;
   records: DividendRecord[];
@@ -906,6 +908,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         current2025: stock.dividend2025 || 0,
         fetched2024: result.found ? result.dividend2024 : null,
         fetched2025: result.found ? result.dividend2025 : null,
+        fetchedDividendByYear: result.found ? result.dividendByYear : stock.dividendByYear || {},
         hasData: result.found,
         error: result.error,
         records: result.records || [],
@@ -939,11 +942,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       if (!entry || !selectedDividendIds.has(stock.id) || !entry.hasData) return stock;
       const dividend2024 = entry.fetched2024 ?? stock.dividend2024;
       const dividend2025 = entry.fetched2025 ?? stock.dividend2025;
+      const dividendByYear = Object.keys(entry.fetchedDividendByYear).length > 0
+        ? entry.fetchedDividendByYear
+        : (stock.dividendByYear || {});
       const dividendRate2025 = stock.price > 0 ? (dividend2025 / stock.price) * 100 : 0;
       return {
         ...stock,
         dividend2024,
         dividend2025,
+        dividendByYear,
         dividendRate2025,
         dividendRates: calculateDividendRates(dividend2025, rateCols),
       };
@@ -976,12 +983,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       // 自动查询该股票的 2024/2025 全年分红（查不到则保持 0，可稍后用"自动获取分红"批量补）
       let dividend2024 = 0;
       let dividend2025 = 0;
+      let dividendByYear: Record<number, number> = {};
       try {
         requestLogService.setBatchReason('添加股票时自动查询全年分红（预计 1~2 条请求；同花顺为主，失败回退东方财富）');
         const divResult = await fetchYearlyDividends(stockCode);
         if (divResult.found) {
           dividend2024 = divResult.dividend2024;
           dividend2025 = divResult.dividend2025;
+          dividendByYear = divResult.dividendByYear;
         }
       } catch {
         // 分红获取失败不影响添加股票
@@ -997,6 +1006,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         low: result?.low || 0,
         dividend2024,
         dividend2025,
+        dividendByYear,
         dividendRate2025: 0,
         positionShares: 0,
         positionCost: 0,
@@ -1398,7 +1408,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           e.stopPropagation();
                           const rect = e.currentTarget.getBoundingClientRect();
                           const popupW = 340;
-                          const popupH = 280;
+                          const popupH = 500;
                           const centerY = rect.top + rect.height / 2;
                           let top = centerY - popupH / 2;
                           top = Math.max(12, Math.min(top, window.innerHeight - popupH - 12));
@@ -1658,7 +1668,148 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       <span className="text-[10px] text-app-subtext">下轨</span>
                       <span className="font-mono text-xs font-bold text-brand-green">{bollData ? formatPrice(bollData.lower) : '-'}</span>
                     </div>
-                    <div className="col-span-3 flex justify-between items-center text-[10px] text-app-subtext mt-1 px-1">
+                </div>
+                <div className="border-t border-app-border pt-2 mt-2 mb-2">
+                  <div className="text-[10px] text-app-subtext mb-2">
+                    {(() => {
+                      const count = bollData?.rangeCount ?? 0;
+                      if (bollPeriod === 'daily') return `区间极值（近${count}个交易日）`;
+                      if (bollPeriod === 'weekly') return `区间极值（近${count}周）`;
+                      return `区间极值（近${count}个月）`;
+                    })()}
+                  </div>
+                  <div className="flex flex-col gap-1 mb-2">
+                    {(() => {
+                      const byYear = stock.dividendByYear || {};
+                      const calcDividendForDate = (dateStr: string): { amount: number; year: number | null } => {
+                        if (!dateStr) return { amount: 0, year: null };
+                        const y = parseInt(dateStr.slice(0, 4), 10);
+                        if (isNaN(y)) return { amount: 0, year: null };
+                        // 优先取当年分红，若当年为空，回退到最近一年（对未来年份/未公告年份的兜底）
+                        if (byYear[y] && byYear[y] > 0) return { amount: byYear[y], year: y };
+                        const years = Object.keys(byYear).map(Number).filter(k => byYear[k] > 0).sort((a, b) => b - a);
+                        if (years.length === 0) return { amount: 0, year: y };
+                        // 找 ≤ y 的最大年份，否则用最近一年
+                        const latestBefore = years.find(k => k <= y) || years[0];
+                        return { amount: byYear[latestBefore] || 0, year: latestBefore };
+                      };
+                      const calcRate = (price: number, dividend: number): string => {
+                        if (!dividend || !price) return '-';
+                        const rate = dividend / price * 100;
+                        return rate.toFixed(2) + '%';
+                      };
+                      const calcRateColor = (price: number, dividend: number): string => {
+                        if (!dividend || !price) return 'text-app-subtext';
+                        const rate = dividend / price * 100;
+                        return getDividendRateColor(rate, ranges);
+                      };
+                      const highPrice = bollData?.rangePriceHigh ?? 0;
+                      const highDate = bollData?.rangePriceHighDate ?? '';
+                      const highDiv = calcDividendForDate(highDate);
+                      const highRate = calcRate(highPrice, highDiv.amount);
+                      const highRateColor = calcRateColor(highPrice, highDiv.amount);
+                      const lowPrice = bollData?.rangePriceLow ?? 0;
+                      const lowDate = bollData?.rangePriceLowDate ?? '';
+                      const lowDiv = calcDividendForDate(lowDate);
+                      const lowRate = calcRate(lowPrice, lowDiv.amount);
+                      const lowRateColor = calcRateColor(lowPrice, lowDiv.amount);
+                      return (
+                        <>
+                          <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
+                            <span className="text-[10px] text-app-subtext shrink-0">最高价</span>
+                            <span className="font-mono text-[10px] font-bold text-red-400 shrink-0">
+                              {bollData ? formatPrice(highPrice) : '-'}
+                            </span>
+                            <span className="text-[10px] shrink-0">
+                              <span className="text-app-subtext">股息率 </span>
+                              <span className={`font-mono font-bold ${highRateColor}`}>{bollData && highDiv.amount ? highRate : '-'}</span>
+                            </span>
+                            <span className="text-[10px] text-app-subtext ml-auto shrink-0">
+                              {bollData && highDate ? highDate : '-'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
+                            <span className="text-[10px] text-app-subtext shrink-0">最低价</span>
+                            <span className="font-mono text-[10px] font-bold text-brand-green shrink-0">
+                              {bollData ? formatPrice(lowPrice) : '-'}
+                            </span>
+                            <span className="text-[10px] shrink-0">
+                              <span className="text-app-subtext">股息率 </span>
+                              <span className={`font-mono font-bold ${lowRateColor}`}>{bollData && lowDiv.amount ? lowRate : '-'}</span>
+                            </span>
+                            <span className="text-[10px] text-app-subtext ml-auto shrink-0">
+                              {bollData && lowDate ? lowDate : '-'}
+                            </span>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                  <div className="border-t border-app-border pt-2">
+                    <div className="text-[10px] text-app-subtext mb-1">年度分红（元/股）</div>
+                    {(() => {
+                      const byYear = stock.dividendByYear || {};
+                      const years = Object.keys(byYear).map(Number).sort((a, b) => a - b);
+                      const chartData = years.map(y => ({
+                        year: y.toString(),
+                        dividend: byYear[y],
+                      }));
+                      if (chartData.length === 0) {
+                        return (
+                          <div className="h-[120px] flex items-center justify-center text-[10px] text-app-subtext">
+                            暂无分红数据（点击列头"自动获取分红"补全）
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="h-[120px] w-full">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData} margin={{ top: 5, right: 5, left: -10, bottom: 0 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
+                              <XAxis
+                                dataKey="year"
+                                tick={{ fontSize: 9, fill: 'currentColor' }}
+                                stroke="rgba(148,163,184,0.3)"
+                                tickLine={false}
+                                axisLine={false}
+                                minTickGap={18}
+                              />
+                              <YAxis
+                                tick={{ fontSize: 9, fill: 'currentColor' }}
+                                stroke="rgba(148,163,184,0.3)"
+                                tickLine={false}
+                                axisLine={false}
+                                domain={[0, 'auto']}
+                                width={38}
+                              />
+                              <Tooltip
+                                contentStyle={{
+                                  backgroundColor: 'rgba(15,23,42,0.95)',
+                                  border: '1px solid rgba(148,163,184,0.3)',
+                                  borderRadius: 6,
+                                  fontSize: 11,
+                                  color: 'inherit',
+                                }}
+                                formatter={(value: number) => [`${value.toFixed(3)} 元`, '每股分红']}
+                                labelFormatter={(label) => `${label}年`}
+                                cursor={{ stroke: 'rgba(99,102,241,0.4)', strokeWidth: 1 }}
+                              />
+                              <Line
+                                type="monotone"
+                                dataKey="dividend"
+                                stroke="#6366f1"
+                                strokeWidth={1.8}
+                                dot={{ r: 2, fill: '#6366f1', strokeWidth: 0 }}
+                                activeDot={{ r: 4 }}
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+                <div className="flex justify-between items-center text-[10px] text-app-subtext mt-1 px-1">
                       <span>价格 {formatPrice(stock.price || 0)} - {formatFetchTime(stock.priceUpdatedAt || 0)}</span>
                       <span className="font-mono whitespace-nowrap">
                         {bollUnsupported ? (
@@ -1678,7 +1829,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         )}
                       </span>
                     </div>
-                  </div>
               </div>
             </div>
           </>,

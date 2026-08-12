@@ -132,6 +132,11 @@ export interface BollData {
   close: number;
   date: string;
   fetchedAt: number;
+  rangeCount: number;
+  rangePriceHigh: number;
+  rangePriceHighDate: string;
+  rangePriceLow: number;
+  rangePriceLowDate: string;
 }
 
 export interface BollResult {
@@ -471,6 +476,24 @@ async function fetchBollFromTencent(
     const upper = mid + 2 * std;
     const lower = mid - 2 * std;
 
+    // 遍历全部已拉取的K线，找出区间最高/最低（使用 high/low）
+    const rangeCount = klines.length;
+    let rangePriceHigh = -Infinity;
+    let rangePriceHighDate = '';
+    let rangePriceLow = Infinity;
+    let rangePriceLowDate = '';
+    for (let i = 0; i < klines.length; i++) {
+      const k = klines[i];
+      if (k.high > rangePriceHigh) {
+        rangePriceHigh = k.high;
+        rangePriceHighDate = k.date;
+      }
+      if (k.low < rangePriceLow) {
+        rangePriceLow = k.low;
+        rangePriceLowDate = k.date;
+      }
+    }
+
     const last = klines[klines.length - 1];
     const close = adjust === 'none' && realtimePrice ? realtimePrice : last.close;
     const date = last.date;
@@ -483,6 +506,11 @@ async function fetchBollFromTencent(
       close: Math.round(close * 100) / 100,
       date,
       fetchedAt,
+      rangeCount,
+      rangePriceHigh: Math.round(rangePriceHigh * 100) / 100,
+      rangePriceHighDate,
+      rangePriceLow: Math.round(rangePriceLow * 100) / 100,
+      rangePriceLowDate,
     };
 
     const cacheKey = getCacheKey(code, period, adjust, 'tencent');
@@ -570,6 +598,26 @@ async function fetchBollFromSina(
     const upper = mid + 2 * std;
     const lower = mid - 2 * std;
 
+    // 遍历全部已拉取的K线，找出区间最高/最低（使用 high/low）
+    const rangeCount = klines.length;
+    let rangePriceHigh = -Infinity;
+    let rangePriceHighDate = '';
+    let rangePriceLow = Infinity;
+    let rangePriceLowDate = '';
+    for (let i = 0; i < klines.length; i++) {
+      const k = klines[i];
+      const high = parseFloat(k.high);
+      const low = parseFloat(k.low);
+      if (high > rangePriceHigh) {
+        rangePriceHigh = high;
+        rangePriceHighDate = k.day;
+      }
+      if (low < rangePriceLow) {
+        rangePriceLow = low;
+        rangePriceLowDate = k.day;
+      }
+    }
+
     const last = klines[klines.length - 1];
     const close = parseFloat(last.close);
     const date = last.day;
@@ -582,6 +630,11 @@ async function fetchBollFromSina(
       close: Math.round(close * 100) / 100,
       date,
       fetchedAt,
+      rangeCount,
+      rangePriceHigh: Math.round(rangePriceHigh * 100) / 100,
+      rangePriceHighDate,
+      rangePriceLow: Math.round(rangePriceLow * 100) / 100,
+      rangePriceLowDate,
     };
 
     const cacheKey = getCacheKey(fullCode, period, adjust, 'sina');

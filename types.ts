@@ -87,6 +87,7 @@ export interface StockEntry {
   low: number;
   dividend2024: number;
   dividend2025: number;
+  dividendByYear: Record<number, number>; // key=年份, value=每股税前派息（全年汇总）
   dividendRate2025: number;
   positionShares: number; // 持仓股数（0 = 未持仓）
   positionCost: number;   // 每股成本（买入均价，元；仅编辑模式展示）

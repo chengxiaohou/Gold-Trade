@@ -48,6 +48,7 @@ function createDefaultStocks(): StockEntry[] {
     low: 0,
     dividend2024: div2024,
     dividend2025: div2025,
+    dividendByYear: { 2024: div2024, 2025: div2025 },
     dividendRate2025: 0,
     positionShares: 0,
     positionCost: 0,
@@ -98,9 +99,21 @@ export default function App() {
   const [stocks, setStocks] = useState<StockEntry[]>(() => {
     const saved = localStorage.getItem('stock_dividend_stocks');
     if (saved) {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((s: StockEntry) => ({
+            ...s,
+            dividendByYear: s.dividendByYear && Object.keys(s.dividendByYear).length > 0
+              ? s.dividendByYear
+              : {
+                  ...(s.dividend2024 ? { 2024: s.dividend2024 } : {}),
+                  ...(s.dividend2025 ? { 2025: s.dividend2025 } : {}),
+                },
+          }));
+        }
+      } catch {
+        // fall through to default
       }
     }
     return createDefaultStocks();
