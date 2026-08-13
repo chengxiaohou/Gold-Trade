@@ -1,4 +1,4 @@
-import { requestLogService } from './requestLogService';
+import { requestLogService, type LogBatchContext } from './requestLogService';
 
 // 分红数据查询服务
 //
@@ -84,8 +84,8 @@ async function prodFetch(realUrl: string): Promise<Response> {
   throw new Error(lastError || '所有代理请求均失败');
 }
 
-async function fetchText(realUrl: string, localPath: string, gbk: boolean): Promise<string> {
-  const logId = requestLogService.startRequest(realUrl);
+async function fetchText(realUrl: string, localPath: string, gbk: boolean, logCtx?: LogBatchContext): Promise<string> {
+  const logId = requestLogService.startRequest(realUrl, 'GET', logCtx);
   try {
     let response: Response;
     if (import.meta.env.DEV) {
@@ -176,13 +176,13 @@ function parseTonghuashunHtml(html: string, code: string): YearlyDividends | nul
   };
 }
 
-async function fetchFromTonghuashun(code: string): Promise<YearlyDividends | null> {
+async function fetchFromTonghuashun(code: string, logCtx?: LogBatchContext): Promise<YearlyDividends | null> {
   const secCode = code.replace(/\.(SH|SZ|BJ)$/i, '');
   // 附加时间戳避免 CF Worker / 代理层命中缓存（点击刷新必须拿最新数据）
   const realUrl = `https://${THS_HOST}/pad/${secCode}/equitybonus.html?_=${Date.now()}`;
   const localPath = `/api/ths/pad/${secCode}/equitybonus.html`;
   try {
-    const html = await fetchText(realUrl, localPath, true);
+    const html = await fetchText(realUrl, localPath, true, logCtx);
     return parseTonghuashunHtml(html, code);
   } catch {
     return null;
@@ -259,9 +259,9 @@ function parseEastmoneyJson(json: unknown, code: string): YearlyDividends {
   };
 }
 
-async function fetchFromEastmoney(code: string): Promise<YearlyDividends | null> {
+async function fetchFromEastmoney(code: string, logCtx?: LogBatchContext): Promise<YearlyDividends | null> {
   const realUrl = buildEastmoneyUrl(code);
-  const logId = requestLogService.startRequest(realUrl);
+  const logId = requestLogService.startRequest(realUrl, 'GET', logCtx);
   try {
     let json: unknown;
     if (import.meta.env.DEV) {
@@ -285,15 +285,15 @@ async function fetchFromEastmoney(code: string): Promise<YearlyDividends | null>
 // ---------- 对外入口 ----------
 
 // 查询一只股票的 2024/2025 全年分红（每股税前派息，按分红所属年度汇总）
-export async function fetchYearlyDividends(code: string): Promise<YearlyDividends> {
+export async function fetchYearlyDividends(code: string, logCtx?: LogBatchContext): Promise<YearlyDividends> {
   await throttleRequest();
 
-  const ths = await fetchFromTonghuashun(code);
+  const ths = await fetchFromTonghuashun(code, logCtx);
   if (ths) {
     return ths;
   }
 
-  const em = await fetchFromEastmoney(code);
+  const em = await fetchFromEastmoney(code, logCtx);
   if (em) {
     return em;
   }

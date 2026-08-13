@@ -3,9 +3,9 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, Download, BarChart3, List, ChevronDown } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
-import { fetchBollData, checkAllBollCache, BollData, BollPeriod, BollAdjust } from '../services/bollService';
-import { getDynamicCacheTTL, getDynamicBollCacheTTL, isStockPriceFresh, isTradingHours, getCacheExpiry } from '../services/cacheService';
-import { requestLogService, RequestLogEntry, RequestLogStats } from '../services/requestLogService';
+import { fetchBollData, checkAllBollCache, countStaleBollCache, BollData, BollPeriod, BollAdjust } from '../services/bollService';
+import { isStockPriceFresh, isTradingHours, getDynamicBollCacheTTL } from '../services/cacheService';
+import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
 import { getNickname } from '../services/nicknameService';
 
@@ -300,43 +300,6 @@ const formatFetchTime = (timestamp: number): string => {
   return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 };
 
-// BOLL缓存日志：取数据源的真实expiresAt，算出"有效期至+已过期时长"
-// 例如 → "BOLL缓存有效期至 08月12日 08:56，当前已过期1天5小时34分"
-// 注意：此为数据源级别过期时间，个股缓存可能更早过期
-const formatBollCacheLog = (source: ApiSource): string => {
-  const expiresAt = getCacheExpiry(source);
-  if (!expiresAt) return 'BOLL缓存无记录';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const d = new Date(expiresAt);
-  const expireStr = `${pad(d.getMonth() + 1)}月${pad(d.getDate())}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  const overdueMs = Date.now() - expiresAt;
-  if (overdueMs <= 0) return `BOLL缓存有效期至 ${expireStr}，当前尚未过期`;
-  const days = Math.floor(overdueMs / (24 * 60 * 60 * 1000));
-  const hours = Math.floor((overdueMs % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
-  const mins = Math.floor((overdueMs % (60 * 60 * 1000)) / (60 * 1000));
-  const parts: string[] = [];
-  if (days > 0) parts.push(`${days}天`);
-  if (hours > 0) parts.push(`${hours}小时`);
-  if (mins > 0 || parts.length === 0) parts.push(`${mins}分`);
-  return `BOLL缓存有效期至 ${expireStr}，当前已过期${parts.join('')}`;
-};
-
-// 价格缓存日志：用 now - TTL 反推过期时间点（每支股票priceUpdatedAt不同，不显示已过期时长）
-// 例如 → "价格缓存有效期10分钟，拉取时间早于 08月13日 14:20 的股票已过期"
-const formatPriceCacheLog = (ttlMinutes: number): string => {
-  const humanParts: string[] = [];
-  const days = Math.floor(ttlMinutes / (24 * 60));
-  const hours = Math.floor((ttlMinutes % (24 * 60)) / 60);
-  const mins = ttlMinutes % 60;
-  if (days > 0) humanParts.push(`${days}天`);
-  if (hours > 0) humanParts.push(`${hours}小时`);
-  if (mins > 0 || humanParts.length === 0) humanParts.push(`${mins}分`);
-  const cutoff = new Date(Date.now() - ttlMinutes * 60000);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const cutoffStr = `${pad(cutoff.getMonth() + 1)}月${pad(cutoff.getDate())}日 ${pad(cutoff.getHours())}:${pad(cutoff.getMinutes())}`;
-  return `价格缓存有效期${humanParts.join('')}，拉取时间早于 ${cutoffStr} 的股票已过期`;
-};
-
 interface BollPosition {
   band: 'upper' | 'mid' | 'lower';
   percent: number;
@@ -534,10 +497,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // 同一批次所有请求共享同一时间戳，确保缓存时间统一
     const batchTimestamp = Date.now();
 
-    requestLogService.setBatchReason(
-      `${trigger}：${formatBollCacheLog(apiSource)}，${stocks.length} 只股票 × 3 周期 = ${stocks.length * 3} 项，命中缓存的跳过，仅刷新过期部分`
-    );
-    
     // 只在前复权模式下批量获取所有股票的BOLL数据
     // 新浪不支持不复权模式，跳过批量获取
     if (apiSource === 'sina' && bollAdjust === 'none') {
@@ -562,7 +521,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     
     // 先检查缓存
     const dynamicTTL = getDynamicBollCacheTTL();
-    const { allCached, cachedData } = checkAllBollCache(stocks, bollAdjust, apiSource, dynamicTTL);
+    const staleCount = countStaleBollCache(stocks, bollAdjust, apiSource, dynamicTTL);
+    const logCtx = requestLogService.beginBatch(
+      staleCount === 0
+        ? `${trigger}：${stocks.length * 3} 项缓存均未过期，无需请求`
+        : `${trigger}：${staleCount}/${stocks.length * 3} 项已过期，重新请求 ${staleCount} 条请求`
+    );
+    const { allCached, cachedData } = checkAllBollCache(stocks, bollAdjust, apiSource, dynamicTTL, logCtx, batchTimestamp);
     
     if (fetchVersionRef.current !== currentVersion) {
       // 已被新请求取消
@@ -604,9 +569,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       
       // 未缓存，发起网络请求
       const [dailyR, weeklyR, monthlyR] = await Promise.all([
-        fetchBollData(stock.code, 'daily', bollAdjust, apiSource, batchTimestamp),
-        fetchBollData(stock.code, 'weekly', bollAdjust, apiSource, batchTimestamp),
-        fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, batchTimestamp),
+        fetchBollData(stock.code, 'daily', bollAdjust, apiSource, batchTimestamp, logCtx),
+        fetchBollData(stock.code, 'weekly', bollAdjust, apiSource, batchTimestamp, logCtx),
+        fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, batchTimestamp, logCtx),
       ]);
       
       // 请求完成后再次检查版本号
@@ -655,7 +620,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setIsRefreshingBoll(false);
   }, [stocks, bollAdjust, apiSource]);
 
+  // 防止 StrictMode 双重调用：标志在 effect 层设置，与 fetchAllBoll 内部守卫无关
+  const didAutoRefreshBollRef = useRef(false);
   useEffect(() => {
+    if (didAutoRefreshBollRef.current) return;
+    didAutoRefreshBollRef.current = true;
     fetchAllBoll();
     // 只在挂载时自动刷新一次布林线；之后由「布林线」列头按钮手动刷新
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -786,7 +755,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return fullCode.replace('.SH', '').replace('.SZ', '');
   };
 
-  const fetchStockPrice = useCallback(async (stockCode: string): Promise<{
+  const fetchStockPrice = useCallback(async (stockCode: string, logCtx?: LogBatchContext): Promise<{
     price: number;
     name: string;
     changePercent: number;
@@ -807,7 +776,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       }
       
       const url = `https://qt.gtimg.cn/q=${market}${code}`;
-      const logId = requestLogService.startRequest(url);
+      const logId = requestLogService.startRequest(url, 'GET', logCtx);
       try {
         const response = await fetch(url);
         const buffer = await response.arrayBuffer();
@@ -854,7 +823,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const stock = stocks.find(s => s.id === id);
     if (!stock) return;
 
-    requestLogService.setBatchReason('点击行内重试按钮，重新刷新单只股价（预计 1 条请求）');
+    const logCtx = requestLogService.beginBatch('点击行内重试：1 只股票 · 1 条请求');
     setIsRefreshing(prev => new Set(prev).add(id));
     setRefreshFailed(prev => {
       const next = new Set(prev);
@@ -862,7 +831,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       return next;
     });
     try {
-      const result = await fetchStockPrice(stock.code);
+      const result = await fetchStockPrice(stock.code, logCtx);
       if (result) {
         const year = getSelectedYear(stock);
         const dividend = getDividendForYear(stock, year);
@@ -891,19 +860,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   }, [stocks, onStocksChange, fetchStockPrice]);
 
   const handleRefreshAll = useCallback(async (skipFresh = false) => {
-    const ttlMinutes = Math.round(getDynamicCacheTTL() / 60000);
     const marketClosed = !isTradingHours();
     // 休市时股价已是当日/最近收盘价，手动刷新也视为无需请求（除非缓存已过期）
     const effectiveSkip = skipFresh || marketClosed;
+    const staleCount = effectiveSkip
+      ? stocks.filter(s => !isStockPriceFresh(s.priceUpdatedAt)).length
+      : stocks.length;
     let refreshReason: string;
     if (skipFresh) {
-      refreshReason = `打开股息页自动刷新股价：${formatPriceCacheLog(ttlMinutes)}，重新拉取（预计最多 ${stocks.length} 条请求）`;
+      refreshReason = staleCount === 0
+        ? `打开股息页自动刷新股价：${stocks.length} 只股票缓存均未过期，无需请求`
+        : `打开股息页自动刷新股价：${staleCount}/${stocks.length} 只已过期，重新请求 ${staleCount} 条请求`;
     } else if (marketClosed) {
-      refreshReason = `点击「价格」列头刷新按钮：休市中，股价已是最新收盘价（${formatPriceCacheLog(ttlMinutes)}），仅刷新过期股票（预计最多 ${stocks.length} 条请求）`;
+      refreshReason = staleCount === 0
+        ? `点击「价格」列头刷新（休市）：${stocks.length} 只股票缓存均未过期，无需请求`
+        : `点击「价格」列头刷新（休市）：${staleCount}/${stocks.length} 只已过期，重新请求 ${staleCount} 条请求`;
     } else {
-      refreshReason = `点击「价格」列头刷新按钮，刷新全部股价（预计 ${stocks.length} 条请求）`;
+      refreshReason = `点击「价格」列头刷新：${stocks.length} 只股票 · ${stocks.length} 条请求`;
     }
-    requestLogService.setBatchReason(refreshReason);
+    const logCtx = requestLogService.beginBatch(refreshReason);
+    const batchTime = Date.now(); // 同批次共用的触发时间，作为本批所有股票的过期起点
     setIsRefreshing(new Set(stocks.map(s => s.id)));
     setRefreshFailed(new Set());
     try {
@@ -916,9 +892,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         // 跳过仍新鲜的股价（主要用于打开页面时的自动刷新：休市时拿到收盘价后不再重复请求）
         if (effectiveSkip && isStockPriceFresh(stock.priceUpdatedAt)) {
           skippedCount++;
+          // 仍新鲜的股票也把时间统一到本次触发时间，保证同批次共用过期时间
+          updatedStocks[i] = { ...stock, priceUpdatedAt: batchTime };
+          changed = true;
           continue;
         }
-        const result = await fetchStockPrice(stock.code);
+        const result = await fetchStockPrice(stock.code, logCtx);
         if (result) {
           const year = getSelectedYear(updatedStocks[i]);
           const dividend = getDividendForYear(updatedStocks[i], year);
@@ -927,7 +906,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             ...updatedStocks[i],
             price: result.price,
             changePercent: result.changePercent,
-            priceUpdatedAt: Date.now(),
+            priceUpdatedAt: batchTime,
             dividendRate2025: dividendRate,
           };
           changed = true;
@@ -958,15 +937,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 批量获取所有股票的 2024/2025 全年分红（东方财富，按报告期年度汇总）
   const handleFetchAllDividends = useCallback(async () => {
     if (isFetchingDividends || stocks.length === 0) return;
-    requestLogService.setBatchReason(
-      `点击「分红」列头刷新按钮，批量查询 ${stocks.length} 只股票的全年分红（预计 ${stocks.length} 条请求；同花顺为主，失败回退东方财富）`
+    const logCtx = requestLogService.beginBatch(
+      `点击「分红」列头刷新：${stocks.length} 只股票 · ${stocks.length} 条请求`
     );
     setIsFetchingDividends(true);
     const entries: DividendDiffEntry[] = [];
     const selected = new Set<string>();
     for (let i = 0; i < stocks.length; i++) {
       const stock = stocks[i];
-      const result = await fetchYearlyDividends(stock.code);
+      const result = await fetchYearlyDividends(stock.code, logCtx);
       const fetchedByYear = result.found ? result.dividendByYear : {};
       const existingByYear = stock.dividendByYear || {};
       const changed = result.found && Object.keys(fetchedByYear).some(yr =>
@@ -995,11 +974,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 单只股票拉取年度分红（与批量拉取流程一致，仅拉取当前这一只，弹窗只展示这一只的结果）
   const handleFetchSingleDividend = useCallback(async (stock: StockEntry) => {
     if (isFetchingSingleDividend) return;
-    requestLogService.setBatchReason(
-      `小眼睛详情页刷新按钮，单只查询 ${stock.name}(${getDisplayCode(stock.code)}) 的全年分红（预计 1 条请求）`
+    const logCtx = requestLogService.beginBatch(
+      `小眼睛详情页刷新 ${stock.name}(${getDisplayCode(stock.code)})：1 只股票 · 1 条请求`
     );
     setIsFetchingSingleDividend(stock.id);
-    const result = await fetchYearlyDividends(stock.code);
+    const result = await fetchYearlyDividends(stock.code, logCtx);
     const fetchedByYear = result.found ? result.dividendByYear : {};
     const existingByYear = stock.dividendByYear || {};
     const changed = result.found && Object.keys(fetchedByYear).some(yr =>
@@ -1082,16 +1061,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
     setIsRefreshing(new Set(['new']));
     try {
-      requestLogService.setBatchReason('添加股票时查询实时股价（预计 1 条请求）');
-      const result = await fetchStockPrice(stockCode);
+      const priceLogCtx = requestLogService.beginBatch('添加股票查询股价：1 只股票 · 1 条请求');
+      const result = await fetchStockPrice(stockCode, priceLogCtx);
 
       // 自动查询该股票的 2024/2025 全年分红（查不到则保持 0，可稍后用"自动获取分红"批量补）
       let dividend2024 = 0;
       let dividend2025 = 0;
       let dividendByYear: Record<number, number> = {};
       try {
-        requestLogService.setBatchReason('添加股票时自动查询全年分红（预计 1~2 条请求；同花顺为主，失败回退东方财富）');
-        const divResult = await fetchYearlyDividends(stockCode);
+        const divLogCtx = requestLogService.beginBatch('添加股票查询分红：1 只股票 · 1~2 条请求');
+        const divResult = await fetchYearlyDividends(stockCode, divLogCtx);
         if (divResult.found) {
           dividend2024 = divResult.dividend2024;
           dividend2025 = divResult.dividend2025;
@@ -1459,8 +1438,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             });
                             setBollData(null);
                             setBollError(null);
-                            requestLogService.setBatchReason('点击BOLL单元格打开弹窗，刷新单只布林线（预计 1 条请求）');
-                            fetchBollData(stock.code, key, bollAdjust, apiSource).then(result => {
+                            const popupLogCtx = requestLogService.beginBatch('打开 BOLL 弹窗：1 只股票 · 1 条请求');
+                            fetchBollData(stock.code, key, bollAdjust, apiSource, undefined, popupLogCtx).then(result => {
                               setBollData(result.data);
                               setBollError(result.error || null);
                             });
@@ -1567,8 +1546,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           });
                           setBollData(null);
                           setBollError(null);
-                          requestLogService.setBatchReason('点击行内「股息率对应股价」按钮打开弹窗，刷新单只布林线（预计 1 条请求）');
-                          fetchBollData(stock.code, bollPeriod, bollAdjust, apiSource).then(result => {
+                          const popupLogCtx = requestLogService.beginBatch('打开股息率弹窗：1 只股票 · 1 条请求');
+                          fetchBollData(stock.code, bollPeriod, bollAdjust, apiSource, undefined, popupLogCtx).then(result => {
                             setBollData(result.data);
                             setBollError(result.error || null);
                           });
@@ -1714,8 +1693,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           setBollData(null);
           setBollError(null);
           setBollUnsupported(false);
-          requestLogService.setBatchReason('切换布林线弹窗的周期/复权，刷新单只布林线（预计 1 条请求）');
-          fetchBollData(stock.code, period, adjust, apiSource).then(result => {
+          const popupLogCtx = requestLogService.beginBatch('切换布林线周期/复权：1 只股票 · 1 条请求');
+          fetchBollData(stock.code, period, adjust, apiSource, undefined, popupLogCtx).then(result => {
             setBollData(result.data);
             setBollError(result.error || null);
             setBollUnsupported(result.unsupported || false);
@@ -2264,20 +2243,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <div className="text-xs text-app-subtext text-center py-2">暂无请求记录</div>
               ) : (() => {
                 // 按触发原因分组（保持新到旧顺序），第一层级只展示原因，点开再展开请求明细
-                const groups: { reason: string; logs: RequestLogEntry[] }[] = [];
+                const groups: { reason: string; batchKey: string; logs: RequestLogEntry[] }[] = [];
                 const groupIndex = new Map<string, number>();
                 requestLogs.slice().reverse().forEach(log => {
-                  const reason = log.reason || '（无触发原因）';
-                  const idx = groupIndex.get(reason);
+                  // 同一批次（同一次触发）的所有请求归为一组；无批次标识的历史/单条请求各自成组
+                  const batchKey = log.batchKey || `${log.reason || '（无触发原因）'}|${log.id}`;
+                  const idx = groupIndex.get(batchKey);
                   if (idx === undefined) {
-                    groupIndex.set(reason, groups.length);
-                    groups.push({ reason, logs: [log] });
+                    groupIndex.set(batchKey, groups.length);
+                    groups.push({ reason: log.reason || '（无触发原因）', batchKey, logs: [log] });
                   } else {
                     groups[idx].logs.push(log);
                   }
                 });
                 return groups.map(group => {
-                  const expanded = expandedLogReasons.has(group.reason);
+                  const expanded = expandedLogReasons.has(group.batchKey);
                   const triggerAt = Math.min(...group.logs.map(l => l.timestamp));
                   const success = group.logs.filter(l => l.status === 'success').length;
                   const failed = group.logs.filter(l => l.status === 'failed').length;
@@ -2285,7 +2265,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   return (
                     <div key={group.reason} className="bg-app-input/50 rounded overflow-hidden">
                       <button
-                        onClick={() => toggleLogReason(group.reason)}
+                        onClick={() => toggleLogReason(group.batchKey)}
                         className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-app-input transition-colors"
                         title={expanded ? '收起本条请求明细' : '展开本条请求明细'}
                       >

@@ -10,6 +10,7 @@ export interface RequestLogEntry {
   error?: string;
   cached?: boolean;
   reason?: string; // 触发原因（一次批量请求共用同一个原因）
+  batchKey?: string; // 批次标识（原因+触发时间），用于区分多次相同原因的触发
 }
 
 export interface RequestLogStats {
@@ -18,6 +19,14 @@ export interface RequestLogStats {
   failed: number;
   cached: number;
   pending: number;
+}
+
+// 批次上下文：一次触发（批量请求）的原因与批次标识，
+// 由调用方在批次开始时通过 beginBatch 获取，并显式传给该批次内的每个请求，
+// 避免并发批次之间互相劫持原因
+export interface LogBatchContext {
+  reason: string;
+  batchKey: string;
 }
 
 type RequestLogListener = (logs: RequestLogEntry[], stats: RequestLogStats) => void;
@@ -30,6 +39,7 @@ class RequestLogService {
   private listeners: Set<RequestLogListener> = new Set();
   private pendingRequests: Map<string, number> = new Map(); // id -> startTime
   private batchReason: string | null = null; // 当前批量请求的触发原因
+  private batchStartedAt: number | null = null; // 当前批次的触发时间
 
   constructor() {
     // 从 localStorage 恢复日志（刷新页面后仍然保留，只有点「重置」才清空）
@@ -42,7 +52,9 @@ class RequestLogService {
             .filter((l): l is RequestLogEntry => l && typeof l.id === 'string' && typeof l.url === 'string')
             .map(l => l.status === 'pending'
               ? { ...l, status: 'failed' as const, error: '页面刷新，请求中断' }
-              : l);
+              : l)
+            // 每次页面加载都替换上一次的"打开页面自动刷新"日志，避免刷新后新旧重复
+            .filter(l => !(l.reason && l.reason.startsWith('打开股息页自动刷新')));
         }
       }
     } catch {
@@ -67,6 +79,17 @@ class RequestLogService {
   // 直到下一次 setBatchReason 或 reset 才会改变
   setBatchReason(reason: string | null): void {
     this.batchReason = reason;
+    this.batchStartedAt = reason ? Date.now() : null;
+  }
+
+  // 开始一个批次，返回稳定的批次上下文（原因 + 批次标识）
+  beginBatch(reason: string): LogBatchContext {
+    this.batchReason = reason;
+    this.batchStartedAt = Date.now();
+    return {
+      reason,
+      batchKey: `${this.batchStartedAt}_${reason}`,
+    };
   }
 
   // 添加监听器
@@ -82,7 +105,11 @@ class RequestLogService {
   }
 
   // 开始请求
-  startRequest(url: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET'): string {
+  startRequest(
+    url: string,
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET',
+    ctx?: LogBatchContext
+  ): string {
     const id = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const entry: RequestLogEntry = {
       id,
@@ -90,7 +117,8 @@ class RequestLogService {
       url,
       method,
       status: 'pending',
-      reason: this.batchReason || undefined,
+      reason: ctx?.reason ?? this.batchReason ?? undefined,
+      batchKey: ctx?.batchKey ?? (this.batchReason && this.batchStartedAt ? `${this.batchStartedAt}_${this.batchReason}` : undefined),
     };
     
     this.logs.push(entry);
@@ -130,7 +158,7 @@ class RequestLogService {
   }
 
   // 缓存命中（不发网络请求）
-  cacheHit(url: string): void {
+  cacheHit(url: string, ctx?: LogBatchContext): void {
     const id = `cache_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const entry: RequestLogEntry = {
       id,
@@ -139,7 +167,8 @@ class RequestLogService {
       method: 'GET',
       status: 'cached',
       cached: true,
-      reason: this.batchReason || undefined,
+      reason: ctx?.reason ?? this.batchReason ?? undefined,
+      batchKey: ctx?.batchKey ?? (this.batchReason && this.batchStartedAt ? `${this.batchStartedAt}_${this.batchReason}` : undefined),
     };
     
     this.logs.push(entry);

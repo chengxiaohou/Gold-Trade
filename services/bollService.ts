@@ -1,6 +1,6 @@
 import { ApiSource } from '../types';
 import { getDynamicBollCacheTTL, setLastFetchTime } from './cacheService';
-import { requestLogService } from './requestLogService';
+import { requestLogService, type LogBatchContext } from './requestLogService';
 
 // 生产环境配置
 const isDev = import.meta.env.DEV;
@@ -225,12 +225,48 @@ function getMarketPrefix(stockCode: string): { market: string; code: string } {
   return { market, code };
 }
 
+// 判断单只股票某个周期的 BOLL 缓存是否仍新鲜（与 checkAllBollCache 同一口径）
+function isBollCacheFresh(
+  stock: { code: string },
+  period: BollPeriod,
+  adjust: BollAdjust,
+  apiSource: ApiSource,
+  dynamicTTL: number
+): boolean {
+  const { market, code } = getMarketPrefix(stock.code);
+  const fullCode = `${market}${code}`;
+  const cacheKey = getCacheKey(fullCode, period, adjust, apiSource);
+  const cached = cache.get(cacheKey);
+  return !!cached && Date.now() - cached.timestamp < dynamicTTL;
+}
+
+// 统计缓存已过期的 股票×周期 项数（不产生日志），用于日志文案展示精确数字
+export function countStaleBollCache(
+  stocks: Array<{ code: string }>,
+  adjust: BollAdjust,
+  apiSource: ApiSource,
+  dynamicTTL: number
+): number {
+  let stale = 0;
+  const periods: BollPeriod[] = ['daily', 'weekly', 'monthly'];
+  for (const stock of stocks) {
+    for (const period of periods) {
+      if (!isBollCacheFresh(stock, period, adjust, apiSource, dynamicTTL)) {
+        stale++;
+      }
+    }
+  }
+  return stale;
+}
+
 // 检查所有股票的缓存状态，返回缓存数据或null
 export function checkAllBollCache(
   stocks: Array<{ id: string; code: string }>,
   adjust: BollAdjust,
   apiSource: ApiSource,
-  dynamicTTL: number
+  dynamicTTL: number,
+  logCtx?: LogBatchContext,
+  touchTime?: number
 ): { allCached: boolean; cachedData: Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }> } {
   const cachedData = new Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>();
   let allCached = true;
@@ -247,16 +283,22 @@ export function checkAllBollCache(
     };
     
     for (const period of periods) {
-      const cacheKey = getCacheKey(fullCode, period, adjust, apiSource);
-      const cached = cache.get(cacheKey);
-      
-      if (cached && Date.now() - cached.timestamp < dynamicTTL) {
-        data[period] = cached.data;
+      if (isBollCacheFresh(stock, period, adjust, apiSource, dynamicTTL)) {
+        const cacheKey = getCacheKey(fullCode, period, adjust, apiSource);
+        const cached = cache.get(cacheKey);
+        if (cached) {
+          data[period] = cached.data;
+          // 同批次共用触发时间：缓存命中的条目也把时间戳统一到本次触发时间
+          if (touchTime) {
+            cache.set(cacheKey, { ...cached, timestamp: touchTime });
+            saveCacheToStorage();
+          }
+        }
         // 记录缓存命中日志（配合 fetchAllBoll 开始时的 reset，只显示本次缓存命中）
         const url = apiSource === 'tencent'
           ? logTencentUrl(`/appstock/app/fqkline/get?param=${fullCode},${period}`)
           : logSinaUrl(`/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${fullCode}&scale=${period}`);
-        requestLogService.cacheHit(url);
+        requestLogService.cacheHit(url, logCtx);
       } else {
         allCached = false;
       }
@@ -364,7 +406,8 @@ export async function fetchBollData(
   period: BollPeriod = 'daily',
   adjust: BollAdjust = 'qfq',
   apiSource: ApiSource = 'tencent',
-  batchTimestamp?: number
+  batchTimestamp?: number,
+  logCtx?: LogBatchContext
 ): Promise<BollResult> {
   const { market, code } = getMarketPrefix(stockCode);
   const fullCode = `${market}${code}`;
@@ -378,7 +421,7 @@ export async function fetchBollData(
     const url = apiSource === 'tencent'
       ? logTencentUrl(`/appstock/app/fqkline/get?param=${fullCode},${period}`)
       : logSinaUrl(`/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${fullCode}&scale=${period}`);
-    requestLogService.cacheHit(url);
+    requestLogService.cacheHit(url, logCtx);
     return { data: cached.data };
   }
 
@@ -394,9 +437,9 @@ export async function fetchBollData(
 
   try {
     if (apiSource === 'tencent') {
-      return fetchBollFromTencent(fullCode, period, adjust, batchTimestamp);
+      return fetchBollFromTencent(fullCode, period, adjust, batchTimestamp, logCtx);
     } else {
-      return fetchBollFromSina(market, code, period, adjust, apiSource, batchTimestamp);
+      return fetchBollFromSina(market, code, period, adjust, apiSource, batchTimestamp, logCtx);
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -408,7 +451,8 @@ async function fetchBollFromTencent(
   code: string,
   period: BollPeriod,
   adjust: BollAdjust,
-  batchTimestamp?: number
+  batchTimestamp?: number,
+  logCtx?: LogBatchContext
 ): Promise<BollResult> {
   const periodMap: Record<BollPeriod, string> = {
     daily: 'day',
@@ -431,7 +475,7 @@ async function fetchBollFromTencent(
   const logUrl = logTencentUrl(urlPath);
 
   // 开始请求，记录日志
-  const requestId = requestLogService.startRequest(logUrl);
+  const requestId = requestLogService.startRequest(logUrl, 'GET', logCtx);
 
   try {
     let result: TencentKlineResponse | null = null;
@@ -553,7 +597,8 @@ async function fetchBollFromSina(
   period: BollPeriod,
   adjust: BollAdjust,
   _apiSource: ApiSource,
-  batchTimestamp?: number
+  batchTimestamp?: number,
+  logCtx?: LogBatchContext
 ): Promise<BollResult> {
   const scale = getScaleParam(period);
   const fullCode = `${market}${code}`;
@@ -564,7 +609,7 @@ async function fetchBollFromSina(
   const logUrl = logSinaUrl(urlPath);
 
   // 开始请求，记录日志
-  const requestId = requestLogService.startRequest(logUrl);
+  const requestId = requestLogService.startRequest(logUrl, 'GET', logCtx);
 
   try {
     let klines: SinaKline[];
