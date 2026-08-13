@@ -410,6 +410,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showRatesId, setShowRatesId] = useState<string | null>(null);
   const [ratesPopupPos, setRatesPopupPos] = useState<{ top: number, left: number }>({ top: 0, left: 0 });
+  const ratesPopupRef = useRef<HTMLDivElement>(null);
+  const ratesDragOffset = useRef({ x: 0, y: 0 });
+  const isRatesDragging = useRef(false);
   const [newStock, setNewStock] = useState({
     code: '',
     name: '',
@@ -1746,6 +1749,38 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             }
           });
         };
+
+        const handleRatesPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+          if (!ratesPopupRef.current) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const rect = ratesPopupRef.current.getBoundingClientRect();
+          ratesDragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+          isRatesDragging.current = true;
+          e.currentTarget.setPointerCapture(e.pointerId);
+          ratesPopupRef.current.style.transition = 'none';
+          document.body.style.cursor = 'grabbing';
+        };
+
+        const handleRatesPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+          if (!isRatesDragging.current || !ratesPopupRef.current) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const newLeft = e.clientX - ratesDragOffset.current.x;
+          const newTop = e.clientY - ratesDragOffset.current.y;
+          ratesPopupRef.current.style.left = `${newLeft}px`;
+          ratesPopupRef.current.style.top = `${newTop}px`;
+        };
+
+        const handleRatesPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+          if (!isRatesDragging.current || !ratesPopupRef.current) return;
+          isRatesDragging.current = false;
+          e.currentTarget.releasePointerCapture(e.pointerId);
+          document.body.style.cursor = '';
+          const rect = ratesPopupRef.current.getBoundingClientRect();
+          setRatesPopupPos({ left: rect.left, top: rect.top });
+          ratesPopupRef.current.style.transition = '';
+        };
         
         return createPortal(
           <>
@@ -1754,13 +1789,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               onClick={() => setShowRatesId(null)}
             />
             <div 
+              ref={ratesPopupRef}
               className="fixed z-50 bg-app-card border border-app-border rounded-lg shadow-xl p-3 w-[340px]"
               style={{ top: ratesPopupPos.top, left: ratesPopupPos.left }}
             >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-bold text-app-text">{stock.name}</span>
+              <div
+                onPointerDown={handleRatesPointerDown}
+                onPointerMove={handleRatesPointerMove}
+                onPointerUp={handleRatesPointerUp}
+                className="flex items-center justify-between mb-2 cursor-grab active:cursor-grabbing touch-none select-none"
+              >
+                <span className="text-sm font-bold text-app-text pointer-events-none">{stock.name}</span>
                 <button
                   onClick={() => setShowRatesId(null)}
+                  onPointerDown={(e) => e.stopPropagation()}
                   className="p-0.5 hover:bg-app-input rounded transition-colors"
                 >
                   <X size={14} className="text-app-subtext" />
