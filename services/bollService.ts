@@ -162,18 +162,18 @@ function restoreCacheFromStorage(): void {
       // 各数据源最新的拉取时间
       let latestTencent = 0;
       let latestSina = 0;
-      
-      // 只恢复未过期的缓存
+
       for (const [key, value] of Object.entries(parsed)) {
         const entry = value as { data: BollData; timestamp: number };
+        // 不管缓存是否过期，都记录最新拉取时间（用于缓存管理显示和日志）
+        if (key.endsWith('_tencent') && entry.timestamp > latestTencent) {
+          latestTencent = entry.timestamp;
+        } else if (key.endsWith('_sina') && entry.timestamp > latestSina) {
+          latestSina = entry.timestamp;
+        }
+        // 只恢复未过期的缓存到内存（过期数据不恢复，但拉取时间仍记录）
         if (now - entry.timestamp < CACHE_EXPIRY_MS) {
           cache.set(key, entry);
-          // 从 cache key 中提取数据源，记录最新拉取时间
-          if (key.endsWith('_tencent') && entry.timestamp > latestTencent) {
-            latestTencent = entry.timestamp;
-          } else if (key.endsWith('_sina') && entry.timestamp > latestSina) {
-            latestSina = entry.timestamp;
-          }
         }
       }
       
@@ -363,7 +363,8 @@ export async function fetchBollData(
   stockCode: string,
   period: BollPeriod = 'daily',
   adjust: BollAdjust = 'qfq',
-  apiSource: ApiSource = 'tencent'
+  apiSource: ApiSource = 'tencent',
+  batchTimestamp?: number
 ): Promise<BollResult> {
   const { market, code } = getMarketPrefix(stockCode);
   const fullCode = `${market}${code}`;
@@ -393,9 +394,9 @@ export async function fetchBollData(
 
   try {
     if (apiSource === 'tencent') {
-      return fetchBollFromTencent(fullCode, period, adjust);
+      return fetchBollFromTencent(fullCode, period, adjust, batchTimestamp);
     } else {
-      return fetchBollFromSina(market, code, period, adjust, apiSource);
+      return fetchBollFromSina(market, code, period, adjust, apiSource, batchTimestamp);
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -406,7 +407,8 @@ export async function fetchBollData(
 async function fetchBollFromTencent(
   code: string,
   period: BollPeriod,
-  adjust: BollAdjust
+  adjust: BollAdjust,
+  batchTimestamp?: number
 ): Promise<BollResult> {
   const periodMap: Record<BollPeriod, string> = {
     daily: 'day',
@@ -511,7 +513,7 @@ async function fetchBollFromTencent(
     const last = klines[klines.length - 1];
     const close = adjust === 'none' && realtimePrice ? realtimePrice : last.close;
     const date = last.date;
-    const fetchedAt = Date.now();
+    const fetchedAt = batchTimestamp ?? Date.now();
 
     const result_data: BollData = {
       upper: Math.round(upper * 100) / 100,
@@ -550,7 +552,8 @@ async function fetchBollFromSina(
   code: string,
   period: BollPeriod,
   adjust: BollAdjust,
-  _apiSource: ApiSource
+  _apiSource: ApiSource,
+  batchTimestamp?: number
 ): Promise<BollResult> {
   const scale = getScaleParam(period);
   const fullCode = `${market}${code}`;
@@ -635,7 +638,7 @@ async function fetchBollFromSina(
     const last = klines[klines.length - 1];
     const close = parseFloat(last.close);
     const date = last.day;
-    const fetchedAt = Date.now();
+    const fetchedAt = batchTimestamp ?? Date.now();
 
     const result_data: BollData = {
       upper: Math.round(upper * 100) / 100,

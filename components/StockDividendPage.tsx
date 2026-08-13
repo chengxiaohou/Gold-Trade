@@ -4,7 +4,7 @@ import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, C
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
 import { fetchBollData, checkAllBollCache, BollData, BollPeriod, BollAdjust } from '../services/bollService';
-import { getDynamicCacheTTL, getDynamicBollCacheTTL, isStockPriceFresh, isTradingHours } from '../services/cacheService';
+import { getDynamicCacheTTL, getDynamicBollCacheTTL, isStockPriceFresh, isTradingHours, getCacheExpiry } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats } from '../services/requestLogService';
 import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
 import { getNickname } from '../services/nicknameService';
@@ -300,6 +300,43 @@ const formatFetchTime = (timestamp: number): string => {
   return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 };
 
+// BOLL缓存日志：取数据源的真实expiresAt，算出"有效期至+已过期时长"
+// 例如 → "BOLL缓存有效期至 08月12日 08:56，当前已过期1天5小时34分"
+// 注意：此为数据源级别过期时间，个股缓存可能更早过期
+const formatBollCacheLog = (source: ApiSource): string => {
+  const expiresAt = getCacheExpiry(source);
+  if (!expiresAt) return 'BOLL缓存无记录';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const d = new Date(expiresAt);
+  const expireStr = `${pad(d.getMonth() + 1)}月${pad(d.getDate())}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const overdueMs = Date.now() - expiresAt;
+  if (overdueMs <= 0) return `BOLL缓存有效期至 ${expireStr}，当前尚未过期`;
+  const days = Math.floor(overdueMs / (24 * 60 * 60 * 1000));
+  const hours = Math.floor((overdueMs % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+  const mins = Math.floor((overdueMs % (60 * 60 * 1000)) / (60 * 1000));
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}天`);
+  if (hours > 0) parts.push(`${hours}小时`);
+  if (mins > 0 || parts.length === 0) parts.push(`${mins}分`);
+  return `BOLL缓存有效期至 ${expireStr}，当前已过期${parts.join('')}`;
+};
+
+// 价格缓存日志：用 now - TTL 反推过期时间点（每支股票priceUpdatedAt不同，不显示已过期时长）
+// 例如 → "价格缓存有效期10分钟，拉取时间早于 08月13日 14:20 的股票已过期"
+const formatPriceCacheLog = (ttlMinutes: number): string => {
+  const humanParts: string[] = [];
+  const days = Math.floor(ttlMinutes / (24 * 60));
+  const hours = Math.floor((ttlMinutes % (24 * 60)) / 60);
+  const mins = ttlMinutes % 60;
+  if (days > 0) humanParts.push(`${days}天`);
+  if (hours > 0) humanParts.push(`${hours}小时`);
+  if (mins > 0 || humanParts.length === 0) humanParts.push(`${mins}分`);
+  const cutoff = new Date(Date.now() - ttlMinutes * 60000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const cutoffStr = `${pad(cutoff.getMonth() + 1)}月${pad(cutoff.getDate())}日 ${pad(cutoff.getHours())}:${pad(cutoff.getMinutes())}`;
+  return `价格缓存有效期${humanParts.join('')}，拉取时间早于 ${cutoffStr} 的股票已过期`;
+};
+
 interface BollPosition {
   band: 'upper' | 'mid' | 'lower';
   percent: number;
@@ -494,10 +531,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     
     // 递增版本号，标记本次请求
     const currentVersion = ++fetchVersionRef.current;
-    
-    const ttlMinutes = Math.round(getDynamicBollCacheTTL() / 60000);
+    // 同一批次所有请求共享同一时间戳，确保缓存时间统一
+    const batchTimestamp = Date.now();
+
     requestLogService.setBatchReason(
-      `${trigger}：BOLL缓存超过 ${ttlMinutes} 分钟即过期，过期部分重新请求（预计最多 ${stocks.length * 3} 条请求）`
+      `${trigger}：${formatBollCacheLog(apiSource)}，${stocks.length} 只股票 × 3 周期 = ${stocks.length * 3} 项，命中缓存的跳过，仅刷新过期部分`
     );
     
     // 只在前复权模式下批量获取所有股票的BOLL数据
@@ -566,9 +604,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       
       // 未缓存，发起网络请求
       const [dailyR, weeklyR, monthlyR] = await Promise.all([
-        fetchBollData(stock.code, 'daily', bollAdjust, apiSource),
-        fetchBollData(stock.code, 'weekly', bollAdjust, apiSource),
-        fetchBollData(stock.code, 'monthly', bollAdjust, apiSource),
+        fetchBollData(stock.code, 'daily', bollAdjust, apiSource, batchTimestamp),
+        fetchBollData(stock.code, 'weekly', bollAdjust, apiSource, batchTimestamp),
+        fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, batchTimestamp),
       ]);
       
       // 请求完成后再次检查版本号
@@ -859,9 +897,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const effectiveSkip = skipFresh || marketClosed;
     let refreshReason: string;
     if (skipFresh) {
-      refreshReason = `打开股息页自动刷新股价：缓存超过 ${ttlMinutes} 分钟即过期，过期股票重新请求（预计最多 ${stocks.length} 条请求）`;
+      refreshReason = `打开股息页自动刷新股价：${formatPriceCacheLog(ttlMinutes)}，重新拉取（预计最多 ${stocks.length} 条请求）`;
     } else if (marketClosed) {
-      refreshReason = `点击「价格」列头刷新按钮：休市中，股价已是最新收盘价（缓存超过 ${ttlMinutes} 分钟即过期），仅刷新过期股票（预计最多 ${stocks.length} 条请求）`;
+      refreshReason = `点击「价格」列头刷新按钮：休市中，股价已是最新收盘价（${formatPriceCacheLog(ttlMinutes)}），仅刷新过期股票（预计最多 ${stocks.length} 条请求）`;
     } else {
       refreshReason = `点击「价格」列头刷新按钮，刷新全部股价（预计 ${stocks.length} 条请求）`;
     }
@@ -958,7 +996,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const handleFetchSingleDividend = useCallback(async (stock: StockEntry) => {
     if (isFetchingSingleDividend) return;
     requestLogService.setBatchReason(
-      `小眼睛详情页刷新按钮，单只查询 ${stock.name}(${getDisplayCode(stock.code)}) 的全年分红（预计 1 条请求；同花顺为主，失败回退东方财富）`
+      `小眼睛详情页刷新按钮，单只查询 ${stock.name}(${getDisplayCode(stock.code)}) 的全年分红（预计 1 条请求）`
     );
     setIsFetchingSingleDividend(stock.id);
     const result = await fetchYearlyDividends(stock.code);
