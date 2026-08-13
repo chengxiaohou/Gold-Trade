@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, Download, BarChart3, List, ChevronDown } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, Download, BarChart3, List, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
 import { fetchBollData, checkAllBollCache, countStaleBollCache, BollData, BollPeriod, BollAdjust } from '../services/bollService';
@@ -444,6 +444,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [bollUnsupported, setBollUnsupported] = useState<boolean>(false);
   const [bollPeriod, setBollPeriod] = useState<BollPeriod>('daily');
   const [bollAdjust, setBollAdjust] = useState<BollAdjust>('qfq');
+  const [bollCopied, setBollCopied] = useState(false);
 
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
   const [stockBollErrorMap, setStockBollErrorMap] = useState<Map<string, { daily?: string; weekly?: string; monthly?: string }>>(new Map());
@@ -1700,6 +1701,51 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             setBollUnsupported(result.unsupported || false);
           });
         };
+
+        const copyBollData = () => {
+          const adjustLabel = bollAdjust === 'qfq' ? '前复权' : '除权';
+          const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v) : '-');
+          const buildLine = (label: string, data: BollData | null | undefined) => {
+            const ma = data?.ma;
+            return `${label}：MA5=${fmt(ma?.ma5)} MA10=${fmt(ma?.ma10)} MA20=${fmt(ma?.ma20)} MA30=${fmt(ma?.ma30)} MA60=${fmt(ma?.ma60)} BOLL 上=${fmt(data?.upper)} 中=${fmt(data?.mid)} 下=${fmt(data?.lower)}`;
+          };
+          const popupLogCtx = requestLogService.beginBatch('复制 MA 与 BOLL 数据：1 只股票 · 3 条请求');
+          Promise.all([
+            fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx),
+            fetchBollData(stock.code, 'weekly', bollAdjust, apiSource, undefined, popupLogCtx),
+            fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, undefined, popupLogCtx),
+          ]).then(([dailyR, weeklyR, monthlyR]) => {
+            const text = [
+              `${stock.name}（${adjustLabel}）`,
+              buildLine('日线', dailyR.data),
+              buildLine('周线', weeklyR.data),
+              buildLine('月线', monthlyR.data),
+            ].join('\n');
+            const done = () => {
+              setBollCopied(true);
+              setTimeout(() => setBollCopied(false), 1500);
+            };
+            if (navigator.clipboard?.writeText) {
+              navigator.clipboard.writeText(text).then(done).catch(() => {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                done();
+              });
+            } else {
+              const ta = document.createElement('textarea');
+              ta.value = text;
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand('copy');
+              document.body.removeChild(ta);
+              done();
+            }
+          });
+        };
         
         return createPortal(
           <>
@@ -1746,15 +1792,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 })()}
               </div>
               <div className="border-t border-app-border pt-2">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] text-app-subtext">BOLL (20, 2)</span>
+                <div className="flex items-center gap-1 mb-2">
+                  <span className="text-[10px] text-app-subtext">MA & BOLL (20, 2)</span>
+                  <button
+                    onClick={copyBollData}
+                    className="p-0.5 rounded transition-colors hover:bg-app-input"
+                    title="复制 MA 与 BOLL 数据"
+                  >
+                    {bollCopied ? <Check size={12} className="text-indigo-400" /> : <Copy size={12} className="text-app-subtext" />}
+                  </button>
                 </div>
                 <div className="flex items-center gap-1 mb-2">
                   {(['daily', 'weekly', 'monthly'] as BollPeriod[]).map(p => (
                     <button
                       key={p}
                       onClick={() => { setBollPeriod(p); reloadBoll(p, bollAdjust); }}
-                      className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${bollPeriod === p ? 'bg-indigo-500/20 text-indigo-400' : 'bg-app-input text-app-subtext hover:bg-app-input/80'}`}
+                      className={`px-2 py-1 text-[11px] rounded transition-colors ${bollPeriod === p ? 'bg-indigo-500/20 text-indigo-400' : 'bg-app-input text-app-subtext hover:bg-app-input/80'}`}
                     >
                       {p === 'daily' ? '日线' : p === 'weekly' ? '周线' : '月线'}
                     </button>
@@ -1764,16 +1817,33 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     <button
                       key={a}
                       onClick={() => { setBollAdjust(a); reloadBoll(bollPeriod, a); }}
-                      className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${bollAdjust === a ? 'bg-indigo-500/20 text-indigo-400' : 'bg-app-input text-app-subtext hover:bg-app-input/80'}`}
+                      className={`px-2 py-1 text-[11px] rounded transition-colors ${bollAdjust === a ? 'bg-indigo-500/20 text-indigo-400' : 'bg-app-input text-app-subtext hover:bg-app-input/80'}`}
                     >
                       {a === 'qfq' ? '前复权' : '除权'}
                     </button>
                   ))}
                 </div>
+                {/* 关键均线（与 BOLL 合并标题，无分隔线） */}
+                <div className="mb-2">
+                  <div className="grid grid-cols-5 gap-1">
+                    {([
+                      ['MA5', bollData?.ma?.ma5, 'text-gray-300'],
+                      ['MA10', bollData?.ma?.ma10, 'text-pink-500'],
+                      ['MA20', bollData?.ma?.ma20, 'text-brand-softYellow'],
+                      ['MA30', bollData?.ma?.ma30, 'text-blue-400'],
+                      ['MA60', bollData?.ma?.ma60, 'text-[#6e3b3b]'],
+                    ] as Array<[string, number | null | undefined, string]>).map(([label, value, color]) => (
+                      <div key={label} className="flex flex-col items-center p-1 rounded bg-app-input">
+                        <span className="text-[10px] text-app-subtext">{label}</span>
+                        <span className={`font-mono text-xs font-bold ${color}`}>{value != null ? formatPrice(value) : '-'}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
                 <div className="grid grid-cols-3 gap-1">
                     <div className="flex flex-col items-center p-1 rounded bg-app-input">
                       <span className="text-[10px] text-app-subtext">上轨</span>
-                      <span className="font-mono text-xs font-bold text-red-400">{bollData ? formatPrice(bollData.upper) : '-'}</span>
+                      <span className="font-mono text-xs font-bold text-red-500">{bollData ? formatPrice(bollData.upper) : '-'}</span>
                     </div>
                     <div className="flex flex-col items-center p-1 rounded bg-app-input">
                       <span className="text-[10px] text-app-subtext">中轨</span>
@@ -1832,7 +1902,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         <>
                           <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
                             <span className="text-[10px] text-app-subtext shrink-0">最高价</span>
-                            <span className="font-mono text-[10px] font-bold text-red-400 shrink-0">
+                            <span className="font-mono text-[10px] font-bold text-red-500 shrink-0">
                               {bollData ? formatPrice(highPrice) : '-'}
                             </span>
                             <span className="text-[10px] shrink-0">

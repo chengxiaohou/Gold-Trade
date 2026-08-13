@@ -130,6 +130,7 @@ export interface BollData {
   mid: number;
   lower: number;
   close: number;
+  ma?: { ma5: number | null; ma10: number | null; ma20: number | null; ma30: number | null; ma60: number | null };
   date: string;
   fetchedAt: number;
   rangeCount: number;
@@ -237,7 +238,8 @@ function isBollCacheFresh(
   const fullCode = `${market}${code}`;
   const cacheKey = getCacheKey(fullCode, period, adjust, apiSource);
   const cached = cache.get(cacheKey);
-  return !!cached && Date.now() - cached.timestamp < dynamicTTL;
+  // 旧版缓存没有均线字段（ma.ma30），视为过期以便重拉一次补齐
+  return !!cached && !!cached.data?.ma?.ma30 && Date.now() - cached.timestamp < dynamicTTL;
 }
 
 // 统计缓存已过期的 股票×周期 项数（不产生日志），用于日志文案展示精确数字
@@ -316,6 +318,23 @@ function getScaleParam(period: BollPeriod): number {
     case 'weekly': return 1200;
     case 'monthly': return 7200;
   }
+}
+
+// 计算 N 日/周/月均线（收盘价均值），数据不足时返回 null
+function computeMa(closes: number[], period: number): number | null {
+  if (closes.length < period) return null;
+  const slice = closes.slice(closes.length - period);
+  return Math.round((slice.reduce((a, b) => a + b, 0) / period) * 100) / 100;
+}
+
+function computeMAs(closes: number[]) {
+  return {
+    ma5: computeMa(closes, 5),
+    ma10: computeMa(closes, 10),
+    ma20: computeMa(closes, 20),
+    ma30: computeMa(closes, 30),
+    ma60: computeMa(closes, 60),
+  };
 }
 
 interface SinaKline {
@@ -416,7 +435,7 @@ export async function fetchBollData(
   const cached = cache.get(cacheKey);
   const dynamicTTL = getDynamicBollCacheTTL();
   
-  if (cached && Date.now() - cached.timestamp < dynamicTTL) {
+  if (cached && cached.data?.ma?.ma30 && Date.now() - cached.timestamp < dynamicTTL) {
     // 缓存命中，记录日志
     const url = apiSource === 'tencent'
       ? logTencentUrl(`/appstock/app/fqkline/get?param=${fullCode},${period}`)
@@ -527,6 +546,17 @@ async function fetchBollFromTencent(
       return { data: null, error: '收盘价数据不足' };
     }
 
+    // 全部K线收盘价（不复权模式下最后一天用实时价替换），用于计算均线
+    const allCloses: number[] = [];
+    for (let i = 0; i < klines.length; i++) {
+      let c = klines[i].close;
+      if (adjust === 'none' && i === klines.length - 1 && realtimePrice) {
+        c = realtimePrice;
+      }
+      allCloses.push(c);
+    }
+    const ma = computeMAs(allCloses);
+
     const sum = closes.reduce((a, b) => a + b, 0);
     const mid = sum / 20;
 
@@ -564,6 +594,7 @@ async function fetchBollFromTencent(
       mid: Math.round(mid * 100) / 100,
       lower: Math.round(lower * 100) / 100,
       close: Math.round(close * 100) / 100,
+      ma,
       date,
       fetchedAt,
       rangeCount,
@@ -651,6 +682,10 @@ async function fetchBollFromSina(
       return { data: null, error: '收盘价数据不足' };
     }
 
+    // 全部K线收盘价（新浪仅前复权），用于计算均线
+    const allCloses = klines.map(k => parseFloat(k.close));
+    const ma = computeMAs(allCloses);
+
     const sum = closes.reduce((a, b) => a + b, 0);
     const mid = sum / 20;
 
@@ -690,6 +725,7 @@ async function fetchBollFromSina(
       mid: Math.round(mid * 100) / 100,
       lower: Math.round(lower * 100) / 100,
       close: Math.round(close * 100) / 100,
+      ma,
       date,
       fetchedAt,
       rangeCount,
