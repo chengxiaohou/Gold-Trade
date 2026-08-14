@@ -1162,7 +1162,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   return (
     <div className="flex flex-col gap-3 w-full">
       <div className="flex justify-center">
-        <div className="w-full max-w-[700px] flex items-center gap-3">
+        <div className="w-full max-w-[742px] flex items-center gap-3">
           <h1 className="text-3xl font-bold text-app-subtext tracking-wide">股息率一览</h1>
           {appVersion && <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1">{appVersion}</span>}
           {onTogglePage && (
@@ -1177,7 +1177,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         </div>
       </div>
       <div className="flex justify-center">
-        <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full max-w-[700px]">
+        <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full max-w-[742px]">
           <div 
             ref={scrollContainerRef}
             className="overflow-x-auto custom-scrollbar"
@@ -1350,13 +1350,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             onChange={(e) => {
                               const v = e.target.value;
                               const idx = v.indexOf('-');
-                              if (idx >= 0) {
-                                handleUpdateField(stock.id, 'name', v.slice(0, idx));
-                                handleUpdateField(stock.id, 'nickname', v.slice(idx + 1));
-                              } else {
-                                handleUpdateField(stock.id, 'name', v);
-                                handleUpdateField(stock.id, 'nickname', '');
-                              }
+                              const newName = idx >= 0 ? v.slice(0, idx) : v;
+                              const newNickname = idx >= 0 ? v.slice(idx + 1) : '';
+                              onStocksChange(stocks.map(s => {
+                                if (s.id !== stock.id) return s;
+                                return { ...s, name: newName, nickname: newNickname };
+                              }));
                             }}
                             placeholder="名称-代号"
                             className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight text-app-text outline-none text-center"
@@ -1668,7 +1667,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       )}
 
       <div className="flex justify-center">
-        <div className="bg-app-card border border-app-border rounded-xl p-4 max-w-[700px] w-full">
+        <div className="bg-app-card border border-app-border rounded-xl p-4 max-w-[742px] w-full">
           <div className="text-xs text-app-subtext">
             <p className="mb-2">计算公式：<span className="font-mono">股价 = 分红金额 / 股息率</span></p>
             <p>例如：分红 ¥2.00，股息率 5%，对应股价 = 2.00 / 0.05 = ¥40.00</p>
@@ -1799,7 +1798,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 onPointerUp={handleRatesPointerUp}
                 className="flex items-center justify-between mb-2 cursor-grab active:cursor-grabbing touch-none select-none"
               >
-                <span className="text-sm font-bold text-app-text pointer-events-none">{stock.name}</span>
+                <div className="flex items-center gap-2 pointer-events-none">
+                  <span className="text-sm font-bold text-app-text">{stock.name}</span>
+                  {stock.price > 0 && (
+                    <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-red-500' : 'text-brand-green'}`}>
+                      {formatPrice(stock.price)}
+                    </span>
+                  )}
+                </div>
                 <button
                   onClick={() => setShowRatesId(null)}
                   onPointerDown={(e) => e.stopPropagation()}
@@ -2165,7 +2171,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               onClick={() => setDividendDiff(null)}
             />
             <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-              <div className="bg-app-card border border-app-border rounded-xl shadow-2xl w-full max-w-[700px] max-h-[85vh] flex flex-col">
+              <div className="bg-app-card border border-app-border rounded-xl shadow-2xl w-full max-w-[742px] max-h-[85vh] flex flex-col">
                 <div className="flex items-start justify-between px-4 py-3 border-b border-app-border">
                   <div>
                     <h3 className="text-sm font-bold text-app-text">分红数据核对</h3>
