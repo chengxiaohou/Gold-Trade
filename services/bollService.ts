@@ -149,7 +149,7 @@ export interface BollResult {
 // 请求频率限制已移至 fetchAllBoll，此处仅保留缓存相关逻辑
 const cache = new Map<string, { data: BollData; timestamp: number }>();
 
-const CACHE_STORAGE_KEY = 'boll_cache_v1';
+const CACHE_STORAGE_KEY = 'boll_cache_v2';
 const CACHE_EXPIRY_MS = 4 * 60 * 60 * 1000; // 4小时
 
 // 从 LocalStorage 恢复缓存
@@ -324,7 +324,7 @@ function getScaleParam(period: BollPeriod): number {
 function computeMa(closes: number[], period: number): number | null {
   if (closes.length < period) return null;
   const slice = closes.slice(closes.length - period);
-  return Math.round((slice.reduce((a, b) => a + b, 0) / period) * 100) / 100;
+  return Math.round((slice.reduce((a, b) => a + b, 0) / period) * 1000) / 1000;
 }
 
 function computeMAs(closes: number[]) {
@@ -590,9 +590,9 @@ async function fetchBollFromTencent(
     const fetchedAt = batchTimestamp ?? Date.now();
 
     const result_data: BollData = {
-      upper: Math.round(upper * 100) / 100,
-      mid: Math.round(mid * 100) / 100,
-      lower: Math.round(lower * 100) / 100,
+      upper: Math.round(upper * 1000) / 1000,
+      mid: Math.round(mid * 1000) / 1000,
+      lower: Math.round(lower * 1000) / 1000,
       close: Math.round(close * 100) / 100,
       ma,
       date,
@@ -721,9 +721,9 @@ async function fetchBollFromSina(
     const fetchedAt = batchTimestamp ?? Date.now();
 
     const result_data: BollData = {
-      upper: Math.round(upper * 100) / 100,
-      mid: Math.round(mid * 100) / 100,
-      lower: Math.round(lower * 100) / 100,
+      upper: Math.round(upper * 1000) / 1000,
+      mid: Math.round(mid * 1000) / 1000,
+      lower: Math.round(lower * 1000) / 1000,
       close: Math.round(close * 100) / 100,
       ma,
       date,

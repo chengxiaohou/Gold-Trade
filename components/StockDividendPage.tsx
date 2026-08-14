@@ -1707,7 +1707,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
         const copyBollData = () => {
           const adjustLabel = bollAdjust === 'qfq' ? '前复权' : '除权';
-          const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v) : '-');
+          const fmt = (v: number | null | undefined) => (v != null ? v.toFixed(3) : '-');
           const buildLine = (label: string, data: BollData | null | undefined) => {
             const ma = data?.ma;
             return `${label}：MA5=${fmt(ma?.ma5)} MA10=${fmt(ma?.ma10)} MA20=${fmt(ma?.ma20)} MA30=${fmt(ma?.ma30)} MA60=${fmt(ma?.ma60)} BOLL 上=${fmt(data?.upper)} 中=${fmt(data?.mid)} 下=${fmt(data?.lower)}`;
