@@ -449,6 +449,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [bollAdjust, setBollAdjust] = useState<BollAdjust>('qfq');
   const [bollCopied, setBollCopied] = useState(false);
 
+  const [copyPreviewText, setCopyPreviewText] = useState<string | null>(null);
+  const [tooltipOffset, setTooltipOffset] = useState(0);
+  const copyBtnRef = useRef<HTMLButtonElement | null>(null);
+  const previewHoveredRef = useRef(false);
+
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
   const [stockBollErrorMap, setStockBollErrorMap] = useState<Map<string, { daily?: string; weekly?: string; monthly?: string }>>(new Map());
   const [isRefreshingBoll, setIsRefreshingBoll] = useState(false);
@@ -1844,10 +1849,59 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   <span className="text-[10px] text-app-subtext">MA & BOLL (20, 2)</span>
                   <button
                     onClick={copyBollData}
-                    className="p-0.5 rounded transition-colors hover:bg-app-input"
+                    onMouseEnter={(e) => {
+                      previewHoveredRef.current = true;
+                      copyBtnRef.current = e.currentTarget;
+                      const adjustLabel = bollAdjust === 'qfq' ? '前复权' : '除权';
+                      const popupLogCtx = requestLogService.beginBatch('复制预览：1 只股票 · 3 条请求');
+                      Promise.all([
+                        fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx),
+                        fetchBollData(stock.code, 'weekly', bollAdjust, apiSource, undefined, popupLogCtx),
+                        fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, undefined, popupLogCtx),
+                      ]).then(([dailyR, weeklyR, monthlyR]) => {
+                        if (!previewHoveredRef.current || !copyBtnRef.current) return;
+                        const fmt = (v: number | null | undefined) => (v != null ? v.toFixed(3) : '-');
+                        const buildLine = (label: string, data: BollData | null | undefined) => {
+                          const ma = data?.ma;
+                          return `${label}  MA5=${fmt(ma?.ma5)} MA10=${fmt(ma?.ma10)} MA20=${fmt(ma?.ma20)} MA30=${fmt(ma?.ma30)} MA60=${fmt(ma?.ma60)}  BOLL 上=${fmt(data?.upper)} 中=${fmt(data?.mid)} 下=${fmt(data?.lower)}`;
+                        };
+                        const lines = [`${stock.name}（${adjustLabel}）`];
+                        lines.push(buildLine('日线', dailyR.data));
+                        lines.push(buildLine('周线', weeklyR.data));
+                        lines.push(buildLine('月线', monthlyR.data));
+                        const text = lines.join('\n');
+                        // 一次性计算位置，避免先显示再调整
+                        const btnRect = copyBtnRef.current.getBoundingClientRect();
+                        const measureEl = document.createElement('div');
+                        measureEl.style.cssText = 'position:fixed;visibility:hidden;white-space:pre;font-family:monospace;font-size:10px;padding:6px 10px;border:1px solid;line-height:1.5';
+                        measureEl.textContent = text;
+                        document.body.appendChild(measureEl);
+                        const tooltipWidth = measureEl.offsetWidth;
+                        document.body.removeChild(measureEl);
+                        const margin = 10;
+                        const centerX = btnRect.left + btnRect.width / 2;
+                        let offset = 0;
+                        const leftEdge = centerX - tooltipWidth / 2;
+                        const rightEdge = centerX + tooltipWidth / 2;
+                        if (leftEdge < margin) offset = margin - leftEdge;
+                        else if (rightEdge > window.innerWidth - margin) offset = window.innerWidth - margin - rightEdge;
+                        setTooltipOffset(offset);
+                        setCopyPreviewText(text);
+                      });
+                    }}
+                    onMouseLeave={() => {
+                      previewHoveredRef.current = false;
+                      setCopyPreviewText(null);
+                    }}
+                    className="p-0.5 rounded transition-colors hover:bg-app-input relative"
                     title="复制 MA 与 BOLL 数据"
                   >
                     {bollCopied ? <Check size={12} className="text-indigo-400" /> : <Copy size={12} className="text-app-subtext" />}
+                    {copyPreviewText && (
+                      <div className="absolute bottom-full left-1/2 mb-1.5 bg-app-card border border-app-border rounded px-2.5 py-1.5 text-[10px] font-mono text-app-text whitespace-pre shadow-lg z-[60] pointer-events-none leading-relaxed" style={{ transform: `translateX(calc(-50% + ${tooltipOffset}px))` }}>
+                        {copyPreviewText}
+                      </div>
+                    )}
                   </button>
                 </div>
                 <div className="flex items-center gap-1 mb-2">
