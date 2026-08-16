@@ -1512,7 +1512,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const sharesText = shares > 0
                       ? `${Number.isInteger(shares) ? shares : shares.toFixed(2)}股`
                       : '-';
-                    const costText = cost > 0 ? `¥${cost.toFixed(2)}` : '-';
+                    const costText = cost > 0 ? `¥${cost.toFixed(3)}` : '-';
                     const displayValue = positionDisplayMode === 'shares'
                       ? sharesText
                       : positionDisplayMode === 'cost'
@@ -2155,7 +2155,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     ] as Array<[string, number | null | undefined, string]>).map(([label, value, color]) => (
                       <div key={label} className="flex flex-col items-center p-1 rounded bg-app-input">
                         <span className="text-[10px] text-app-subtext">{label}</span>
-                        <span className={`font-mono text-xs font-bold ${color}`}>{value != null ? formatPrice(value) : '-'}</span>
+                        <span className={`font-mono text-xs font-bold ${color}`}>{value != null ? value.toFixed(3) : '-'}</span>
                       </div>
                     ))}
                   </div>
@@ -2163,15 +2163,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <div className="grid grid-cols-3 gap-1">
                     <div className="flex flex-col items-center p-1 rounded bg-app-input">
                       <span className="text-[10px] text-app-subtext">上轨</span>
-                      <span className="font-mono text-xs font-bold text-red-500">{bollData ? formatPrice(bollData.upper) : '-'}</span>
-                    </div>
-                    <div className="flex flex-col items-center p-1 rounded bg-app-input">
-                      <span className="text-[10px] text-app-subtext">中轨</span>
-                      <span className="font-mono text-xs font-bold text-blue-400">{bollData ? formatPrice(bollData.mid) : '-'}</span>
+                      <span className="font-mono text-xs font-bold text-red-500">{bollData ? bollData.upper.toFixed(3) : '-'}
+                    </span>
+                  </div>
+                  <div className="flex flex-col items-center p-1 rounded bg-app-input">
+                    <span className="text-[10px] text-app-subtext">中轨</span>
+                    <span className="font-mono text-xs font-bold text-blue-400">{bollData ? bollData.mid.toFixed(3) : '-'}</span>
                     </div>
                     <div className="flex flex-col items-center p-1 rounded bg-app-input">
                       <span className="text-[10px] text-app-subtext">下轨</span>
-                      <span className="font-mono text-xs font-bold text-brand-green">{bollData ? formatPrice(bollData.lower) : '-'}</span>
+                      <span className="font-mono text-xs font-bold text-brand-green">{bollData ? bollData.lower.toFixed(3) : '-'}</span>
                     </div>
                 </div>
                 <div className="border-t border-app-border pt-2 mt-2 mb-2">
