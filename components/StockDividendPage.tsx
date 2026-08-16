@@ -400,6 +400,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return stock.price > 0 ? (dividend / stock.price) * 100 : 0;
   };
   const rateCols = dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'];
+  // 中文字符按2列宽计算，用于等宽字体对齐
+  const visualPad = (s: string, len: number) => {
+    let w = 0;
+    for (const ch of s) w += ch.charCodeAt(0) > 127 ? 2 : 1;
+    return s + ' '.repeat(Math.max(0, len - w));
+  };
   const ranges = colorRanges || [
     { min: 3, max: 4, color: 'red' },
     { min: 4.5, max: 5.5, color: 'gray' },
@@ -453,6 +459,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [tooltipOffset, setTooltipOffset] = useState(0);
   const copyBtnRef = useRef<HTMLButtonElement | null>(null);
   const previewHoveredRef = useRef(false);
+
+  const [srPreviewText, setSrPreviewText] = useState<string | null>(null);
+  const [srTooltipOffset, setSrTooltipOffset] = useState(0);
+  const [srTooltipAbove, setSrTooltipAbove] = useState(true);
+  const srBtnRef = useRef<HTMLButtonElement | null>(null);
+  const srHoveredRef = useRef(false);
+  const [srCopied, setSrCopied] = useState(false);
 
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
   const [stockBollErrorMap, setStockBollErrorMap] = useState<Map<string, { daily?: string; weekly?: string; monthly?: string }>>(new Map());
@@ -1754,6 +1767,98 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           });
         };
 
+        const copySRData = () => {
+          const adjustLabel = bollAdjust === 'qfq' ? '前复权' : '除权';
+          const fmt = (v: number | null | undefined) => (v != null ? v.toFixed(3) : '-');
+          const popupLogCtx = requestLogService.beginBatch('复制支撑/压力位：1 只股票 · 3 条请求');
+          Promise.all([
+            fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx),
+            fetchBollData(stock.code, 'weekly', bollAdjust, apiSource, undefined, popupLogCtx),
+            fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, undefined, popupLogCtx),
+          ]).then(([dailyR, weeklyR, monthlyR]) => {
+            const periodLabels: { period: string; data: BollData | null }[] = [
+              { period: '日', data: dailyR.data },
+              { period: '周', data: weeklyR.data },
+              { period: '月', data: monthlyR.data },
+            ];
+            const trackKeys: { key: keyof BollData; label: string }[] = [
+              { key: 'upper', label: '上' },
+              { key: 'mid', label: '中' },
+              { key: 'lower', label: '下' },
+            ];
+            const maKeys: { key: 'ma5' | 'ma10' | 'ma20' | 'ma30' | 'ma60'; label: string }[] = [
+              { key: 'ma5', label: '5' },
+              { key: 'ma10', label: '10' },
+              { key: 'ma20', label: '20' },
+              { key: 'ma30', label: '30' },
+              { key: 'ma60', label: '60' },
+            ];
+            const all: { price: number; name: string }[] = [];
+            for (const { period, data } of periodLabels) {
+              if (!data) continue;
+              for (const t of trackKeys) {
+                const v = data[t.key] as number | null | undefined;
+                if (v != null) all.push({ price: v, name: `${period}${t.label}` });
+              }
+              if (data.ma) {
+                for (const m of maKeys) {
+                  const v = data.ma[m.key] as number | null | undefined;
+                  if (v != null) all.push({ price: v, name: `${period}${m.label}` });
+                }
+              }
+            }
+            const seen = new Set<number>();
+            const unique = all.filter(l => {
+              const key = Math.round(l.price * 1000);
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            }).sort((a, b) => b.price - a.price);
+            const resistances = unique.filter(l => l.price > (stock.price || 0)).slice(0, 5);
+            const supports = unique.filter(l => l.price < (stock.price || 0)).sort((a, b) => b.price - a.price).slice(0, 5);
+            const lines: string[] = [`${stock.name}（${adjustLabel}）`];
+            lines.push('───────────────────────────────');
+            for (const r of resistances) {
+              const diff = r.price - (stock.price || 0);
+              const pct = (diff / (stock.price || 1)) * 100;
+              const diffStr = (diff >= 0 ? '+' : '') + diff.toFixed(3);
+              lines.push(`${r.name}\t${r.price.toFixed(3)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
+            }
+            lines.push(`现价\t${fmt(stock.price)}\t------\t------`);
+            for (const s of supports) {
+              const diff = s.price - (stock.price || 0);
+              const pct = (diff / (stock.price || 1)) * 100;
+              const diffStr = (diff >= 0 ? '+' : '') + diff.toFixed(3);
+              lines.push(`${s.name}\t${s.price.toFixed(3)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
+            }
+            lines.push('───────────────────────────────');
+            const text = lines.join('\n');
+            const done = () => {
+              setSrCopied(true);
+              setTimeout(() => setSrCopied(false), 1500);
+            };
+            if (navigator.clipboard?.writeText) {
+              navigator.clipboard.writeText(text).then(done).catch(() => {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                done();
+              });
+            } else {
+              const ta = document.createElement('textarea');
+              ta.value = text;
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand('copy');
+              document.body.removeChild(ta);
+              done();
+            }
+          });
+        };
+
         const handleRatesPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
           if (!ratesPopupRef.current) return;
           e.preventDefault();
@@ -1894,12 +1999,125 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       setCopyPreviewText(null);
                     }}
                     className="p-0.5 rounded transition-colors hover:bg-app-input relative"
-                    title="复制 MA 与 BOLL 数据"
+                    title=""
                   >
                     {bollCopied ? <Check size={12} className="text-indigo-400" /> : <Copy size={12} className="text-app-subtext" />}
                     {copyPreviewText && (
                       <div className="absolute bottom-full left-1/2 mb-1.5 bg-app-card border border-app-border rounded px-2.5 py-1.5 text-[10px] font-mono text-app-text whitespace-pre shadow-lg z-[60] pointer-events-none leading-relaxed" style={{ transform: `translateX(calc(-50% + ${tooltipOffset}px))` }}>
                         {copyPreviewText}
+                      </div>
+                    )}
+                  </button>
+                  <span className="text-[10px] text-app-border">|</span>
+                  <button
+                    onClick={copySRData}
+                    onMouseEnter={(e) => {
+                      srHoveredRef.current = true;
+                      srBtnRef.current = e.currentTarget;
+                      const adjustLabel = bollAdjust === 'qfq' ? '前复权' : '除权';
+                      const popupLogCtx = requestLogService.beginBatch('支撑/压力位预览：1 只股票 · 3 条请求');
+                      Promise.all([
+                        fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx),
+                        fetchBollData(stock.code, 'weekly', bollAdjust, apiSource, undefined, popupLogCtx),
+                        fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, undefined, popupLogCtx),
+                      ]).then(([dailyR, weeklyR, monthlyR]) => {
+                        if (!srHoveredRef.current || !srBtnRef.current) return;
+                        const periodLabels: { period: string; data: BollData | null }[] = [
+                          { period: '日', data: dailyR.data },
+                          { period: '周', data: weeklyR.data },
+                          { period: '月', data: monthlyR.data },
+                        ];
+                        const trackKeys: { key: keyof BollData; label: string }[] = [
+                          { key: 'upper', label: '上' },
+                          { key: 'mid', label: '中' },
+                          { key: 'lower', label: '下' },
+                        ];
+                        const maKeys: { key: 'ma5' | 'ma10' | 'ma20' | 'ma30' | 'ma60'; label: string }[] = [
+                          { key: 'ma5', label: '5' },
+                          { key: 'ma10', label: '10' },
+                          { key: 'ma20', label: '20' },
+                          { key: 'ma30', label: '30' },
+                          { key: 'ma60', label: '60' },
+                        ];
+                        // 收集所有 (价格, 名称) 对
+                        const all: { price: number; name: string }[] = [];
+                        for (const { period, data } of periodLabels) {
+                          if (!data) continue;
+                          for (const t of trackKeys) {
+                            const v = data[t.key] as number | null | undefined;
+                            if (v != null) all.push({ price: v, name: `${period}${t.label}` });
+                          }
+                          if (data.ma) {
+                            for (const m of maKeys) {
+                              const v = data.ma[m.key] as number | null | undefined;
+                              if (v != null) all.push({ price: v, name: `${period}${m.label}` });
+                            }
+                          }
+                        }
+                        // 按价格去重
+                        const seen = new Set<number>();
+                        const unique = all.filter(l => {
+                          const key = Math.round(l.price * 1000);
+                          if (seen.has(key)) return false;
+                          seen.add(key);
+                          return true;
+                        }).sort((a, b) => b.price - a.price);
+                        // 5 个压力（>=当前价，从高到低）+ 当前价 + 5 个支撑（<当前价，从高到低）
+                        const resistances = unique.filter(l => l.price > (stock.price || 0)).slice(0, 5);
+                        const supports = unique.filter(l => l.price < (stock.price || 0)).sort((a, b) => b.price - a.price).slice(0, 5);
+                        const fmt = (v: number | null | undefined) => (v != null ? v.toFixed(3) : '-');
+                        const lines: string[] = [`${stock.name}（${adjustLabel}）`];
+                        lines.push('───────────────────────────────');
+                        for (const r of resistances) {
+                          const diff = r.price - (stock.price || 0);
+                          const pct = (diff / (stock.price || 1)) * 100;
+                          const diffStr = (diff >= 0 ? '+' : '') + diff.toFixed(3);
+                          lines.push(`${r.name}\t${r.price.toFixed(3)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
+                        }
+                        lines.push(`现价\t${fmt(stock.price)}\t------\t------`);
+                        for (const s of supports) {
+                          const diff = s.price - (stock.price || 0);
+                          const pct = (diff / (stock.price || 1)) * 100;
+                          const diffStr = (diff >= 0 ? '+' : '') + diff.toFixed(3);
+                          lines.push(`${s.name}\t${s.price.toFixed(3)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
+                        }
+                        lines.push('───────────────────────────────');
+                        const text = lines.join('\n');
+                        const btnRect = srBtnRef.current.getBoundingClientRect();
+                        const measureEl = document.createElement('div');
+                        measureEl.style.cssText = 'position:fixed;visibility:hidden;white-space:pre;font-family:monospace;font-size:10px;padding:6px 10px;border:1px solid;line-height:1.5';
+                        measureEl.textContent = text;
+                        document.body.appendChild(measureEl);
+                        const tooltipWidth = measureEl.offsetWidth;
+                        const tooltipHeight = measureEl.offsetHeight;
+                        document.body.removeChild(measureEl);
+                        const margin = 10;
+                        // 水平：左对齐于按钮
+                        let xOffset = 0;
+                        const proposedLeft = btnRect.left;
+                        const proposedRight = proposedLeft + tooltipWidth;
+                        if (proposedLeft < margin) xOffset = margin - proposedLeft;
+                        else if (proposedRight > window.innerWidth - margin) xOffset = window.innerWidth - margin - proposedRight;
+                        setSrTooltipOffset(xOffset);
+                        // 垂直：默认显示在按钮下方
+                        const belowRoom = window.innerHeight - btnRect.bottom - margin;
+                        const aboveRoom = btnRect.top - margin;
+                        const showAbove = tooltipHeight > belowRoom && tooltipHeight <= aboveRoom;
+                        setSrTooltipAbove(showAbove);
+                        setSrPreviewText(text);
+                      });
+                    }}
+                    onMouseLeave={() => {
+                      srHoveredRef.current = false;
+                      setSrPreviewText(null);
+                    }}
+                    className="p-0.5 rounded transition-colors hover:bg-app-input relative"
+                    title=""
+                  >
+                    {srCopied ? <Check size={12} className="text-indigo-400" /> : <BarChart3 size={12} className="text-app-subtext" />}
+                    {srPreviewText && (
+                      <div className={`absolute left-0 bg-app-card border border-app-border rounded px-2.5 py-1.5 text-[10px] font-mono text-app-text whitespace-pre shadow-lg z-[60] pointer-events-none leading-relaxed text-left ${srTooltipAbove ? 'bottom-full mb-1.5' : 'top-full mt-1.5'}`} style={{ transform: `translateX(${srTooltipOffset}px)`, tabSize: 8 }}>
+                        {srPreviewText}
                       </div>
                     )}
                   </button>
