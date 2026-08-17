@@ -130,7 +130,7 @@ export interface BollData {
   mid: number;
   lower: number;
   close: number;
-  ma?: { ma5: number | null; ma10: number | null; ma20: number | null; ma30: number | null; ma60: number | null };
+  ma?: { ma5: number | null; ma10: number | null; ma20: number | null; ma30: number | null; ma60: number | null; ma120: number | null; ma250: number | null; ma500: number | null };
   date: string;
   fetchedAt: number;
   rangeCount: number;
@@ -334,6 +334,9 @@ function computeMAs(closes: number[]) {
     ma20: computeMa(closes, 20),
     ma30: computeMa(closes, 30),
     ma60: computeMa(closes, 60),
+    ma120: computeMa(closes, 120),
+    ma250: computeMa(closes, 250),
+    ma500: computeMa(closes, 500),
   };
 }
 
@@ -486,7 +489,7 @@ async function fetchBollFromTencent(
 
   const periodParam = periodMap[period];
   const adjustParam = adjustMap[adjust];
-  const count = 80;
+  const count = 500;
 
   const urlPath = `/appstock/app/fqkline/get?param=${code},${periodParam},,,${count},${adjustParam}`;
   const realUrl = `https://web.ifzq.gtimg.cn${urlPath}`;
@@ -634,7 +637,7 @@ async function fetchBollFromSina(
   const scale = getScaleParam(period);
   const fullCode = `${market}${code}`;
 
-  const urlPath = `/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${fullCode}&scale=${scale}&ma=no&datalen=80`;
+  const urlPath = `/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${fullCode}&scale=${scale}&ma=no&datalen=500`;
   const realUrl = `https://money.finance.sina.com.cn${urlPath}`;
   const devUrl = `/api/sina${urlPath}`;
   const logUrl = logSinaUrl(urlPath);

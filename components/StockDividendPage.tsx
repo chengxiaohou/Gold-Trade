@@ -455,12 +455,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [bollUnsupported, setBollUnsupported] = useState<boolean>(false);
   const [bollPeriod, setBollPeriod] = useState<BollPeriod>('daily');
   const [bollAdjust, setBollAdjust] = useState<BollAdjust>('qfq');
-  const [bollCopied, setBollCopied] = useState(false);
-
-  const [copyPreviewText, setCopyPreviewText] = useState<string | null>(null);
-  const [tooltipOffset, setTooltipOffset] = useState(0);
-  const copyBtnRef = useRef<HTMLButtonElement | null>(null);
-  const previewHoveredRef = useRef(false);
 
   const [srPreviewText, setSrPreviewText] = useState<string | null>(null);
   const [srTooltipOffset, setSrTooltipOffset] = useState(0);
@@ -468,6 +462,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const srBtnRef = useRef<HTMLButtonElement | null>(null);
   const srHoveredRef = useRef(false);
   const [srCopied, setSrCopied] = useState(false);
+  const [srTooltipPinned, setSrTooltipPinned] = useState(false);
+  const srTooltipRef = useRef<HTMLDivElement | null>(null);
+  const maBollLabelRef = useRef<HTMLSpanElement | null>(null);
+  const srTooltipMeasuredSize = useRef({ w: 0, h: 0 });
+  const srTooltipMaBollOffset = useRef(0);
+  const [copyPreviewText, setCopyPreviewText] = useState<string | null>(null);
+  const copyHoveredRef = useRef(false);
+  const [srTooltipHidden, setSrTooltipHidden] = useState(false);
 
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
   const [stockBollErrorMap, setStockBollErrorMap] = useState<Map<string, { daily?: string; weekly?: string; monthly?: string }>>(new Map());
@@ -669,6 +671,43 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const timer = setInterval(() => setNowTick(t => t + 1), 30000);
     return () => clearInterval(timer);
   }, []);
+
+  // 支撑/压力位弹窗固定模式：点击弹窗外部关闭
+  useEffect(() => {
+    if (!srTooltipPinned) return;
+    const handler = (e: MouseEvent) => {
+      if (srTooltipRef.current && !srTooltipRef.current.contains(e.target as Node) &&
+          srBtnRef.current && !srBtnRef.current.contains(e.target as Node)) {
+        setSrTooltipPinned(false);
+        setSrPreviewText(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [srTooltipPinned]);
+
+  // 支撑/压力位弹窗跟随主弹窗移动
+  useEffect(() => {
+    if (!srPreviewText) return;
+    const { w, h } = srTooltipMeasuredSize.current;
+    if (!w || !h) return;
+    const gap = 24;
+    const popupLeft = ratesPopupPos.left;
+    const popupTop = ratesPopupPos.top;
+    let calcLeft = popupLeft - w - gap;
+    let calcTop = popupTop + srTooltipMaBollOffset.current;
+    if (calcLeft < 10) {
+      calcLeft = popupLeft + 340 + gap;
+    }
+    if (calcTop + h > window.innerHeight - 10) {
+      calcTop = window.innerHeight - h - 10;
+    }
+    if (calcTop < 10) {
+      calcTop = 10;
+    }
+    setSrTooltipOffset(calcLeft);
+    setSrTooltipAbove(calcTop);
+  }, [ratesPopupPos, srPreviewText]);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -1729,7 +1768,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
           const buildLine = (label: string, data: BollData | null | undefined) => {
             const ma = data?.ma;
-            return `${label}：MA5=${fmt(ma?.ma5)} MA10=${fmt(ma?.ma10)} MA20=${fmt(ma?.ma20)} MA30=${fmt(ma?.ma30)} MA60=${fmt(ma?.ma60)} BOLL 上=${fmt(data?.upper)} 中=${fmt(data?.mid)} 下=${fmt(data?.lower)}`;
+            return `${label}：MA5=${fmt(ma?.ma5)} MA10=${fmt(ma?.ma10)} MA20=${fmt(ma?.ma20)} MA30=${fmt(ma?.ma30)} MA60=${fmt(ma?.ma60)} MA120=${fmt(ma?.ma120)} MA250=${fmt(ma?.ma250)} MA500=${fmt(ma?.ma500)} BOLL 上=${fmt(data?.upper)} 中=${fmt(data?.mid)} 下=${fmt(data?.lower)}`;
           };
           const popupLogCtx = requestLogService.beginBatch('复制 MA 与 BOLL 数据：1 只股票 · 3 条请求');
           Promise.all([
@@ -1744,8 +1783,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               buildLine('月线', monthlyR.data),
             ].join('\n');
             const done = () => {
-              setBollCopied(true);
-              setTimeout(() => setBollCopied(false), 1500);
+              setSrCopied(true);
+              setTimeout(() => setSrCopied(false), 1500);
             };
             if (navigator.clipboard?.writeText) {
               navigator.clipboard.writeText(text).then(done).catch(() => {
@@ -1787,12 +1826,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               { key: 'mid', label: '中' },
               { key: 'lower', label: '下' },
             ];
-            const maKeys: { key: 'ma5' | 'ma10' | 'ma20' | 'ma30' | 'ma60'; label: string }[] = [
+            const maKeys: { key: 'ma5' | 'ma10' | 'ma20' | 'ma30' | 'ma60' | 'ma120' | 'ma250' | 'ma500'; label: string }[] = [
               { key: 'ma5', label: '5' },
               { key: 'ma10', label: '10' },
               { key: 'ma20', label: '20' },
               { key: 'ma30', label: '30' },
               { key: 'ma60', label: '60' },
+              { key: 'ma120', label: '120' },
+              { key: 'ma250', label: '250' },
+              { key: 'ma500', label: '500' },
             ];
             const all: { price: number; name: string }[] = [];
             for (const { period, data } of periodLabels) {
@@ -1864,6 +1906,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           e.currentTarget.setPointerCapture(e.pointerId);
           ratesPopupRef.current.style.transition = 'none';
           document.body.style.cursor = 'grabbing';
+          setSrTooltipHidden(true);
         };
 
         const handleRatesPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -1884,6 +1927,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           const rect = ratesPopupRef.current.getBoundingClientRect();
           setRatesPopupPos({ left: rect.left, top: rect.top });
           ratesPopupRef.current.style.transition = '';
+          setSrTooltipHidden(false);
         };
         
         return createPortal(
@@ -1946,69 +1990,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               </div>
               <div className="border-t border-app-border pt-2">
                 <div className="flex items-center gap-1 mb-2">
-                  <span className="text-[10px] text-app-subtext">MA & BOLL (20, 2)</span>
+                  <span ref={maBollLabelRef} className="text-[10px] text-app-subtext">MA & BOLL (20, 2)</span>
                   <button
-                    onClick={copyBollData}
-                    onMouseEnter={(e) => {
-                      previewHoveredRef.current = true;
-                      copyBtnRef.current = e.currentTarget;
-                      const adjustLabel = bollAdjust === 'qfq' ? '前复权' : '除权';
-                      const popupLogCtx = requestLogService.beginBatch('复制预览：1 只股票 · 3 条请求');
-                      Promise.all([
-                        fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx),
-                        fetchBollData(stock.code, 'weekly', bollAdjust, apiSource, undefined, popupLogCtx),
-                        fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, undefined, popupLogCtx),
-                      ]).then(([dailyR, weeklyR, monthlyR]) => {
-                        if (!previewHoveredRef.current || !copyBtnRef.current) return;
-                        const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
-                        const buildLine = (label: string, data: BollData | null | undefined) => {
-                          const ma = data?.ma;
-                          return `${label}  MA5=${fmt(ma?.ma5)} MA10=${fmt(ma?.ma10)} MA20=${fmt(ma?.ma20)} MA30=${fmt(ma?.ma30)} MA60=${fmt(ma?.ma60)}  BOLL 上=${fmt(data?.upper)} 中=${fmt(data?.mid)} 下=${fmt(data?.lower)}`;
-                        };
-                        const lines = [`${stock.name}（${adjustLabel}）`];
-                        lines.push(buildLine('日线', dailyR.data));
-                        lines.push(buildLine('周线', weeklyR.data));
-                        lines.push(buildLine('月线', monthlyR.data));
-                        const text = lines.join('\n');
-                        // 一次性计算位置，避免先显示再调整
-                        const btnRect = copyBtnRef.current.getBoundingClientRect();
-                        const measureEl = document.createElement('div');
-                        measureEl.style.cssText = 'position:fixed;visibility:hidden;white-space:pre;font-family:monospace;font-size:10px;padding:6px 10px;border:1px solid;line-height:1.5';
-                        measureEl.textContent = text;
-                        document.body.appendChild(measureEl);
-                        const tooltipWidth = measureEl.offsetWidth;
-                        document.body.removeChild(measureEl);
-                        const margin = 10;
-                        const centerX = btnRect.left + btnRect.width / 2;
-                        let offset = 0;
-                        const leftEdge = centerX - tooltipWidth / 2;
-                        const rightEdge = centerX + tooltipWidth / 2;
-                        if (leftEdge < margin) offset = margin - leftEdge;
-                        else if (rightEdge > window.innerWidth - margin) offset = window.innerWidth - margin - rightEdge;
-                        setTooltipOffset(offset);
-                        setCopyPreviewText(text);
-                      });
-                    }}
-                    onMouseLeave={() => {
-                      previewHoveredRef.current = false;
-                      setCopyPreviewText(null);
-                    }}
-                    className="p-0.5 rounded transition-colors hover:bg-app-input relative"
-                    title=""
-                  >
-                    {bollCopied ? <Check size={12} className="text-indigo-400" /> : <Copy size={12} className="text-app-subtext" />}
-                    {copyPreviewText && (
-                      <div className="absolute bottom-full left-1/2 mb-1.5 bg-app-card border border-app-border rounded px-2.5 py-1.5 text-[10px] font-mono text-app-text whitespace-pre shadow-lg z-[60] pointer-events-none leading-relaxed" style={{ transform: `translateX(calc(-50% + ${tooltipOffset}px))` }}>
-                        {copyPreviewText}
-                      </div>
-                    )}
-                  </button>
-                  <span className="text-[10px] text-app-border">|</span>
-                  <button
-                    onClick={copySRData}
-                    onMouseEnter={(e) => {
+                    ref={srBtnRef}
+                    onClick={(e) => {
                       srHoveredRef.current = true;
                       srBtnRef.current = e.currentTarget;
+                      setSrTooltipPinned(true);
                       const adjustLabel = bollAdjust === 'qfq' ? '前复权' : '除权';
                       const popupLogCtx = requestLogService.beginBatch('支撑/压力位预览：1 只股票 · 3 条请求');
                       Promise.all([
@@ -2016,7 +2004,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         fetchBollData(stock.code, 'weekly', bollAdjust, apiSource, undefined, popupLogCtx),
                         fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, undefined, popupLogCtx),
                       ]).then(([dailyR, weeklyR, monthlyR]) => {
-                        if (!srHoveredRef.current || !srBtnRef.current) return;
+                        if (!srBtnRef.current) return;
                         const periodLabels: { period: string; data: BollData | null }[] = [
                           { period: '日', data: dailyR.data },
                           { period: '周', data: weeklyR.data },
@@ -2027,14 +2015,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           { key: 'mid', label: '中' },
                           { key: 'lower', label: '下' },
                         ];
-                        const maKeys: { key: 'ma5' | 'ma10' | 'ma20' | 'ma30' | 'ma60'; label: string }[] = [
+                        const maKeys: { key: 'ma5' | 'ma10' | 'ma20' | 'ma30' | 'ma60' | 'ma120' | 'ma250' | 'ma500'; label: string }[] = [
                           { key: 'ma5', label: '5' },
                           { key: 'ma10', label: '10' },
                           { key: 'ma20', label: '20' },
                           { key: 'ma30', label: '30' },
                           { key: 'ma60', label: '60' },
+                          { key: 'ma120', label: '120' },
+                          { key: 'ma250', label: '250' },
+                          { key: 'ma500', label: '500' },
                         ];
-                        // 收集所有 (价格, 名称) 对
                         const all: { price: number; name: string }[] = [];
                         for (const { period, data } of periodLabels) {
                           if (!data) continue;
@@ -2049,9 +2039,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             }
                           }
                         }
-                        // 保留所有指标（相同价格不合并）
                         const sorted = all.sort((a, b) => b.price - a.price);
-                        // 5 个压力（>=当前价，从高到低）+ 当前价 + 5 个支撑（<当前价，从高到低）
                         const resistances = sorted.filter(l => l.price > (stock.price || 0)).slice(0, 5);
                         const supports = sorted.filter(l => l.price < (stock.price || 0)).sort((a, b) => b.price - a.price).slice(0, 5);
                         const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
@@ -2072,44 +2060,208 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         }
                         lines.push('───────────────────────────────');
                         const text = lines.join('\n');
-                        const btnRect = srBtnRef.current.getBoundingClientRect();
+                        // 测量宽度
                         const measureEl = document.createElement('div');
                         measureEl.style.cssText = 'position:fixed;visibility:hidden;white-space:pre;font-family:monospace;font-size:10px;padding:6px 10px;border:1px solid;line-height:1.5';
                         measureEl.textContent = text;
                         document.body.appendChild(measureEl);
-                        const tooltipWidth = measureEl.offsetWidth;
-                        const tooltipHeight = measureEl.offsetHeight;
+                        const tw = measureEl.offsetWidth;
+                        const th = measureEl.offsetHeight;
                         document.body.removeChild(measureEl);
-                        const margin = 10;
-                        // 水平：左对齐于按钮
-                        let xOffset = 0;
-                        const proposedLeft = btnRect.left;
-                        const proposedRight = proposedLeft + tooltipWidth;
-                        if (proposedLeft < margin) xOffset = margin - proposedLeft;
-                        else if (proposedRight > window.innerWidth - margin) xOffset = window.innerWidth - margin - proposedRight;
-                        setSrTooltipOffset(xOffset);
-                        // 垂直：优先显示在按钮上方，放得下就放上方，放不下再放下方
-                        const belowRoom = window.innerHeight - btnRect.bottom - margin;
-                        const aboveRoom = btnRect.top - margin;
-                        const showAbove = tooltipHeight <= aboveRoom;
-                        setSrTooltipAbove(showAbove);
+                        srTooltipMeasuredSize.current = { w: tw, h: th };
+                        // 测量 MA&BOLL 标签相对于弹窗顶部的偏移
+                        if (maBollLabelRef.current && ratesPopupRef.current) {
+                          const labelRect = maBollLabelRef.current.getBoundingClientRect();
+                          const popupRect = ratesPopupRef.current.getBoundingClientRect();
+                          srTooltipMaBollOffset.current = labelRect.top - popupRect.top;
+                        }
+                        const gap = 24;
+                        const popupLeft = ratesPopupPos.left;
+                        const popupTop = ratesPopupPos.top;
+                        let calcLeft = popupLeft - tw - gap;
+                        let calcTop = popupTop + srTooltipMaBollOffset.current;
+                        // 超出左边界时回退到弹窗右侧
+                        if (calcLeft < 10) {
+                          calcLeft = popupLeft + 340 + gap;
+                        }
+                        // 超出顶部/底部时调整
+                        if (calcTop + th > window.innerHeight - 10) {
+                          calcTop = window.innerHeight - th - 10;
+                        }
+                        if (calcTop < 10) {
+                          calcTop = 10;
+                        }
+                        setSrTooltipOffset(calcLeft);
+                        setSrTooltipAbove(calcTop);
+                        setSrPreviewText(text);
+                      });
+                    }}
+                    onMouseEnter={(e) => {
+                      if (srTooltipPinned) return;
+                      srHoveredRef.current = true;
+                      srBtnRef.current = e.currentTarget;
+                      const adjustLabel = bollAdjust === 'qfq' ? '前复权' : '除权';
+                      const popupLogCtx = requestLogService.beginBatch('支撑/压力位预览：1 只股票 · 3 条请求');
+                      Promise.all([
+                        fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx),
+                        fetchBollData(stock.code, 'weekly', bollAdjust, apiSource, undefined, popupLogCtx),
+                        fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, undefined, popupLogCtx),
+                      ]).then(([dailyR, weeklyR, monthlyR]) => {
+                        if (!srHoveredRef.current || !srBtnRef.current || srTooltipPinned) return;
+                        const periodLabels: { period: string; data: BollData | null }[] = [
+                          { period: '日', data: dailyR.data },
+                          { period: '周', data: weeklyR.data },
+                          { period: '月', data: monthlyR.data },
+                        ];
+                        const trackKeys: { key: keyof BollData; label: string }[] = [
+                          { key: 'upper', label: '上' },
+                          { key: 'mid', label: '中' },
+                          { key: 'lower', label: '下' },
+                        ];
+                        const maKeys: { key: 'ma5' | 'ma10' | 'ma20' | 'ma30' | 'ma60' | 'ma120' | 'ma250' | 'ma500'; label: string }[] = [
+                          { key: 'ma5', label: '5' },
+                          { key: 'ma10', label: '10' },
+                          { key: 'ma20', label: '20' },
+                          { key: 'ma30', label: '30' },
+                          { key: 'ma60', label: '60' },
+                          { key: 'ma120', label: '120' },
+                          { key: 'ma250', label: '250' },
+                          { key: 'ma500', label: '500' },
+                        ];
+                        const all: { price: number; name: string }[] = [];
+                        for (const { period, data } of periodLabels) {
+                          if (!data) continue;
+                          for (const t of trackKeys) {
+                            const v = data[t.key] as number | null | undefined;
+                            if (v != null) all.push({ price: v, name: `${period}${t.label}` });
+                          }
+                          if (data.ma) {
+                            for (const m of maKeys) {
+                              const v = data.ma[m.key] as number | null | undefined;
+                              if (v != null) all.push({ price: v, name: `${period}${m.label}` });
+                            }
+                          }
+                        }
+                        const sorted = all.sort((a, b) => b.price - a.price);
+                        const resistances = sorted.filter(l => l.price > (stock.price || 0)).slice(0, 5);
+                        const supports = sorted.filter(l => l.price < (stock.price || 0)).sort((a, b) => b.price - a.price).slice(0, 5);
+                        const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
+                        const lines: string[] = [`${stock.name}（${adjustLabel}）`];
+                        lines.push('───────────────────────────────');
+                        for (const r of resistances) {
+                          const diff = r.price - (stock.price || 0);
+                          const pct = (diff / (stock.price || 1)) * 100;
+                          const diffStr = (diff >= 0 ? '+' : '') + formatPrice(diff, stock.name);
+                          lines.push(`${r.name}\t${formatPrice(r.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
+                        }
+                        lines.push(`现价\t${fmt(stock.price)}\t------\t------`);
+                        for (const s of supports) {
+                          const diff = s.price - (stock.price || 0);
+                          const pct = (diff / (stock.price || 1)) * 100;
+                          const diffStr = (diff >= 0 ? '+' : '') + formatPrice(diff, stock.name);
+                          lines.push(`${s.name}\t${formatPrice(s.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
+                        }
+                        lines.push('───────────────────────────────');
+                        const text = lines.join('\n');
+                        const measureEl = document.createElement('div');
+                        measureEl.style.cssText = 'position:fixed;visibility:hidden;white-space:pre;font-family:monospace;font-size:10px;padding:6px 10px;border:1px solid;line-height:1.5';
+                        measureEl.textContent = text;
+                        document.body.appendChild(measureEl);
+                        const tw = measureEl.offsetWidth;
+                        const th = measureEl.offsetHeight;
+                        document.body.removeChild(measureEl);
+                        srTooltipMeasuredSize.current = { w: tw, h: th };
+                        // 测量 MA&BOLL 标签相对于弹窗顶部的偏移
+                        if (maBollLabelRef.current && ratesPopupRef.current) {
+                          const labelRect = maBollLabelRef.current.getBoundingClientRect();
+                          const popupRect = ratesPopupRef.current.getBoundingClientRect();
+                          srTooltipMaBollOffset.current = labelRect.top - popupRect.top;
+                        }
+                        const gap = 24;
+                        const popupLeft = ratesPopupPos.left;
+                        const popupTop = ratesPopupPos.top;
+                        let calcLeft = popupLeft - tw - gap;
+                        let calcTop = popupTop + srTooltipMaBollOffset.current;
+                        if (calcLeft < 10) {
+                          calcLeft = popupLeft + 340 + gap;
+                        }
+                        if (calcTop + th > window.innerHeight - 10) {
+                          calcTop = window.innerHeight - th - 10;
+                        }
+                        if (calcTop < 10) {
+                          calcTop = 10;
+                        }
+                        setSrTooltipOffset(calcLeft);
+                        setSrTooltipAbove(calcTop);
                         setSrPreviewText(text);
                       });
                     }}
                     onMouseLeave={() => {
                       srHoveredRef.current = false;
-                      setSrPreviewText(null);
+                      if (!srTooltipPinned) {
+                        setSrPreviewText(null);
+                      }
                     }}
                     className="p-0.5 rounded transition-colors hover:bg-app-input relative"
                     title=""
                   >
                     {srCopied ? <Check size={12} className="text-indigo-400" /> : <BarChart3 size={12} className="text-app-subtext" />}
-                    {srPreviewText && (
-                      <div className={`absolute left-0 bg-app-card border border-app-border rounded px-2.5 py-1.5 text-[10px] font-mono text-app-text whitespace-pre shadow-lg z-[60] pointer-events-none leading-relaxed text-left ${srTooltipAbove ? 'bottom-full mb-1.5' : 'top-full mt-1.5'}`} style={{ transform: `translateX(${srTooltipOffset}px)`, tabSize: 8 }}>
-                        {srPreviewText}
-                      </div>
-                    )}
                   </button>
+                  {srPreviewText && (
+                    <div
+                      ref={srTooltipRef}
+                      className={`fixed z-[60] bg-app-card border border-app-border rounded px-2.5 py-1.5 text-[11px] font-mono text-app-text whitespace-pre shadow-lg leading-relaxed text-left${srTooltipHidden ? ' invisible' : ''}`}
+                      style={{ top: srTooltipAbove, left: srTooltipOffset, tabSize: 8 }}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span />
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            copyBollData();
+                          }}
+                          onMouseEnter={(e) => {
+                            copyHoveredRef.current = true;
+                            const adjustLabel = bollAdjust === 'qfq' ? '前复权' : '除权';
+                            const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
+                            const buildLine = (label: string, data: BollData | null | undefined) => {
+                              const ma = data?.ma;
+                              return `${label}：MA5=${fmt(ma?.ma5)} MA10=${fmt(ma?.ma10)} MA20=${fmt(ma?.ma20)} MA30=${fmt(ma?.ma30)} MA60=${fmt(ma?.ma60)} MA120=${fmt(ma?.ma120)} MA250=${fmt(ma?.ma250)} MA500=${fmt(ma?.ma500)} BOLL 上=${fmt(data?.upper)} 中=${fmt(data?.mid)} 下=${fmt(data?.lower)}`;
+                            };
+                            const popupLogCtx = requestLogService.beginBatch('复制预览：1 只股票 · 3 条请求');
+                            Promise.all([
+                              fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx),
+                              fetchBollData(stock.code, 'weekly', bollAdjust, apiSource, undefined, popupLogCtx),
+                              fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, undefined, popupLogCtx),
+                            ]).then(([dailyR, weeklyR, monthlyR]) => {
+                              if (!copyHoveredRef.current) return;
+                              const text = [
+                                `${stock.name}（${adjustLabel}）`,
+                                buildLine('日线', dailyR.data),
+                                buildLine('周线', weeklyR.data),
+                                buildLine('月线', monthlyR.data),
+                              ].join('\n');
+                              setCopyPreviewText(text);
+                            });
+                          }}
+                          onMouseLeave={() => {
+                            copyHoveredRef.current = false;
+                            setCopyPreviewText(null);
+                          }}
+                          className="p-0.5 rounded transition-colors hover:bg-app-input shrink-0 mt-0 mr-0 relative"
+                          title=""
+                        >
+                          {srCopied ? <Check size={12} className="text-indigo-400" /> : <Copy size={12} className="text-app-subtext" />}
+                          {copyPreviewText && (
+                            <div className="absolute right-0 top-full mt-0.5 bg-app-card border border-app-border rounded px-2 py-1 text-[11px] font-mono text-app-text whitespace-pre shadow-lg z-[70] leading-relaxed">
+                              {copyPreviewText}
+                            </div>
+                          )}
+                        </button>
+                      </div>
+                      <div className="-mt-3">{srPreviewText}</div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-1 mb-2">
                   {(['daily', 'weekly', 'monthly'] as BollPeriod[]).map(p => (
@@ -2134,13 +2286,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 </div>
                 {/* 关键均线（与 BOLL 合并标题，无分隔线） */}
                 <div className="mb-2">
-                  <div className="grid grid-cols-5 gap-1">
+                  <div className="grid grid-cols-4 gap-1 mb-1">
                     {([
                       ['MA5', bollData?.ma?.ma5, 'text-gray-300'],
                       ['MA10', bollData?.ma?.ma10, 'text-pink-500'],
                       ['MA20', bollData?.ma?.ma20, 'text-brand-softYellow'],
                       ['MA30', bollData?.ma?.ma30, 'text-blue-400'],
+                    ] as Array<[string, number | null | undefined, string]>).map(([label, value, color]) => (
+                      <div key={label} className="flex flex-col items-center p-1 rounded bg-app-input">
+                        <span className="text-[10px] text-app-subtext">{label}</span>
+                        <span className={`font-mono text-xs font-bold ${color}`}>{value != null ? formatPrice(value, stock.name) : '-'}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {([
                       ['MA60', bollData?.ma?.ma60, 'text-[#6e3b3b]'],
+                      ['MA120', bollData?.ma?.ma120, 'text-teal-400'],
+                      ['MA250', bollData?.ma?.ma250, 'text-orange-400'],
+                      ['MA500', bollData?.ma?.ma500, 'text-purple-400'],
                     ] as Array<[string, number | null | undefined, string]>).map(([label, value, color]) => (
                       <div key={label} className="flex flex-col items-center p-1 rounded bg-app-input">
                         <span className="text-[10px] text-app-subtext">{label}</span>
