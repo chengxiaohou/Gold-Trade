@@ -99,6 +99,7 @@ export interface StockEntry {
   dividendRates: StockDividendRates;
   tag?: string; // User defined tag for filtering or categorization
   selectedDividendYear?: number; // Which dividend year this stock uses for rate calc, default = right year
+  bollHidden?: boolean; // Whether BOLL data is hidden for this stock
 }
 
 export interface DividendRateColorRange {

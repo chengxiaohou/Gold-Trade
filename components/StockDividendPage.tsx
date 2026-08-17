@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, Download, BarChart3, List, ChevronDown, Copy } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, EyeOff, Download, BarChart3, List, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
 import { fetchBollData, checkAllBollCache, countStaleBollCache, BollData, BollPeriod, BollAdjust } from '../services/bollService';
@@ -580,6 +580,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       }
       
       const stock = stocks[i];
+      
+      // 跳过已隐藏布林线的股票
+      if (stock.bollHidden) continue;
       
       // 先检查这只股票是否已缓存
       const cachedStockData = cachedData.get(stock.id);
@@ -1470,9 +1473,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const bollInfo = stockBollMap.get(stock.id);
                     const price = stock.price || 0;
                     const periods: { key: BollPeriod; data: BollData | null }[] = [
-                      { key: 'daily', data: bollInfo?.daily ?? null },
-                      { key: 'weekly', data: bollInfo?.weekly ?? null },
-                      { key: 'monthly', data: bollInfo?.monthly ?? null },
+                      { key: 'daily', data: !stock.bollHidden ? (bollInfo?.daily ?? null) : null },
+                      { key: 'weekly', data: !stock.bollHidden ? (bollInfo?.weekly ?? null) : null },
+                      { key: 'monthly', data: !stock.bollHidden ? (bollInfo?.monthly ?? null) : null },
                     ];
                     return periods.map(({ key, data }, idx) => {
                       const pos = getBollPosition(data, price);
@@ -1501,11 +1504,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             });
                             setBollData(null);
                             setBollError(null);
-                            const popupLogCtx = requestLogService.beginBatch('打开 BOLL 弹窗：1 只股票 · 1 条请求');
-                            fetchBollData(stock.code, key, bollAdjust, apiSource, undefined, popupLogCtx).then(result => {
-                              setBollData(result.data);
-                              setBollError(result.error || null);
-                            });
+                            if (!stock.bollHidden) {
+                              const popupLogCtx = requestLogService.beginBatch('打开 BOLL 弹窗：1 只股票 · 1 条请求');
+                              fetchBollData(stock.code, key, bollAdjust, apiSource, undefined, popupLogCtx).then(result => {
+                                setBollData(result.data);
+                                setBollError(result.error || null);
+                              });
+                            }
                           }}
                         >
                           {pos ? (
@@ -1596,29 +1601,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          const popupW = 340;
-                          const popupH = 500;
-                          const centerY = rect.top + rect.height / 2;
-                          let top = centerY - popupH / 2;
-                          top = Math.max(12, Math.min(top, window.innerHeight - popupH - 12));
-                          setShowRatesId(stock.id);
-                          setRatesPopupPos({
-                            top,
-                            left: Math.min(Math.max(12, rect.right + 8), window.innerWidth - popupW - 12)
-                          });
-                          setBollData(null);
-                          setBollError(null);
-                          const popupLogCtx = requestLogService.beginBatch('打开股息率弹窗：1 只股票 · 1 条请求');
-                          fetchBollData(stock.code, bollPeriod, bollAdjust, apiSource, undefined, popupLogCtx).then(result => {
-                            setBollData(result.data);
-                            setBollError(result.error || null);
-                          });
+                          onStocksChange(stocks.map(s =>
+                            s.id === stock.id ? { ...s, bollHidden: !s.bollHidden } : s
+                          ));
                         }}
-                        className={`p-0.5 rounded transition-colors ${showRatesId === stock.id ? 'bg-indigo-500/20 text-indigo-400' : 'text-app-subtext hover:bg-app-input'}`}
-                        title="股息率对应股价"
+                        className={`p-0.5 rounded transition-colors ${stock.bollHidden ? 'text-gray-500' : 'text-app-subtext hover:bg-app-input'}`}
+                        title={stock.bollHidden ? '显示布林线' : '隐藏布林线'}
                       >
-                        <Eye size={12} />
+                        {stock.bollHidden ? <EyeOff size={12} /> : <Eye size={12} />}
                       </button>
                       {editingId === stock.id ? (
                         <button
@@ -1756,6 +1746,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           setBollData(null);
           setBollError(null);
           setBollUnsupported(false);
+          if (stock.bollHidden) return;
           const popupLogCtx = requestLogService.beginBatch('切换布林线周期/复权：1 只股票 · 1 条请求');
           fetchBollData(stock.code, period, adjust, apiSource, undefined, popupLogCtx).then(result => {
             setBollData(result.data);
@@ -1765,6 +1756,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         };
 
         const copyBollData = () => {
+          if (stock.bollHidden) return;
           const adjustLabel = bollAdjust === 'qfq' ? '前复权' : '除权';
           const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
           const fmtPad = (v: number | null | undefined) => {
@@ -1815,6 +1807,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         };
 
         const copySRData = () => {
+          if (stock.bollHidden) return;
           const adjustLabel = bollAdjust === 'qfq' ? '前复权' : '除权';
           const popupLogCtx = requestLogService.beginBatch('复制支撑/压力位：1 只股票 · 3 条请求');
           Promise.all([
