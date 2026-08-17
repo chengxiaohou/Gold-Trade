@@ -283,8 +283,10 @@ const formatDividendCell = (current: number, fetched: number | null, hasData: bo
   );
 };
 
-const formatPrice = (price: number): string => {
-  return price.toFixed(2);
+// 根据名称判断：ETF 显示 3 位小数，普通股票显示 2 位小数
+const formatPrice = (price: number, name?: string): string => {
+  const isETF = name?.includes('ETF') || name?.includes('etf');
+  return isETF ? price.toFixed(3) : price.toFixed(2);
 };
 
 const formatFetchTime = (timestamp: number): string => {
@@ -1406,7 +1408,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   {cols.includes('price') && <td className="px-1 py-1.5 text-center border-r border-app-border">
                     <div className="flex items-center justify-center gap-0.5">
                       <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                        {formatPrice(stock.price)}
+                        {formatPrice(stock.price, stock.name)}
                       </span>
                       {refreshFailed.has(stock.id) && (
                         <button
@@ -1497,7 +1499,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
                           />
                         ) : (
-                          <span className={`font-mono text-xs font-normal ${isSelected ? 'text-brand-red' : 'text-app-rowtext'}`}>{formatPrice(value)}</span>
+                          <span className={`font-mono text-xs font-normal ${isSelected ? 'text-brand-red' : 'text-app-rowtext'}`}>{formatPrice(value, stock.name)}</span>
                         )}
                       </td>
                     );
@@ -1512,7 +1514,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const sharesText = shares > 0
                       ? `${Number.isInteger(shares) ? shares : shares.toFixed(2)}股`
                       : '-';
-                    const costText = cost > 0 ? `¥${cost.toFixed(3)}` : '-';
+                    const costText = cost > 0 ? `¥${cost.toFixed(2)}` : '-';
                     const displayValue = positionDisplayMode === 'shares'
                       ? sharesText
                       : positionDisplayMode === 'cost'
@@ -1724,7 +1726,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
         const copyBollData = () => {
           const adjustLabel = bollAdjust === 'qfq' ? '前复权' : '除权';
-          const fmt = (v: number | null | undefined) => (v != null ? v.toFixed(3) : '-');
+          const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
           const buildLine = (label: string, data: BollData | null | undefined) => {
             const ma = data?.ma;
             return `${label}：MA5=${fmt(ma?.ma5)} MA10=${fmt(ma?.ma10)} MA20=${fmt(ma?.ma20)} MA30=${fmt(ma?.ma30)} MA60=${fmt(ma?.ma60)} BOLL 上=${fmt(data?.upper)} 中=${fmt(data?.mid)} 下=${fmt(data?.lower)}`;
@@ -1769,7 +1771,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
         const copySRData = () => {
           const adjustLabel = bollAdjust === 'qfq' ? '前复权' : '除权';
-          const fmt = (v: number | null | undefined) => (v != null ? v.toFixed(3) : '-');
           const popupLogCtx = requestLogService.beginBatch('复制支撑/压力位：1 只股票 · 3 条请求');
           Promise.all([
             fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx),
@@ -1807,29 +1808,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 }
               }
             }
-            const seen = new Set<number>();
-            const unique = all.filter(l => {
-              const key = Math.round(l.price * 1000);
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            }).sort((a, b) => b.price - a.price);
-            const resistances = unique.filter(l => l.price > (stock.price || 0)).slice(0, 5);
-            const supports = unique.filter(l => l.price < (stock.price || 0)).sort((a, b) => b.price - a.price).slice(0, 5);
+            const sorted = all.sort((a, b) => b.price - a.price);
+            const resistances = sorted.filter(l => l.price > (stock.price || 0)).slice(0, 5);
+            const supports = sorted.filter(l => l.price < (stock.price || 0)).sort((a, b) => b.price - a.price).slice(0, 5);
             const lines: string[] = [`${stock.name}（${adjustLabel}）`];
             lines.push('───────────────────────────────');
             for (const r of resistances) {
               const diff = r.price - (stock.price || 0);
               const pct = (diff / (stock.price || 1)) * 100;
-              const diffStr = (diff >= 0 ? '+' : '') + diff.toFixed(3);
-              lines.push(`${r.name}\t${r.price.toFixed(3)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
+              const diffStr = (diff >= 0 ? '+' : '') + formatPrice(diff, stock.name);
+              lines.push(`${r.name}\t${formatPrice(r.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
             }
-            lines.push(`现价\t${fmt(stock.price)}\t------\t------`);
+            lines.push(`现价\t${formatPrice(stock.price, stock.name)}\t------\t------`);
             for (const s of supports) {
               const diff = s.price - (stock.price || 0);
               const pct = (diff / (stock.price || 1)) * 100;
-              const diffStr = (diff >= 0 ? '+' : '') + diff.toFixed(3);
-              lines.push(`${s.name}\t${s.price.toFixed(3)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
+              const diffStr = (diff >= 0 ? '+' : '') + formatPrice(diff, stock.name);
+              lines.push(`${s.name}\t${formatPrice(s.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
             }
             lines.push('───────────────────────────────');
             const text = lines.join('\n');
@@ -1912,7 +1907,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   <span className="text-sm font-bold text-app-text">{stock.name}</span>
                   {stock.price > 0 && (
                     <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-red-500' : 'text-brand-green'}`}>
-                      {formatPrice(stock.price)}
+                      {formatPrice(stock.price, stock.name)}
                     </span>
                   )}
                 </div>
@@ -1925,7 +1920,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 </button>
               </div>
               <div className="text-[10px] text-app-subtext mb-2">
-                股息率对应股价（基于{getSelectedYear(stock)}年分红 ¥{formatPrice(getDividendForYear(stock, getSelectedYear(stock)))}）
+                股息率对应股价（基于{getSelectedYear(stock)}年分红 ¥{formatPrice(getDividendForYear(stock, getSelectedYear(stock)), stock.name)}）
               </div>
               <div className="grid grid-cols-3 gap-1 mb-3">
                 {(() => {
@@ -1942,7 +1937,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       <div key={rate} className={`flex flex-col items-center p-1 rounded ${isCurrentRate ? 'bg-indigo-500/10 ring-1 ring-indigo-500/30' : 'bg-app-input'}`}>
                         <span className={`text-[10px] ${isCurrentRate ? rateColorClass : 'text-app-subtext'}`}>{rate}</span>
                         <span className={`font-mono text-xs font-bold ${isCurrentRate ? rateColorClass : 'text-app-text'}`}>
-                          {formatPrice(price)}
+                          {formatPrice(price, stock.name)}
                         </span>
                       </div>
                     );
@@ -1965,7 +1960,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, undefined, popupLogCtx),
                       ]).then(([dailyR, weeklyR, monthlyR]) => {
                         if (!previewHoveredRef.current || !copyBtnRef.current) return;
-                        const fmt = (v: number | null | undefined) => (v != null ? v.toFixed(3) : '-');
+                        const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
                         const buildLine = (label: string, data: BollData | null | undefined) => {
                           const ma = data?.ma;
                           return `${label}  MA5=${fmt(ma?.ma5)} MA10=${fmt(ma?.ma10)} MA20=${fmt(ma?.ma20)} MA30=${fmt(ma?.ma30)} MA60=${fmt(ma?.ma60)}  BOLL 上=${fmt(data?.upper)} 中=${fmt(data?.mid)} 下=${fmt(data?.lower)}`;
@@ -2054,32 +2049,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             }
                           }
                         }
-                        // 按价格去重
-                        const seen = new Set<number>();
-                        const unique = all.filter(l => {
-                          const key = Math.round(l.price * 1000);
-                          if (seen.has(key)) return false;
-                          seen.add(key);
-                          return true;
-                        }).sort((a, b) => b.price - a.price);
+                        // 保留所有指标（相同价格不合并）
+                        const sorted = all.sort((a, b) => b.price - a.price);
                         // 5 个压力（>=当前价，从高到低）+ 当前价 + 5 个支撑（<当前价，从高到低）
-                        const resistances = unique.filter(l => l.price > (stock.price || 0)).slice(0, 5);
-                        const supports = unique.filter(l => l.price < (stock.price || 0)).sort((a, b) => b.price - a.price).slice(0, 5);
-                        const fmt = (v: number | null | undefined) => (v != null ? v.toFixed(3) : '-');
+                        const resistances = sorted.filter(l => l.price > (stock.price || 0)).slice(0, 5);
+                        const supports = sorted.filter(l => l.price < (stock.price || 0)).sort((a, b) => b.price - a.price).slice(0, 5);
+                        const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
                         const lines: string[] = [`${stock.name}（${adjustLabel}）`];
                         lines.push('───────────────────────────────');
                         for (const r of resistances) {
                           const diff = r.price - (stock.price || 0);
                           const pct = (diff / (stock.price || 1)) * 100;
-                          const diffStr = (diff >= 0 ? '+' : '') + diff.toFixed(3);
-                          lines.push(`${r.name}\t${r.price.toFixed(3)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
+                          const diffStr = (diff >= 0 ? '+' : '') + formatPrice(diff, stock.name);
+                          lines.push(`${r.name}\t${formatPrice(r.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
                         }
                         lines.push(`现价\t${fmt(stock.price)}\t------\t------`);
                         for (const s of supports) {
                           const diff = s.price - (stock.price || 0);
                           const pct = (diff / (stock.price || 1)) * 100;
-                          const diffStr = (diff >= 0 ? '+' : '') + diff.toFixed(3);
-                          lines.push(`${s.name}\t${s.price.toFixed(3)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
+                          const diffStr = (diff >= 0 ? '+' : '') + formatPrice(diff, stock.name);
+                          lines.push(`${s.name}\t${formatPrice(s.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
                         }
                         lines.push('───────────────────────────────');
                         const text = lines.join('\n');
@@ -2099,10 +2088,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         if (proposedLeft < margin) xOffset = margin - proposedLeft;
                         else if (proposedRight > window.innerWidth - margin) xOffset = window.innerWidth - margin - proposedRight;
                         setSrTooltipOffset(xOffset);
-                        // 垂直：默认显示在按钮下方
+                        // 垂直：优先显示在按钮上方，放得下就放上方，放不下再放下方
                         const belowRoom = window.innerHeight - btnRect.bottom - margin;
                         const aboveRoom = btnRect.top - margin;
-                        const showAbove = tooltipHeight > belowRoom && tooltipHeight <= aboveRoom;
+                        const showAbove = tooltipHeight <= aboveRoom;
                         setSrTooltipAbove(showAbove);
                         setSrPreviewText(text);
                       });
@@ -2155,7 +2144,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     ] as Array<[string, number | null | undefined, string]>).map(([label, value, color]) => (
                       <div key={label} className="flex flex-col items-center p-1 rounded bg-app-input">
                         <span className="text-[10px] text-app-subtext">{label}</span>
-                        <span className={`font-mono text-xs font-bold ${color}`}>{value != null ? value.toFixed(3) : '-'}</span>
+                        <span className={`font-mono text-xs font-bold ${color}`}>{value != null ? formatPrice(value, stock.name) : '-'}</span>
                       </div>
                     ))}
                   </div>
@@ -2163,16 +2152,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <div className="grid grid-cols-3 gap-1">
                     <div className="flex flex-col items-center p-1 rounded bg-app-input">
                       <span className="text-[10px] text-app-subtext">上轨</span>
-                      <span className="font-mono text-xs font-bold text-red-500">{bollData ? bollData.upper.toFixed(3) : '-'}
-                    </span>
-                  </div>
-                  <div className="flex flex-col items-center p-1 rounded bg-app-input">
-                    <span className="text-[10px] text-app-subtext">中轨</span>
-                    <span className="font-mono text-xs font-bold text-blue-400">{bollData ? bollData.mid.toFixed(3) : '-'}</span>
+                      <span className="font-mono text-xs font-bold text-red-500">{bollData ? formatPrice(bollData.upper, stock.name) : '-'}</span>
+                    </div>
+                    <div className="flex flex-col items-center p-1 rounded bg-app-input">
+                      <span className="text-[10px] text-app-subtext">中轨</span>
+                      <span className="font-mono text-xs font-bold text-blue-400">{bollData ? formatPrice(bollData.mid, stock.name) : '-'}</span>
                     </div>
                     <div className="flex flex-col items-center p-1 rounded bg-app-input">
                       <span className="text-[10px] text-app-subtext">下轨</span>
-                      <span className="font-mono text-xs font-bold text-brand-green">{bollData ? bollData.lower.toFixed(3) : '-'}</span>
+                      <span className="font-mono text-xs font-bold text-brand-green">{bollData ? formatPrice(bollData.lower, stock.name) : '-'}</span>
                     </div>
                 </div>
                 <div className="border-t border-app-border pt-2 mt-2 mb-2">
@@ -2224,7 +2212,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
                             <span className="text-[10px] text-app-subtext shrink-0">最高价</span>
                             <span className="font-mono text-[10px] font-bold text-red-500 shrink-0">
-                              {bollData ? formatPrice(highPrice) : '-'}
+                              {bollData ? formatPrice(highPrice, stock.name) : '-'}
                             </span>
                             <span className="text-[10px] shrink-0">
                               <span className="text-app-subtext">股息率</span>
@@ -2238,7 +2226,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
                             <span className="text-[10px] text-app-subtext shrink-0">最低价</span>
                             <span className="font-mono text-[10px] font-bold text-brand-green shrink-0">
-                              {bollData ? formatPrice(lowPrice) : '-'}
+                              {bollData ? formatPrice(lowPrice, stock.name) : '-'}
                             </span>
                             <span className="text-[10px] shrink-0">
                               <span className="text-app-subtext">股息率</span>
@@ -2332,7 +2320,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </div>
                 </div>
                 <div className="flex justify-between items-center text-[10px] text-app-subtext mt-1 px-1">
-                      <span>价格 {formatPrice(stock.price || 0)} - {formatFetchTime(stock.priceUpdatedAt || 0)}</span>
+                      <span>价格 {formatPrice(stock.price || 0, stock.name)} - {formatFetchTime(stock.priceUpdatedAt || 0)}</span>
                       <span className="font-mono whitespace-nowrap">
                         {bollUnsupported ? (
                           <span className="text-brand-yellow">
@@ -2662,7 +2650,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       >
                         <ChevronDown size={12} className={`shrink-0 text-app-subtext transition-transform ${expanded ? '' : '-rotate-90'}`} />
                         <span className="text-app-subtext shrink-0 font-mono text-[10px]">{new Date(triggerAt).toLocaleString('zh-CN', { hour12: false })}</span>
-                        <span className="text-indigo-400/80 truncate flex-1" title={group.reason}>{group.reason}</span>
+                        <span className={`text-indigo-400/80 ${expanded ? '' : 'truncate'} flex-1`} title={group.reason}>{group.reason}</span>
                         <span className="text-app-subtext shrink-0 whitespace-nowrap">
                           {group.logs.length} 条
                           {success > 0 && <span className="text-green-400"> · 成功 {success}</span>}
