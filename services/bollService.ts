@@ -598,9 +598,9 @@ async function fetchBollFromTencent(
       date,
       fetchedAt,
       rangeCount,
-      rangePriceHigh: Math.round(rangePriceHigh * 1000) / 1000,
+      rangePriceHigh: Math.round(rangePriceHigh * 100) / 100,
       rangePriceHighDate,
-      rangePriceLow: Math.round(rangePriceLow * 1000) / 1000,
+      rangePriceLow: Math.round(rangePriceLow * 100) / 100,
       rangePriceLowDate,
     };
 
@@ -729,9 +729,9 @@ async function fetchBollFromSina(
       date,
       fetchedAt,
       rangeCount,
-      rangePriceHigh: Math.round(rangePriceHigh * 1000) / 1000,
+      rangePriceHigh: Math.round(rangePriceHigh * 100) / 100,
       rangePriceHighDate,
-      rangePriceLow: Math.round(rangePriceLow * 1000) / 1000,
+      rangePriceLow: Math.round(rangePriceLow * 100) / 100,
       rangePriceLowDate,
     };
 

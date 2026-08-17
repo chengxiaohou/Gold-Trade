@@ -21,7 +21,7 @@ function calcDividendRates(dividend2025: number): Record<string, number> {
   const result: Record<string, number> = {};
   rates.forEach(rate => {
     const rateValue = parseFloat(rate) / 100;
-    result[rate] = Math.round((dividend2025 / rateValue) * 1000) / 1000;
+    result[rate] = Math.round((dividend2025 / rateValue) * 100) / 100;
   });
   return result;
 }
