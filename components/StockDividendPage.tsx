@@ -1420,6 +1420,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                 return { ...s, name: newName, nickname: newNickname };
                               }));
                             }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
+                            enterKeyHint="done"
                             placeholder="名称-代号"
                             className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight text-app-text outline-none text-center"
                             title="股票名称-代号，如：中国平安-星星人"
@@ -1428,6 +1430,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             type="text"
                             value={getDisplayCode(stock.code)}
                             onChange={(e) => handleUpdateField(stock.id, 'code', e.target.value.toUpperCase())}
+                            onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
+                            enterKeyHint="done"
                             className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[9px] leading-tight font-mono text-app-text outline-none text-center"
                           />}
                         </div>
@@ -1529,6 +1533,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const year = yearCol === 'dividendLeft' ? dividendYearLeft : dividendYearRight;
                     const value = getDividendForYear(stock, year);
                     const isSelected = getSelectedYear(stock) === year;
+                    const otherYear = yearCol === 'dividendLeft' ? dividendYearRight : dividendYearLeft;
+                    const otherValue = getDividendForYear(stock, otherYear);
+                    const selectedColor = value > otherValue ? 'text-brand-red' : value < otherValue ? 'text-brand-green' : 'text-blue-400';
                     return (
                       <td key={yearCol} className={`px-1 py-1.5 text-center cursor-pointer ${idx < dividendYearCols.length - 1 ? 'border-r border-app-border' : ''}`} onClick={() => {
                         if (editingId !== stock.id) {
@@ -1540,11 +1547,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             type="number"
                             value={value}
                             onChange={(e) => handleUpdateField(stock.id, yearCol as keyof StockEntry, parseFloat(e.target.value) || 0)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
+                            enterKeyHint="done"
                             step="0.01"
                             className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
                           />
                         ) : (
-                          <span className={`font-mono text-xs font-normal ${isSelected ? 'text-brand-red' : 'text-app-rowtext'}`}>{formatPrice(value, stock.name)}</span>
+                          <span className={`font-mono text-xs font-normal ${isSelected ? selectedColor : 'text-app-rowtext'}`}>{formatPrice(value, stock.name)}</span>
                         )}
                       </td>
                     );
@@ -1559,7 +1568,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const sharesText = shares > 0
                       ? `${Number.isInteger(shares) ? shares : shares.toFixed(2)}股`
                       : '-';
-                    const costText = cost > 0 ? `¥${cost.toFixed(2)}` : '-';
+                    const costText = cost > 0 ? cost.toFixed(2) : '-';
+                    const costColor = cost > 0 ? (cost > (stock.price || 0) ? 'text-brand-green' : 'text-brand-red') : 'text-app-subtext';
                     const displayValue = positionDisplayMode === 'shares'
                       ? sharesText
                       : positionDisplayMode === 'cost'
@@ -1571,27 +1581,30 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           <div className="flex flex-col gap-0.5">
                             <input
                               type="number"
-                              value={shares || ''}
-                              onChange={(e) => handleUpdateField(stock.id, 'positionShares', parseFloat(e.target.value) || 0)}
-                              step="1"
-                              min="0"
-                              placeholder="股数"
-                              className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
-                              title="持仓股数"
-                            />
-                            <input
-                              type="number"
                               value={cost || ''}
                               onChange={(e) => handleUpdateField(stock.id, 'positionCost', parseFloat(e.target.value) || 0)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
                               step="0.01"
                               min="0"
                               placeholder="成本价"
                               className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
                               title="每股成本（买入均价）"
                             />
+                            <input
+                              type="number"
+                              value={shares || ''}
+                              onChange={(e) => handleUpdateField(stock.id, 'positionShares', parseFloat(e.target.value) || 0)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
+                              enterKeyHint="done"
+                              step="1"
+                              min="0"
+                              placeholder="股数"
+                              className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
+                              title="持仓股数"
+                            />
                           </div>
                         ) : (
-                          <span className="font-mono text-[11px] text-app-subtext whitespace-nowrap">{displayValue}</span>
+                          <span className={`font-mono text-[11px] whitespace-nowrap ${positionDisplayMode === 'cost' ? costColor : 'text-app-subtext'}`}>{displayValue}</span>
                         )}
                       </td>
                     );
