@@ -2053,7 +2053,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     return (
                       <div key={rate} className={`flex flex-col items-center p-1 rounded ${isCurrentRate ? 'bg-indigo-500/10 ring-1 ring-indigo-500/30' : 'bg-app-input'}`}>
                         <span className={`text-[10px] ${isCurrentRate ? rateColorClass : 'text-app-subtext'}`}>{rate}</span>
-                        <span className={`font-mono text-xs font-bold ${isCurrentRate ? rateColorClass : 'text-app-text'}`}>
+                        <span className={`font-mono text-xs font-bold ${isCurrentRate ? rateColorClass : 'text-app-subtext'}`}>
                           {formatPrice(price, stock.name)}
                         </span>
                       </div>
@@ -2432,10 +2432,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         return (
                           <div key={band} className="flex flex-col items-center p-1 rounded bg-app-input">
                             <span className={`text-[11px] font-bold ${labelColor}`}>
-                              {displayArrow}{showUnderline ? `-${label}-` : label}{displayArrowAfter}
+                              {displayArrow}{showUnderline ? `- ${label} -` : label}{displayArrowAfter}
                             </span>
                             <span className={`font-mono text-xs font-bold ${valueColor}`}>
                               {value != null ? formatPrice(value, stock.name) : '-'}
+                              {isClosest && pos ? <span className={`font-mono text-[9px] ${valueColor} ml-1`}>({pos.percent >= 0 ? '+' : ''}{pos.percent.toFixed(2)}%)</span> : null}
                             </span>
                           </div>
                         );
@@ -2527,7 +2528,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
                               <XAxis
                                 dataKey="date"
-                                tick={{ fontSize: 9, fill: 'currentColor' }}
+                                tick={{ fontSize: 9, fill: '#94a3b8' }}
                                 stroke="rgba(148,163,184,0.3)"
                                 tickLine={false}
                                 axisLine={false}
@@ -2542,7 +2543,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                 }}
                               />
                               <YAxis
-                                tick={{ fontSize: yAxisFontSize, fill: 'currentColor' }}
+                                tick={{ fontSize: yAxisFontSize, fill: '#94a3b8' }}
                                 stroke="rgba(148,163,184,0.3)"
                                 tickLine={false}
                                 axisLine={false}
@@ -2608,11 +2609,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                 setDividendRateChartOffset(newOffset);
                               });
                             }}
-                            className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer 
+                            className="flex-1 h-1 bg-app-input rounded-lg appearance-none cursor-pointer 
                               [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 
-                              [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-indigo-500
+                              [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500
                               [&::-moz-range-thumb]:w-2.5 [&::-moz-range-thumb]:h-2.5 [&::-moz-range-thumb]:rounded-full 
-                              [&::-moz-range-thumb]:bg-indigo-500 [&::-moz-range-thumb]:border-0"
+                              [&::-moz-range-thumb]:bg-gray-500 [&::-moz-range-thumb]:border-0"
                           />
                           <div className="flex items-center gap-0.5 shrink-0">
                             <button
@@ -2740,14 +2741,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
                               <XAxis
                                 dataKey="year"
-                                tick={{ fontSize: 9, fill: 'currentColor' }}
+                                tick={{ fontSize: 9, fill: '#94a3b8' }}
                                 stroke="rgba(148,163,184,0.3)"
                                 tickLine={false}
                                 axisLine={false}
                                 minTickGap={18}
                               />
                               <YAxis
-                                tick={{ fontSize: annualYAxisFontSize, fill: 'currentColor' }}
+                                tick={{ fontSize: annualYAxisFontSize, fill: '#94a3b8' }}
                                 stroke="rgba(148,163,184,0.3)"
                                 tickLine={false}
                                 axisLine={false}
