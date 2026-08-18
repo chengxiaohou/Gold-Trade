@@ -767,6 +767,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                      onClick={(e) => {
                                        e.stopPropagation();
                                        if (dividendRateColorRanges.length > 1) {
+                                         if (!window.confirm(`确定删除「${range.min}-${range.max}%」颜色区间？`)) return;
                                          setDividendRateColorRanges(dividendRateColorRanges.filter((_, i) => i !== index));
                                          if (editingRangeIndex === index) {
                                            setEditingRangeIndex(null);
