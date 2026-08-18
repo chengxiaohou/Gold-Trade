@@ -473,6 +473,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [dividendRateChartOffset, setDividendRateChartOffset] = useState(0);
   
   const dividendRateChartDragRef = useRef({ startX: 0, startOffset: 0 });
+  const sliderRAFRef = useRef<number | null>(null);
   const copyHoveredRef = useRef(false);
   const [copyPreviewPos, setCopyPreviewPos] = useState({ left: 0, top: 0 });
   const [srTooltipHidden, setSrTooltipHidden] = useState(false);
@@ -1095,6 +1096,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setIsFetchingSingleDividend(null);
   }, [isFetchingSingleDividend, dividendYearLeft, dividendYearRight]);
 
+  // 导出内置分红数据（临时功能，用于填充 createDefaultStocks）
+  const handleExportDefaultData = useCallback(() => {
+    const lines = stocks.map(s => {
+      const years = Object.entries(s.dividendByYear || {})
+        .sort(([a], [b]) => Number(b) - Number(a))
+        .map(([y, v]) => `${y}: ${Number(v).toFixed(4)}`)
+        .join(', ');
+      return `  { code: '${s.code}', name: '${s.name}', dividendByYear: { ${years} } }`;
+    });
+    const code = `const stockData = [\n${lines.join(',\n')}\n];`;
+    navigator.clipboard.writeText(code).then(() => {
+      showNotice('内置分红数据已复制到剪贴板，请粘贴给开发者');
+    });
+  }, [stocks]);
+
   const toggleDividendRow = (id: string) => {
     setSelectedDividendIds(prev => {
       const next = new Set(prev);
@@ -1280,6 +1296,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           >
             <style>{`
               .custom-scrollbar::-webkit-scrollbar {
+                display: none;
+              }
+              html, body {
+                scrollbar-width: none;
+                -ms-overflow-style: none;
+              }
+              html::-webkit-scrollbar, body::-webkit-scrollbar {
                 display: none;
               }
             `}</style>
@@ -1522,7 +1545,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             e.stopPropagation();
                             const rect = e.currentTarget.getBoundingClientRect();
                             const popupW = 340;
-                            const popupH = 500;
+                            const popupH = window.innerHeight * 0.9;
                             const centerY = window.innerHeight / 2;
                             let top = centerY - popupH / 2;
                             top = Math.max(12, Math.min(top, window.innerHeight - popupH - 12));
@@ -1985,8 +2008,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             />
             <div 
               ref={ratesPopupRef}
-              className="fixed z-50 bg-app-card border border-app-border rounded-lg shadow-xl w-[340px] flex flex-col max-h-[80vh]"
-              style={{ top: ratesPopupPos.top, left: ratesPopupPos.left }}
+              className="fixed z-50 bg-app-card border border-app-border rounded-lg shadow-xl w-[340px] flex flex-col"
+              style={{ top: ratesPopupPos.top, left: ratesPopupPos.left, maxHeight: window.innerHeight * 0.9 }}
             >
               <div className="p-3 pb-0 shrink-0">
               <div
@@ -2388,18 +2411,36 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-1">
-                    <div className="flex flex-col items-center p-1 rounded bg-app-input">
-                      <span className="text-[10px] text-app-subtext">MID</span>
-                      <span className="font-mono text-xs font-bold text-blue-400">{bollData ? formatPrice(bollData.mid, stock.name) : '-'}</span>
-                    </div>
-                    <div className="flex flex-col items-center p-1 rounded bg-app-input">
-                      <span className="text-[10px] text-app-subtext">UP</span>
-                      <span className="font-mono text-xs font-bold text-red-500">{bollData ? formatPrice(bollData.upper, stock.name) : '-'}</span>
-                    </div>
-                    <div className="flex flex-col items-center p-1 rounded bg-app-input">
-                      <span className="text-[10px] text-app-subtext">LOW</span>
-                      <span className="font-mono text-xs font-bold text-brand-green">{bollData ? formatPrice(bollData.lower, stock.name) : '-'}</span>
-                    </div>
+                    {(() => {
+                      const bandLabels: { band: string; label: string; value: number | undefined; labelColor: string; valueColor: string }[] = [
+                        { band: 'mid', label: getBollBandLabel(bollPeriod, 'mid'), value: bollData?.mid, labelColor: 'text-blue-500', valueColor: 'text-blue-500' },
+                        { band: 'upper', label: getBollBandLabel(bollPeriod, 'upper'), value: bollData?.upper, labelColor: 'text-brand-red', valueColor: 'text-red-500' },
+                        { band: 'lower', label: getBollBandLabel(bollPeriod, 'lower'), value: bollData?.lower, labelColor: 'text-brand-green', valueColor: 'text-brand-green' },
+                      ];
+                      const pos = bollData && stock.price ? getBollPosition(bollData, stock.price) : null;
+                      const absPct = pos ? Math.abs(pos.percent) : 0;
+                      const arrowCount = absPct <= 0.5 ? 0 : absPct <= 3 ? 1 : absPct <= 6 ? 2 : 3;
+                      const arrow = pos && arrowCount > 0 ? (pos.percent >= 0 ? '↑' : '↓').repeat(arrowCount) : '';
+                      const isCounter = pos && ((pos.band === 'upper' && pos.percent < 0) || (pos.band === 'lower' && pos.percent >= 0));
+                      return bandLabels.map(({ band, label, value, labelColor, valueColor }) => {
+                        const isClosest = pos && pos.band === band;
+                        const showArrow = isClosest && arrowCount > 0 && arrow;
+                        // 价格非常接近该轨道（≤0.5%）→ 不加箭头，加下划线
+                        const showUnderline = isClosest && arrowCount === 0;
+                        const displayArrow = showArrow ? (isCounter ? arrow : '') : '';
+                        const displayArrowAfter = showArrow ? (!isCounter ? arrow : '') : '';
+                        return (
+                          <div key={band} className="flex flex-col items-center p-1 rounded bg-app-input">
+                            <span className={`text-[11px] font-bold ${labelColor}`}>
+                              {displayArrow}{showUnderline ? `-${label}-` : label}{displayArrowAfter}
+                            </span>
+                            <span className={`font-mono text-xs font-bold ${valueColor}`}>
+                              {value != null ? formatPrice(value, stock.name) : '-'}
+                            </span>
+                          </div>
+                        );
+                      });
+                    })()}
                 </div>
                 {(() => {
                     const currentKlines = bollData?.klines;
@@ -2412,11 +2453,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const maxOffset = Math.max(0, maxRange - range);
                     const offset = Math.min(dividendRateChartOffset, maxOffset);
                     const chartData = currentKlines.slice(-range - offset, currentKlines.length - offset).map(k => {
-                      const rate = k.close > 0 ? (dividend / k.close) * 100 : 0;
+                      const byYear = stock.dividendByYear || {};
+                      const y = parseInt(k.date.slice(0, 4), 10);
+                      const pointDividend = (!isNaN(y) && byYear[y] && byYear[y] > 0) ? byYear[y]
+                        : (!isNaN(y) && byYear[y - 1] && byYear[y - 1] > 0) ? byYear[y - 1]
+                        : dividend;
+                      const rate = k.close > 0 ? (pointDividend / k.close) * 100 : 0;
                       return {
                         date: k.date,
                         price: k.close,
-                        dividend,
+                        dividend: pointDividend,
                         rate: parseFloat(rate.toFixed(2)),
                       };
                     });
@@ -2430,6 +2476,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const yTicks = rates.length > 0
                       ? Array.from({ length: 5 }, (_, i) => yMin + (yMax - yMin) * i / 4)
                       : [0, 0.25, 0.5, 0.75, 1];
+                    const maxTickLen = yTicks.reduce((max, v) => Math.max(max, v.toFixed(1).length + 1), 0);
+                    const yAxisFontSize = maxTickLen > 5 ? 7 : 8;
+                    // X 轴标尺：始终包含首尾日期，中间均匀分布
+                    const xTicks = chartData.length > 0
+                      ? Array.from({ length: 6 }, (_, i) => chartData[Math.round(i * (chartData.length - 1) / 5)]?.date).filter(Boolean)
+                      : [];
                     return (
                       <div className="border-t border-app-border pt-2">
                         <div className="flex items-center mb-1">
@@ -2445,7 +2497,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             const chartWidth = e.currentTarget.offsetWidth;
                             const dataPointsPerPx = range / chartWidth;
                             const newOffset = Math.max(0, Math.min(maxOffset, dividendRateChartDragRef.current.startOffset + Math.round(dx * dataPointsPerPx)));
-                            setDividendRateChartOffset(newOffset);
+                            if (sliderRAFRef.current) cancelAnimationFrame(sliderRAFRef.current);
+                            sliderRAFRef.current = requestAnimationFrame(() => {
+                              sliderRAFRef.current = null;
+                              setDividendRateChartOffset(newOffset);
+                            });
                           }}
                           onTouchEnd={() => {}}
                           onMouseDown={(e) => {
@@ -2458,12 +2514,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             const chartWidth = e.currentTarget.offsetWidth;
                             const dataPointsPerPx = range / chartWidth;
                             const newOffset = Math.max(0, Math.min(maxOffset, dividendRateChartDragRef.current.startOffset + Math.round(dx * dataPointsPerPx)));
-                            setDividendRateChartOffset(newOffset);
+                            if (sliderRAFRef.current) cancelAnimationFrame(sliderRAFRef.current);
+                            sliderRAFRef.current = requestAnimationFrame(() => {
+                              sliderRAFRef.current = null;
+                              setDividendRateChartOffset(newOffset);
+                            });
                           }}
                           onMouseUp={() => {}}
                         >
                           <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={chartData} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
+                            <LineChart data={chartData} margin={{ top: 5, right: 5, left: 2, bottom: 0 }}>
                               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
                               <XAxis
                                 dataKey="date"
@@ -2471,25 +2531,27 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                 stroke="rgba(148,163,184,0.3)"
                                 tickLine={false}
                                 axisLine={false}
-                                minTickGap={18}
-                                tickFormatter={(v: string, i: number) => {
-  if (i === 0) return v;
-  const last = chartData[chartData.length - 1]?.date;
-  const first = chartData[0]?.date;
-  if (v === last && last?.slice(0, 4) !== first?.slice(0, 4)) return v;
-  return v.length >= 10 ? v.slice(5, 10) : v;
-}}
+                                ticks={xTicks}
+                                tickMargin={6}
+                                tickFormatter={(v: string) => {
+                                  const xFirst = xTicks[0];
+                                  const xLast = xTicks[xTicks.length - 1];
+                                  if (v === xFirst) return v;
+                                  if (v === xLast && xLast?.slice(0, 4) !== xFirst?.slice(0, 4)) return v;
+                                  return v.length >= 10 ? v.slice(5, 10) : v;
+                                }}
                               />
                               <YAxis
-                                tick={{ fontSize: 8, fill: 'currentColor' }}
+                                tick={{ fontSize: yAxisFontSize, fill: 'currentColor' }}
                                 stroke="rgba(148,163,184,0.3)"
                                 tickLine={false}
                                 axisLine={false}
                                 domain={[yTicks[0], yTicks[4]]}
                                 ticks={yTicks}
-                                width={42}
+                                width={30}
                                 tickFormatter={(v: number) => `${v.toFixed(1)}%`}
                               />
+                              <YAxis yAxisId="price" orientation="right" hide={true} />
                               <Tooltip
                                 contentStyle={{
                                   backgroundColor: 'rgba(15,23,42,0.95)',
@@ -2515,10 +2577,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                               <Line
                                 type="monotone"
                                 dataKey="rate"
-                                stroke="#22c55e"
+                                stroke="#3b82f6"
                                 strokeWidth={1.8}
-                                dot={range >= 120 ? false : { r: 2, fill: '#22c55e', strokeWidth: 0 }}
+                                dot={range >= 120 ? false : { r: 2, fill: '#3b82f6', strokeWidth: 0 }}
                                 activeDot={range >= 120 ? { r: 3 } : { r: 4 }}
+                              />
+                              <Line
+                                yAxisId="price"
+                                type="monotone"
+                                dataKey="price"
+                                stroke="rgba(148,163,184,0.4)"
+                                strokeWidth={1}
+                                dot={false}
+                                activeDot={false}
                               />
                             </LineChart>
                           </ResponsiveContainer>
@@ -2529,8 +2600,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             min={0}
                             max={maxOffset}
                             value={maxOffset - offset}
-                            onChange={(e) => setDividendRateChartOffset(maxOffset - Number(e.target.value))}
-                            className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                            onChange={(e) => {
+                              const newOffset = maxOffset - Number(e.target.value);
+                              if (sliderRAFRef.current) cancelAnimationFrame(sliderRAFRef.current);
+                              sliderRAFRef.current = requestAnimationFrame(() => {
+                                sliderRAFRef.current = null;
+                                setDividendRateChartOffset(newOffset);
+                              });
+                            }}
+                            className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer 
+                              [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 
+                              [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-indigo-500
+                              [&::-moz-range-thumb]:w-2.5 [&::-moz-range-thumb]:h-2.5 [&::-moz-range-thumb]:rounded-full 
+                              [&::-moz-range-thumb]:bg-indigo-500 [&::-moz-range-thumb]:border-0"
                           />
                           <div className="flex items-center gap-0.5 shrink-0">
                             <button
@@ -2647,10 +2729,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           </div>
                         );
                       }
+                      const annualDividends = chartData.map(d => d.dividend);
+                      const maxAnnualDiv = annualDividends.length > 0 ? Math.max(...annualDividends) : 1;
+                      const annualTickLen = maxAnnualDiv.toFixed(1).length + 1;
+                      const annualYAxisFontSize = annualTickLen > 5 ? 7 : 9;
                       return (
                         <div className="h-[120px] w-full">
                           <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={chartData} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
+                            <LineChart data={chartData} margin={{ top: 5, right: 5, left: 2, bottom: 0 }}>
                               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
                               <XAxis
                                 dataKey="year"
@@ -2661,12 +2747,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                 minTickGap={18}
                               />
                               <YAxis
-                                tick={{ fontSize: 9, fill: 'currentColor' }}
+                                tick={{ fontSize: annualYAxisFontSize, fill: 'currentColor' }}
                                 stroke="rgba(148,163,184,0.3)"
                                 tickLine={false}
                                 axisLine={false}
                                 domain={[0, 'auto']}
-                                width={38}
+                                width={30}
                               />
                               <Tooltip
                                 contentStyle={{
@@ -2988,6 +3074,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             >
               <RotateCcw size={12} />
               <span className="hidden sm:inline">重置</span>
+            </button>
+            <button
+              onClick={handleExportDefaultData}
+              disabled={stocks.length === 0}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-app-subtext hover:text-blue-400 border border-app-border rounded hover:border-blue-400/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="导出当前股票分红数据为内置代码"
+            >
+              <Download size={12} />
+              <span className="hidden sm:inline">导出内置</span>
             </button>
           </div>
         </div>
