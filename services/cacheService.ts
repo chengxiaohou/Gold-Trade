@@ -202,6 +202,27 @@ export function getCacheInfo(source: ApiSource): CacheInfo {
   };
 }
 
+// 格式化到期时间/缓存时间（YYYY-MM-DD HH:MM）
+export function formatCacheTime(timestamp: number | null): string {
+  if (!timestamp) return '未知';
+  const date = new Date(timestamp);
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+// 格式化持续时间（毫秒 → 可读字符串）
+export function formatDuration(ms: number): string {
+  const abs = Math.abs(ms);
+  const seconds = Math.floor(abs / 1000);
+  if (seconds < 60) return `${seconds}秒`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}分钟`;
+  const hours = Math.floor(minutes / 60);
+  const remainMinutes = minutes % 60;
+  if (remainMinutes === 0) return `${hours}小时`;
+  return `${hours}小时${remainMinutes}分钟`;
+}
+
 // 格式化日期时间
 export function formatDateTime(timestamp: number | null): string {
   if (!timestamp) return '从未拉取';

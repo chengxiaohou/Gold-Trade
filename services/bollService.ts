@@ -138,6 +138,7 @@ export interface BollData {
   rangePriceHighDate: string;
   rangePriceLow: number;
   rangePriceLowDate: string;
+  klines?: { date: string; close: number }[];
 }
 
 export interface BollResult {
@@ -259,6 +260,28 @@ export function countStaleBollCache(
     }
   }
   return stale;
+}
+
+// 获取所有 BOLL 缓存的时间戳（用于日志显示缓存时间信息）
+export function getBollCacheTimestamps(
+  stocks: Array<{ code: string }>,
+  adjust: BollAdjust,
+  apiSource: ApiSource
+): number[] {
+  const timestamps: number[] = [];
+  const periods: BollPeriod[] = ['daily', 'weekly', 'monthly'];
+  for (const stock of stocks) {
+    const { market, code } = getMarketPrefix(stock.code);
+    const fullCode = `${market}${code}`;
+    for (const period of periods) {
+      const cacheKey = getCacheKey(fullCode, period, adjust, apiSource);
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        timestamps.push(cached.timestamp);
+      }
+    }
+  }
+  return timestamps;
 }
 
 // 检查所有股票的缓存状态，返回缓存数据或null
@@ -438,7 +461,8 @@ export async function fetchBollData(
   const cached = cache.get(cacheKey);
   const dynamicTTL = getDynamicBollCacheTTL();
   
-  if (cached && cached.data?.ma?.ma30 && Date.now() - cached.timestamp < dynamicTTL) {
+  // 旧版缓存可能没有 klines 字段（用于股息率曲线），缺少时视为过期重拉
+  if (cached && cached.data?.ma?.ma30 && cached.data?.klines && Date.now() - cached.timestamp < dynamicTTL) {
     // 缓存命中，记录日志
     const url = apiSource === 'tencent'
       ? logTencentUrl(`/appstock/app/fqkline/get?param=${fullCode},${period}`)
@@ -605,6 +629,7 @@ async function fetchBollFromTencent(
       rangePriceHighDate,
       rangePriceLow: Math.round(rangePriceLow * 1000) / 1000,
       rangePriceLowDate,
+      klines: klines.map(k => ({ date: k.date, close: adjust === 'none' && realtimePrice && k.date === last.date ? realtimePrice : k.close })),
     };
 
     const cacheKey = getCacheKey(code, period, adjust, 'tencent');
@@ -736,6 +761,7 @@ async function fetchBollFromSina(
       rangePriceHighDate,
       rangePriceLow: Math.round(rangePriceLow * 1000) / 1000,
       rangePriceLowDate,
+      klines: klines.map(k => ({ date: k.day, close: parseFloat(k.close) })),
     };
 
     const cacheKey = getCacheKey(fullCode, period, adjust, 'sina');

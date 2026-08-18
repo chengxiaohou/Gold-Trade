@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, EyeOff, Download, BarChart3, List, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
-import { fetchBollData, checkAllBollCache, countStaleBollCache, BollData, BollPeriod, BollAdjust } from '../services/bollService';
-import { isStockPriceFresh, isTradingHours, getDynamicBollCacheTTL } from '../services/cacheService';
+import { fetchBollData, checkAllBollCache, countStaleBollCache, getBollCacheTimestamps, BollData, BollPeriod, BollAdjust } from '../services/bollService';
+import { isStockPriceFresh, isTradingHours, getDynamicBollCacheTTL, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
 import { getNickname } from '../services/nicknameService';
@@ -467,6 +467,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const maBollLabelRef = useRef<HTMLSpanElement | null>(null);
   const srTooltipMeasuredSize = useRef({ w: 0, h: 0 });
   const [copyPreviewText, setCopyPreviewText] = useState<string | null>(null);
+  const popupContentRef = useRef<HTMLDivElement>(null);
+  const popupScrollPosRef = useRef(0);
+  const [dividendRateChartRange, setDividendRateChartRange] = useState(120);
+  const [dividendRateChartOffset, setDividendRateChartOffset] = useState(0);
+  
+  const dividendRateChartDragRef = useRef({ startX: 0, startOffset: 0 });
   const copyHoveredRef = useRef(false);
   const [copyPreviewPos, setCopyPreviewPos] = useState({ left: 0, top: 0 });
   const [srTooltipHidden, setSrTooltipHidden] = useState(false);
@@ -548,10 +554,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // 先检查缓存
     const dynamicTTL = getDynamicBollCacheTTL();
     const staleCount = countStaleBollCache(stocks, bollAdjust, apiSource, dynamicTTL);
+    // 计算缓存时间信息用于日志
+    const cacheTimestamps = getBollCacheTimestamps(stocks, bollAdjust, apiSource);
+    const now = Date.now();
+    let cacheInfoStr = '';
+    if (cacheTimestamps.length > 0) {
+      const minTs = Math.min(...cacheTimestamps);
+      const isTrading = isTradingHours();
+      const expiryTime = isTrading ? minTs + dynamicTTL : now + dynamicTTL;
+      cacheInfoStr = `（缓存时间：${formatCacheTime(minTs)}，有效期至：${formatCacheTime(expiryTime)}）`;
+    }
     const logCtx = requestLogService.beginBatch(
       staleCount === 0
-        ? `${trigger}：${stocks.length * 3} 项缓存均未过期，无需请求`
-        : `${trigger}：${staleCount}/${stocks.length * 3} 项已过期，重新请求 ${staleCount} 条请求`
+        ? `${trigger}：${stocks.length * 3} 项缓存均未过期，无需请求${cacheInfoStr}`
+        : `${trigger}：${staleCount}/${stocks.length * 3} 项已过期，重新请求 ${staleCount} 条请求${cacheInfoStr}`
     );
     const { allCached, cachedData } = checkAllBollCache(stocks, bollAdjust, apiSource, dynamicTTL, logCtx, batchTimestamp);
     
@@ -933,15 +949,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const staleCount = effectiveSkip
       ? stocks.filter(s => !isStockPriceFresh(s.priceUpdatedAt)).length
       : stocks.length;
+    // 计算缓存时间信息用于日志
+    const priceTimestamps = stocks.map(s => s.priceUpdatedAt).filter((t): t is number => t !== null && t !== undefined);
+    let cacheInfoStr = '';
+    const now = Date.now();
+    if (priceTimestamps.length > 0) {
+      const minTs = Math.min(...priceTimestamps);
+      const isTrading = isTradingHours();
+      const expiryTime = isTrading ? minTs + getDynamicCacheTTL() : now + getDynamicCacheTTL();
+      cacheInfoStr = `（缓存时间：${formatCacheTime(minTs)}，有效期至：${formatCacheTime(expiryTime)}）`;
+    }
     let refreshReason: string;
     if (skipFresh) {
       refreshReason = staleCount === 0
-        ? `打开股息页自动刷新股价：${stocks.length} 只股票缓存均未过期，无需请求`
-        : `打开股息页自动刷新股价：${staleCount}/${stocks.length} 只已过期，重新请求 ${staleCount} 条请求`;
+        ? `打开股息页自动刷新股价：${stocks.length} 只股票缓存均未过期，无需请求${cacheInfoStr}`
+        : `打开股息页自动刷新股价：${staleCount}/${stocks.length} 只已过期，重新请求 ${staleCount} 条请求${cacheInfoStr}`;
     } else if (marketClosed) {
       refreshReason = staleCount === 0
-        ? `点击「价格」列头刷新（休市）：${stocks.length} 只股票缓存均未过期，无需请求`
-        : `点击「价格」列头刷新（休市）：${staleCount}/${stocks.length} 只已过期，重新请求 ${staleCount} 条请求`;
+        ? `点击「价格」列头刷新（休市）：${stocks.length} 只股票缓存均未过期，无需请求${cacheInfoStr}`
+        : `点击「价格」列头刷新（休市）：${staleCount}/${stocks.length} 只已过期，重新请求 ${staleCount} 条请求${cacheInfoStr}`;
     } else {
       refreshReason = `点击「价格」列头刷新：${stocks.length} 只股票 · ${stocks.length} 条请求`;
     }
@@ -1310,7 +1336,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <th
                 className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none hover:bg-app-card transition-colors"
                 colSpan={3}
-                onClick={() => setBollAdjust(bollAdjust === 'qfq' ? 'none' : 'qfq')}
+                onClick={() => { setBollAdjust(bollAdjust === 'qfq' ? 'none' : 'qfq'); setDividendRateChartRange(120); }}
                 title="点击切换前复权/除权"
               >
                 <div className="flex items-center justify-center gap-1">
@@ -1501,6 +1527,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             let top = centerY - popupH / 2;
                             top = Math.max(12, Math.min(top, window.innerHeight - popupH - 12));
                             setBollPeriod(key);
+                            setDividendRateChartRange(120);
                             setShowRatesId(stock.id);
                             setRatesPopupPos({
                               top,
@@ -1755,7 +1782,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const stock = stocks.find(s => s.id === showRatesId);
         if (!stock) return null;
         
-        const reloadBoll = (period: BollPeriod, adjust: BollAdjust) => {
+        const reloadBoll = (period: BollPeriod, adjust: BollAdjust, savedScrollPos?: number) => {
           setBollData(null);
           setBollError(null);
           setBollUnsupported(false);
@@ -1765,6 +1792,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             setBollData(result.data);
             setBollError(result.error || null);
             setBollUnsupported(result.unsupported || false);
+            // 恢复弹窗滚动位置
+            if (savedScrollPos !== undefined && savedScrollPos > 0) {
+              requestAnimationFrame(() => {
+                if (popupContentRef.current) {
+                  popupContentRef.current.scrollTop = savedScrollPos;
+                }
+              });
+            }
           });
         };
 
@@ -1977,7 +2012,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 </button>
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto px-3" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+            <div ref={popupContentRef} className="flex-1 overflow-y-auto px-3" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
               <div className="text-[10px] text-app-subtext mb-2">
                 股息率对应股价（基于{getSelectedYear(stock)}年分红 ¥{formatPrice(getDividendForYear(stock, getSelectedYear(stock)), stock.name)}）
               </div>
@@ -2304,7 +2339,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   {(['daily', 'weekly', 'monthly'] as BollPeriod[]).map(p => (
                     <button
                       key={p}
-                      onClick={() => { setBollPeriod(p); reloadBoll(p, bollAdjust); }}
+                      onClick={() => { popupScrollPosRef.current = popupContentRef.current?.scrollTop || 0; setBollPeriod(p); setDividendRateChartRange(120); setDividendRateChartOffset(0); reloadBoll(p, bollAdjust, popupScrollPosRef.current); }}
                       className={`px-2 py-1 text-[11px] rounded transition-colors ${bollPeriod === p ? 'bg-indigo-500/20 text-indigo-400' : 'bg-app-input text-app-subtext hover:bg-app-input/80'}`}
                     >
                       {p === 'daily' ? '日线' : p === 'weekly' ? '周线' : '月线'}
@@ -2314,7 +2349,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   {(['qfq', 'none'] as BollAdjust[]).map(a => (
                     <button
                       key={a}
-                      onClick={() => { setBollAdjust(a); reloadBoll(bollPeriod, a); }}
+                      onClick={() => { popupScrollPosRef.current = popupContentRef.current?.scrollTop || 0; setBollAdjust(a); setDividendRateChartRange(120); setDividendRateChartOffset(0); reloadBoll(bollPeriod, a, popupScrollPosRef.current); }}
                       className={`px-2 py-1 text-[11px] rounded transition-colors ${bollAdjust === a ? 'bg-indigo-500/20 text-indigo-400' : 'bg-app-input text-app-subtext hover:bg-app-input/80'}`}
                     >
                       {a === 'qfq' ? '前复权' : '除权'}
@@ -2366,84 +2401,222 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       <span className="font-mono text-xs font-bold text-brand-green">{bollData ? formatPrice(bollData.lower, stock.name) : '-'}</span>
                     </div>
                 </div>
-                <div className="border-t border-app-border pt-2 mt-2 mb-2">
-                  <div className="text-[10px] text-app-subtext mb-2">
-                    {(() => {
-                      const count = bollData?.rangeCount ?? 0;
-                      if (bollPeriod === 'daily') return `区间极值（近${count}个交易日）`;
-                      if (bollPeriod === 'weekly') return `区间极值（近${count}周）`;
-                      return `区间极值（近${count}个月）`;
-                    })()}
-                  </div>
-                  <div className="flex flex-col gap-1 mb-2">
-                    {(() => {
-                      const byYear = stock.dividendByYear || {};
-                      // 返回 { amount, usedYear, isApproximate }：当年有数据就用(=)；当年无则回退前一年(≈)；前一年也无 → amount=0
-                      const calcDividendForDate = (dateStr: string): { amount: number; isApproximate: boolean } => {
-                        if (!dateStr) return { amount: 0, isApproximate: false };
-                        const y = parseInt(dateStr.slice(0, 4), 10);
-                        if (isNaN(y)) return { amount: 0, isApproximate: false };
-                        if (byYear[y] && byYear[y] > 0) return { amount: byYear[y], isApproximate: false };
-                        // 回退到前一年
-                        if (byYear[y - 1] && byYear[y - 1] > 0) return { amount: byYear[y - 1], isApproximate: true };
-                        return { amount: 0, isApproximate: false };
+                {(() => {
+                    const currentKlines = bollData?.klines;
+                    if (!currentKlines || currentKlines.length === 0) return null;
+                    const selectedYear = getSelectedYear(stock);
+                    const dividend = getDividendForYear(stock, selectedYear);
+                    const maxRange = currentKlines.length;
+                    const range = Math.min(dividendRateChartRange, maxRange);
+                    const options = [5, 10, 20, 30, 60, 120, 250, 500].filter(opt => opt <= maxRange);
+                    const maxOffset = Math.max(0, maxRange - range);
+                    const offset = Math.min(dividendRateChartOffset, maxOffset);
+                    const chartData = currentKlines.slice(-range - offset, currentKlines.length - offset).map(k => {
+                      const rate = k.close > 0 ? (dividend / k.close) * 100 : 0;
+                      return {
+                        date: k.date,
+                        price: k.close,
+                        dividend,
+                        rate: parseFloat(rate.toFixed(2)),
                       };
-                      const calcRate = (price: number, dividend: number): string => {
-                        if (!dividend || !price) return '-';
-                        const rate = dividend / price * 100;
-                        return rate.toFixed(2) + '%';
-                      };
-                      const calcRateColor = (price: number, dividend: number): string => {
-                        if (!dividend || !price) return 'text-app-subtext';
-                        const rate = dividend / price * 100;
-                        return getDividendRateColor(rate, ranges);
-                      };
-                      const highPrice = bollData?.rangePriceHigh ?? 0;
-                      const highDate = bollData?.rangePriceHighDate ?? '';
-                      const highDiv = calcDividendForDate(highDate);
-                      const highRate = calcRate(highPrice, highDiv.amount);
-                      const highRateColor = calcRateColor(highPrice, highDiv.amount);
-                      const highSymbol = !highDiv.amount ? '' : (highDiv.isApproximate ? '≈' : '=');
-                      const lowPrice = bollData?.rangePriceLow ?? 0;
-                      const lowDate = bollData?.rangePriceLowDate ?? '';
-                      const lowDiv = calcDividendForDate(lowDate);
-                      const lowRate = calcRate(lowPrice, lowDiv.amount);
-                      const lowRateColor = calcRateColor(lowPrice, lowDiv.amount);
-                      const lowSymbol = !lowDiv.amount ? '' : (lowDiv.isApproximate ? '≈' : '=');
-                      return (
-                        <>
-                          <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
-                            <span className="text-[10px] text-app-subtext shrink-0">最高价</span>
-                            <span className="font-mono text-[10px] font-bold text-red-500 shrink-0">
-                              {bollData ? formatPrice(highPrice, stock.name) : '-'}
-                            </span>
-                            <span className="text-[10px] shrink-0">
-                              <span className="text-app-subtext">股息率</span>
-                              {highSymbol && <span className="text-app-subtext mx-0.5">{highSymbol}</span>}
-                              <span className={`font-mono font-bold ${highRateColor}`}>{bollData && highDiv.amount ? highRate : '-'}</span>
-                            </span>
-                            <span className="text-[10px] text-app-subtext ml-auto shrink-0">
-                              {bollData && highDate ? highDate : '-'}
-                            </span>
+                    });
+                    // 计算 Y 轴 5 条等间距标尺
+                    const rates = chartData.map(d => d.rate);
+                    const rawMin = rates.length > 0 ? Math.min(...rates) : 0;
+                    const rawMax = rates.length > 0 ? Math.max(...rates) : 1;
+                    const pad = rates.length > 0 ? Math.max((rawMax - rawMin) * 0.1, 0.1) : 0.25;
+                    const yMin = rawMin - pad;
+                    const yMax = rawMax + pad;
+                    const yTicks = rates.length > 0
+                      ? Array.from({ length: 5 }, (_, i) => yMin + (yMax - yMin) * i / 4)
+                      : [0, 0.25, 0.5, 0.75, 1];
+                    return (
+                      <div className="border-t border-app-border pt-2">
+                        <div className="flex items-center mb-1">
+                          <span className="text-[10px] text-app-subtext">股息率曲线（{bollPeriod === 'daily' ? '日' : bollPeriod === 'weekly' ? '周' : '月'}线）</span>
+                        </div>
+                        <div className="h-[120px] w-full cursor-grab active:cursor-grabbing select-none"
+                          onTouchStart={(e) => {
+                            dividendRateChartDragRef.current.startX = e.touches[0].clientX;
+                            dividendRateChartDragRef.current.startOffset = offset;
+                          }}
+                          onTouchMove={(e) => {
+                            const dx = dividendRateChartDragRef.current.startX - e.touches[0].clientX;
+                            const chartWidth = e.currentTarget.offsetWidth;
+                            const dataPointsPerPx = range / chartWidth;
+                            const newOffset = Math.max(0, Math.min(maxOffset, dividendRateChartDragRef.current.startOffset + Math.round(dx * dataPointsPerPx)));
+                            setDividendRateChartOffset(newOffset);
+                          }}
+                          onTouchEnd={() => {}}
+                          onMouseDown={(e) => {
+                            dividendRateChartDragRef.current.startX = e.clientX;
+                            dividendRateChartDragRef.current.startOffset = offset;
+                          }}
+                          onMouseMove={(e) => {
+                            if (e.buttons !== 1) return;
+                            const dx = dividendRateChartDragRef.current.startX - e.clientX;
+                            const chartWidth = e.currentTarget.offsetWidth;
+                            const dataPointsPerPx = range / chartWidth;
+                            const newOffset = Math.max(0, Math.min(maxOffset, dividendRateChartDragRef.current.startOffset + Math.round(dx * dataPointsPerPx)));
+                            setDividendRateChartOffset(newOffset);
+                          }}
+                          onMouseUp={() => {}}
+                        >
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
+                              <XAxis
+                                dataKey="date"
+                                tick={{ fontSize: 9, fill: 'currentColor' }}
+                                stroke="rgba(148,163,184,0.3)"
+                                tickLine={false}
+                                axisLine={false}
+                                minTickGap={18}
+                                tickFormatter={(v: string, i: number) => {
+  if (i === 0) return v;
+  const last = chartData[chartData.length - 1]?.date;
+  const first = chartData[0]?.date;
+  if (v === last && last?.slice(0, 4) !== first?.slice(0, 4)) return v;
+  return v.length >= 10 ? v.slice(5, 10) : v;
+}}
+                              />
+                              <YAxis
+                                tick={{ fontSize: 8, fill: 'currentColor' }}
+                                stroke="rgba(148,163,184,0.3)"
+                                tickLine={false}
+                                axisLine={false}
+                                domain={[yTicks[0], yTicks[4]]}
+                                ticks={yTicks}
+                                width={42}
+                                tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+                              />
+                              <Tooltip
+                                contentStyle={{
+                                  backgroundColor: 'rgba(15,23,42,0.95)',
+                                  border: '1px solid rgba(148,163,184,0.3)',
+                                  borderRadius: 6,
+                                  fontSize: 11,
+                                  color: 'inherit',
+                                }}
+                                content={({ active, payload, label }) => {
+                                  if (!active || !payload || !payload[0]) return null;
+                                  const d = payload[0].payload;
+                                  return (
+                                    <div className="bg-[rgba(15,23,42,0.95)] border border-[rgba(148,163,184,0.3)] rounded px-2 py-1.5 text-xs leading-relaxed">
+                                      <div className="text-app-subtext">{label}</div>
+                                      <div>股价: <span className="text-app-text">¥{d.price.toFixed(2)}</span></div>
+                                      <div>分红: <span className="text-app-text">{d.dividend.toFixed(3)} 元</span></div>
+                                      <div>股息率: <span className="text-green-400">{d.rate.toFixed(2)}%</span></div>
+                                    </div>
+                                  );
+                                }}
+                                cursor={{ stroke: 'rgba(99,102,241,0.4)', strokeWidth: 1 }}
+                              />
+                              <Line
+                                type="monotone"
+                                dataKey="rate"
+                                stroke="#22c55e"
+                                strokeWidth={1.8}
+                                dot={range >= 120 ? false : { r: 2, fill: '#22c55e', strokeWidth: 0 }}
+                                activeDot={range >= 120 ? { r: 3 } : { r: 4 }}
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 mb-1.5">
+                          <input
+                            type="range"
+                            min={0}
+                            max={maxOffset}
+                            value={maxOffset - offset}
+                            onChange={(e) => setDividendRateChartOffset(maxOffset - Number(e.target.value))}
+                            className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                          />
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            <button
+                              type="button"
+                              className="text-[10px] px-1.5 py-0.5 rounded-l bg-app-input text-app-text hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
+                              disabled={options.indexOf(range) <= 0}
+                              onClick={() => {
+                                const idx = options.indexOf(range);
+                                if (idx > 0) {
+                                  setDividendRateChartRange(options[idx - 1]);
+                                  setDividendRateChartOffset(0);
+                                }
+                              }}
+                            >−</button>
+                            <span className="text-[10px] px-2 py-0.5 bg-app-input text-app-text select-none">{range}</span>
+                            <button
+                              type="button"
+                              className="text-[10px] px-1.5 py-0.5 rounded-r bg-app-input text-app-text hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
+                              disabled={options.indexOf(range) >= options.length - 1}
+                              onClick={() => {
+                                const idx = options.indexOf(range);
+                                if (idx < options.length - 1) {
+                                  setDividendRateChartRange(options[idx + 1]);
+                                  setDividendRateChartOffset(0);
+                                }
+                              }}
+                            >+</button>
                           </div>
-                          <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
-                            <span className="text-[10px] text-app-subtext shrink-0">最低价</span>
-                            <span className="font-mono text-[10px] font-bold text-brand-green shrink-0">
-                              {bollData ? formatPrice(lowPrice, stock.name) : '-'}
-                            </span>
-                            <span className="text-[10px] shrink-0">
-                              <span className="text-app-subtext">股息率</span>
-                              {lowSymbol && <span className="text-app-subtext mx-0.5">{lowSymbol}</span>}
-                              <span className={`font-mono font-bold ${lowRateColor}`}>{bollData && lowDiv.amount ? lowRate : '-'}</span>
-                            </span>
-                            <span className="text-[10px] text-app-subtext ml-auto shrink-0">
-                              {bollData && lowDate ? lowDate : '-'}
-                            </span>
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
+                        </div>
+                        {(() => {
+                          if (chartData.length === 0) return null;
+                          const byYear = stock.dividendByYear || {};
+                          const calcDividendForDate = (dateStr: string): { amount: number; isApproximate: boolean } => {
+                            if (!dateStr) return { amount: 0, isApproximate: false };
+                            const y = parseInt(dateStr.slice(0, 4), 10);
+                            if (isNaN(y)) return { amount: 0, isApproximate: false };
+                            if (byYear[y] && byYear[y] > 0) return { amount: byYear[y], isApproximate: false };
+                            if (byYear[y - 1] && byYear[y - 1] > 0) return { amount: byYear[y - 1], isApproximate: true };
+                            return { amount: 0, isApproximate: false };
+                          };
+                          const calcRate = (price: number, dividend: number): string => {
+                            if (!dividend || !price) return '-';
+                            return (dividend / price * 100).toFixed(2) + '%';
+                          };
+                          const calcRateColor = (price: number, dividend: number): string => {
+                            if (!dividend || !price) return 'text-app-subtext';
+                            return getDividendRateColor(dividend / price * 100, ranges);
+                          };
+                          const highItem = chartData.reduce((a, b) => a.price > b.price ? a : b);
+                          const lowItem = chartData.reduce((a, b) => a.price < b.price ? a : b);
+                          const highDiv = calcDividendForDate(highItem.date);
+                          const lowDiv = calcDividendForDate(lowItem.date);
+                          const highRate = calcRate(highItem.price, highDiv.amount);
+                          const lowRate = calcRate(lowItem.price, lowDiv.amount);
+                          const highRateColor = calcRateColor(highItem.price, highDiv.amount);
+                          const lowRateColor = calcRateColor(lowItem.price, lowDiv.amount);
+                          const highSymbol = !highDiv.amount ? '' : (highDiv.isApproximate ? '≈' : '=');
+                          const lowSymbol = !lowDiv.amount ? '' : (lowDiv.isApproximate ? '≈' : '=');
+                          return (
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
+                                <span className="text-[10px] text-app-subtext shrink-0">最高价</span>
+                                <span className="font-mono text-[10px] font-bold text-red-500 shrink-0">{formatPrice(highItem.price, stock.name)}</span>
+                                <span className="text-[10px] shrink-0">
+                                  <span className="text-app-subtext">股息率</span>
+                                  {highSymbol && <span className="text-app-subtext mx-0.5">{highSymbol}</span>}
+                                  <span className={`font-mono font-bold ${highRateColor}`}>{highDiv.amount ? highRate : '-'}</span>
+                                </span>
+                                <span className="text-[10px] text-app-subtext ml-auto shrink-0">{highItem.date}</span>
+                              </div>
+                              <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
+                                <span className="text-[10px] text-app-subtext shrink-0">最低价</span>
+                                <span className="font-mono text-[10px] font-bold text-brand-green shrink-0">{formatPrice(lowItem.price, stock.name)}</span>
+                                <span className="text-[10px] shrink-0">
+                                  <span className="text-app-subtext">股息率</span>
+                                  {lowSymbol && <span className="text-app-subtext mx-0.5">{lowSymbol}</span>}
+                                  <span className={`font-mono font-bold ${lowRateColor}`}>{lowDiv.amount ? lowRate : '-'}</span>
+                                </span>
+                                <span className="text-[10px] text-app-subtext ml-auto shrink-0">{lowItem.date}</span>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    );
+                  })()}
                   <div className="border-t border-app-border pt-2">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-[10px] text-app-subtext">年度分红（元/股）</span>
@@ -2477,7 +2650,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       return (
                         <div className="h-[120px] w-full">
                           <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={chartData} margin={{ top: 5, right: 5, left: -10, bottom: 0 }}>
+                            <LineChart data={chartData} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
                               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
                               <XAxis
                                 dataKey="year"
@@ -2540,7 +2713,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       </span>
                     </div>
               </div>
-            </div>
           </>,
           document.body
         );
