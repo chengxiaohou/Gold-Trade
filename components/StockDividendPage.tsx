@@ -1497,7 +1497,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             const rect = e.currentTarget.getBoundingClientRect();
                             const popupW = 340;
                             const popupH = 500;
-                            const centerY = rect.top + rect.height / 2;
+                            const centerY = window.innerHeight / 2;
                             let top = centerY - popupH / 2;
                             top = Math.max(12, Math.min(top, window.innerHeight - popupH - 12));
                             setBollPeriod(key);
