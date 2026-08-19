@@ -2582,6 +2582,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                 strokeWidth={1.8}
                                 dot={range >= 120 ? false : { r: 2, fill: '#3b82f6', strokeWidth: 0 }}
                                 activeDot={range >= 120 ? { r: 3 } : { r: 4 }}
+                                isAnimationActive={false}
                               />
                               <Line
                                 yAxisId="price"
@@ -2591,6 +2592,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                 strokeWidth={1}
                                 dot={false}
                                 activeDot={false}
+                                isAnimationActive={false}
                               />
                             </LineChart>
                           </ResponsiveContainer>
@@ -2735,7 +2737,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       const annualTickLen = maxAnnualDiv.toFixed(1).length + 1;
                       const annualYAxisFontSize = annualTickLen > 5 ? 7 : 9;
                       return (
-                        <div className="h-[120px] w-full">
+                        <div className="h-[120px] w-full select-none">
                           <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={chartData} margin={{ top: 5, right: 5, left: 2, bottom: 0 }}>
                               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
@@ -2774,6 +2776,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                 strokeWidth={1.8}
                                 dot={{ r: 2, fill: '#6366f1', strokeWidth: 0 }}
                                 activeDot={{ r: 4 }}
+                                isAnimationActive={false}
                               />
                             </LineChart>
                           </ResponsiveContainer>
