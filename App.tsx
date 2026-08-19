@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Trash2 } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Trash2, Eye, EyeOff } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
@@ -300,12 +300,28 @@ export default function App() {
     clearCacheRecord('tencent');
   };
 
+  const handleSortModeChange = (mode: 'default' | 'dividendRate' | 'tag') => {
+    setStockSettings(prev => ({ ...prev, sortMode: mode }));
+  };
+
   // Modal States
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportFileName, setExportFileName] = useState('');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [stockResetSignal, setStockResetSignal] = useState(0);
+  const [showRequestStats, setShowRequestStats] = useState(() => {
+    try {
+      const saved = localStorage.getItem('gold_show_request_stats');
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch {
+      return true;
+    }
+  });
   const [isEditingCapital, setIsEditingCapital] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('gold_show_request_stats', JSON.stringify(showRequestStats));
+  }, [showRequestStats]);
 
   // 5. Preview Type
   const [previewType, setPreviewType] = useState<OrderType>(() => {
@@ -1346,6 +1362,17 @@ export default function App() {
           >
             {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
           </button>
+          <button 
+              onClick={() => setShowRequestStats(prev => !prev)}
+              className={`flex items-center justify-center bg-app-card border py-2.5 rounded-md transition-all w-10 ${
+                showRequestStats 
+                  ? 'border-indigo-500 text-indigo-400' 
+                  : 'border-app-border text-app-subtext hover:text-app-text hover:border-app-text'
+              }`}
+              title={showRequestStats ? '隐藏请求统计' : '显示请求统计'}
+            >
+              <BarChart3 size={16} />
+          </button>
       </div>
     </div>
   );
@@ -1796,10 +1823,11 @@ export default function App() {
             apiSource={appSettings.apiSource || 'tencent'}
             onResetStocks={resetStockData}
             resetSignal={stockResetSignal}
-            dividendYearLeft={appSettings.dividendYearLeft ?? 2024}
-            dividendYearRight={appSettings.dividendYearRight ?? 2025}
+            dividendYearLeft={stockSettings.dividendYearLeft}
+            dividendYearRight={stockSettings.dividendYearRight}
             sortMode={stockSettings.sortMode}
-            onSortModeChange={(mode) => setStockSettings(prev => ({ ...prev, sortMode: mode }))}
+            onSortModeChange={handleSortModeChange}
+            showRequestStats={showRequestStats}
           />
         )}
         <div className="lg:hidden mt-2 order-3">{currentPage === 'gold' && renderActionButtons()}</div>

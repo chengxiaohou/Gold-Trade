@@ -225,6 +225,7 @@ interface StockDividendPageProps {
   dividendYearRight?: number;
   sortMode?: 'default' | 'dividendRate' | 'tag';
   onSortModeChange?: (mode: 'default' | 'dividendRate' | 'tag') => void;
+  showRequestStats?: boolean;
 }
 
 // 分红核对弹窗里的单只股票差异条目
@@ -374,7 +375,7 @@ const formatPercent = (percent: number): string => {
   return percent.toFixed(2) + '%';
 };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, showRequestStats = true }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
   // 分红年份列（dividendLeft / dividendRight）：表头合并为一格，年份各自成列
@@ -2624,11 +2625,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                 setDividendRateChartOffset(newOffset);
                               });
                             }}
-                            className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer 
-                              [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 
-                              [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500
-                              [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full 
-                              [&::-moz-range-thumb]:bg-gray-500 [&::-moz-range-thumb]:border-0"
+                            className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-gray-500 
+                              [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500
+                              [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-gray-500 [&::-moz-range-thumb]:border-0"
                           />
                           <div className="flex items-center gap-0.5 shrink-0">
                             <button
@@ -3037,6 +3036,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       )}
 
       {/* 页面底部请求计数器 */}
+      {showRequestStats && (
       <div className="fixed bottom-0 left-0 right-0 z-30 bg-app-card border-t border-app-border px-4 py-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -3187,6 +3187,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           </div>
         )}
       </div>
+      )}
     </div>
   );
 };
