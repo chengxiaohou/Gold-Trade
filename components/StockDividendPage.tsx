@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, EyeOff, Download, BarChart3, List, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
-import { fetchBollData, checkAllBollCache, countStaleBollCache, getBollCacheTimestamps, BollData, BollPeriod, BollAdjust } from '../services/bollService';
+import { fetchBollData, checkAllBollCache, countStaleBollCache, countVisibleBollItems, getBollCacheTimestamps, BollData, BollPeriod, BollAdjust } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getDynamicBollCacheTTL, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
@@ -554,21 +554,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     
     // 先检查缓存
     const dynamicTTL = getDynamicBollCacheTTL();
+    const visibleTotal = countVisibleBollItems(stocks);
     const staleCount = countStaleBollCache(stocks, bollAdjust, apiSource, dynamicTTL);
     // 计算缓存时间信息用于日志
     const cacheTimestamps = getBollCacheTimestamps(stocks, bollAdjust, apiSource);
     const now = Date.now();
     let cacheInfoStr = '';
     if (cacheTimestamps.length > 0) {
-      const minTs = Math.min(...cacheTimestamps);
+      const maxTs = Math.max(...cacheTimestamps); // 使用最新缓存时间，更准确反映缓存有效期
       const isTrading = isTradingHours();
-      const expiryTime = isTrading ? minTs + dynamicTTL : now + dynamicTTL;
-      cacheInfoStr = `（缓存时间：${formatCacheTime(minTs)}，有效期至：${formatCacheTime(expiryTime)}）`;
+      const expiryTime = isTrading ? maxTs + dynamicTTL : now + dynamicTTL;
+      cacheInfoStr = `（缓存时间：${formatCacheTime(maxTs)}，有效期至：${formatCacheTime(expiryTime)}）`;
     }
     const logCtx = requestLogService.beginBatch(
       staleCount === 0
-        ? `${trigger}：${stocks.length * 3} 项缓存均未过期，无需请求${cacheInfoStr}`
-        : `${trigger}：${staleCount}/${stocks.length * 3} 项已过期，重新请求 ${staleCount} 条请求${cacheInfoStr}`
+        ? `${trigger}：${visibleTotal} 项缓存均未过期，无需请求${cacheInfoStr}`
+        : `${trigger}：${staleCount}/${visibleTotal} 项已过期，重新请求 ${staleCount} 条请求${cacheInfoStr}`
     );
     const { allCached, cachedData } = checkAllBollCache(stocks, bollAdjust, apiSource, dynamicTTL, logCtx, batchTimestamp);
     
@@ -2488,7 +2489,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         <div className="flex items-center mb-1">
                           <span className="text-[10px] text-app-subtext">股息率曲线（{bollPeriod === 'daily' ? '日' : bollPeriod === 'weekly' ? '周' : '月'}线）</span>
                         </div>
-                        <div className="h-[120px] w-full cursor-grab active:cursor-grabbing select-none"
+                        <div className="h-[120px] w-full cursor-grab active:cursor-grabbing select-none outline-none [&_svg]:outline-none [&_svg]:focus:outline-none" tabIndex={-1}
                           onTouchStart={(e) => {
                             dividendRateChartDragRef.current.startX = e.touches[0].clientX;
                             dividendRateChartDragRef.current.startOffset = offset;
@@ -2737,7 +2738,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       const annualTickLen = maxAnnualDiv.toFixed(1).length + 1;
                       const annualYAxisFontSize = annualTickLen > 5 ? 7 : 9;
                       return (
-                        <div className="h-[120px] w-full select-none">
+                        <div className="h-[120px] w-full select-none outline-none [&_svg]:outline-none [&_svg]:focus:outline-none" tabIndex={-1}>
                           <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={chartData} margin={{ top: 5, right: 5, left: 2, bottom: 0 }}>
                               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
@@ -3128,6 +3129,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         <ChevronDown size={12} className={`shrink-0 text-app-subtext transition-transform ${expanded ? '' : '-rotate-90'}`} />
                         <span className="text-app-subtext shrink-0 font-mono text-[10px]">{new Date(triggerAt).toLocaleString('zh-CN', { hour12: false })}</span>
                         <span className={`text-indigo-400/80 ${expanded ? '' : 'truncate'} flex-1`} title={group.reason}>{group.reason}</span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const text = `${new Date(triggerAt).toLocaleString('zh-CN', { hour12: false })} ${group.reason}`;
+                            navigator.clipboard?.writeText(text).catch(() => {});
+                          }}
+                          className="shrink-0 text-app-subtext hover:text-app-text transition-colors"
+                          title=""
+                        >
+                          <Copy size={10} />
+                        </button>
                         <span className="text-app-subtext shrink-0 whitespace-nowrap">
                           {group.logs.length} 条
                           {success > 0 && <span className="text-green-400"> · 成功 {success}</span>}

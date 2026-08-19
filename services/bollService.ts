@@ -229,23 +229,33 @@ function getMarketPrefix(stockCode: string): { market: string; code: string } {
 
 // 判断单只股票某个周期的 BOLL 缓存是否仍新鲜（与 checkAllBollCache 同一口径）
 function isBollCacheFresh(
-  stock: { code: string },
+  stock: { code: string; bollHidden?: boolean },
   period: BollPeriod,
   adjust: BollAdjust,
   apiSource: ApiSource,
   dynamicTTL: number
 ): boolean {
+  // 跳过已隐藏布林线的股票
+  if (stock.bollHidden) return false;
   const { market, code } = getMarketPrefix(stock.code);
   const fullCode = `${market}${code}`;
   const cacheKey = getCacheKey(fullCode, period, adjust, apiSource);
   const cached = cache.get(cacheKey);
   // 旧版缓存没有均线字段（ma.ma30），视为过期以便重拉一次补齐
-  return !!cached && !!cached.data?.ma?.ma30 && Date.now() - cached.timestamp < dynamicTTL;
+  if (!cached) return false;
+  if (!cached.data?.ma?.ma30) return false;
+  const age = Date.now() - cached.timestamp;
+  const fresh = age < dynamicTTL;
+  if (!fresh) {
+    console.warn(`[isBollCacheFresh] 缓存已过期: ${cacheKey}, age=${Math.round(age/1000)}s, TTL=${Math.round(dynamicTTL/1000)}s, ts=${new Date(cached.timestamp).toLocaleString('zh-CN', { hour12: false })}`);
+  }
+  return fresh;
 }
 
 // 统计缓存已过期的 股票×周期 项数（不产生日志），用于日志文案展示精确数字
+// 注意：跳过已隐藏布林线的股票，这些股票不参与缓存判断也不实际请求
 export function countStaleBollCache(
-  stocks: Array<{ code: string }>,
+  stocks: Array<{ code: string; bollHidden?: boolean }>,
   adjust: BollAdjust,
   apiSource: ApiSource,
   dynamicTTL: number
@@ -253,6 +263,7 @@ export function countStaleBollCache(
   let stale = 0;
   const periods: BollPeriod[] = ['daily', 'weekly', 'monthly'];
   for (const stock of stocks) {
+    if (stock.bollHidden) continue; // 隐藏的股票不参与计数
     for (const period of periods) {
       if (!isBollCacheFresh(stock, period, adjust, apiSource, dynamicTTL)) {
         stale++;
@@ -262,15 +273,23 @@ export function countStaleBollCache(
   return stale;
 }
 
+// 计算可见股票（未隐藏布林线）的 股票×周期 总数
+export function countVisibleBollItems(
+  stocks: Array<{ code: string; bollHidden?: boolean }>
+): number {
+  return stocks.filter(s => !s.bollHidden).length * 3;
+}
+
 // 获取所有 BOLL 缓存的时间戳（用于日志显示缓存时间信息）
 export function getBollCacheTimestamps(
-  stocks: Array<{ code: string }>,
+  stocks: Array<{ code: string; bollHidden?: boolean }>,
   adjust: BollAdjust,
   apiSource: ApiSource
 ): number[] {
   const timestamps: number[] = [];
   const periods: BollPeriod[] = ['daily', 'weekly', 'monthly'];
   for (const stock of stocks) {
+    if (stock.bollHidden) continue;
     const { market, code } = getMarketPrefix(stock.code);
     const fullCode = `${market}${code}`;
     for (const period of periods) {
@@ -286,7 +305,7 @@ export function getBollCacheTimestamps(
 
 // 检查所有股票的缓存状态，返回缓存数据或null
 export function checkAllBollCache(
-  stocks: Array<{ id: string; code: string }>,
+  stocks: Array<{ id: string; code: string; bollHidden?: boolean }>,
   adjust: BollAdjust,
   apiSource: ApiSource,
   dynamicTTL: number,
@@ -297,6 +316,11 @@ export function checkAllBollCache(
   let allCached = true;
   
   for (const stock of stocks) {
+    // 跳过已隐藏布林线的股票
+    if (stock.bollHidden) {
+      cachedData.set(stock.id, { daily: null, weekly: null, monthly: null });
+      continue;
+    }
     const { market, code } = getMarketPrefix(stock.code);
     const fullCode = `${market}${code}`;
     

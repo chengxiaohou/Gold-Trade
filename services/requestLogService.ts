@@ -52,13 +52,12 @@ class RequestLogService {
             .filter((l): l is RequestLogEntry => l && typeof l.id === 'string' && typeof l.url === 'string')
             .map(l => l.status === 'pending'
               ? { ...l, status: 'failed' as const, error: '页面刷新，请求中断' }
-              : l)
-            // 每次页面加载都替换上一次的"打开页面自动刷新"日志，避免刷新后新旧重复
-            .filter(l => !(l.reason && l.reason.startsWith('打开股息页自动刷新')));
+              : l);
+          console.log(`[RequestLogService] 从 localStorage 恢复 ${this.logs.length} 条日志`);
         }
       }
-    } catch {
-      // 忽略读取失败
+    } catch (e) {
+      console.warn('[RequestLogService] 读取 localStorage 日志失败:', e);
     }
     if (this.logs.length > 0) {
       this.notifyListeners();
@@ -70,8 +69,8 @@ class RequestLogService {
     try {
       const trimmed = this.logs.slice(-MAX_LOGS);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
-    } catch {
-      // 存储失败不影响功能
+    } catch (e) {
+      console.warn('[RequestLogService] 日志持久化失败:', e);
     }
   }
 
