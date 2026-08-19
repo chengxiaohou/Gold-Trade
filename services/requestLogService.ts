@@ -32,6 +32,7 @@ export interface LogBatchContext {
 type RequestLogListener = (logs: RequestLogEntry[], stats: RequestLogStats) => void;
 
 const STORAGE_KEY = 'gold_request_logs';
+const SESSION_STORAGE_KEY = 'gold_request_logs_session';
 const MAX_LOGS = 500;
 
 class RequestLogService {
@@ -43,34 +44,65 @@ class RequestLogService {
 
   constructor() {
     // 从 localStorage 恢复日志（刷新页面后仍然保留，只有点「重置」才清空）
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          this.logs = parsed
-            .filter((l): l is RequestLogEntry => l && typeof l.id === 'string' && typeof l.url === 'string')
-            .map(l => l.status === 'pending'
-              ? { ...l, status: 'failed' as const, error: '页面刷新，请求中断' }
-              : l);
-          console.log(`[RequestLogService] 从 localStorage 恢复 ${this.logs.length} 条日志`);
-        }
-      }
-    } catch (e) {
-      console.warn('[RequestLogService] 读取 localStorage 日志失败:', e);
-    }
+    // 优先从 localStorage 读取，如果为空则尝试 sessionStorage（作为后备）
+    this.restoreFromStorage();
     if (this.logs.length > 0) {
       this.notifyListeners();
     }
   }
 
-  // 持久化日志到 localStorage（最多保留最近 MAX_LOGS 条）
+  // 从存储中恢复日志
+  private restoreFromStorage(): void {
+    const tryRestore = (key: string, source: string): boolean => {
+      try {
+        const saved = (source === 'session' ? sessionStorage : localStorage).getItem(key);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) {
+            this.logs = parsed
+              .filter((l): l is RequestLogEntry => l && typeof l.id === 'string' && typeof l.url === 'string')
+              .map(l => l.status === 'pending'
+                ? { ...l, status: 'failed' as const, error: '页面刷新，请求中断' }
+                : l);
+            console.log(`[RequestLogService] 从 ${source}Storage 恢复 ${this.logs.length} 条日志`);
+            return true;
+          }
+        }
+      } catch (e) {
+        console.warn(`[RequestLogService] 读取 ${source}Storage 日志失败:`, e);
+      }
+      return false;
+    };
+
+    // 优先从 localStorage 恢复
+    if (tryRestore(STORAGE_KEY, 'local')) return;
+
+    // localStorage 没有数据，尝试 sessionStorage
+    tryRestore(SESSION_STORAGE_KEY, 'session');
+  }
+
+  // 持久化日志到 localStorage + sessionStorage 双保险
+  // sessionStorage 在页面刷新时数据不会丢失，作为 localStorage 写入失败的后备
   private persist(): void {
     try {
       const trimmed = this.logs.slice(-MAX_LOGS);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+      const data = JSON.stringify(trimmed);
+
+      // 主存储：localStorage（跨会话持久化）
+      try {
+        localStorage.setItem(STORAGE_KEY, data);
+      } catch (e) {
+        console.warn('[RequestLogService] localStorage 持久化失败，尝试 sessionStorage:', e);
+      }
+
+      // 后备存储：sessionStorage（刷新页面时数据保留，关闭标签页后清除）
+      try {
+        sessionStorage.setItem(SESSION_STORAGE_KEY, data);
+      } catch (e) {
+        console.warn('[RequestLogService] sessionStorage 持久化失败:', e);
+      }
     } catch (e) {
-      console.warn('[RequestLogService] 日志持久化失败:', e);
+      console.warn('[RequestLogService] 序列化日志失败:', e);
     }
   }
 
@@ -199,6 +231,11 @@ class RequestLogService {
     this.notifyListeners();
     try {
       localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // 忽略
+    }
+    try {
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
     } catch {
       // 忽略
     }

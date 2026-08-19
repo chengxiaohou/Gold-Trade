@@ -2489,7 +2489,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         <div className="flex items-center mb-1">
                           <span className="text-[10px] text-app-subtext">股息率曲线（{bollPeriod === 'daily' ? '日' : bollPeriod === 'weekly' ? '周' : '月'}线）</span>
                         </div>
-                        <div className="h-[120px] w-full cursor-grab active:cursor-grabbing select-none outline-none [&_svg]:outline-none [&_svg]:focus:outline-none" tabIndex={-1}
+                        <div className="h-[120px] w-full cursor-grab active:cursor-grabbing select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none"
                           onTouchStart={(e) => {
                             dividendRateChartDragRef.current.startX = e.touches[0].clientX;
                             dividendRateChartDragRef.current.startOffset = offset;
@@ -2612,16 +2612,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                 setDividendRateChartOffset(newOffset);
                               });
                             }}
-                            className="flex-1 h-1 bg-app-input rounded-lg appearance-none cursor-pointer 
-                              [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 
+                            className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer 
+                              [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 
                               [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500
-                              [&::-moz-range-thumb]:w-2.5 [&::-moz-range-thumb]:h-2.5 [&::-moz-range-thumb]:rounded-full 
+                              [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full 
                               [&::-moz-range-thumb]:bg-gray-500 [&::-moz-range-thumb]:border-0"
                           />
                           <div className="flex items-center gap-0.5 shrink-0">
                             <button
                               type="button"
-                              className="text-[10px] px-1.5 py-0.5 rounded-l bg-app-input text-app-text hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
+                              className="text-xs px-2.5 py-1 rounded-l bg-app-input text-app-text hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
                               disabled={options.indexOf(range) <= 0}
                               onClick={() => {
                                 const idx = options.indexOf(range);
@@ -2631,10 +2631,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                 }
                               }}
                             >−</button>
-                            <span className="text-[10px] px-2 py-0.5 bg-app-input text-app-text select-none">{range}</span>
+                            <span className="text-xs px-2.5 py-1 bg-app-input text-app-text select-none">{range}</span>
                             <button
                               type="button"
-                              className="text-[10px] px-1.5 py-0.5 rounded-r bg-app-input text-app-text hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
+                              className="text-xs px-2.5 py-1 rounded-r bg-app-input text-app-text hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
                               disabled={options.indexOf(range) >= options.length - 1}
                               onClick={() => {
                                 const idx = options.indexOf(range);
@@ -2738,7 +2738,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       const annualTickLen = maxAnnualDiv.toFixed(1).length + 1;
                       const annualYAxisFontSize = annualTickLen > 5 ? 7 : 9;
                       return (
-                        <div className="h-[120px] w-full select-none outline-none [&_svg]:outline-none [&_svg]:focus:outline-none" tabIndex={-1}>
+                        <div className="h-[120px] w-full select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none">
                           <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={chartData} margin={{ top: 5, right: 5, left: 2, bottom: 0 }}>
                               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
