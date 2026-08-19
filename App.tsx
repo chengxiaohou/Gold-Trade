@@ -676,20 +676,32 @@ export default function App() {
         }
       }
       
+      // 构造上传数据时排除设备特定的设置（不同设备各自保留）
+      const cloudStockSettings = stockSettings ? {
+        ...stockSettings,
+        maxRows: undefined,
+        sortMode: undefined,
+      } : undefined;
+      const cloudExistingStockSettings = existingStockSettings ? {
+        ...existingStockSettings,
+        maxRows: undefined,
+        sortMode: undefined,
+      } : undefined;
+
       let dataToUpload;
       if (currentPage === 'gold') {
         dataToUpload = {
           trades,
           settings: appSettings,
           stocks: existingStocks,
-          stockSettings: existingStockSettings
+          stockSettings: cloudExistingStockSettings
         };
       } else {
         dataToUpload = {
           trades: existingTrades,
           settings: appSettings,
           stocks,
-          stockSettings
+          stockSettings: cloudStockSettings
         };
       }
       
@@ -743,8 +755,17 @@ export default function App() {
           }
           
           if (result.stockSettings) {
-            setStockSettings(result.stockSettings);
-            localStorage.setItem('stock_dividend_settings', JSON.stringify(result.stockSettings));
+            // 从云端恢复时，保留本地的设备特定设置（maxRows、sortMode）
+            setStockSettings({
+              ...result.stockSettings,
+              maxRows: stockSettings?.maxRows ?? result.stockSettings.maxRows,
+              sortMode: stockSettings?.sortMode ?? result.stockSettings.sortMode,
+            });
+            localStorage.setItem('stock_dividend_settings', JSON.stringify({
+              ...result.stockSettings,
+              maxRows: stockSettings?.maxRows ?? result.stockSettings.maxRows,
+              sortMode: stockSettings?.sortMode ?? result.stockSettings.sortMode,
+            }));
           }
         }
         

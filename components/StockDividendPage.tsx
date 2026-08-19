@@ -720,6 +720,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     let calcTop = popupTop + (mainPopupHeight - h) / 2;
     if (calcLeft < 10) {
       calcLeft = popupLeft + 340 + gap;
+      // 浏览器宽度不足以同时展示时，居中显示
+      if (calcLeft + w > window.innerWidth - 10) {
+        calcLeft = (window.innerWidth - w) / 2;
+      }
     }
     if (calcTop + h > window.innerHeight - 10) {
       calcTop = window.innerHeight - h - 10;
@@ -2152,6 +2156,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         // 超出左边界时回退到弹窗右侧
                         if (calcLeft < 10) {
                           calcLeft = popupLeft + 340 + gap;
+                          // 浏览器宽度不足以同时展示时，居中显示
+                          if (calcLeft + tw > window.innerWidth - 10) {
+                            calcLeft = (window.innerWidth - tw) / 2;
+                          }
                         }
                         // 超出顶部/底部时调整
                         if (calcTop + th > window.innerHeight - 10) {
@@ -2248,6 +2256,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         let calcTop = popupTop + (mainPopupHeight - th) / 2;
                         if (calcLeft < 10) {
                           calcLeft = popupLeft + 340 + gap;
+                          // 浏览器宽度不足以同时展示时，居中显示
+                          if (calcLeft + tw > window.innerWidth - 10) {
+                            calcLeft = (window.innerWidth - tw) / 2;
+                          }
                         }
                         if (calcTop + th > window.innerHeight - 10) {
                           calcTop = window.innerHeight - th - 10;

@@ -208,7 +208,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         { min: 4.5, max: 5.5, color: 'gray' },
         { min: 6, max: 7, color: 'green' }
       ],
-      maxRows: maxRows || stockSettings?.maxRows || 15,
+      maxRows: maxRows ?? stockSettings?.maxRows ?? 15,
+      sortMode: stockSettings?.sortMode ?? 'default',
     };
 
     // If Cloud tab is not active and no changes to cloud config, just save app settings
@@ -306,6 +307,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       dividendRateColumns: currentPage === 'stock' ? dividendRateColumns : stockSettings?.dividendRateColumns,
       dividendRateColorRanges: currentPage === 'stock' ? dividendRateColorRanges : stockSettings?.dividendRateColorRanges,
       maxRows: currentPage === 'stock' ? maxRows : stockSettings?.maxRows,
+      sortMode: stockSettings?.sortMode ?? 'default',
     };
     
     // 保留现有云端配置，避免关闭弹窗时意外清空 GitHub token/gistId
