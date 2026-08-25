@@ -247,7 +247,7 @@ interface DividendDiffEntry {
 type PositionDisplayMode = 'yield' | 'shares' | 'cost';
 const POSITION_MODE_LABEL: Record<PositionDisplayMode, string> = {
   yield: '股息率',
-  shares: '股数',
+  shares: '份额',
   cost: '成本',
 };
 
@@ -451,6 +451,108 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const handleSortModeChange = (mode: 'default' | 'dividendRate' | 'tag') => {
     if (onSortModeChange) onSortModeChange(mode);
   };
+
+  // 列表页点击股票名称显示支撑/压力位弹窗
+  const handleListSrClick = (e: React.MouseEvent, stock: StockEntry) => {
+    e.stopPropagation();
+    const btn = e.currentTarget as HTMLElement;
+    const rect = btn.getBoundingClientRect();
+    listSrHoveredRef.current = true;
+    listSrBtnRef.current = btn as unknown as HTMLButtonElement;
+    setListSrTooltipPinned(true);
+    setListSrStock(stock);
+    const adjustLabel = '前复权';
+    const popupLogCtx = requestLogService.beginBatch('支撑/压力位预览：1 只股票 · 3 条请求');
+    Promise.all([
+      fetchBollData(stock.code, 'daily', 'qfq', apiSource, undefined, popupLogCtx),
+      fetchBollData(stock.code, 'weekly', 'qfq', apiSource, undefined, popupLogCtx),
+      fetchBollData(stock.code, 'monthly', 'qfq', apiSource, undefined, popupLogCtx),
+    ]).then(([dailyR, weeklyR, monthlyR]) => {
+      if (!listSrBtnRef.current) return;
+      const periodLabels: { period: string; data: BollData | null }[] = [
+        { period: '日', data: dailyR.data },
+        { period: '周', data: weeklyR.data },
+        { period: '月', data: monthlyR.data },
+      ];
+      const trackKeys: { key: keyof BollData; label: string }[] = [
+        { key: 'upper', label: '上' },
+        { key: 'mid', label: '中' },
+        { key: 'lower', label: '下' },
+      ];
+      const maKeys: { key: 'ma5' | 'ma10' | 'ma20' | 'ma30' | 'ma60' | 'ma120' | 'ma250' | 'ma500'; label: string }[] = [
+        { key: 'ma5', label: '5' },
+        { key: 'ma10', label: '10' },
+        { key: 'ma20', label: '20' },
+        { key: 'ma30', label: '30' },
+        { key: 'ma60', label: '60' },
+        { key: 'ma120', label: '120' },
+        { key: 'ma250', label: '250' },
+        { key: 'ma500', label: '500' },
+      ];
+      const all: { price: number; name: string }[] = [];
+      for (const { period, data } of periodLabels) {
+        if (!data) continue;
+        for (const t of trackKeys) {
+          const v = data[t.key] as number | null | undefined;
+          if (v != null) all.push({ price: v, name: `${period}${t.label}` });
+        }
+        if (data.ma) {
+          for (const m of maKeys) {
+            const v = data.ma[m.key] as number | null | undefined;
+            if (v != null) all.push({ price: v, name: `${period}${m.label}` });
+          }
+        }
+      }
+      const sorted = all.sort((a, b) => b.price - a.price);
+      const resistances = sorted.filter(l => l.price > (stock.price || 0)).sort((a, b) => a.price - b.price).slice(0, 10).reverse();
+      const supports = sorted.filter(l => l.price < (stock.price || 0)).sort((a, b) => b.price - a.price).slice(0, 10);
+      const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
+      const lines: string[] = [`${stock.name}（${adjustLabel}）`];
+      lines.push('───────────────────────────────');
+      for (const r of resistances) {
+        const diff = r.price - (stock.price || 0);
+        const pct = (diff / (stock.price || 1)) * 100;
+        const diffStr = (diff >= 0 ? '+' : '') + formatPrice(diff, stock.name);
+        lines.push(`${r.name}\t${formatPrice(r.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
+      }
+      lines.push(`现价\t${fmt(stock.price)}\t------\t------`);
+      for (const s of supports) {
+        const diff = s.price - (stock.price || 0);
+        const pct = (diff / (stock.price || 1)) * 100;
+        const diffStr = (diff >= 0 ? '+' : '') + formatPrice(diff, stock.name);
+        lines.push(`${s.name}\t${formatPrice(s.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
+      }
+      lines.push('───────────────────────────────');
+      const text = lines.join('\n');
+      const measureEl = document.createElement('div');
+      measureEl.style.cssText = 'position:fixed;visibility:hidden;white-space:pre;font-family:monospace;font-size:10px;padding:6px 10px;border:1px solid;line-height:1.5';
+      measureEl.textContent = text;
+      document.body.appendChild(measureEl);
+      const tw = measureEl.offsetWidth;
+      const th = measureEl.offsetHeight;
+      document.body.removeChild(measureEl);
+      listSrTooltipMeasuredSize.current = { w: tw, h: th };
+      const gap = 8;
+      let calcLeft = rect.left + rect.width + gap;
+      let calcTop = rect.top + rect.height / 2 - th / 2;
+      if (calcLeft + tw > window.innerWidth - 10) {
+        calcLeft = rect.left - tw - gap;
+      }
+      if (calcLeft < 10) {
+        calcLeft = (window.innerWidth - tw) / 2;
+      }
+      if (calcTop + th > window.innerHeight - 10) {
+        calcTop = window.innerHeight - th - 10;
+      }
+      if (calcTop < 10) {
+        calcTop = 10;
+      }
+      setListSrTooltipOffset(calcLeft);
+      setListSrTooltipAbove(calcTop);
+      setListSrPreviewText(text);
+    });
+  };
+
   const [bollData, setBollData] = useState<BollData | null>(null);
   const [bollError, setBollError] = useState<string | null>(null);
   const [bollUnsupported, setBollUnsupported] = useState<boolean>(false);
@@ -473,11 +575,27 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [dividendRateChartRange, setDividendRateChartRange] = useState(120);
   const [dividendRateChartOffset, setDividendRateChartOffset] = useState(0);
   
-  const dividendRateChartDragRef = useRef({ startX: 0, startOffset: 0 });
   const sliderRAFRef = useRef<number | null>(null);
   const copyHoveredRef = useRef(false);
   const [copyPreviewPos, setCopyPreviewPos] = useState({ left: 0, top: 0 });
   const [srTooltipHidden, setSrTooltipHidden] = useState(false);
+
+  // 列表页支撑/压力位弹窗状态
+  const [listSrPreviewText, setListSrPreviewText] = useState<string | null>(null);
+  const [listSrTooltipOffset, setListSrTooltipOffset] = useState(0);
+  const [listSrTooltipAbove, setListSrTooltipAbove] = useState(0);
+  const listSrBtnRef = useRef<HTMLButtonElement | null>(null);
+  const listSrHoveredRef = useRef(false);
+  const [listSrCopied, setListSrCopied] = useState(false);
+  const [listSrTooltipPinned, setListSrTooltipPinned] = useState(false);
+  const listSrTooltipRef = useRef<HTMLDivElement | null>(null);
+  const listSrTooltipMeasuredSize = useRef({ w: 0, h: 0 });
+  const [listSrTooltipHidden, setListSrTooltipHidden] = useState(false);
+  const listCopyHoveredRef = useRef(false);
+  const [listCopyPreviewText, setListCopyPreviewText] = useState<string | null>(null);
+  const [listCopyPreviewPos, setListCopyPreviewPos] = useState({ left: 0, top: 0 });
+  // 当前点击的股票（用于列表页弹窗内的复制操作）
+  const [listSrStock, setListSrStock] = useState<StockEntry | null>(null);
 
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
   const [stockBollErrorMap, setStockBollErrorMap] = useState<Map<string, { daily?: string; weekly?: string; monthly?: string }>>(new Map());
@@ -707,6 +825,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [srTooltipPinned]);
+
+  // 列表页支撑/压力位弹窗：点击外部关闭
+  useEffect(() => {
+    if (!listSrTooltipPinned) return;
+    const handler = (e: MouseEvent) => {
+      if (listSrTooltipRef.current && !listSrTooltipRef.current.contains(e.target as Node) &&
+          listSrBtnRef.current && !listSrBtnRef.current.contains(e.target as Node)) {
+        setListSrTooltipPinned(false);
+        setListSrPreviewText(null);
+        setListSrStock(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [listSrTooltipPinned]);
 
   // 支撑/压力位弹窗跟随主弹窗移动
   useEffect(() => {
@@ -1323,7 +1456,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <col style={{ width: '65px' }} />
               <col style={{ width: '65px' }} />
               {dividendYearCols.map(yearCol => <col key={yearCol} style={{ width: '50px' }} />)}
-              {cols.includes('position') && <col style={{ width: '62px' }} />}
+              {cols.includes('position') && <col style={{ width: '70px' }} />}
               <col style={{ width: '60px' }} />
             </colgroup>
             <thead className="sticky top-0 z-30 overflow-hidden">
@@ -1403,9 +1536,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-l border-app-border border-r border-app-border cursor-pointer select-none"
                   rowSpan={2}
                   onClick={cyclePositionMode}
-                  title={`点击切换展示（当前：${POSITION_MODE_LABEL[positionDisplayMode]}）：股息率 / 持仓股数 / 成本`}
+                  title={`点击切换展示（当前：${POSITION_MODE_LABEL[positionDisplayMode]}）：股息率 / 份额 / 成本`}
                 >
-                  持仓
+                  <div className="flex flex-col items-center leading-tight">
+                    <span>持仓</span>
+                    <span>{POSITION_MODE_LABEL[positionDisplayMode]}</span>
+                  </div>
                 </th>}
                 <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border" rowSpan={2}>操作</th>
               </tr>
@@ -1491,7 +1627,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           />}
                         </div>
                       ) : (
-                        <div className="relative flex items-center justify-center h-8 whitespace-nowrap">
+                        <div className="relative flex items-center justify-center h-8 whitespace-nowrap cursor-pointer" onClick={(e) => handleListSrClick(e, stock)}>
                           <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
                             const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
                             const n = raw.replace(/\s/g, '');
@@ -1626,6 +1762,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       : '-';
                     const costText = cost > 0 ? cost.toFixed(2) : '-';
                     const costColor = cost > 0 ? (cost > (stock.price || 0) ? 'text-brand-green' : 'text-brand-red') : 'text-app-subtext';
+                    const positionPct = cost > 0 && stock.price > 0 ? ((stock.price - cost) / cost) * 100 : 0;
+                    const positionPctStr = cost > 0 && stock.price > 0 ? `${positionPct >= 0 ? '+' : ''}${positionPct.toFixed(2)}%` : '';
+                    const showPct = positionDisplayMode !== 'shares' && cost > 0 && stock.price > 0;
                     const displayValue = positionDisplayMode === 'shares'
                       ? sharesText
                       : positionDisplayMode === 'cost'
@@ -1659,8 +1798,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                               title="持仓股数"
                             />
                           </div>
+                        ) : showPct ? (
+                          <div className="flex flex-col items-center leading-tight">
+                            <span className={`font-mono text-[11px] whitespace-nowrap ${positionDisplayMode === 'shares' ? 'text-app-subtext' : costColor}`}>{displayValue}</span>
+                            <span className="font-mono text-[10px] text-app-rowtext">{positionPctStr}</span>
+                          </div>
                         ) : (
-                          <span className={`font-mono text-[11px] whitespace-nowrap ${positionDisplayMode === 'cost' ? costColor : 'text-app-subtext'}`}>{displayValue}</span>
+                          <span className={`font-mono text-[11px] whitespace-nowrap ${positionDisplayMode === 'shares' ? 'text-app-subtext' : costColor}`}>{displayValue}</span>
                         )}
                       </td>
                     );
@@ -2502,41 +2646,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         <div className="flex items-center mb-1">
                           <span className="text-[10px] text-app-subtext">股息率曲线（{bollPeriod === 'daily' ? '日' : bollPeriod === 'weekly' ? '周' : '月'}线）</span>
                         </div>
-                        <div className="h-[120px] w-full cursor-grab active:cursor-grabbing select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none"
-                          onTouchStart={(e) => {
-                            dividendRateChartDragRef.current.startX = e.touches[0].clientX;
-                            dividendRateChartDragRef.current.startOffset = offset;
-                          }}
-                          onTouchMove={(e) => {
-                            const dx = dividendRateChartDragRef.current.startX - e.touches[0].clientX;
-                            const chartWidth = e.currentTarget.offsetWidth;
-                            const dataPointsPerPx = range / chartWidth;
-                            const newOffset = Math.max(0, Math.min(maxOffset, dividendRateChartDragRef.current.startOffset + Math.round(dx * dataPointsPerPx)));
-                            if (sliderRAFRef.current) cancelAnimationFrame(sliderRAFRef.current);
-                            sliderRAFRef.current = requestAnimationFrame(() => {
-                              sliderRAFRef.current = null;
-                              setDividendRateChartOffset(newOffset);
-                            });
-                          }}
-                          onTouchEnd={() => {}}
-                          onMouseDown={(e) => {
-                            dividendRateChartDragRef.current.startX = e.clientX;
-                            dividendRateChartDragRef.current.startOffset = offset;
-                          }}
-                          onMouseMove={(e) => {
-                            if (e.buttons !== 1) return;
-                            const dx = dividendRateChartDragRef.current.startX - e.clientX;
-                            const chartWidth = e.currentTarget.offsetWidth;
-                            const dataPointsPerPx = range / chartWidth;
-                            const newOffset = Math.max(0, Math.min(maxOffset, dividendRateChartDragRef.current.startOffset + Math.round(dx * dataPointsPerPx)));
-                            if (sliderRAFRef.current) cancelAnimationFrame(sliderRAFRef.current);
-                            sliderRAFRef.current = requestAnimationFrame(() => {
-                              sliderRAFRef.current = null;
-                              setDividendRateChartOffset(newOffset);
-                            });
-                          }}
-                          onMouseUp={() => {}}
-                        >
+                        <div className="h-[120px] w-full select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none">
                           <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={chartData} margin={{ top: 5, right: 5, left: 2, bottom: 0 }}>
                               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
@@ -3032,6 +3142,59 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {notice && (
         <div className="fixed bottom-14 left-1/2 -translate-x-1/2 z-40 bg-app-card border border-app-border rounded-lg px-4 py-2 text-xs text-app-text shadow-xl">
           {notice}
+        </div>
+      )}
+
+      {/* 列表页支撑/压力位弹窗 */}
+      {listSrPreviewText && listSrStock && (
+        <div
+          ref={listSrTooltipRef}
+          className={`fixed z-[60] bg-app-card border border-app-border rounded px-2.5 py-1.5 text-[11px] font-mono text-app-subtext whitespace-pre shadow-lg leading-relaxed text-left ${listSrTooltipHidden ? ' invisible' : ''}`}
+          style={{ top: listSrTooltipAbove, left: listSrTooltipOffset, tabSize: 8 }}
+        >
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              const stock = listSrStock;
+              if (!stock) return;
+              const adjustLabel = '前复权';
+              const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
+              const fmtPad = (v: number | null | undefined) => {
+                const s = fmt(v);
+                const targetLen = (stock.name?.includes('ETF') || stock.name?.includes('etf')) ? 7 : 6;
+                return s.padEnd(targetLen);
+              };
+              const buildLine = (label: string, data: BollData | null | undefined) => {
+                const ma = data?.ma;
+                return `${label}：MA5=${fmtPad(ma?.ma5)}MA10=${fmtPad(ma?.ma10)}MA20=${fmtPad(ma?.ma20)}MA30=${fmtPad(ma?.ma30)}MA60=${fmtPad(ma?.ma60)}MA120=${fmtPad(ma?.ma120)}MA250=${fmtPad(ma?.ma250)}MA500=${fmtPad(ma?.ma500)} BOLL MID=${fmtPad(data?.mid)}UP=${fmtPad(data?.upper)}LOW=${fmtPad(data?.lower)}`;
+              };
+              const popupLogCtx = requestLogService.beginBatch('复制 MA 与 BOLL 数据：1 只股票 · 3 条请求');
+              Promise.all([
+                fetchBollData(stock.code, 'daily', 'qfq', apiSource, undefined, popupLogCtx),
+                fetchBollData(stock.code, 'weekly', 'qfq', apiSource, undefined, popupLogCtx),
+                fetchBollData(stock.code, 'monthly', 'qfq', apiSource, undefined, popupLogCtx),
+              ]).then(([dailyR, weeklyR, monthlyR]) => {
+                const text = [
+                  `${stock.name}（${adjustLabel}）`,
+                  buildLine('日线', dailyR.data),
+                  buildLine('周线', weeklyR.data),
+                  buildLine('月线', monthlyR.data),
+                ].join('\n');
+                const done = () => {
+                  setListSrCopied(true);
+                  setTimeout(() => setListSrCopied(false), 1500);
+                };
+                if (navigator.clipboard?.writeText) {
+                  navigator.clipboard.writeText(text).then(done).catch(() => {});
+                }
+              });
+            }}
+            className="absolute top-1.5 right-2 p-0.5 rounded hover:bg-app-input transition-colors text-app-subtext"
+            title=""
+          >
+            {listSrCopied ? <Check size={10} className="text-indigo-400" /> : <Copy size={10} className="text-app-subtext" />}
+          </button>
+          {listSrPreviewText}
         </div>
       )}
 
