@@ -639,12 +639,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const fetchVersionRef = useRef(0);
 
   const fetchAllBoll = useCallback(async (trigger = '打开股息页自动刷新布林线') => {
-    // 防止重复调用
-    if (isFetchingRef.current) {
-      return;
-    }
-    
-    // 递增版本号，标记本次请求
+    // 先递增版本号，让旧请求通过版本检查自行取消，避免新请求被阻塞无法产生日志
     const currentVersion = ++fetchVersionRef.current;
     // 同一批次所有请求共享同一时间戳，确保缓存时间统一
     const batchTimestamp = Date.now();
@@ -693,7 +688,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const { allCached, cachedData } = checkAllBollCache(stocks, bollAdjust, apiSource, dynamicTTL, logCtx, batchTimestamp);
     
     if (fetchVersionRef.current !== currentVersion) {
-      // 已被新请求取消
+      // 已被新请求取消，旧请求中止，新请求会负责最终的清理
       return;
     }
     
@@ -711,8 +706,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     for (let i = 0; i < stocks.length; i++) {
       // 检查版本号，如果已被新请求替代则取消
       if (fetchVersionRef.current !== currentVersion) {
-        isFetchingRef.current = false;
-        setIsRefreshingBoll(false);
+        // 已被新请求取消，旧请求中止，新请求会负责最终的清理
         return;
       }
       
@@ -742,8 +736,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       
       // 请求完成后再次检查版本号
       if (fetchVersionRef.current !== currentVersion) {
-        isFetchingRef.current = false;
-        setIsRefreshingBoll(false);
+        // 已被新请求取消，旧请求中止，新请求会负责最终的清理
         return;
       }
       
@@ -775,8 +768,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         for (let w = 0; w < 25; w++) {
           await new Promise(resolve => setTimeout(resolve, 10));
           if (fetchVersionRef.current !== currentVersion) {
-            isFetchingRef.current = false;
-            setIsRefreshingBoll(false);
+            // 已被新请求取消，旧请求中止，新请求会负责最终的清理
             return;
           }
         }
