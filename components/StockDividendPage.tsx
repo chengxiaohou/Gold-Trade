@@ -1891,7 +1891,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onMouseLeave={() => handlePriceInfoLeave()}
                     onClick={(e) => handlePriceInfoClick(e, stock)}
                     className="px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
-                    title="悬停预览，点击固定查看当日行情与技术指标"
+                    title=""
                   >
                     <div className="flex items-center justify-center gap-0.5">
                       <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
@@ -3467,7 +3467,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     <div className="text-[10px] text-app-subtext mb-0.5">{label}</div>
                     <div className="flex gap-2">
                       {vals.map(([k, v, c]) => (
-                        <span key={k} className={`flex-1 text-center font-mono text-[10px] ${c ?? 'text-app-rowtext'}`}>{k}<span className="text-app-subtext">:</span>{v ?? '-'}</span>
+                        <span key={k} className="flex-1 text-center font-mono text-[10px]">
+                          <span className="text-app-subtext">{k}<span>:</span></span>
+                          <span className={`${c ?? 'text-app-rowtext'}`}>{v ?? '-'}</span>
+                        </span>
                       ))}
                     </div>
                   </div>
