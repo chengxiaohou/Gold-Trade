@@ -241,6 +241,7 @@ interface DividendDiffEntry {
   hasData: boolean;
   error?: string;
   records: DividendRecord[];
+  registerDate?: string; // 最新股权登记日
 }
 
 // 持仓列展示模式（表头按钮循环切换）
@@ -1173,9 +1174,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       const result = await fetchYearlyDividends(stock.code, logCtx);
       const fetchedByYear = result.found ? result.dividendByYear : {};
       const existingByYear = stock.dividendByYear || {};
-      const changed = result.found && Object.keys(fetchedByYear).some(yr =>
-        Math.abs((fetchedByYear[Number(yr)] || 0) - (existingByYear[Number(yr)] || 0)) > 0.0001
-      );
+      // 提取最近一次股权登记日
+      const futureRegDate = result.records
+        ?.filter(r => r.registerDate)
+        .map(r => r.registerDate!)
+        .sort()
+        .reverse()[0];
       entries.push({
         stockId: stock.id,
         code: getDisplayCode(stock.code),
@@ -1188,8 +1192,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         hasData: result.found,
         error: result.error,
         records: result.records || [],
+        registerDate: futureRegDate,
       });
-      if (changed) selected.add(stock.id);
+      // 默认全部勾选所有有数据的股票
+      if (result.found && !result.error) selected.add(stock.id);
     }
     setDividendDiff(entries);
     setSelectedDividendIds(selected);
@@ -1206,9 +1212,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const result = await fetchYearlyDividends(stock.code, logCtx);
     const fetchedByYear = result.found ? result.dividendByYear : {};
     const existingByYear = stock.dividendByYear || {};
-    const changed = result.found && Object.keys(fetchedByYear).some(yr =>
-      Math.abs((fetchedByYear[Number(yr)] || 0) - (existingByYear[Number(yr)] || 0)) > 0.0001
-    );
+    // 提取最近一次股权登记日
+    const futureRegDate = result.records
+      ?.filter(r => r.registerDate)
+      .map(r => r.registerDate!)
+      .sort()
+      .reverse()[0];
     const entry: DividendDiffEntry = {
       stockId: stock.id,
       code: getDisplayCode(stock.code),
@@ -1221,9 +1230,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       hasData: result.found,
       error: result.error,
       records: result.records || [],
+      registerDate: futureRegDate,
     };
     setDividendDiff([entry]);
-    setSelectedDividendIds(changed ? new Set([stock.id]) : new Set());
+    setSelectedDividendIds(result.found && !result.error ? new Set([stock.id]) : new Set());
     setIsFetchingSingleDividend(null);
   }, [isFetchingSingleDividend, dividendYearLeft, dividendYearRight]);
 
@@ -1270,6 +1280,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       const selectedYear = getSelectedYear(stock);
       const selectedDividend = dividendByYear[selectedYear] ?? 0;
       const dividendRate2025 = stock.price > 0 ? (selectedDividend / stock.price) * 100 : 0;
+      // 从 records 中提取最近一次股权登记日
+      const futureRegDate = entry.records
+        ?.filter(r => r.registerDate)
+        .map(r => r.registerDate!)
+        .sort()
+        .reverse()[0];
       return {
         ...stock,
         dividend2024,
@@ -1277,6 +1293,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         dividendByYear,
         dividendRate2025,
         dividendRates: calculateDividendRates(selectedDividend, rateCols),
+        registerDate: futureRegDate || stock.registerDate,
       };
     });
     onStocksChange(updatedStocks);
@@ -1509,7 +1526,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 </div>
               </th>
                 {dividendYearCols.length > 0 && <th
-                  colSpan={dividendYearCols.length}
+                  colSpan={dividendYearCols.length + 1}
                   className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border bg-app-input whitespace-nowrap"
                 >
                   <div className="flex items-center justify-center gap-1 whitespace-nowrap">
@@ -1544,10 +1561,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">周线</th>
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">月线</th>
                 {dividendYearCols.map((yearCol, idx) => (
-                  <th key={yearCol} className={`px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border ${idx < dividendYearCols.length - 1 ? 'border-r border-app-border' : ''}`}>
+                  <th key={yearCol} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">
                     {yearCol === 'dividendLeft' ? dividendYearLeft : dividendYearRight}
                   </th>
                 ))}
+                {dividendYearCols.length > 0 && <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border whitespace-nowrap w-0">登记日</th>}
               </tr>
             </thead>
             <tbody>
@@ -1721,7 +1739,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const otherValue = getDividendForYear(stock, otherYear);
                     const selectedColor = value > otherValue ? 'text-brand-red' : value < otherValue ? 'text-brand-green' : 'text-blue-400';
                     return (
-                      <td key={yearCol} className={`px-1 py-1.5 text-center cursor-pointer ${idx < dividendYearCols.length - 1 ? 'border-r border-app-border' : ''}`} onClick={() => {
+                      <td key={yearCol} className="px-1 py-1.5 text-center cursor-pointer border-r border-app-border" onClick={() => {
                         if (editingId !== stock.id) {
                           onStocksChange(stocks.map(s => s.id === stock.id ? { ...s, selectedDividendYear: year } : s));
                         }
@@ -1742,6 +1760,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       </td>
                     );
                   })}
+                  {dividendYearCols.length > 0 && (
+                    <td className="px-1 py-1.5 text-center">
+                      {(() => {
+                        if (!stock.registerDate) return <span className="text-app-subtext">-</span>;
+                        const today = new Date();
+                        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                        const regDate = new Date(stock.registerDate);
+                        const isToday = stock.registerDate === todayStr;
+                        const isFuture = !isToday && regDate >= today;
+                        const parts = stock.registerDate.split('-');
+                        const dateLabel = `${parseInt(parts[1])}月${parseInt(parts[2])}日`;
+                        const dateColor = isToday ? 'text-brand-red' : isFuture ? 'text-orange-400' : 'text-app-rowtext';
+                        return (
+                          <span className={`font-mono text-xs ${dateColor}`}>
+                            {dateLabel}
+                          </span>
+                        );
+                      })()}
+                    </td>
+                  )}
                   {cols.includes('position') && (() => {
                     const shares = stock.positionShares || 0;
                     const cost = stock.positionCost || 0;
@@ -2190,19 +2228,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <div className="grid grid-cols-3 gap-1 mb-3">
                 {(() => {
                   const currentRate = getDividendRate(stock);
-                  const rateNums = rateCols.map(r => parseFloat(r.replace('%', '')));
-                  const highlightIdx = rateNums.reduce((closestIdx, val, idx) => 
-                    Math.abs(val - currentRate) < Math.abs(rateNums[closestIdx] - currentRate) ? idx : closestIdx
-                  , 0);
-                  const rateColorClass = getDividendRateColor(currentRate, ranges);
-                  return rateCols.map((rate, idx) => {
-                    const price = stock.dividendRates[rate] || 0;
-                    const isCurrentRate = idx === highlightIdx;
+                  const dividend = getDividendForYear(stock, getSelectedYear(stock)) || 0;
+                  // 以当前股息率最近的 0.5 网格为中心，左右各 4 格按 0.5 递增/递减（共 9 格）
+                  const centerRate = Math.round(currentRate * 2) / 2;
+                  const rates = Array.from({ length: 9 }, (_, i) => centerRate - 4 * 0.5 + i * 0.5);
+                  const rateColorClass = getDividendRateColor(centerRate, ranges);
+                  return rates.map((rateNum, idx) => {
+                    const isCurrentRate = idx === 4; // 中心格
+                    const rateLabel = `${rateNum.toFixed(1)}%`;
+                    const price = dividend > 0 ? dividend / (rateNum / 100) : 0;
                     return (
-                      <div key={rate} className={`flex flex-col items-center p-1 rounded ${isCurrentRate ? 'bg-indigo-500/10 ring-1 ring-indigo-500/30' : 'bg-app-input'}`}>
-                        <span className={`text-[10px] ${isCurrentRate ? rateColorClass : 'text-app-subtext'}`}>{rate}</span>
+                      <div key={rateLabel} className={`flex flex-col items-center p-1 rounded ${isCurrentRate ? 'bg-indigo-500/10 ring-1 ring-indigo-500/30' : 'bg-app-input'}`}>
+                        <span className={`text-[10px] ${isCurrentRate ? rateColorClass : 'text-app-subtext'}`}>{rateLabel}</span>
                         <span className={`font-mono text-xs font-bold ${isCurrentRate ? rateColorClass : 'text-app-subtext'}`}>
-                          {formatPrice(price, stock.name)}
+                          {price > 0 ? formatPrice(price, stock.name) : '-'}
                         </span>
                       </div>
                     );
@@ -3019,12 +3058,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               className="fixed inset-0 z-[9998] bg-black/40"
               onClick={() => setDividendDiff(null)}
             />
-            <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-              <div className="bg-app-card border border-app-border rounded-xl shadow-2xl w-full max-w-[742px] max-h-[85vh] flex flex-col">
-                <div className="flex items-start justify-between px-4 py-3 border-b border-app-border">
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center p-2 sm:p-4">
+              <div className="bg-app-card border border-app-border rounded-xl shadow-2xl w-full max-w-[400px] max-h-[90vh] flex flex-col">
+                <div className="flex items-start justify-between px-3 py-2 border-b border-app-border">
                   <div>
-                    <h3 className="text-sm font-bold text-app-text">分红数据核对</h3>
-                    <p className="text-[10px] text-app-subtext mt-0.5">
+                    <h3 className="text-xs font-bold text-app-text">分红数据核对</h3>
+                    <p className="text-[9px] text-app-subtext mt-0.5">
                       数据来源：同花顺 F10 · 按分红所属年度汇总（含中期/特别分红）· 每股税前派息（送转不计入）
                     </p>
                   </div>
@@ -3036,25 +3075,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </button>
                 </div>
                 <div className="overflow-y-auto custom-scrollbar min-h-0">
-                  <table className="w-full text-xs border-separate border-spacing-0">
+                  <table className="w-full text-[10px] border-separate border-spacing-0">
                     <thead className="sticky top-0 z-10">
                       <tr className="bg-app-input">
-                        <th className="px-2 py-2 text-center border-b border-app-border w-14">
-                          <label className="flex items-center justify-center gap-1 cursor-pointer">
+                        <th className="px-1 py-1 text-center border-b border-app-border">
+                          <label className="flex items-center justify-center cursor-pointer">
                             <input
                               type="checkbox"
                               checked={allSelected}
                               disabled={selectable.length === 0}
                               onChange={toggleSelectAllDividends}
-                              className="accent-indigo-500 w-3.5 h-3.5"
+                              className="accent-indigo-500 w-3 h-3"
                             />
-                            <span className="text-[10px] text-app-subtext">全选</span>
                           </label>
                         </th>
-                        <th className="px-2 py-2 text-left border-b border-app-border border-r border-app-border whitespace-nowrap">股票</th>
-                        <th className="px-2 py-2 text-center border-b border-app-border border-r border-app-border whitespace-nowrap">{dividendYearLeft} 分红</th>
-                        <th className="px-2 py-2 text-center border-b border-app-border border-r border-app-border whitespace-nowrap">{dividendYearRight} 分红</th>
-                        <th className="px-2 py-2 text-center border-b border-app-border whitespace-nowrap">状态</th>
+                        <th className="px-1 py-1 text-left border-b border-app-border border-r border-app-border whitespace-nowrap">股票</th>
+                        <th className="px-1 py-1 text-center border-b border-app-border border-r border-app-border whitespace-nowrap">{dividendYearLeft}</th>
+                        <th className="px-1 py-1 text-center border-b border-app-border border-r border-app-border whitespace-nowrap">{dividendYearRight}</th>
+                        <th className="px-1 py-1 text-center border-b border-app-border border-r border-app-border whitespace-nowrap">登记日</th>
+                        <th className="px-1 py-1 text-center border-b border-app-border whitespace-nowrap">状态</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3068,29 +3107,47 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           .join('\n');
                         return (
                           <tr key={entry.stockId} className="hover:bg-app-hover/50 transition-colors">
-                            <td className="px-2 py-1.5 text-center border-b border-app-border">
+                            <td className="px-1 py-0.5 text-center border-b border-app-border">
                               <input
                                 type="checkbox"
                                 checked={selectedDividendIds.has(entry.stockId)}
                                 disabled={!entry.hasData || !!entry.error}
                                 onChange={() => toggleDividendRow(entry.stockId)}
-                                className="accent-indigo-500 w-4 h-4"
+                                className="accent-indigo-500 w-3 h-3"
                               />
                             </td>
                             <td
-                              className="px-2 py-1.5 border-b border-app-border border-r border-app-border"
+                              className="px-1 py-0.5 border-b border-app-border border-r border-app-border"
                               title={recordTooltip || undefined}
                             >
-                              <div className="text-app-text font-medium whitespace-nowrap">{entry.name}</div>
-                              <div className="text-[10px] text-app-subtext font-mono">{entry.code}</div>
+                              <div className="text-[10px] text-app-text font-medium whitespace-nowrap">{entry.name}</div>
+                              <div className="text-[8px] text-app-subtext font-mono">{entry.code}</div>
                             </td>
-                            <td className="px-2 py-1.5 text-center border-b border-app-border border-r border-app-border font-mono">
+                            <td className="px-1 py-0.5 text-center border-b border-app-border border-r border-app-border font-mono">
                               {formatDividendCell(entry.current2024, entry.fetched2024, entry.hasData)}
                             </td>
-                            <td className="px-2 py-1.5 text-center border-b border-app-border border-r border-app-border font-mono">
+                            <td className="px-1 py-0.5 text-center border-b border-app-border border-r border-app-border font-mono">
                               {formatDividendCell(entry.current2025, entry.fetched2025, entry.hasData)}
                             </td>
-                            <td className="px-2 py-1.5 text-center border-b border-app-border whitespace-nowrap">
+                            <td className="px-1 py-0.5 text-center border-b border-app-border border-r border-app-border font-mono">
+                              {(() => {
+                                if (!entry.registerDate) return <span className="text-app-subtext">-</span>;
+                                const today = new Date();
+                                const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                                const regDate = new Date(entry.registerDate);
+                                const isToday = entry.registerDate === todayStr;
+                                const isFuture = !isToday && regDate >= today;
+                                const parts = entry.registerDate.split('-');
+                                const dateLabel = `${parseInt(parts[1])}月${parseInt(parts[2])}日`;
+                                const dateColor = isToday ? 'text-brand-red' : isFuture ? 'text-orange-400' : 'text-app-rowtext';
+                                return (
+                                  <span className={dateColor}>
+                                    {dateLabel}
+                                  </span>
+                                );
+                              })()}
+                            </td>
+                            <td className="px-1 py-0.5 text-center border-b border-app-border whitespace-nowrap">
                               {!entry.hasData ? (
                                 <span className={entry.error ? 'text-red-400' : 'text-app-subtext'}>
                                   {entry.error ? '获取失败' : '查不到，保持手动'}
@@ -3107,8 +3164,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </tbody>
                   </table>
                 </div>
-                <div className="flex items-center justify-between gap-2 flex-wrap px-4 py-3 border-t border-app-border">
-                  <span className="text-[10px] text-app-subtext">
+                <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-2 border-t border-app-border">
+                  <span className="text-[9px] text-app-subtext">
                     {selectable.length > 0
                       ? `已勾选 ${selectedCount} 只将更新`
                       : '本次没有可更新的股票'}
@@ -3116,14 +3173,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   <div className="flex gap-2">
                     <button
                       onClick={() => setDividendDiff(null)}
-                      className="px-3 py-2 rounded-lg text-xs font-semibold border border-app-border text-app-subtext hover:bg-app-input transition-colors"
+                      className="px-2.5 py-1.5 rounded-lg text-[10px] font-semibold border border-app-border text-app-subtext hover:bg-app-input transition-colors"
                     >
                       取消
                     </button>
                     <button
                       onClick={handleApplyDividends}
                       disabled={selectedCount === 0}
-                      className="px-3 py-2 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-2.5 py-1.5 rounded-lg text-[10px] font-semibold bg-indigo-600 text-white hover:bg-indigo-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       应用勾选（{selectedCount}）
                     </button>

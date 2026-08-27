@@ -100,6 +100,7 @@ export interface StockEntry {
   tag?: string; // User defined tag for filtering or categorization
   selectedDividendYear?: number; // Which dividend year this stock uses for rate calc, default = right year
   bollHidden?: boolean; // Whether BOLL data is hidden for this stock
+  registerDate?: string; // 最近一次股权登记日（同步分红数据时获取）
 }
 
 export interface DividendRateColorRange {

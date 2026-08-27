@@ -43,6 +43,7 @@ export interface DividendRecord {
   reportDate: string;     // 公告日期，如 2026-04-01
   pretaxPer10: number;    // 每10股派息（税前，元）
   planProfile: string;    // 方案描述，如 10派15.83元(含税) 【2025年年度】
+  registerDate?: string;  // 股权登记日（已实施的才有，预案阶段为空）
 }
 
 export interface YearlyDividends {
@@ -136,6 +137,7 @@ function parseTonghuashunHtml(html: string, code: string): YearlyDividends | nul
       reportDate: cells[0].replace(/<[^>]+>/g, '').trim().slice(0, 10),
       pretaxPer10,
       planProfile: program,
+      registerDate: cells[2] ? cells[2].replace(/<[^>]+>/g, '').trim().slice(0, 10) || undefined : undefined,
     });
   }
 
@@ -224,6 +226,7 @@ function parseEastmoneyJson(json: unknown, code: string): YearlyDividends {
       reportDate: String(r.REPORT_DATE || '').slice(0, 10),
       pretaxPer10: parseFloat(String(r.PRETAX_BONUS_RMB || '0')),
       planProfile: String(r.IMPL_PLAN_PROFILE || ''),
+      registerDate: String(r.REGISTER_DATE || '').slice(0, 10) || undefined,
     }));
 
   const sumPerShare = (year: number): number => {
