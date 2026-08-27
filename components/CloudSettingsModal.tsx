@@ -87,6 +87,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [apiSource, setApiSource] = useState<ApiSource>(appSettings.apiSource || 'tencent');
   const [cacheTTLMinutes, setCacheTTLMinutes] = useState<number>(appSettings.cacheTTLMinutes || 10);
   const [bollCacheTTLMinutes, setBollCacheTTLMinutes] = useState<number>(appSettings.bollCacheTTLMinutes || 120);
+  const [manualFxRate, setManualFxRate] = useState<string>((appSettings.manualFxRate || '').toString());
   const [cacheInfo, setCacheInfo] = useState<{ sina: CacheInfo; tencent: CacheInfo }>({
     sina: getCacheInfo('sina'),
     tencent: getCacheInfo('tencent')
@@ -140,6 +141,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       setApiSource(appSettings.apiSource || 'tencent');
       setCacheTTLMinutes(appSettings.cacheTTLMinutes || 10);
       setBollCacheTTLMinutes(appSettings.bollCacheTTLMinutes || 120);
+      setManualFxRate((appSettings.manualFxRate || '').toString());
       setIsVerifying(false);
       setLogState(null);
       setEditingRangeIndex(null);
@@ -301,6 +303,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       bollCacheTTLMinutes: bollCacheTTLMinutes,
       dividendYearLeft: dividendYearLeft,
       dividendYearRight: dividendYearRight,
+      manualFxRate: parseFloat(manualFxRate) || 0,
     };
     
     const newStockSettings: StockSettings = {
@@ -491,6 +494,20 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                           className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-mono text-sm"
                         />
                         <p className="text-xs text-app-subtext">每笔卖出交易的税费，不纳入盈亏计算。</p>
+                     </div>
+
+                     <div className="space-y-2">
+                        <label className="text-sm font-medium text-app-text block">
+                          手动换算汇率 (美元/人民币)
+                        </label>
+                        <input 
+                          type="number" 
+                          value={manualFxRate}
+                          onChange={(e) => setManualFxRate(e.target.value)}
+                          placeholder="如 6.72"
+                          className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-mono text-sm"
+                        />
+                        <p className="text-xs text-app-subtext">点击“回本价/持仓均价”弹出的换算弹窗中，实时汇率获取失败时使用此汇率兜底。</p>
                      </div>
                      
                      <div className="pt-2 border-t border-app-border">

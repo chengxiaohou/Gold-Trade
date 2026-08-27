@@ -67,6 +67,7 @@ export interface AppSettings {
   bollCacheTTLMinutes?: number; // Cache TTL for BOLL data during trading hours, default 120
   dividendYearLeft?: number; // Left dividend year column, default = right - 1
   dividendYearRight?: number; // Right dividend year column, default 2025
+  manualFxRate?: number; // Manual USD/CNY fallback rate for price conversion (元/克 <-> 美元)
 }
 
 export type MarketStatus = 'pre_open' | 'morning_session' | 'midday_break' | 'afternoon_session' | 'closed' | 'full_day_closed';

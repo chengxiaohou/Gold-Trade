@@ -3467,9 +3467,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     <div className="text-[10px] text-app-subtext mb-0.5">{label}</div>
                     <div className="flex gap-2">
                       {vals.map(([k, v, c]) => (
-                        <span key={k} className="flex-1 text-center font-mono text-[10px]">
-                          <span className="text-app-subtext">{k}<span>:</span></span>
-                          <span className={`${c ?? 'text-app-rowtext'}`}>{v ?? '-'}</span>
+                        <span key={k} className="flex-1 text-center font-mono text-[10px] text-app-rowtext">
+                          <span>{k}<span>:</span></span>
+                          <span className={c ?? ''}>{v ?? '-'}</span>
                         </span>
                       ))}
                     </div>

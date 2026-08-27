@@ -13,7 +13,7 @@ import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings } from './types';
 
-const APP_VERSION = 'v2.12.0';
+const APP_VERSION = 'v2.13.0';
 
 // 生成股息率对应股价的辅助函数
 function calcDividendRates(dividend2025: number): Record<string, number> {
@@ -217,8 +217,60 @@ export default function App() {
       bollCacheTTLMinutes: parsed.bollCacheTTLMinutes,
       dividendYearRight: parsed.dividendYearRight ?? 2025,
       dividendYearLeft: parsed.dividendYearLeft ?? (parsed.dividendYearRight ? parsed.dividendYearRight - 1 : 2024),
+      manualFxRate: parsed.manualFxRate || 0,
     };
   });
+
+  // --- FX Rate (人民币/美元) 换算 ---
+  const FX_CACHE_KEY = 'gold_fx_rate';
+  const FX_TIME_KEY = 'gold_fx_rate_time';
+  const FX_CACHE_TTL = 10 * 60 * 1000; // 汇率缓存 10 分钟
+  const OZ_PER_GRAM = 31.1035; // 1 盎司 = 31.1035 克
+
+  const [fxRate, setFxRate] = useState<number>(() => parseFloat(localStorage.getItem(FX_CACHE_KEY) || '0') || 0);
+  const [fxRateTime, setFxRateTime] = useState<number>(() => parseInt(localStorage.getItem(FX_TIME_KEY) || '0', 10) || 0);
+  const [showFxModal, setShowFxModal] = useState(false);
+  const [fxLoading, setFxLoading] = useState(false);
+  const [fxError, setFxError] = useState<string | null>(null);
+
+  // 实际生效汇率：实时 > 缓存 > 手动设置
+  const effectiveFxRate = fxRate > 0 ? fxRate : (appSettings.manualFxRate && appSettings.manualFxRate > 0 ? appSettings.manualFxRate : 0);
+
+  const fetchFxRate = async () => {
+    // 缓存仍有效则直接复用，避免重复请求
+    if (fxRate > 0 && Date.now() - fxRateTime < FX_CACHE_TTL) return fxRate;
+    setFxLoading(true);
+    setFxError(null);
+    try {
+      const res = await fetch('https://qt.gtimg.cn/q=whUSDCNY');
+      const buffer = await res.arrayBuffer();
+      const text = new TextDecoder('gb18030').decode(buffer);
+      const match = text.match(/v_whUSDCNY="([^"]+)"/);
+      const rate = match && match[1] ? parseFloat(match[1].split('~')[3]) : 0;
+      if (rate > 0) {
+        setFxRate(rate);
+        setFxRateTime(Date.now());
+        localStorage.setItem(FX_CACHE_KEY, String(rate));
+        localStorage.setItem(FX_TIME_KEY, String(Date.now()));
+        return rate;
+      }
+      throw new Error('汇率解析失败');
+    } catch {
+      if (fxRate <= 0 && appSettings.manualFxRate && appSettings.manualFxRate > 0) {
+        setFxError('实时汇率获取失败，已使用手动汇率');
+        return appSettings.manualFxRate;
+      }
+      setFxError(fxRate > 0 ? '实时汇率获取失败，已使用缓存汇率' : '实时汇率获取失败');
+      return fxRate;
+    } finally {
+      setFxLoading(false);
+    }
+  };
+
+  const openFxModal = () => {
+    setShowFxModal(true);
+    if (Date.now() - fxRateTime >= FX_CACHE_TTL) fetchFxRate();
+  };
 
   const [aiState, setAiState] = useState<AIAnalysisState>({
     loading: false,
@@ -1439,6 +1491,62 @@ export default function App() {
         </div>
       )}
 
+      {showFxModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setShowFxModal(false)}>
+          <div className="bg-app-card border border-app-border rounded-xl w-full max-w-sm shadow-2xl relative p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-bold text-app-text">价格换算</h3>
+              <button onClick={() => setShowFxModal(false)} className="text-app-subtext hover:text-app-text transition-colors"><X size={20} /></button>
+            </div>
+
+            {/* 实时汇率 */}
+            <div className="flex items-center gap-2 justify-between bg-app-bg border border-app-border rounded-lg px-3 py-2">
+              <span className="text-xs text-app-subtext">汇率 美元/人民币</span>
+              <div className="flex items-center gap-2">
+                {fxLoading ? (
+                  <RefreshCw size={14} className="text-app-subtext animate-spin" />
+                ) : (
+                  effectiveFxRate > 0
+                    ? <span className="font-mono font-bold text-app-text">1 USD = {effectiveFxRate.toFixed(4)} CNY</span>
+                    : <span className="text-app-subtext text-xs">--</span>
+                )}
+                <button onClick={() => { setFxRateTime(0); fetchFxRate(); }} className="text-app-subtext hover:text-app-text" title="">
+                  <RefreshCw size={14} />
+                </button>
+              </div>
+            </div>
+            {fxError && <p className="text-xs text-orange-400 text-center">{fxError}</p>}
+
+            {/* 换算项 */}
+            {(() => {
+              const rows = [
+                { label: '回本价', rmb: currentPosition.breakEvenPrice },
+                { label: '持仓均价', rmb: currentPosition.avgCost },
+              ];
+              const usdOf = (rmb: number) => effectiveFxRate > 0 ? rmb / effectiveFxRate : null;
+              return (
+                <div className="space-y-3">
+                  {rows.map(row => {
+                    const usdG = usdOf(row.rmb);
+                    const usdOz = usdG != null ? usdG * OZ_PER_GRAM : null;
+                    return (
+                      <div key={row.label} className="space-y-1.5">
+                        <div className="text-xs text-app-subtext">{row.label}</div>
+                        <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-sm font-mono">
+                          <div className="flex justify-between"><span className="text-app-subtext text-xs">人民币</span><span className="font-bold text-app-text">¥{row.rmb.toFixed(2)}</span></div>
+                          {usdG != null && <div className="flex justify-between"><span className="text-app-subtext text-xs">美元/克</span><span className="font-bold text-app-text">${usdG.toFixed(2)}</span></div>}
+                          {usdOz != null && <div className="flex justify-between col-span-2"><span className="text-app-subtext text-xs">美元/盎司</span><span className="font-bold text-app-text">${usdOz.toFixed(2)}</span></div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
       {isDragging && (
         <div className="absolute inset-0 bg-brand-yellow/10 backdrop-blur-sm z-50 flex items-center justify-center border-4 border-dashed border-brand-yellow m-4 rounded-3xl pointer-events-none text-center">
            <div><FileJson size={64} className="mx-auto text-brand-yellow mb-4" /><h3 className="text-2xl font-bold text-app-text">松开以导入数据</h3></div>
@@ -1537,10 +1645,7 @@ export default function App() {
                           </div>
                       </div>
                       <div 
-                          onClick={() => {
-                              const nextMode = appSettings.priceDisplayMode === 'breakEven' ? 'avgCost' : 'breakEven';
-                              handleSettingsUpdate({ priceDisplayMode: nextMode });
-                          }}
+                          onClick={openFxModal}
                           className="bg-app-bg p-3 rounded-lg border border-app-border flex flex-col justify-center gap-1.5 cursor-pointer hover:border-brand-yellow/50 transition-colors"
                       >
                           <div className="flex items-center justify-between">
