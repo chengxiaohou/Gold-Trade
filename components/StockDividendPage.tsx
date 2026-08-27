@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, EyeOff, Download, BarChart3, List, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
-import { fetchBollData, checkAllBollCache, countStaleBollCache, countVisibleBollItems, getBollCacheTimestamps, BollData, BollPeriod, BollAdjust } from '../services/bollService';
+import { fetchBollData, checkAllBollCache, countStaleBollCache, countVisibleBollItems, getBollCacheTimestamps, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getDynamicBollCacheTTL, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
@@ -215,6 +215,7 @@ interface StockDividendPageProps {
   tagColors?: Record<string, string>;
   onTagColorsChange?: (colors: Record<string, string>) => void;
   maxRows?: number;
+  maxWidth?: number;
   actionButtons?: React.ReactNode;
   appVersion?: string;
   onTogglePage?: () => void;
@@ -289,6 +290,103 @@ const formatDividendCell = (current: number, fetched: number | null, hasData: bo
 const formatPrice = (price: number, name?: string): string => {
   const isETF = name?.includes('ETF') || name?.includes('etf');
   return isETF ? price.toFixed(3) : price.toFixed(2);
+};
+
+// ---- 技术指标计算（复用已有K线数据，不额外请求） ----
+
+interface IndicatorResult {
+  open: number | null;   // 最新一根K线的开盘价
+  high: number | null;   // 最新一根K线的最高价
+  low: number | null;    // 最新一根K线的最低价
+  changePct: number | null; // 最新收盘较昨收涨跌幅
+  volume: number | null; // 最新一根K线的成交量
+  volumeMa5: number | null; // 最近5根K线成交量均值
+  kdj: { k: number | null; d: number | null; j: number | null };
+  rsi: { rsi6: number | null; rsi12: number | null; rsi24: number | null };
+  macd: { dif: number | null; dea: number | null; macd: number | null };
+}
+
+// 基于K线序列计算技术指标（9日KDJ / 6,12,24日RSI / 12,26,9 MACD）
+function calcIndicators(klines: BollKline[]): IndicatorResult | null {
+  if (!klines || klines.length === 0) return null;
+  const last = klines[klines.length - 1];
+  const prev = klines.length >= 2 ? klines[klines.length - 2] : null;
+
+  const high = last.high ?? null;
+  const low = last.low ?? null;
+  const volume = last.volume ?? null;
+  // 成交量 MA5：最近5根K线成交量均值
+  const volumeMa5 = klines.length >= 5
+    ? klines.slice(-5).reduce((sum, k) => sum + (k.volume ?? 0), 0) / 5
+    : null;
+  const changePct = prev && prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : null;
+
+  // ---- KDJ (9) ----
+  let kv: number | null = null, dv: number | null = null, jv: number | null = null;
+  if (klines.length >= 9) {
+    let k = 50, d = 50, prevK = 50;
+    for (let i = 0; i < klines.length; i++) {
+      const start = Math.max(0, i - 9 + 1);
+      let hh = -Infinity, ll = Infinity;
+      for (let j = start; j <= i; j++) {
+        if (klines[j].high > hh) hh = klines[j].high;
+        if (klines[j].low < ll) ll = klines[j].low;
+      }
+      const rsv = hh === ll ? 50 : ((klines[i].close - ll) / (hh - ll)) * 100;
+      k = (2 / 3) * (prevK === 50 ? k : prevK) + (1 / 3) * rsv;
+      prevK = k;
+      d = (2 / 3) * d + (1 / 3) * k;
+    }
+    kv = parseFloat(k.toFixed(2));
+    dv = parseFloat(d.toFixed(2));
+    jv = parseFloat((3 * k - 2 * d).toFixed(2));
+  }
+
+  // ---- RSI (6/12/24) ----
+  const calcRsi = (n: number): number | null => {
+    if (klines.length <= n) return null;
+    let up = 0, down = 0;
+    for (let i = klines.length - n; i < klines.length; i++) {
+      const diff = klines[i].close - klines[i - 1].close;
+      if (diff > 0) up += diff; else down -= diff;
+    }
+    if (down === 0) return up === 0 ? 50 : 100;
+    return parseFloat((100 - 100 / (1 + up / down)).toFixed(2));
+  };
+
+  // ---- MACD (12,26,9) ----
+  const ema = (arr: number[], n: number): number[] => {
+    const res: number[] = [];
+    const alpha = 2 / (n + 1);
+    let prevEma = 0;
+    arr.forEach((v, i) => {
+      if (i === 0) { prevEma = v; res.push(v); }
+      else { prevEma = alpha * v + (1 - alpha) * prevEma; res.push(prevEma); }
+    });
+    return res;
+  };
+  const closes = klines.map(k => k.close);
+  let dif: number | null = null, dea: number | null = null, macd: number | null = null;
+  if (closes.length >= 26) {
+    const ema12 = ema(closes, 12);
+    const ema26 = ema(closes, 26);
+    const n = closes.length;
+    const difArr = closes.map((_, i) => ema12[i] - ema26[i]);
+    const deaArr = ema(difArr, 9);
+    dif = parseFloat(difArr[n - 1].toFixed(3));
+    dea = parseFloat(deaArr[deaArr.length - 1].toFixed(3));
+    macd = parseFloat((2 * (difArr[n - 1] - deaArr[deaArr.length - 1])).toFixed(3));
+  }
+
+  return { open: last.open ?? null, high, low, changePct, volume, volumeMa5, kdj: { k: kv, d: dv, j: jv }, rsi: { rsi6: calcRsi(6), rsi12: calcRsi(12), rsi24: calcRsi(24) }, macd: { dif, dea, macd } };
+}
+
+// 成交量格式化（万/亿,单位手）
+const formatVolume = (v: number | null): string => {
+  if (v == null) return '-';
+  if (v >= 1e8) return `${(v / 1e8).toFixed(2)}亿手`;
+  if (v >= 1e4) return `${(v / 1e4).toFixed(2)}万手`;
+  return `${Math.round(v)}手`;
 };
 
 const formatFetchTime = (timestamp: number): string => {
@@ -376,7 +474,7 @@ const formatPercent = (percent: number): string => {
   return percent.toFixed(2) + '%';
 };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, showRequestStats = true }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 812, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, showRequestStats = true }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
   // 分红年份列（dividendLeft / dividendRight）：表头合并为一格，年份各自成列
@@ -453,14 +551,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (onSortModeChange) onSortModeChange(mode);
   };
 
-  // 列表页点击股票名称显示支撑/压力位弹窗
-  const handleListSrClick = (e: React.MouseEvent, stock: StockEntry) => {
+  // 列表页股票名称支撑/压力位弹窗（hover 或 click）
+  const handleListSrClick = (e: React.MouseEvent, stock: StockEntry, pin = false) => {
     e.stopPropagation();
     const btn = e.currentTarget as HTMLElement;
     const rect = btn.getBoundingClientRect();
     listSrHoveredRef.current = true;
     listSrBtnRef.current = btn as unknown as HTMLButtonElement;
-    setListSrTooltipPinned(true);
+    listSrActiveIdRef.current = stock.id;
+    setListSrTooltipPinned(pin);
     setListSrStock(stock);
     const adjustLabel = '前复权';
     const popupLogCtx = requestLogService.beginBatch('支撑/压力位预览：1 只股票 · 3 条请求');
@@ -469,7 +568,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       fetchBollData(stock.code, 'weekly', 'qfq', apiSource, undefined, popupLogCtx),
       fetchBollData(stock.code, 'monthly', 'qfq', apiSource, undefined, popupLogCtx),
     ]).then(([dailyR, weeklyR, monthlyR]) => {
-      if (!listSrBtnRef.current) return;
+      if (!listSrActiveIdRef.current || listSrActiveIdRef.current !== stock.id) return;
       const periodLabels: { period: string; data: BollData | null }[] = [
         { period: '日', data: dailyR.data },
         { period: '周', data: weeklyR.data },
@@ -554,6 +653,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     });
   };
 
+  // 悬停名称显示支撑/压力位（临时，不固定）
+  const handleListSrHoverEnter = (e: React.MouseEvent, stock: StockEntry) => {
+    // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
+    if (listSrTooltipPinned || priceInfoPinned) return;
+    handleListSrClick(e, stock, false);
+  };
+
+  // 移开名称：非固定时关闭
+  const handleListSrHoverLeave = () => {
+    if (!listSrTooltipPinned) {
+      listSrHoveredRef.current = false;
+      listSrActiveIdRef.current = undefined;
+      setListSrPreviewText(null);
+    }
+  };
+
   const [bollData, setBollData] = useState<BollData | null>(null);
   const [bollError, setBollError] = useState<string | null>(null);
   const [bollUnsupported, setBollUnsupported] = useState<boolean>(false);
@@ -587,6 +702,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [listSrTooltipAbove, setListSrTooltipAbove] = useState(0);
   const listSrBtnRef = useRef<HTMLButtonElement | null>(null);
   const listSrHoveredRef = useRef(false);
+  const listSrActiveIdRef = useRef<string | undefined>(undefined);
   const [listSrCopied, setListSrCopied] = useState(false);
   const [listSrTooltipPinned, setListSrTooltipPinned] = useState(false);
   const listSrTooltipRef = useRef<HTMLDivElement | null>(null);
@@ -597,6 +713,104 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [listCopyPreviewPos, setListCopyPreviewPos] = useState({ left: 0, top: 0 });
   // 当前点击的股票（用于列表页弹窗内的复制操作）
   const [listSrStock, setListSrStock] = useState<StockEntry | null>(null);
+
+  // 价格技术指标浮窗（复用现有K线数据，不额外请求）
+  const [priceInfoData, setPriceInfoData] = useState<IndicatorResult | null>(null);
+  const [priceInfoStock, setPriceInfoStock] = useState<StockEntry | null>(null);
+  const [priceInfoPos, setPriceInfoPos] = useState({ left: 0, top: 0 });
+  const [priceInfoLoading, setPriceInfoLoading] = useState(false);
+  const [priceInfoPinned, setPriceInfoPinned] = useState(false);
+  const priceInfoBtnRef = useRef<HTMLTableCellElement | null>(null);
+  const priceInfoRef = useRef<HTMLDivElement | null>(null);
+  const priceInfoHoveredRef = useRef(false);
+  const priceInfoActiveIdRef = useRef<string | undefined>(undefined);
+  const priceInfoHoverCount = useRef(0);
+
+  // 显示价格技术指标浮窗（位置逻辑参考股票名称弹窗：右侧垂直居中）
+  const openPriceInfo = (btn: HTMLElement, stock: StockEntry) => {
+    const rect = btn.getBoundingClientRect();
+    priceInfoBtnRef.current = btn as unknown as HTMLTableCellElement;
+    priceInfoActiveIdRef.current = stock.id;
+    setPriceInfoStock(stock);
+    setPriceInfoLoading(true);
+    setPriceInfoData(null);
+    // 定位：参考名称弹窗，出现在价格右侧并垂直居中
+    const popupW = 195;
+    const estH = 330;
+    const gap = 8;
+    let left = rect.right + gap;
+    let top = rect.top + rect.height / 2 - estH / 2;
+    if (left + popupW > window.innerWidth - 10) left = rect.left - popupW - gap;
+    if (left < 10) left = (window.innerWidth - popupW) / 2;
+    if (top + estH > window.innerHeight - 10) top = window.innerHeight - estH - 10;
+    if (top < 10) top = 10;
+    setPriceInfoPos({ left, top });
+
+    const popupLogCtx = requestLogService.beginBatch(`技术指标预览 ${stock.name}(${getDisplayCode(stock.code)})：1 只股票 · 1 条请求`);
+    fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx).then(result => {
+      // 仅在仍是当前目标股票时应用结果（避免悬停切换/移开后残留旧数据）
+      if (priceInfoActiveIdRef.current !== stock.id) return;
+      const ind = calcIndicators(result.data?.klines || []);
+      setPriceInfoData(ind);
+      setPriceInfoLoading(false);
+      // 自适应高度：数据渲染后用浮窗实际高度重算垂直居中
+      requestAnimationFrame(() => {
+        if (priceInfoActiveIdRef.current !== stock.id || !priceInfoBtnRef.current) return;
+        const pRef = priceInfoRef.current;
+        const popupH = pRef?.offsetHeight || 0;
+        if (!popupH) return;
+        const popupW = 195;
+        const gap = 8;
+        const btnRect = (priceInfoBtnRef.current as HTMLElement).getBoundingClientRect();
+        let left = btnRect.right + gap;
+        let top = btnRect.top + btnRect.height / 2 - popupH / 2;
+        if (left + popupW > window.innerWidth - 10) left = btnRect.left - popupW - gap;
+        if (left < 10) left = (window.innerWidth - popupW) / 2;
+        if (top + popupH > window.innerHeight - 10) top = window.innerHeight - popupH - 10;
+        if (top < 10) top = 10;
+        setPriceInfoPos({ left, top });
+      });
+    });
+  };
+
+  // 悬停价格显示
+  const handlePriceInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
+    // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
+    if (listSrTooltipPinned || priceInfoPinned) return;
+    priceInfoHoverCount.current += 1;
+    priceInfoHoveredRef.current = true;
+    openPriceInfo(e.currentTarget as HTMLElement, stock);
+  };
+
+  // 鼠标移开时关闭（已固定的常驻浮窗不关闭）
+  const handlePriceInfoLeave = () => {
+    priceInfoHoverCount.current = Math.max(0, priceInfoHoverCount.current - 1);
+    if (priceInfoHoverCount.current > 0) return;
+    priceInfoHoveredRef.current = false;
+    priceInfoActiveIdRef.current = undefined;
+    if (priceInfoPinned) return;
+    setPriceInfoStock(null);
+    setPriceInfoData(null);
+    setPriceInfoLoading(false);
+  };
+
+  // 点击价格：切换固定/取消固定
+  const handlePriceInfoClick = (e: React.MouseEvent, stock: StockEntry) => {
+    e.stopPropagation();
+    if (priceInfoPinned && priceInfoStock?.id === stock.id) {
+      // 取消固定并关闭
+      priceInfoHoverCount.current = 0;
+      priceInfoHoveredRef.current = false;
+      priceInfoActiveIdRef.current = undefined;
+      setPriceInfoPinned(false);
+      setPriceInfoStock(null);
+      setPriceInfoData(null);
+      setPriceInfoLoading(false);
+      return;
+    }
+    openPriceInfo(e.currentTarget as HTMLElement, stock);
+    setPriceInfoPinned(true);
+  };
 
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
   const [stockBollErrorMap, setStockBollErrorMap] = useState<Map<string, { daily?: string; weekly?: string; monthly?: string }>>(new Map());
@@ -804,6 +1018,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const timer = setInterval(() => setNowTick(t => t + 1), 30000);
     return () => clearInterval(timer);
   }, []);
+
+  // 列表页价格弹窗：点击外部关闭
+  useEffect(() => {
+    if (!priceInfoPinned) return;
+    const handler = (e: MouseEvent) => {
+      if (priceInfoRef.current && !priceInfoRef.current.contains(e.target as Node) &&
+          priceInfoBtnRef.current && !priceInfoBtnRef.current.contains(e.target as Node)) {
+        priceInfoHoverCount.current = 0;
+        priceInfoHoveredRef.current = false;
+        priceInfoActiveIdRef.current = undefined;
+        setPriceInfoPinned(false);
+        setPriceInfoStock(null);
+        setPriceInfoData(null);
+        setPriceInfoLoading(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [priceInfoPinned]);
 
   // 支撑/压力位弹窗固定模式：点击弹窗外部关闭
   useEffect(() => {
@@ -1415,7 +1648,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   return (
     <div className="flex flex-col gap-3 w-full">
       <div className="flex justify-center">
-        <div className="w-full max-w-[742px] flex items-center gap-3">
+        <div className="w-full flex items-center gap-3" style={{ maxWidth }}>
           <h1 className="text-3xl font-bold text-app-subtext tracking-wide">股息率一览</h1>
           {appVersion && <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1">{appVersion}</span>}
           {onTogglePage && (
@@ -1430,7 +1663,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         </div>
       </div>
       <div className="flex justify-center">
-        <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full max-w-[742px]">
+        <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full" style={{ maxWidth }}>
           <div 
             ref={scrollContainerRef}
             className="overflow-x-auto custom-scrollbar"
@@ -1637,7 +1870,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           />}
                         </div>
                       ) : (
-                        <div className="relative flex items-center justify-center h-8 whitespace-nowrap cursor-pointer" onClick={(e) => handleListSrClick(e, stock)}>
+                        <div className="relative flex items-center justify-center h-8 whitespace-nowrap cursor-pointer" onClick={(e) => handleListSrClick(e, stock, true)} onMouseEnter={(e) => handleListSrHoverEnter(e, stock)} onMouseLeave={() => handleListSrHoverLeave()}>
                           <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
                             const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
                             const n = raw.replace(/\s/g, '');
@@ -1653,20 +1886,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       {getDividendRate(stock) > 0 ? formatPercent(getDividendRate(stock)) : '--'}
                     </span>
                   </td>}
-                  {cols.includes('price') && <td className="px-1 py-1.5 text-center border-r border-app-border">
+                  {cols.includes('price') && <td
+                    onMouseEnter={(e) => handlePriceInfoEnter(e, stock)}
+                    onMouseLeave={() => handlePriceInfoLeave()}
+                    onClick={(e) => handlePriceInfoClick(e, stock)}
+                    className="px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
+                    title="悬停预览，点击固定查看当日行情与技术指标"
+                  >
                     <div className="flex items-center justify-center gap-0.5">
                       <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                         {formatPrice(stock.price, stock.name)}
                       </span>
                       {refreshFailed.has(stock.id) && (
-                        <button
-                          onClick={() => handleRefreshPrice(stock.id)}
-                          className="p-0.5 hover:bg-app-input rounded transition-colors"
-                          title="重新刷新股价"
-                        >
-                          <RefreshCw size={10} className="text-brand-yellow" />
-                        </button>
-                      )}
+                            <span onClick={(e) => { e.stopPropagation(); handleRefreshPrice(stock.id); }} className="cursor-pointer text-brand-yellow hover:opacity-80" title="重新刷新股价"><RefreshCw size={10} /></span>
+                          )}
                     </div>
                   </td>}
                   {cols.includes('changePercent') && <td className="px-1 py-1.5 text-center border-r border-app-border">
@@ -1964,16 +2197,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         </>,
         document.body
       )}
-
-      <div className="flex justify-center">
-        <div className="bg-app-card border border-app-border rounded-xl p-4 max-w-[742px] w-full">
-          <div className="text-xs text-app-subtext">
-            <p className="mb-2">计算公式：<span className="font-mono">股价 = 分红金额 / 股息率</span></p>
-            <p>例如：分红 ¥2.00，股息率 5%，对应股价 = 2.00 / 0.05 = ¥40.00</p>
-            <p className="mt-2 text-[10px] opacity-70">股息率 = 选中年份分红 / 当前股价 × 100%</p>
-          </div>
-        </div>
-      </div>
 
       {editTagState && (
         <EditTagBubble 
@@ -3200,11 +3423,83 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         </div>
       )}
 
+      {/* 列表页价格技术指标弹窗 */}
+      {priceInfoStock && (
+        <div
+          ref={priceInfoRef}
+          className="fixed z-[59] bg-app-input border border-app-border rounded-lg shadow-xl overflow-hidden"
+          style={{ top: priceInfoPos.top, left: priceInfoPos.left, width: 210 }}
+          onMouseEnter={() => { priceInfoHoverCount.current += 1; }}
+          onMouseLeave={() => handlePriceInfoLeave()}
+        >
+          <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center">
+            <span className="text-[11px] font-bold text-app-subtext">{priceInfoStock.name}</span>
+          </div>
+          <div className="px-2.5 py-1.5">
+            {priceInfoLoading && <div className="text-[10px] text-app-subtext py-2 text-center">加载中…</div>}
+            {!priceInfoLoading && !priceInfoData && <div className="text-[10px] text-app-subtext py-2 text-center">暂无数据</div>}
+            {!priceInfoLoading && priceInfoData && (() => {
+              const d = priceInfoData;
+              const fmt = (v: number | null) => v == null ? '-' : formatPrice(v, priceInfoStock!.name);
+              const pctColor = d.changePct == null ? 'text-app-subtext' : d.changePct >= 0 ? 'text-brand-red' : 'text-brand-green';
+              const fmtPct = (v: number | null) => v == null ? '-' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+              const numFmt = (v: number | null, dec = 2) => v == null ? '-' : v.toFixed(dec);
+              const cell2 = (label: string, val: React.ReactNode, colorClass = 'text-app-rowtext') => (
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[10px] text-app-subtext whitespace-nowrap">{label}</span>
+                  <span className={`font-mono text-[11px] ${colorClass}`}>{val}</span>
+                </div>
+              );
+              const volumeRatioText = (() => {
+                if (d.volume == null || d.volumeMa5 == null || d.volumeMa5 === 0) return '-';
+                return (d.volume / d.volumeMa5).toFixed(2);
+              })();
+              const volumeColor = d.volume != null && d.volumeMa5 != null && d.volumeMa5 !== 0
+                ? (d.volume >= d.volumeMa5 ? 'text-brand-red' : 'text-brand-green')
+                : 'text-app-rowtext';
+              const changeAmount = (() => {
+                if (d.changePct == null || priceInfoStock == null || priceInfoStock.price <= 0) return '-';
+                return formatPrice(priceInfoStock.price - priceInfoStock.price / (1 + d.changePct / 100), priceInfoStock.name);
+              })();
+              const subRows = (label: string, vals: [string, string | null, string?][]) => {
+                return (
+                  <div className="py-[3px]">
+                    <div className="text-[10px] text-app-subtext mb-0.5">{label}</div>
+                    <div className="flex gap-2">
+                      {vals.map(([k, v, c]) => (
+                        <span key={k} className={`flex-1 text-center font-mono text-[10px] ${c ?? 'text-app-rowtext'}`}>{k}<span className="text-app-subtext">:</span>{v ?? '-'}</span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              };
+              // 超买(数值偏高)用绿色，超卖(数值偏低)用红色
+              const rsiColor = (v: number | null) => v == null ? undefined : (v > 70 ? 'text-brand-green' : v < 30 ? 'text-brand-red' : undefined);
+              const kdjColor = (v: number | null, buyHigh: number, sellLow: number) => v == null ? undefined : (v > buyHigh ? 'text-brand-green' : v < sellLow ? 'text-brand-red' : undefined);
+              return (
+                <div>
+                  <div className="mb-1 space-y-1">
+                    <div className="grid grid-cols-2 gap-x-4">{cell2('开', fmt(d.open), pctColor)}{cell2('收', formatPrice(priceInfoStock.price, priceInfoStock.name), pctColor)}</div>
+                    <div className="grid grid-cols-2 gap-x-4">{cell2('低', fmt(d.low), pctColor)}{cell2('高', fmt(d.high), pctColor)}</div>
+                    <div className="grid grid-cols-2 gap-x-4">{cell2('额', changeAmount, pctColor)}{cell2('幅', fmtPct(d.changePct), pctColor)}</div>
+                    <div className="grid grid-cols-2 gap-x-4">{cell2('量', formatVolume(d.volume), volumeColor)}{cell2('量比', volumeRatioText, volumeColor)}</div>
+                  </div>
+                  <div className="border-t border-app-border my-1" />
+                  {subRows('KDJ (9, 3, 3)', [['K', numFmt(d.kdj.k), kdjColor(d.kdj.k, 80, 20)], ['D', numFmt(d.kdj.d), kdjColor(d.kdj.d, 80, 20)], ['J', numFmt(d.kdj.j), kdjColor(d.kdj.j, 100, 0)]])}
+                  {subRows('RSI (6, 12, 24)', [['6', numFmt(d.rsi.rsi6), rsiColor(d.rsi.rsi6)], ['12', numFmt(d.rsi.rsi12), rsiColor(d.rsi.rsi12)], ['24', numFmt(d.rsi.rsi24), rsiColor(d.rsi.rsi24)]])}
+                  {subRows('MACD (12, 26, 9)', [['DIF', numFmt(d.macd.dif, 3)], ['DEA', numFmt(d.macd.dea, 3)], ['MACD', numFmt(d.macd.macd, 3)]])}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
       {/* 列表页支撑/压力位弹窗 */}
       {listSrPreviewText && listSrStock && (
         <div
           ref={listSrTooltipRef}
-          className={`fixed z-[60] bg-app-card border border-app-border rounded px-2.5 py-1.5 text-[11px] font-mono text-app-subtext whitespace-pre shadow-lg leading-relaxed text-left ${listSrTooltipHidden ? ' invisible' : ''}`}
+          className={`fixed z-[60] bg-app-input border border-app-border rounded px-2.5 py-1.5 text-[11px] font-mono text-app-rowtext whitespace-pre shadow-lg leading-relaxed text-left ${listSrTooltipHidden ? ' invisible' : ''}`}
           style={{ top: listSrTooltipAbove, left: listSrTooltipOffset, tabSize: 8 }}
         >
           <button

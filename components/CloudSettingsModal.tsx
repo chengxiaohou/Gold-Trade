@@ -83,6 +83,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [newRange, setNewRange] = useState({ min: '', max: '', color: 'gray' });
   const [editingRangeIndex, setEditingRangeIndex] = useState<number | null>(null);
   const [maxRows, setMaxRows] = useState<number>(stockSettings?.maxRows || 15);
+  const [maxWidth, setMaxWidth] = useState<number>(stockSettings?.maxWidth || 812);
   const [apiSource, setApiSource] = useState<ApiSource>(appSettings.apiSource || 'tencent');
   const [cacheTTLMinutes, setCacheTTLMinutes] = useState<number>(appSettings.cacheTTLMinutes || 10);
   const [bollCacheTTLMinutes, setBollCacheTTLMinutes] = useState<number>(appSettings.bollCacheTTLMinutes || 120);
@@ -209,6 +210,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         { min: 6, max: 7, color: 'green' }
       ],
       maxRows: maxRows ?? stockSettings?.maxRows ?? 15,
+      maxWidth: maxWidth ?? stockSettings?.maxWidth ?? 812,
       sortMode: stockSettings?.sortMode ?? 'default',
     };
 
@@ -307,6 +309,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       dividendRateColumns: currentPage === 'stock' ? dividendRateColumns : stockSettings?.dividendRateColumns,
       dividendRateColorRanges: currentPage === 'stock' ? dividendRateColorRanges : stockSettings?.dividendRateColorRanges,
       maxRows: currentPage === 'stock' ? maxRows : stockSettings?.maxRows,
+      maxWidth: currentPage === 'stock' ? maxWidth : stockSettings?.maxWidth,
       sortMode: stockSettings?.sortMode ?? 'default',
     };
     
@@ -897,6 +900,28 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                const val = parseInt(e.target.value) || 0;
                                if (val >= 0) {
                                  setMaxRows(val);
+                               }
+                             }}
+                             className="w-20 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
+                             min="0"
+                           />
+                        </div>
+
+                        {/* Max Width */}
+                        <div className="space-y-2">
+                           <label className="text-sm font-medium text-app-text block">
+                              列表最大宽度
+                           </label>
+                           <p className="text-xs text-app-subtext">
+                              设置列表的最大宽度(px)，默认812。
+                           </p>
+                           <input
+                             type="number"
+                             value={maxWidth}
+                             onChange={(e) => {
+                               const val = parseInt(e.target.value) || 0;
+                               if (val >= 0) {
+                                 setMaxWidth(val);
                                }
                              }}
                              className="w-20 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"

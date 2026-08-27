@@ -125,6 +125,16 @@ function logSinaUrl(path: string): string {
 export type BollPeriod = 'daily' | 'weekly' | 'monthly';
 export type BollAdjust = 'qfq' | 'none';
 
+// K线单根数据（保留完整行情字段，供 KDJ/RSI/MACD/成交量等指标计算）
+export interface BollKline {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
 export interface BollData {
   upper: number;
   mid: number;
@@ -138,7 +148,7 @@ export interface BollData {
   rangePriceHighDate: string;
   rangePriceLow: number;
   rangePriceLowDate: string;
-  klines?: { date: string; close: number }[];
+  klines?: BollKline[];
 }
 
 export interface BollResult {
@@ -653,7 +663,14 @@ async function fetchBollFromTencent(
       rangePriceHighDate,
       rangePriceLow: Math.round(rangePriceLow * 1000) / 1000,
       rangePriceLowDate,
-      klines: klines.map(k => ({ date: k.date, close: adjust === 'none' && realtimePrice && k.date === last.date ? realtimePrice : k.close })),
+      klines: klines.map(k => ({
+        date: k.date,
+        open: Math.round(k.open * 1000) / 1000,
+        high: Math.round(k.high * 1000) / 1000,
+        low: Math.round(k.low * 1000) / 1000,
+        close: adjust === 'none' && realtimePrice && k.date === last.date ? realtimePrice : Math.round(k.close * 1000) / 1000,
+        volume: k.volume,
+      })),
     };
 
     const cacheKey = getCacheKey(code, period, adjust, 'tencent');
@@ -785,7 +802,14 @@ async function fetchBollFromSina(
       rangePriceHighDate,
       rangePriceLow: Math.round(rangePriceLow * 1000) / 1000,
       rangePriceLowDate,
-      klines: klines.map(k => ({ date: k.day, close: parseFloat(k.close) })),
+      klines: klines.map(k => ({
+        date: k.day,
+        open: Math.round(parseFloat(k.open) * 1000) / 1000,
+        high: Math.round(parseFloat(k.high) * 1000) / 1000,
+        low: Math.round(parseFloat(k.low) * 1000) / 1000,
+        close: Math.round(parseFloat(k.close) * 1000) / 1000,
+        volume: parseFloat(k.volume),
+      })),
     };
 
     const cacheKey = getCacheKey(fullCode, period, adjust, 'sina');

@@ -13,7 +13,7 @@ import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings } from './types';
 
-const APP_VERSION = 'v2.11.0';
+const APP_VERSION = 'v2.11.1';
 
 // 生成股息率对应股价的辅助函数
 function calcDividendRates(dividend2025: number): Record<string, number> {
@@ -696,11 +696,13 @@ export default function App() {
       const cloudStockSettings = stockSettings ? {
         ...stockSettings,
         maxRows: undefined,
+        maxWidth: undefined,
         sortMode: undefined,
       } : undefined;
       const cloudExistingStockSettings = existingStockSettings ? {
         ...existingStockSettings,
         maxRows: undefined,
+        maxWidth: undefined,
         sortMode: undefined,
       } : undefined;
 
@@ -771,15 +773,17 @@ export default function App() {
           }
           
           if (result.stockSettings) {
-            // 从云端恢复时，保留本地的设备特定设置（maxRows、sortMode）
+            // 从云端恢复时，保留本地的设备特定设置（maxRows、maxWidth、sortMode）
             setStockSettings({
               ...result.stockSettings,
               maxRows: stockSettings?.maxRows ?? result.stockSettings.maxRows,
+              maxWidth: stockSettings?.maxWidth ?? result.stockSettings.maxWidth,
               sortMode: stockSettings?.sortMode ?? result.stockSettings.sortMode,
             });
             localStorage.setItem('stock_dividend_settings', JSON.stringify({
               ...result.stockSettings,
               maxRows: stockSettings?.maxRows ?? result.stockSettings.maxRows,
+              maxWidth: stockSettings?.maxWidth ?? result.stockSettings.maxWidth,
               sortMode: stockSettings?.sortMode ?? result.stockSettings.sortMode,
             }));
           }
@@ -1817,6 +1821,7 @@ export default function App() {
             tagColors={stockSettings.tagColors || {}}
             onTagColorsChange={(colors) => setStockSettings(prev => ({ ...prev, tagColors: colors }))}
             maxRows={stockSettings.maxRows}
+            maxWidth={stockSettings.maxWidth}
             actionButtons={renderStockActionButtons()}
             appVersion={APP_VERSION}
             onTogglePage={togglePage}
