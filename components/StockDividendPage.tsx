@@ -1756,7 +1756,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const costColor = cost > 0 ? (cost > (stock.price || 0) ? 'text-brand-green' : 'text-brand-red') : 'text-app-subtext';
                     const positionPct = cost > 0 && stock.price > 0 ? ((stock.price - cost) / cost) * 100 : 0;
                     const positionPctStr = cost > 0 && stock.price > 0 ? `${positionPct >= 0 ? '+' : ''}${positionPct.toFixed(2)}%` : '';
-                    const showPct = positionDisplayMode !== 'shares' && cost > 0 && stock.price > 0;
+                    const showPct = (positionDisplayMode !== 'shares' && cost > 0 && stock.price > 0);
+                    const totalAmount = shares > 0 && cost > 0 ? `¥${Math.round(shares * cost).toLocaleString()}` : '-';
                     const displayValue = positionDisplayMode === 'shares'
                       ? sharesText
                       : positionDisplayMode === 'cost'
@@ -1790,13 +1791,18 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                               title="持仓股数"
                             />
                           </div>
+                        ) : positionDisplayMode === 'shares' ? (
+                          <div className="flex flex-col items-center leading-tight">
+                            <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">{totalAmount}</span>
+                            <span className="font-mono text-[10px] text-app-rowtext">{displayValue}</span>
+                          </div>
                         ) : showPct ? (
                           <div className="flex flex-col items-center leading-tight">
-                            <span className={`font-mono text-[11px] whitespace-nowrap ${positionDisplayMode === 'shares' ? 'text-app-subtext' : costColor}`}>{displayValue}</span>
+                            <span className={`font-mono text-[11px] whitespace-nowrap ${costColor}`}>{displayValue}</span>
                             <span className="font-mono text-[10px] text-app-rowtext">{positionPctStr}</span>
                           </div>
                         ) : (
-                          <span className={`font-mono text-[11px] whitespace-nowrap ${positionDisplayMode === 'shares' ? 'text-app-subtext' : costColor}`}>{displayValue}</span>
+                          <span className={`font-mono text-[11px] whitespace-nowrap ${costColor}`}>{displayValue}</span>
                         )}
                       </td>
                     );
