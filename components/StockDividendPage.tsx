@@ -724,7 +724,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const priceInfoRef = useRef<HTMLDivElement | null>(null);
   const priceInfoHoveredRef = useRef(false);
   const priceInfoActiveIdRef = useRef<string | undefined>(undefined);
-  const priceInfoHoverCount = useRef(0);
+  // 判断鼠标是否停留在价格浮窗内部（用 relatedTarget 配平，避免计数器泄漏）
+  const isInsidePriceInfo = (node: Node | null) => !!node && !!priceInfoRef.current?.contains(node);
 
   // 显示价格技术指标浮窗（位置逻辑参考股票名称弹窗：右侧垂直居中）
   const openPriceInfo = (btn: HTMLElement, stock: StockEntry) => {
@@ -777,18 +778,27 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const handlePriceInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
     if (listSrTooltipPinned || priceInfoPinned) return;
-    priceInfoHoverCount.current += 1;
     priceInfoHoveredRef.current = true;
     openPriceInfo(e.currentTarget as HTMLElement, stock);
   };
 
-  // 鼠标移开时关闭（已固定的常驻浮窗不关闭）
-  const handlePriceInfoLeave = () => {
-    priceInfoHoverCount.current = Math.max(0, priceInfoHoverCount.current - 1);
-    if (priceInfoHoverCount.current > 0) return;
+  // 价格悬停离开：若鼠标移入浮窗内部则保留，否则关闭（未固定时）
+  const handlePriceInfoLeave = (e?: React.MouseEvent) => {
+    priceInfoHoveredRef.current = false;
+    if (priceInfoPinned) return;
+    if (e && isInsidePriceInfo(e.relatedTarget as Node | null)) return;
+    priceInfoActiveIdRef.current = undefined;
+    setPriceInfoStock(null);
+    setPriceInfoData(null);
+    setPriceInfoLoading(false);
+  };
+
+  // 浮窗悬停离开：仍在浮窗内部（子元素间移动）则保留，真正离开且未固定时关闭
+  const handlePriceInfoFloatLeave = (e: React.MouseEvent) => {
+    if (priceInfoPinned) return;
+    if (isInsidePriceInfo(e.relatedTarget as Node | null)) return;
     priceInfoHoveredRef.current = false;
     priceInfoActiveIdRef.current = undefined;
-    if (priceInfoPinned) return;
     setPriceInfoStock(null);
     setPriceInfoData(null);
     setPriceInfoLoading(false);
@@ -799,7 +809,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     e.stopPropagation();
     if (priceInfoPinned && priceInfoStock?.id === stock.id) {
       // 取消固定并关闭
-      priceInfoHoverCount.current = 0;
       priceInfoHoveredRef.current = false;
       priceInfoActiveIdRef.current = undefined;
       setPriceInfoPinned(false);
@@ -1025,7 +1034,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const handler = (e: MouseEvent) => {
       if (priceInfoRef.current && !priceInfoRef.current.contains(e.target as Node) &&
           priceInfoBtnRef.current && !priceInfoBtnRef.current.contains(e.target as Node)) {
-        priceInfoHoverCount.current = 0;
         priceInfoHoveredRef.current = false;
         priceInfoActiveIdRef.current = undefined;
         setPriceInfoPinned(false);
@@ -1888,7 +1896,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </td>}
                   {cols.includes('price') && <td
                     onMouseEnter={(e) => handlePriceInfoEnter(e, stock)}
-                    onMouseLeave={() => handlePriceInfoLeave()}
+                    onMouseLeave={handlePriceInfoLeave}
                     onClick={(e) => handlePriceInfoClick(e, stock)}
                     className="px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
                     title=""
@@ -3429,8 +3437,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           ref={priceInfoRef}
           className="fixed z-[59] bg-app-input border border-app-border rounded-lg shadow-xl overflow-hidden"
           style={{ top: priceInfoPos.top, left: priceInfoPos.left, width: 210 }}
-          onMouseEnter={() => { priceInfoHoverCount.current += 1; }}
-          onMouseLeave={() => handlePriceInfoLeave()}
+          onMouseEnter={() => { priceInfoHoveredRef.current = true; }}
+          onMouseLeave={handlePriceInfoFloatLeave}
         >
           <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center">
             <span className="text-[11px] font-bold text-app-subtext">{priceInfoStock.name}</span>
