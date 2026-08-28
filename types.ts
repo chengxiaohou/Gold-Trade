@@ -89,6 +89,8 @@ export interface StockEntry {
   changePercent: number;
   high: number;
   low: number;
+  open?: number; // 今日开盘价（实时行情，用于价格浮窗合并今日K线）
+  volume?: number; // 今日成交量（手，实时行情，用于价格浮窗合并今日K线）
   dividend2024: number;
   dividend2025: number;
   dividendByYear: Record<number, number>; // key=年份, value=每股税前派息（全年汇总）

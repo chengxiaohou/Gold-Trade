@@ -1,5 +1,5 @@
 import { ApiSource } from '../types';
-import { getDynamicBollCacheTTL, getDynamicCacheTTL, setLastFetchTime } from './cacheService';
+import { getDynamicBollCacheTTL, setLastFetchTime } from './cacheService';
 import { requestLogService, type LogBatchContext } from './requestLogService';
 
 // 生产环境配置
@@ -486,15 +486,14 @@ export async function fetchBollData(
   adjust: BollAdjust = 'qfq',
   apiSource: ApiSource = 'tencent',
   batchTimestamp?: number,
-  logCtx?: LogBatchContext,
-  ttlOverride?: number
+  logCtx?: LogBatchContext
 ): Promise<BollResult> {
   const { market, code } = getMarketPrefix(stockCode);
   const fullCode = `${market}${code}`;
   
   const cacheKey = getCacheKey(fullCode, period, adjust, apiSource);
   const cached = cache.get(cacheKey);
-  const dynamicTTL = ttlOverride ?? getDynamicBollCacheTTL();
+  const dynamicTTL = getDynamicBollCacheTTL();
   
   // 旧版缓存可能没有 klines 字段（用于股息率曲线），缺少时视为过期重拉
   if (cached && cached.data?.ma?.ma30 && cached.data?.klines && Date.now() - cached.timestamp < dynamicTTL) {

@@ -307,6 +307,28 @@ interface IndicatorResult {
 }
 
 // 基于K线序列计算技术指标（9日KDJ / 6,12,24日RSI / 12,26,9 MACD）
+// 用实时行情覆盖/追加今日K线，保证技术指标显示今日数据（不依赖K线缓存是否已含今日K线）
+function mergeTodayBarToKlines(
+  klines: BollKline[],
+  rt: { open?: number; high?: number; low?: number; price?: number; volume?: number }
+): BollKline[] {
+  if (!klines || klines.length === 0) return klines;
+  const price = rt.price ?? 0;
+  const open = rt.open ?? 0;
+  if (price <= 0 || open <= 0) return klines; // 无有效实时行情时不修改
+  const high = rt.high && rt.high > 0 ? rt.high : price;
+  const low = rt.low && rt.low > 0 ? rt.low : price;
+  const today = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+  const todayBar: BollKline = { date: today, open, high, low, close: price, volume: rt.volume ?? 0 };
+  const last = klines[klines.length - 1];
+  // K 线末根已是当日：替换为实时数据；否则追加一个今日K线
+  return last.date === today ? [...klines.slice(0, -1), todayBar] : [...klines, todayBar];
+}
+
+// 基于K线序列计算技术指标（KDJ/RSI/MACD、最高/最低/成交量及涨跌幅等）
 function calcIndicators(klines: BollKline[]): IndicatorResult | null {
   if (!klines || klines.length === 0) return null;
   const last = klines[klines.length - 1];
@@ -748,11 +770,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setPriceInfoPos({ left, top });
 
     const popupLogCtx = requestLogService.beginBatch(`技术指标预览 ${stock.name}(${getDisplayCode(stock.code)})：1 只股票 · 1 条请求`);
-    // 浮窗技术指标遵循价格缓存 TTL（默认10分钟），而非BOLL缓存TTL，保证盘中不滞后且不每次强制请求
-    fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx, getDynamicCacheTTL()).then(result => {
+    fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx).then(result => {
       // 仅在仍是当前目标股票时应用结果（避免悬停切换/移开后残留旧数据）
       if (priceInfoActiveIdRef.current !== stock.id) return;
-      const ind = calcIndicators(result.data?.klines || []);
+      // 用实时行情(开/高/低/量/现价)覆盖或追加今日K线，保证浮窗显示今日数据
+      const merged = mergeTodayBarToKlines(result.data?.klines || [], stock);
+      const ind = calcIndicators(merged);
       setPriceInfoData(ind);
       setPriceInfoLoading(false);
       // 自适应高度：数据渲染后用浮窗实际高度重算垂直居中
@@ -1219,6 +1242,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     changePercent: number;
     high: number;
     low: number;
+    open: number;
+    volume: number;
   } | null> => {
     try {
       let market = 'sh';
@@ -1247,8 +1272,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           if (data.length >= 11) {
             const price = parseFloat(data[3]);
             const prevClose = parseFloat(data[4]);
-            const high = parseFloat(data[5]);
-            const low = parseFloat(data[6]);
+            const open = parseFloat(data[5]);
+            const volume = parseFloat(data[6]);
+            // 腾讯实时行情：data[33]最高、data[34]最低
+            const high = parseFloat(data[33]);
+            const low = parseFloat(data[34]);
             let changePercent = 0;
             
             if (prevClose > 0) {
@@ -1262,6 +1290,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               changePercent: changePercent,
               high: high || price,
               low: low || price,
+              open: open || price,
+              volume: volume || 0,
             };
           }
         }
@@ -1299,6 +1329,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             ...s,
             price: result.price,
             changePercent: result.changePercent,
+            high: result.high,
+            low: result.low,
+            open: result.open,
+            volume: result.volume,
             priceUpdatedAt: Date.now(),
             dividendRate2025: dividendRate,
           } : s
@@ -1374,6 +1408,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             ...updatedStocks[i],
             price: result.price,
             changePercent: result.changePercent,
+            high: result.high,
+            low: result.low,
+            open: result.open,
+            volume: result.volume,
             priceUpdatedAt: batchTime,
             dividendRate2025: dividendRate,
           };
@@ -1587,6 +1625,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         changePercent: result?.changePercent || 0,
         high: result?.high || 0,
         low: result?.low || 0,
+        open: result?.open || 0,
+        volume: result?.volume || 0,
         dividend2024,
         dividend2025,
         dividendByYear,
