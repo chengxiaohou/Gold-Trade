@@ -576,6 +576,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 列表页股票名称支撑/压力位弹窗（hover 或 click）
   const handleListSrClick = (e: React.MouseEvent, stock: StockEntry, pin = false) => {
     e.stopPropagation();
+    // 点击固定且当前正是同一股票的固定弹窗 → 再次点击收起
+    if (pin && listSrTooltipPinned && listSrStock?.id === stock.id) {
+      listSrHoveredRef.current = false;
+      listSrActiveIdRef.current = undefined;
+      setListSrTooltipPinned(false);
+      setListSrPreviewText(null);
+      setListSrStock(null);
+      return;
+    }
     const btn = e.currentTarget as HTMLElement;
     const rect = btn.getBoundingClientRect();
     listSrHoveredRef.current = true;
