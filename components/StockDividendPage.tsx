@@ -748,7 +748,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setPriceInfoPos({ left, top });
 
     const popupLogCtx = requestLogService.beginBatch(`技术指标预览 ${stock.name}(${getDisplayCode(stock.code)})：1 只股票 · 1 条请求`);
-    fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx).then(result => {
+    // 浮窗技术指标遵循价格缓存 TTL（默认10分钟），而非BOLL缓存TTL，保证盘中不滞后且不每次强制请求
+    fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx, getDynamicCacheTTL()).then(result => {
       // 仅在仍是当前目标股票时应用结果（避免悬停切换/移开后残留旧数据）
       if (priceInfoActiveIdRef.current !== stock.id) return;
       const ind = calcIndicators(result.data?.klines || []);
@@ -3490,7 +3491,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               return (
                 <div>
                   <div className="mb-1 space-y-1">
-                    <div className="grid grid-cols-2 gap-x-4">{cell2('开', fmt(d.open), pctColor)}{cell2('收', formatPrice(priceInfoStock.price, priceInfoStock.name), pctColor)}</div>
+                    <div className="grid grid-cols-2 gap-x-4">{cell2('开', fmt(d.open), pctColor)}{cell2('现', formatPrice(priceInfoStock.price, priceInfoStock.name), pctColor)}</div>
                     <div className="grid grid-cols-2 gap-x-4">{cell2('低', fmt(d.low), pctColor)}{cell2('高', fmt(d.high), pctColor)}</div>
                     <div className="grid grid-cols-2 gap-x-4">{cell2('额', changeAmount, pctColor)}{cell2('幅', fmtPct(d.changePct), pctColor)}</div>
                     <div className="grid grid-cols-2 gap-x-4">{cell2('量', formatVolume(d.volume), volumeColor)}{cell2('量比', volumeRatioText, volumeColor)}</div>
