@@ -119,5 +119,5 @@ export interface StockSettings {
   maxRows?: number; // 最大显示行数，用于固定高度内部滚动
   maxWidth?: number; // 列表最大宽度(px)，默认812
   tagColors?: Record<string, string>; // 标签颜色配置，与黄金页面独立
-  sortMode?: 'default' | 'dividendRate' | 'tag'; // 列表排序规则
+  sortMode?: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly'; // 列表排序规则
 }

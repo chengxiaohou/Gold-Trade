@@ -224,8 +224,8 @@ interface StockDividendPageProps {
   resetSignal?: number;
   dividendYearLeft?: number;
   dividendYearRight?: number;
-  sortMode?: 'default' | 'dividendRate' | 'tag';
-  onSortModeChange?: (mode: 'default' | 'dividendRate' | 'tag') => void;
+  sortMode?: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly';
+  onSortModeChange?: (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly') => void;
   showRequestStats?: boolean;
 }
 
@@ -569,8 +569,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       setShowResetConfirm(true);
     }
   }, [resetSignal]);
-  const handleSortModeChange = (mode: 'default' | 'dividendRate' | 'tag') => {
+  const handleSortModeChange = (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly') => {
     if (onSortModeChange) onSortModeChange(mode);
+  };
+  // 布林线列排序方向：false=下→中→上，true=上→中→下
+  const [bollSortReverse, setBollSortReverse] = useState(false);
+  const handleBollSortClick = (period: 'daily' | 'weekly' | 'monthly') => {
+    if (sortMode !== period) {
+      // 切换到此列，初始正向（下→中→上）
+      if (onSortModeChange) onSortModeChange(period);
+      setBollSortReverse(false);
+    } else {
+      // 再次点击：正向与反向两档切换
+      setBollSortReverse(prev => !prev);
+    }
   };
 
   // 列表页股票名称支撑/压力位弹窗（hover 或 click）
@@ -1156,9 +1168,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const bTag = (b.tag || '').trim();
         return aTag.localeCompare(bTag);
       });
+    } else if (sortMode === 'daily' || sortMode === 'weekly' || sortMode === 'monthly') {
+      // 轨道分组排序：升序=下→中→上，降序=上→中→下；同一轨道内按偏离度百分比
+      // （负数代表向下偏离最远的“下中的下”），升序时负数靠前、正数靠后，降序时相反，
+      // 无数据排最后
+      const bandRank = bollSortReverse
+        ? { upper: 0, mid: 1, lower: 2, default: 3 }
+        : { lower: 0, mid: 1, upper: 2, default: 3 };
+      const rank = (stock: typeof stocks[number]) =>
+        stock.bollHidden ? null : getBollPosition(stockBollMap.get(stock.id)?.[sortMode] ?? null, stock.price || 0);
+      return [...stocks].sort((a, b) => {
+        const pa = rank(a), pb = rank(b);
+        if (!pa || !pb) return !pa && !pb ? 0 : pa ? -1 : 1;
+        const ba = bandRank[pa.band] ?? 3, bb = bandRank[pb.band] ?? 3;
+        if (ba !== bb) return ba - bb;
+        return bollSortReverse ? pb.percent - pa.percent : pa.percent - pb.percent;
+      });
     }
     return stocks;
-  }, [stocks, sortMode]);
+  }, [stocks, sortMode, stockBollMap, bollSortReverse]);
 
   const handleEditTagClick = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -1848,9 +1876,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <tr className="bg-app-input">
                 {(cols.includes('code') || cols.includes('name')) && <th className="px-2 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border sticky left-[36px] z-10">代码</th>}
                 {(cols.includes('dividendRate') || cols.includes('price') || cols.includes('changePercent')) && <th colSpan={3} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap">{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</th>}
-                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">日线</th>
-                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">周线</th>
-                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">月线</th>
+                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('daily')}>日线</th>
+                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('weekly')}>周线</th>
+                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('monthly')}>月线</th>
                 {dividendYearCols.map((yearCol, idx) => (
                   <th key={yearCol} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">
                     {yearCol === 'dividendLeft' ? dividendYearLeft : dividendYearRight}
