@@ -120,4 +120,6 @@ export interface StockSettings {
   maxWidth?: number; // 列表最大宽度(px)，默认812
   tagColors?: Record<string, string>; // 标签颜色配置，与黄金页面独立
   sortMode?: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly'; // 列表排序规则
+  memo?: string; // 股息率列表下方备忘录文字（随云端同步）
+  memoUpdatedAt?: number; // 备忘录最后编辑时间戳（ms）
 }

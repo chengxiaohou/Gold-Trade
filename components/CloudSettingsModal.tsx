@@ -214,6 +214,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       maxRows: maxRows ?? stockSettings?.maxRows ?? 15,
       maxWidth: maxWidth ?? stockSettings?.maxWidth ?? 812,
       sortMode: stockSettings?.sortMode ?? 'default',
+      memo: stockSettings?.memo ?? '',
+      memoUpdatedAt: stockSettings?.memoUpdatedAt ?? 0,
     };
 
     // If Cloud tab is not active and no changes to cloud config, just save app settings
@@ -314,6 +316,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       maxRows: currentPage === 'stock' ? maxRows : stockSettings?.maxRows,
       maxWidth: currentPage === 'stock' ? maxWidth : stockSettings?.maxWidth,
       sortMode: stockSettings?.sortMode ?? 'default',
+      memo: stockSettings?.memo ?? '',
+      memoUpdatedAt: stockSettings?.memoUpdatedAt ?? 0,
     };
     
     // 保留现有云端配置，避免关闭弹窗时意外清空 GitHub token/gistId

@@ -226,6 +226,9 @@ interface StockDividendPageProps {
   dividendYearRight?: number;
   sortMode?: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly';
   onSortModeChange?: (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly') => void;
+  memo?: string;
+  memoUpdatedAt?: number;
+  onMemoChange?: (memo: string) => void;
   showRequestStats?: boolean;
 }
 
@@ -496,7 +499,15 @@ const formatPercent = (percent: number): string => {
   return percent.toFixed(2) + '%';
 };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 812, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, showRequestStats = true }) => {
+// 格式化备忘录最后编辑时间（编辑于：YYYY年M月D日 HH:MM）
+const formatMemoTime = (ts?: number): string => {
+  if (!ts) return '编辑于 --';
+  const d = new Date(ts);
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `编辑于 ${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 812, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, onMemoChange, showRequestStats = true }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
   // 分红年份列（dividendLeft / dividendRight）：表头合并为一格，年份各自成列
@@ -2225,6 +2236,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           </div>
         )}
         </div>
+      </div>
+
+      {/* 备忘录模块（随云端同步） */}
+      <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full mt-1" style={{ maxWidth }}>
+        <div className="flex items-center justify-between px-3 py-2 border-b border-app-border bg-app-input">
+          <span className="text-[12px] font-bold text-app-subtext tracking-wider uppercase">交易备忘录</span>
+          <span className="text-[10px] text-app-rowtext font-mono opacity-60">{formatMemoTime(memoUpdatedAt)}</span>
+        </div>
+        <textarea
+          value={memo || ''}
+          onChange={(e) => onMemoChange?.(e.target.value)}
+          placeholder="在这里记录备忘内容…"
+          rows={4}
+          className="w-full bg-app-card text-app-subtext text-[11px] leading-relaxed tracking-wider p-3 outline-none resize-y focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all"
+        />
       </div>
 
       {isAdding && createPortal(

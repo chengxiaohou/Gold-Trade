@@ -13,7 +13,7 @@ import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings } from './types';
 
-const APP_VERSION = 'v2.13.4';
+const APP_VERSION = 'v2.13.5';
 
 // 生成股息率对应股价的辅助函数
 function calcDividendRates(dividend2025: number): Record<string, number> {
@@ -314,7 +314,9 @@ export default function App() {
           { min: 5.5, max: 100, color: 'green' }
         ],
         tagColors: parsed.tagColors || {},
-        sortMode: parsed.sortMode || 'default'
+        sortMode: parsed.sortMode || 'default',
+        memo: parsed.memo || '',
+        memoUpdatedAt: parsed.memoUpdatedAt || 0
       };
     } catch {
       return {
@@ -326,7 +328,9 @@ export default function App() {
           { min: 5.5, max: 100, color: 'green' }
         ],
         tagColors: {},
-        sortMode: 'default'
+        sortMode: 'default',
+        memo: '',
+        memoUpdatedAt: 0
       };
     }
   });
@@ -1925,6 +1929,9 @@ export default function App() {
             colorRanges={stockSettings.dividendRateColorRanges}
             tagColors={stockSettings.tagColors || {}}
             onTagColorsChange={(colors) => setStockSettings(prev => ({ ...prev, tagColors: colors }))}
+            memo={stockSettings.memo}
+            memoUpdatedAt={stockSettings.memoUpdatedAt}
+            onMemoChange={(memo) => setStockSettings(prev => ({ ...prev, memo, memoUpdatedAt: Date.now() }))}
             maxRows={stockSettings.maxRows}
             maxWidth={stockSettings.maxWidth}
             actionButtons={renderStockActionButtons()}
