@@ -1880,8 +1880,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <col style={{ width: '65px' }} />
               <col style={{ width: '65px' }} />
               <col style={{ width: '65px' }} />
-              {dividendYearCols.map(yearCol => <col key={yearCol} style={{ width: '50px' }} />)}
               {cols.includes('position') && <col style={{ width: '70px' }} />}
+              {dividendYearCols.map(yearCol => <col key={yearCol} style={{ width: '50px' }} />)}
               <col style={{ width: '60px' }} />
             </colgroup>
             <thead className="sticky top-0 z-30 overflow-hidden">
@@ -1941,9 +1941,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </button>
                 </div>
               </th>
+                {cols.includes('position') && <th
+                  className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-r border-app-border"
+                >
+                  持仓
+                </th>}
                 {dividendYearCols.length > 0 && <th
                   colSpan={dividendYearCols.length + 1}
-                  className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border bg-app-input whitespace-nowrap"
+                  className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap"
                 >
                   <div className="flex items-center justify-center gap-1 whitespace-nowrap">
                     <span>分红</span>
@@ -1957,17 +1962,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </button>
                   </div>
                 </th>}
-                {cols.includes('position') && <th
-                  className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-l border-app-border border-r border-app-border cursor-pointer select-none"
-                  rowSpan={2}
-                  onClick={cyclePositionMode}
-                  title={`点击切换展示（当前：${POSITION_MODE_LABEL[positionDisplayMode]}）：股息率 / 份额 / 成本`}
-                >
-                  <div className="flex flex-col items-center leading-tight">
-                    <span>持仓</span>
-                    <span>{POSITION_MODE_LABEL[positionDisplayMode]}</span>
-                  </div>
-                </th>}
                 <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border" rowSpan={2}>操作</th>
               </tr>
               <tr className="bg-app-input">
@@ -1976,12 +1970,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('daily')}>日线</th>
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('weekly')}>周线</th>
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('monthly')}>月线</th>
+                {cols.includes('position') && <th
+                  className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
+                  onClick={cyclePositionMode}
+                  title={`点击切换展示：股息率 / 份额 / 成本`}
+                >
+                  {POSITION_MODE_LABEL[positionDisplayMode]}
+                </th>}
                 {dividendYearCols.map((yearCol, idx) => (
                   <th key={yearCol} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">
                     {yearCol === 'dividendLeft' ? dividendYearLeft : dividendYearRight}
                   </th>
                 ))}
-                {dividendYearCols.length > 0 && <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border whitespace-nowrap w-0">登记日</th>}
+                {dividendYearCols.length > 0 && <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap w-0">登记日</th>}
               </tr>
             </thead>
             <tbody>
@@ -2147,55 +2148,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       );
                     });
                   })()}
-                  {dividendYearCols.map((yearCol, idx) => {
-                    const year = yearCol === 'dividendLeft' ? dividendYearLeft : dividendYearRight;
-                    const value = getDividendForYear(stock, year);
-                    const isSelected = getSelectedYear(stock) === year;
-                    const otherYear = yearCol === 'dividendLeft' ? dividendYearRight : dividendYearLeft;
-                    const otherValue = getDividendForYear(stock, otherYear);
-                    const selectedColor = value > otherValue ? 'text-brand-red' : value < otherValue ? 'text-brand-green' : 'text-blue-400';
-                    return (
-                      <td key={yearCol} className="px-1 py-1.5 text-center cursor-pointer border-r border-app-border" onClick={() => {
-                        if (editingId !== stock.id) {
-                          onStocksChange(stocks.map(s => s.id === stock.id ? { ...s, selectedDividendYear: year } : s));
-                        }
-                      }}>
-                        {editingId === stock.id ? (
-                          <input
-                            type="number"
-                            value={value}
-                            onChange={(e) => handleUpdateField(stock.id, yearCol as keyof StockEntry, parseFloat(e.target.value) || 0)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
-                            enterKeyHint="done"
-                            step="0.01"
-                            className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
-                          />
-                        ) : (
-                          <span className={`font-mono text-xs font-normal ${isSelected ? selectedColor : 'text-app-rowtext'}`}>{formatPrice(value, stock.name)}</span>
-                        )}
-                      </td>
-                    );
-                  })}
-                  {dividendYearCols.length > 0 && (
-                    <td className="px-1 py-1.5 text-center">
-                      {(() => {
-                        if (!stock.registerDate) return <span className="text-app-subtext">-</span>;
-                        const today = new Date();
-                        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-                        const regDate = new Date(stock.registerDate);
-                        const isToday = stock.registerDate === todayStr;
-                        const isFuture = !isToday && regDate >= today;
-                        const parts = stock.registerDate.split('-');
-                        const dateLabel = `${parseInt(parts[1])}月${parseInt(parts[2])}日`;
-                        const dateColor = isToday ? 'text-brand-red' : isFuture ? 'text-orange-400' : 'text-app-rowtext';
-                        return (
-                          <span className={`font-mono text-xs ${dateColor}`}>
-                            {dateLabel}
-                          </span>
-                        );
-                      })()}
-                    </td>
-                  )}
                   {cols.includes('position') && (() => {
                     const shares = stock.positionShares || 0;
                     const cost = stock.positionCost || 0;
@@ -2220,7 +2172,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         : yieldPct;
                     return (
                       <td
-                        className="px-1 py-1.5 text-center border-l border-app-border border-r border-app-border cursor-pointer"
+                        className="px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
                         onMouseLeave={handlePositionInfoLeave}
                         onClick={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoClick(e, stock); }}
@@ -2252,10 +2204,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             />
                           </div>
                         ) : positionDisplayMode === 'shares' ? (
-                          <div className="flex flex-col items-center leading-tight">
-                            <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">{totalAmount}</span>
-                            <span className="font-mono text-[10px] text-app-rowtext">{displayValue}</span>
-                          </div>
+                          hasPosition ? (
+                            <div className="flex flex-col items-center leading-tight">
+                              <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">{totalAmount}</span>
+                              <span className="font-mono text-[10px] text-app-rowtext">{displayValue}</span>
+                            </div>
+                          ) : (
+                            <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">-</span>
+                          )
                         ) : showPct ? (
                           <div className="flex flex-col items-center leading-tight">
                             <span className={`font-mono text-[11px] whitespace-nowrap ${costColor}`}>{displayValue}</span>
@@ -2267,6 +2223,55 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       </td>
                     );
                   })()}
+                  {dividendYearCols.map((yearCol, idx) => {
+                    const year = yearCol === 'dividendLeft' ? dividendYearLeft : dividendYearRight;
+                    const value = getDividendForYear(stock, year);
+                    const isSelected = getSelectedYear(stock) === year;
+                    const otherYear = yearCol === 'dividendLeft' ? dividendYearRight : dividendYearLeft;
+                    const otherValue = getDividendForYear(stock, otherYear);
+                    const selectedColor = value > otherValue ? 'text-brand-red' : value < otherValue ? 'text-brand-green' : 'text-blue-400';
+                    return (
+                      <td key={yearCol} className="px-1 py-1.5 text-center cursor-pointer border-r border-app-border" onClick={() => {
+                        if (editingId !== stock.id) {
+                          onStocksChange(stocks.map(s => s.id === stock.id ? { ...s, selectedDividendYear: year } : s));
+                        }
+                      }}>
+                        {editingId === stock.id ? (
+                          <input
+                            type="number"
+                            value={value}
+                            onChange={(e) => handleUpdateField(stock.id, yearCol as keyof StockEntry, parseFloat(e.target.value) || 0)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
+                            enterKeyHint="done"
+                            step="0.01"
+                            className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
+                          />
+                        ) : (
+                          <span className={`font-mono text-xs font-normal ${isSelected ? selectedColor : 'text-app-rowtext'}`}>{formatPrice(value, stock.name)}</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                  {dividendYearCols.length > 0 && (
+                    <td className="px-1 py-1.5 text-center border-r border-app-border">
+                      {(() => {
+                        if (!stock.registerDate) return <span className="text-app-subtext">-</span>;
+                        const today = new Date();
+                        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                        const regDate = new Date(stock.registerDate);
+                        const isToday = stock.registerDate === todayStr;
+                        const isFuture = !isToday && regDate >= today;
+                        const parts = stock.registerDate.split('-');
+                        const dateLabel = `${parseInt(parts[1])}月${parseInt(parts[2])}日`;
+                        const dateColor = isToday ? 'text-brand-red' : isFuture ? 'text-orange-400' : 'text-app-rowtext';
+                        return (
+                          <span className={`font-mono text-xs ${dateColor}`}>
+                            {dateLabel}
+                          </span>
+                        );
+                      })()}
+                    </td>
+                  )}
                   <td className="px-1 py-1.5 text-center">
                     <div className="flex items-center justify-center gap-2">
                       <button
