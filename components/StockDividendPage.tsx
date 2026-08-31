@@ -2239,18 +2239,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       </div>
 
       {/* 备忘录模块（随云端同步） */}
-      <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full mt-1" style={{ maxWidth }}>
-        <div className="flex items-center justify-between px-3 py-2 border-b border-app-border bg-app-input">
-          <span className="text-[12px] font-bold text-app-subtext tracking-wider uppercase">交易备忘录</span>
-          <span className="text-[10px] text-app-rowtext font-mono opacity-60">{formatMemoTime(memoUpdatedAt)}</span>
+      <div className="flex justify-center">
+        <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full mt-1" style={{ maxWidth }}>
+          <div className="flex items-center justify-between px-3 py-2 border-b border-app-border bg-app-input">
+            <span className="text-[12px] font-bold text-app-subtext tracking-wider uppercase">交易备忘录</span>
+            <span className="text-[10px] text-app-rowtext font-mono opacity-60">{formatMemoTime(memoUpdatedAt)}</span>
+          </div>
+          <textarea
+            value={memo || ''}
+            onChange={(e) => onMemoChange?.(e.target.value)}
+            placeholder="在这里记录备忘内容…"
+            rows={4}
+            className="w-full bg-app-card text-app-subtext text-[11px] leading-relaxed tracking-wider p-3 outline-none resize-y focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all"
+          />
         </div>
-        <textarea
-          value={memo || ''}
-          onChange={(e) => onMemoChange?.(e.target.value)}
-          placeholder="在这里记录备忘内容…"
-          rows={4}
-          className="w-full bg-app-card text-app-subtext text-[11px] leading-relaxed tracking-wider p-3 outline-none resize-y focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all"
-        />
       </div>
 
       {isAdding && createPortal(
