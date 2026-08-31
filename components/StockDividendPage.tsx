@@ -710,7 +710,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 悬停名称显示支撑/压力位（临时，不固定）
   const handleListSrHoverEnter = (e: React.MouseEvent, stock: StockEntry) => {
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
-    if (listSrTooltipPinned || priceInfoPinned) return;
+    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned) return;
     handleListSrClick(e, stock, false);
   };
 
@@ -781,6 +781,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 判断鼠标是否停留在价格浮窗内部（用 relatedTarget 配平，避免计数器泄漏）
   const isInsidePriceInfo = (node: Node | null) => !!node && !!priceInfoRef.current?.contains(node);
 
+  // 持仓详情浮窗（hover 临时显示 / 点击固定，逻辑与价格浮窗一致，浮窗朝左侧展示）
+  const [positionInfoStock, setPositionInfoStock] = useState<StockEntry | null>(null);
+  const [positionInfoPos, setPositionInfoPos] = useState({ left: 0, top: 0 });
+  const [positionInfoPinned, setPositionInfoPinned] = useState(false);
+  const positionInfoBtnRef = useRef<HTMLTableCellElement | null>(null);
+  const positionInfoRef = useRef<HTMLDivElement | null>(null);
+  const positionInfoHoveredRef = useRef(false);
+  const positionInfoActiveIdRef = useRef<string | undefined>(undefined);
+  const isInsidePositionInfo = (node: Node | null) => !!node && !!positionInfoRef.current?.contains(node);
+
   // 显示价格技术指标浮窗（位置逻辑参考股票名称弹窗：右侧垂直居中）
   const openPriceInfo = (btn: HTMLElement, stock: StockEntry) => {
     const rect = btn.getBoundingClientRect();
@@ -833,7 +843,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 悬停价格显示
   const handlePriceInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
-    if (listSrTooltipPinned || priceInfoPinned) return;
+    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned) return;
     priceInfoHoveredRef.current = true;
     openPriceInfo(e.currentTarget as HTMLElement, stock);
   };
@@ -875,6 +885,66 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     }
     openPriceInfo(e.currentTarget as HTMLElement, stock);
     setPriceInfoPinned(true);
+  };
+
+  // 显示持仓详情浮窗（朝左侧展示，垂直居中；数据全部来自本地持仓，无需请求）
+  const openPositionInfo = (btn: HTMLElement, stock: StockEntry) => {
+    const rect = btn.getBoundingClientRect();
+    positionInfoBtnRef.current = btn as unknown as HTMLTableCellElement;
+    positionInfoActiveIdRef.current = stock.id;
+    setPositionInfoStock(stock);
+    const popupW = 220;
+    const estH = 170;
+    const gap = 8;
+    let left = rect.left - popupW - gap;
+    let top = rect.top + rect.height / 2 - estH / 2;
+    // 左侧空间不足时翻转到右侧；两者都不足时居中
+    if (left < 10) left = rect.right + gap;
+    if (left + popupW > window.innerWidth - 10) left = (window.innerWidth - popupW) / 2;
+    if (top + estH > window.innerHeight - 10) top = window.innerHeight - estH - 10;
+    if (top < 10) top = 10;
+    setPositionInfoPos({ left, top });
+  };
+
+  // 悬停持仓显示（临时，不固定）
+  const handlePositionInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
+    // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
+    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned) return;
+    positionInfoHoveredRef.current = true;
+    openPositionInfo(e.currentTarget as HTMLElement, stock);
+  };
+
+  // 持仓悬停离开：若鼠标移入浮窗内部则保留，否则关闭（未固定时）
+  const handlePositionInfoLeave = (e?: React.MouseEvent) => {
+    positionInfoHoveredRef.current = false;
+    if (positionInfoPinned) return;
+    if (e && isInsidePositionInfo(e.relatedTarget as Node | null)) return;
+    positionInfoActiveIdRef.current = undefined;
+    setPositionInfoStock(null);
+  };
+
+  // 浮窗悬停离开：仍在浮窗内部（子元素间移动）则保留，真正离开且未固定时关闭
+  const handlePositionInfoFloatLeave = (e: React.MouseEvent) => {
+    if (positionInfoPinned) return;
+    if (isInsidePositionInfo(e.relatedTarget as Node | null)) return;
+    positionInfoHoveredRef.current = false;
+    positionInfoActiveIdRef.current = undefined;
+    setPositionInfoStock(null);
+  };
+
+  // 点击持仓：切换固定/取消固定
+  const handlePositionInfoClick = (e: React.MouseEvent, stock: StockEntry) => {
+    e.stopPropagation();
+    if (positionInfoPinned && positionInfoStock?.id === stock.id) {
+      // 取消固定并关闭
+      positionInfoHoveredRef.current = false;
+      positionInfoActiveIdRef.current = undefined;
+      setPositionInfoPinned(false);
+      setPositionInfoStock(null);
+      return;
+    }
+    openPositionInfo(e.currentTarget as HTMLElement, stock);
+    setPositionInfoPinned(true);
   };
 
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
@@ -1101,6 +1171,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [priceInfoPinned]);
+
+  // 列表页持仓浮窗：点击外部关闭
+  useEffect(() => {
+    if (!positionInfoPinned) return;
+    const handler = (e: MouseEvent) => {
+      if (positionInfoRef.current && !positionInfoRef.current.contains(e.target as Node) &&
+          positionInfoBtnRef.current && !positionInfoBtnRef.current.contains(e.target as Node)) {
+        positionInfoHoveredRef.current = false;
+        positionInfoActiveIdRef.current = undefined;
+        setPositionInfoPinned(false);
+        setPositionInfoStock(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [positionInfoPinned]);
 
   // 支撑/压力位弹窗固定模式：点击弹窗外部关闭
   useEffect(() => {
@@ -2126,13 +2212,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const positionPctStr = cost > 0 && stock.price > 0 ? `${positionPct >= 0 ? '+' : ''}${positionPct.toFixed(2)}%` : '';
                     const showPct = (positionDisplayMode !== 'shares' && cost > 0 && stock.price > 0);
                     const totalAmount = shares > 0 && cost > 0 ? `¥${Math.round(shares * cost).toLocaleString()}` : '-';
+                    const hasPosition = shares > 0 || cost > 0;
                     const displayValue = positionDisplayMode === 'shares'
                       ? sharesText
                       : positionDisplayMode === 'cost'
                         ? costText
                         : yieldPct;
                     return (
-                      <td className="px-1 py-1.5 text-center border-l border-app-border border-r border-app-border">
+                      <td
+                        className="px-1 py-1.5 text-center border-l border-app-border border-r border-app-border cursor-pointer"
+                        onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
+                        onMouseLeave={handlePositionInfoLeave}
+                        onClick={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoClick(e, stock); }}
+                      >
                         {editingId === stock.id ? (
                           <div className="flex flex-col gap-0.5">
                             <input
@@ -3611,6 +3703,52 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           </div>
         </div>
       )}
+
+      {/* 列表页持仓详情浮窗（朝左侧展示，数据来自本地持仓） */}
+      {positionInfoStock && (() => {
+        const s = positionInfoStock;
+        const shares = s.positionShares || 0;
+        const cost = s.positionCost || 0;
+        const price = s.price || 0;
+        const dividend = getDividendForYear(s, getSelectedYear(s)) || 0;
+        const fmtP = (v: number) => formatPrice(v, s.name);
+        const sharesText = shares > 0 ? `${Number.isInteger(shares) ? shares : shares.toFixed(2)}股` : '-';
+        const marketValue = shares > 0 && price > 0 ? `¥${Math.round(shares * price).toLocaleString()}` : '-';
+        const totalCost = shares > 0 && cost > 0 ? `¥${Math.round(shares * cost).toLocaleString()}` : '-';
+        const profit = shares > 0 && cost > 0 && price > 0 ? shares * (price - cost) : 0;
+        const profitText = profit !== 0 ? `${profit >= 0 ? '+' : ''}${fmtP(profit)}` : '-';
+        const profitPct = cost > 0 && price > 0 ? ((price - cost) / cost) * 100 : 0;
+        const profitPctText = cost > 0 && price > 0 ? `${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(2)}%` : '-';
+        const yieldText = shares > 0 && cost > 0 && dividend > 0 ? ((dividend / cost) * 100).toFixed(2) + '%' : '-';
+        const costColor = cost > 0 ? (cost > price ? 'text-brand-green' : 'text-brand-red') : 'text-app-subtext';
+        const pctColor = s.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green';
+        const profitColor = profit > 0 ? 'text-brand-red' : profit < 0 ? 'text-brand-green' : 'text-app-rowtext';
+        const cell2 = (label: string, val: React.ReactNode, colorClass = 'text-app-rowtext') => (
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-[10px] text-app-subtext whitespace-nowrap">{label}</span>
+            <span className={`font-mono text-[11px] ${colorClass}`}>{val}</span>
+          </div>
+        );
+        return (
+          <div
+            ref={positionInfoRef}
+            className="fixed z-[59] bg-app-input border border-app-border rounded-lg shadow-xl overflow-hidden"
+            style={{ top: positionInfoPos.top, left: positionInfoPos.left, width: 220 }}
+            onMouseEnter={() => { positionInfoHoveredRef.current = true; }}
+            onMouseLeave={handlePositionInfoFloatLeave}
+          >
+            <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center">
+              <span className="text-[11px] font-bold text-app-subtext">{s.name}</span>
+            </div>
+            <div className="px-2.5 py-1.5 space-y-1">
+              <div className="grid grid-cols-2 gap-x-4">{cell2('成本', cost > 0 ? fmtP(cost) : '-', costColor)}{cell2('现价', price > 0 ? fmtP(price) : '-', pctColor)}</div>
+              <div className="grid grid-cols-2 gap-x-4">{cell2('股数', sharesText)}{cell2('市值', marketValue)}</div>
+              <div className="grid grid-cols-2 gap-x-4">{cell2('浮盈', profitText, profitColor)}{cell2('盈亏', profitPctText, profitColor)}</div>
+              <div className="grid grid-cols-2 gap-x-4">{cell2('总成本', totalCost)}{cell2('股息率', yieldText)}</div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 列表页支撑/压力位弹窗 */}
       {listSrPreviewText && listSrStock && (
