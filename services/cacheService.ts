@@ -102,6 +102,32 @@ export function getNextTradingOpen(date: Date = new Date()): Date {
   }
 }
 
+// 获取最近一次"数据基准开盘时间"（非交易时段判断缓存新鲜度用）
+// 午间休市：当天上午9:30开盘；已收盘：当天下午13:00开盘；盘前/全天休市：最近一个交易日9:30
+export function getLastTradingOpen(date: Date = new Date()): Date {
+  const status = getMarketStatus(date);
+  const d = new Date(date);
+
+  if (status === 'closed') {
+    // 已收盘：数据基准为当天下午13:00开盘后的数据（需包含最终收盘K线）
+    d.setHours(13, 0, 0, 0);
+    return d;
+  }
+
+  if (status === 'morning_session' || status === 'midday_break' || status === 'afternoon_session') {
+    // 当天已开盘：数据基准为当天上午9:30开盘后的数据
+    d.setHours(9, 30, 0, 0);
+    return d;
+  }
+
+  // pre_open / full_day_closed：今天未开盘，取最近一个交易日的9:30
+  do {
+    d.setDate(d.getDate() - 1);
+  } while (!isTradingDay(d));
+  d.setHours(9, 30, 0, 0);
+  return d;
+}
+
 // 缓存管理
 const sourceLastFetch: Map<ApiSource, number> = new Map();
 const sourceCacheExpiry: Map<ApiSource, number> = new Map();

@@ -1,5 +1,5 @@
 import { ApiSource } from '../types';
-import { getDynamicBollCacheTTL, setLastFetchTime } from './cacheService';
+import { getDynamicBollCacheTTL, getLastTradingOpen, getMarketStatus, setLastFetchTime } from './cacheService';
 import { requestLogService, type LogBatchContext } from './requestLogService';
 
 // 生产环境配置
@@ -254,10 +254,26 @@ function isBollCacheFresh(
   // 旧版缓存没有均线字段（ma.ma30），视为过期以便重拉一次补齐
   if (!cached) return false;
   if (!cached.data?.ma?.ma30) return false;
-  const age = Date.now() - cached.timestamp;
-  const fresh = age < dynamicTTL;
+
+  const now = Date.now();
+  const marketStatus = getMarketStatus();
+  let fresh: boolean;
+
+  if (marketStatus === 'morning_session' || marketStatus === 'afternoon_session') {
+    // 交易时段：缓存年龄在 TTL 内视为新鲜
+    const age = now - cached.timestamp;
+    fresh = age < dynamicTTL;
+  } else {
+    // 非交易时段（午间休市/已收盘/盘前/全天休市）：K线数据不会变化，
+    // 只要缓存是在"最近一次数据基准开盘时间"之后拉取的即视为新鲜（有效期到下次开盘）。
+    // 不能用 getDynamicBollCacheTTL 返回的"剩余时长"与缓存年龄比较，
+    // 否则缓存越接近下次开盘越容易被误判过期（如 12:21 拉的缓存 12:44 就被误判过期）。
+    const lastOpen = getLastTradingOpen();
+    fresh = cached.timestamp >= lastOpen.getTime();
+  }
+
   if (!fresh) {
-    console.warn(`[isBollCacheFresh] 缓存已过期: ${cacheKey}, age=${Math.round(age/1000)}s, TTL=${Math.round(dynamicTTL/1000)}s, ts=${new Date(cached.timestamp).toLocaleString('zh-CN', { hour12: false })}`);
+    console.warn(`[isBollCacheFresh] 缓存已过期: ${cacheKey}, ts=${new Date(cached.timestamp).toLocaleString('zh-CN', { hour12: false })}, marketStatus=${marketStatus}`);
   }
   return fresh;
 }
