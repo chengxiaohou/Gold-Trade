@@ -507,6 +507,241 @@ const formatMemoTime = (ts?: number): string => {
   return `编辑于 ${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
+// 股息率曲线共享组件：详情弹窗与列表页“股息率”浮窗共用一套渲染逻辑，
+// 之后任一处的股息率曲线改动都会同时反映到另一处。
+function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges }: {
+  klines: BollKline[];
+  stock: StockEntry;
+  fallbackDividend: number;
+  title?: string;
+  ranges: DividendRateColorRange[];
+}) {
+  const [chartRange, setChartRange] = useState(120);
+  const [chartOffset, setChartOffset] = useState(0);
+  const sliderRAFRef = useRef<number | null>(null);
+
+  const currentKlines = klines;
+  if (!currentKlines || currentKlines.length === 0) return null;
+  const maxRange = currentKlines.length;
+  const range = Math.min(chartRange, maxRange);
+  const options = [5, 10, 20, 30, 60, 120, 250, 500].filter(opt => opt <= maxRange);
+  const maxOffset = Math.max(0, maxRange - range);
+  const offset = Math.min(chartOffset, maxOffset);
+  const dividend = fallbackDividend;
+  const chartData = currentKlines.slice(-range - offset, currentKlines.length - offset).map(k => {
+    const byYear = stock.dividendByYear || {};
+    const y = parseInt(k.date.slice(0, 4), 10);
+    const pointDividend = (!isNaN(y) && byYear[y] && byYear[y] > 0) ? byYear[y]
+      : (!isNaN(y) && byYear[y - 1] && byYear[y - 1] > 0) ? byYear[y - 1]
+      : dividend;
+    const rate = k.close > 0 ? (pointDividend / k.close) * 100 : 0;
+    return {
+      date: k.date,
+      price: k.close,
+      dividend: pointDividend,
+      rate: parseFloat(rate.toFixed(2)),
+    };
+  });
+  // 计算 Y 轴 5 条等间距标尺
+  const rates = chartData.map(d => d.rate);
+  const rawMin = rates.length > 0 ? Math.min(...rates) : 0;
+  const rawMax = rates.length > 0 ? Math.max(...rates) : 1;
+  const pad = rates.length > 0 ? Math.max((rawMax - rawMin) * 0.1, 0.1) : 0.25;
+  const yMin = rawMin - pad;
+  const yMax = rawMax + pad;
+  const yTicks = rates.length > 0
+    ? Array.from({ length: 5 }, (_, i) => yMin + (yMax - yMin) * i / 4)
+    : [0, 0.25, 0.5, 0.75, 1];
+  const maxTickLen = yTicks.reduce((max, v) => Math.max(max, v.toFixed(1).length + 1), 0);
+  const yAxisFontSize = maxTickLen > 5 ? 7 : 8;
+  // X 轴标尺：始终包含首尾日期，中间均匀分布
+  const xTicks = chartData.length > 0
+    ? Array.from({ length: 6 }, (_, i) => chartData[Math.round(i * (chartData.length - 1) / 5)]?.date).filter(Boolean)
+    : [];
+  return (
+    <div className="border-t border-app-border bg-app-card pt-2">
+      <div className="flex items-center mb-1">
+        <span className="text-[10px] text-app-subtext">{title}</span>
+      </div>
+      <div className="h-[120px] w-full select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 5, right: 5, left: 2, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
+            <XAxis
+              dataKey="date"
+              tick={{ fontSize: 9, fill: '#94a3b8' }}
+              stroke="rgba(148,163,184,0.3)"
+              tickLine={false}
+              axisLine={false}
+              ticks={xTicks}
+              tickMargin={6}
+              tickFormatter={(v: string) => {
+                const xFirst = xTicks[0];
+                const xLast = xTicks[xTicks.length - 1];
+                if (v === xFirst) return v;
+                if (v === xLast && xLast?.slice(0, 4) !== xFirst?.slice(0, 4)) return v;
+                return v.length >= 10 ? v.slice(5, 10) : v;
+              }}
+            />
+            <YAxis
+              tick={{ fontSize: yAxisFontSize, fill: '#94a3b8' }}
+              stroke="rgba(148,163,184,0.3)"
+              tickLine={false}
+              axisLine={false}
+              domain={[yTicks[0], yTicks[4]]}
+              ticks={yTicks}
+              width={30}
+              tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+            />
+            <YAxis yAxisId="price" orientation="right" hide={true} />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: 'rgba(15,23,42,0.95)',
+                border: '1px solid rgba(148,163,184,0.3)',
+                borderRadius: 6,
+                fontSize: 11,
+                color: 'inherit',
+              }}
+              content={({ active, payload, label }) => {
+                if (!active || !payload || !payload[0]) return null;
+                const d = payload[0].payload;
+                return (
+                  <div className="bg-[rgba(15,23,42,0.95)] border border-[rgba(148,163,184,0.3)] rounded px-2 py-1.5 text-xs leading-relaxed">
+                    <div className="text-app-subtext">{label}</div>
+                    <div>股价: <span className="text-app-text">¥{d.price.toFixed(2)}</span></div>
+                    <div>分红: <span className="text-app-text">{d.dividend.toFixed(3)} 元</span></div>
+                    <div>股息率: <span className="text-green-400">{d.rate.toFixed(2)}%</span></div>
+                  </div>
+                );
+              }}
+              cursor={{ stroke: 'rgba(99,102,241,0.4)', strokeWidth: 1 }}
+            />
+            <Line
+              type="monotone"
+              dataKey="rate"
+              stroke="#3b82f6"
+              strokeWidth={1.8}
+              dot={range >= 120 ? false : { r: 2, fill: '#3b82f6', strokeWidth: 0 }}
+              activeDot={range >= 120 ? { r: 3 } : { r: 4 }}
+              isAnimationActive={false}
+            />
+            <Line
+              yAxisId="price"
+              type="monotone"
+              dataKey="price"
+              stroke="rgba(148,163,184,0.4)"
+              strokeWidth={1}
+              dot={false}
+              activeDot={false}
+              isAnimationActive={false}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="flex items-center gap-2 mt-1 mb-1.5">
+        <input
+          type="range"
+          min={0}
+          max={maxOffset}
+          value={maxOffset - offset}
+          onChange={(e) => {
+            const newOffset = maxOffset - Number(e.target.value);
+            if (sliderRAFRef.current) cancelAnimationFrame(sliderRAFRef.current);
+            sliderRAFRef.current = requestAnimationFrame(() => {
+              sliderRAFRef.current = null;
+              setChartOffset(newOffset);
+            });
+          }}
+          className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-gray-500 
+            [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500
+            [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-gray-500 [&::-moz-range-thumb]:border-0"
+        />
+        <div className="flex items-center gap-0.5 shrink-0">
+          <button
+            type="button"
+            className="text-xs px-2.5 py-1 rounded-l bg-app-input text-app-text hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
+            disabled={options.indexOf(range) <= 0}
+            onClick={() => {
+              const idx = options.indexOf(range);
+              if (idx > 0) {
+                setChartRange(options[idx - 1]);
+                setChartOffset(0);
+              }
+            }}
+          >−</button>
+          <span className="text-xs px-2.5 py-1 bg-app-input text-app-text select-none">{range}</span>
+          <button
+            type="button"
+            className="text-xs px-2.5 py-1 rounded-r bg-app-input text-app-text hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
+            disabled={options.indexOf(range) >= options.length - 1}
+            onClick={() => {
+              const idx = options.indexOf(range);
+              if (idx < options.length - 1) {
+                setChartRange(options[idx + 1]);
+                setChartOffset(0);
+              }
+            }}
+          >+</button>
+        </div>
+      </div>
+      {(() => {
+        if (chartData.length === 0) return null;
+        const byYear = stock.dividendByYear || {};
+        const calcDividendForDate = (dateStr: string): { amount: number; isApproximate: boolean } => {
+          if (!dateStr) return { amount: 0, isApproximate: false };
+          const y = parseInt(dateStr.slice(0, 4), 10);
+          if (isNaN(y)) return { amount: 0, isApproximate: false };
+          if (byYear[y] && byYear[y] > 0) return { amount: byYear[y], isApproximate: false };
+          if (byYear[y - 1] && byYear[y - 1] > 0) return { amount: byYear[y - 1], isApproximate: true };
+          return { amount: 0, isApproximate: false };
+        };
+        const calcRate = (price: number, dividend: number): string => {
+          if (!dividend || !price) return '-';
+          return (dividend / price * 100).toFixed(2) + '%';
+        };
+        const calcRateColor = (price: number, dividend: number): string => {
+          if (!dividend || !price) return 'text-app-subtext';
+          return getDividendRateColor(dividend / price * 100, ranges);
+        };
+        const highItem = chartData.reduce((a, b) => a.price > b.price ? a : b);
+        const lowItem = chartData.reduce((a, b) => a.price < b.price ? a : b);
+        const highDiv = calcDividendForDate(highItem.date);
+        const lowDiv = calcDividendForDate(lowItem.date);
+        const highRate = calcRate(highItem.price, highDiv.amount);
+        const lowRate = calcRate(lowItem.price, lowDiv.amount);
+        const highRateColor = calcRateColor(highItem.price, highDiv.amount);
+        const lowRateColor = calcRateColor(lowItem.price, lowDiv.amount);
+        const highSymbol = !highDiv.amount ? '' : (highDiv.isApproximate ? '≈' : '=');
+        const lowSymbol = !lowDiv.amount ? '' : (lowDiv.isApproximate ? '≈' : '=');
+        return (
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
+              <span className="text-[10px] text-app-subtext shrink-0">最高价</span>
+              <span className="font-mono text-[10px] font-bold text-red-500 shrink-0">{formatPrice(highItem.price, stock.name)}</span>
+              <span className="text-[10px] shrink-0">
+                <span className="text-app-subtext">股息率</span>
+                {highSymbol && <span className="text-app-subtext mx-0.5">{highSymbol}</span>}
+                <span className={`font-mono font-bold ${highRateColor}`}>{highDiv.amount ? highRate : '-'}</span>
+              </span>
+              <span className="text-[10px] text-app-subtext ml-auto shrink-0">{highItem.date}</span>
+            </div>
+            <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
+              <span className="text-[10px] text-app-subtext shrink-0">最低价</span>
+              <span className="font-mono text-[10px] font-bold text-brand-green shrink-0">{formatPrice(lowItem.price, stock.name)}</span>
+              <span className="text-[10px] shrink-0">
+                <span className="text-app-subtext">股息率</span>
+                {lowSymbol && <span className="text-app-subtext mx-0.5">{lowSymbol}</span>}
+                <span className={`font-mono font-bold ${lowRateColor}`}>{lowDiv.amount ? lowRate : '-'}</span>
+              </span>
+              <span className="text-[10px] text-app-subtext ml-auto shrink-0">{lowItem.date}</span>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
 export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 812, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, onMemoChange, showRequestStats = true }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
@@ -710,7 +945,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 悬停名称显示支撑/压力位（临时，不固定）
   const handleListSrHoverEnter = (e: React.MouseEvent, stock: StockEntry) => {
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
-    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned) return;
+    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned) return;
     handleListSrClick(e, stock, false);
   };
 
@@ -781,6 +1016,18 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 判断鼠标是否停留在价格浮窗内部（用 relatedTarget 配平，避免计数器泄漏）
   const isInsidePriceInfo = (node: Node | null) => !!node && !!priceInfoRef.current?.contains(node);
 
+  // 股息率曲线浮窗（复用 DividendRateCurve 共享组件，hover 临时显示 / 点击固定，逻辑与价格浮窗一致）
+  const [divRateInfoStock, setDivRateInfoStock] = useState<StockEntry | null>(null);
+  const [divRateInfoKlines, setDivRateInfoKlines] = useState<BollKline[] | null>(null);
+  const [divRateInfoPos, setDivRateInfoPos] = useState({ left: 0, top: 0 });
+  const [divRateInfoLoading, setDivRateInfoLoading] = useState(false);
+  const [divRateInfoPinned, setDivRateInfoPinned] = useState(false);
+  const divRateInfoBtnRef = useRef<HTMLTableCellElement | null>(null);
+  const divRateInfoRef = useRef<HTMLDivElement | null>(null);
+  const divRateInfoHoveredRef = useRef(false);
+  const divRateInfoActiveIdRef = useRef<string | undefined>(undefined);
+  const isInsideDivRateInfo = (node: Node | null) => !!node && !!divRateInfoRef.current?.contains(node);
+
   // 持仓详情浮窗（hover 临时显示 / 点击固定，逻辑与价格浮窗一致，浮窗朝左侧展示）
   const [positionInfoStock, setPositionInfoStock] = useState<StockEntry | null>(null);
   const [positionInfoPos, setPositionInfoPos] = useState({ left: 0, top: 0 });
@@ -843,7 +1090,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 悬停价格显示
   const handlePriceInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
-    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned) return;
+    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned) return;
     priceInfoHoveredRef.current = true;
     openPriceInfo(e.currentTarget as HTMLElement, stock);
   };
@@ -887,6 +1134,98 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setPriceInfoPinned(true);
   };
 
+  // 显示股息率曲线浮窗（位置参考价格浮窗：右侧垂直居中）
+  const openDivRateInfo = (btn: HTMLElement, stock: StockEntry) => {
+    const rect = btn.getBoundingClientRect();
+    divRateInfoBtnRef.current = btn as unknown as HTMLTableCellElement;
+    divRateInfoActiveIdRef.current = stock.id;
+    setDivRateInfoStock(stock);
+    setDivRateInfoLoading(true);
+    setDivRateInfoKlines(null);
+    const popupW = 330;
+    const estH = 300;
+    const gap = 8;
+    let left = rect.right + gap;
+    let top = rect.top + rect.height / 2 - estH / 2;
+    if (left + popupW > window.innerWidth - 10) left = rect.left - popupW - gap;
+    if (left < 10) left = (window.innerWidth - popupW) / 2;
+    if (top + estH > window.innerHeight - 10) top = window.innerHeight - estH - 10;
+    if (top < 10) top = 10;
+    setDivRateInfoPos({ left, top });
+
+    const popupLogCtx = requestLogService.beginBatch(`股息率曲线预览 ${stock.name}(${getDisplayCode(stock.code)})：1 只股票 · 1 条请求`);
+    fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx).then(result => {
+      // 仅在仍是当前目标股票时应用结果（避免悬停切换/移开后残留旧数据）
+      if (divRateInfoActiveIdRef.current !== stock.id) return;
+      const klines = result.data?.klines || [];
+      setDivRateInfoKlines(klines);
+      setDivRateInfoLoading(false);
+      // 自适应高度：数据渲染后用浮窗实际高度重算垂直居中
+      requestAnimationFrame(() => {
+        if (divRateInfoActiveIdRef.current !== stock.id || !divRateInfoBtnRef.current) return;
+        const popupH = divRateInfoRef.current?.offsetHeight || 0;
+        if (!popupH) return;
+        const popupW = 330;
+        const gap = 8;
+        const btnRect = (divRateInfoBtnRef.current as HTMLElement).getBoundingClientRect();
+        let left = btnRect.right + gap;
+        let top = btnRect.top + btnRect.height / 2 - popupH / 2;
+        if (left + popupW > window.innerWidth - 10) left = btnRect.left - popupW - gap;
+        if (left < 10) left = (window.innerWidth - popupW) / 2;
+        if (top + popupH > window.innerHeight - 10) top = window.innerHeight - popupH - 10;
+        if (top < 10) top = 10;
+        setDivRateInfoPos({ left, top });
+      });
+    });
+  };
+
+  // 悬停股息率列显示
+  const handleDivRateInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
+    // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
+    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned) return;
+    divRateInfoHoveredRef.current = true;
+    openDivRateInfo(e.currentTarget as HTMLElement, stock);
+  };
+
+  // 股息率悬停离开：若鼠标移入浮窗内部则保留，否则关闭（未固定时）
+  const handleDivRateInfoLeave = (e?: React.MouseEvent) => {
+    divRateInfoHoveredRef.current = false;
+    if (divRateInfoPinned) return;
+    if (e && isInsideDivRateInfo(e.relatedTarget as Node | null)) return;
+    divRateInfoActiveIdRef.current = undefined;
+    setDivRateInfoStock(null);
+    setDivRateInfoKlines(null);
+    setDivRateInfoLoading(false);
+  };
+
+  // 浮窗悬停离开：仍在浮窗内部（子元素间移动）则保留，真正离开且未固定时关闭
+  const handleDivRateInfoFloatLeave = (e: React.MouseEvent) => {
+    if (divRateInfoPinned) return;
+    if (isInsideDivRateInfo(e.relatedTarget as Node | null)) return;
+    divRateInfoHoveredRef.current = false;
+    divRateInfoActiveIdRef.current = undefined;
+    setDivRateInfoStock(null);
+    setDivRateInfoKlines(null);
+    setDivRateInfoLoading(false);
+  };
+
+  // 点击股息率：切换固定/取消固定
+  const handleDivRateInfoClick = (e: React.MouseEvent, stock: StockEntry) => {
+    e.stopPropagation();
+    if (divRateInfoPinned && divRateInfoStock?.id === stock.id) {
+      // 取消固定并关闭
+      divRateInfoHoveredRef.current = false;
+      divRateInfoActiveIdRef.current = undefined;
+      setDivRateInfoPinned(false);
+      setDivRateInfoStock(null);
+      setDivRateInfoKlines(null);
+      setDivRateInfoLoading(false);
+      return;
+    }
+    openDivRateInfo(e.currentTarget as HTMLElement, stock);
+    setDivRateInfoPinned(true);
+  };
+
   // 显示持仓详情浮窗（朝左侧展示，垂直居中；数据全部来自本地持仓，无需请求）
   const openPositionInfo = (btn: HTMLElement, stock: StockEntry) => {
     const rect = btn.getBoundingClientRect();
@@ -909,7 +1248,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 悬停持仓显示（临时，不固定）
   const handlePositionInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
-    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned) return;
+    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned) return;
     positionInfoHoveredRef.current = true;
     openPositionInfo(e.currentTarget as HTMLElement, stock);
   };
@@ -1187,6 +1526,24 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [positionInfoPinned]);
+
+  // 列表页股息率浮窗：点击外部关闭
+  useEffect(() => {
+    if (!divRateInfoPinned) return;
+    const handler = (e: MouseEvent) => {
+      if (divRateInfoRef.current && !divRateInfoRef.current.contains(e.target as Node) &&
+          divRateInfoBtnRef.current && !divRateInfoBtnRef.current.contains(e.target as Node)) {
+        divRateInfoHoveredRef.current = false;
+        divRateInfoActiveIdRef.current = undefined;
+        setDivRateInfoPinned(false);
+        setDivRateInfoStock(null);
+        setDivRateInfoKlines(null);
+        setDivRateInfoLoading(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [divRateInfoPinned]);
 
   // 支撑/压力位弹窗固定模式：点击弹窗外部关闭
   useEffect(() => {
@@ -2065,7 +2422,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       )}
                     </div>
                   </td>}
-                  {cols.includes('dividendRate') && <td className="px-1 py-1.5 text-center border-r border-app-border">
+                  {cols.includes('dividendRate') && <td
+                    onMouseEnter={(e) => handleDivRateInfoEnter(e, stock)}
+                    onMouseLeave={handleDivRateInfoLeave}
+                    onClick={(e) => handleDivRateInfoClick(e, stock)}
+                    className="px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
+                    title=""
+                  >
                     <span className={`font-mono text-xs font-bold ${getDividendRateColor(getDividendRate(stock), ranges)}`}>
                       {getDividendRate(stock) > 0 ? formatPercent(getDividendRate(stock)) : '--'}
                     </span>
@@ -2907,7 +3270,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   {srPreviewText && (
                     <div
                       ref={srTooltipRef}
-                      className={`fixed z-[60] bg-app-card border border-app-border rounded px-2.5 py-1.5 text-[11px] font-mono text-app-subtext whitespace-pre shadow-lg leading-relaxed text-left${srTooltipHidden ? ' invisible' : ''}`}
+                      className={`fixed z-[60] bg-app-card border border-slate-500/40 rounded px-2.5 py-1.5 text-[11px] font-mono text-app-subtext whitespace-pre shadow-[0_8px_30px_rgba(0,0,0,0.55)] leading-relaxed text-left${srTooltipHidden ? ' invisible' : ''}`}
                       style={{ top: srTooltipAbove, left: srTooltipOffset, tabSize: 8 }}
                     >
                       <div className="flex items-start justify-between gap-2">
@@ -2982,7 +3345,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         >
                           {srCopied ? <Check size={12} className="text-indigo-400" /> : <Copy size={12} className="text-app-subtext" />}
                           {copyPreviewText && (
-                            <div className="fixed z-[70] bg-app-card border border-app-border rounded px-2 py-1 text-[11px] font-mono text-app-subtext whitespace-pre shadow-lg leading-relaxed text-left" style={{ left: copyPreviewPos.left, top: copyPreviewPos.top, tabSize: 8 }}>
+                            <div className="fixed z-[70] bg-app-card border border-slate-500/40 rounded px-2 py-1 text-[11px] font-mono text-app-subtext whitespace-pre shadow-[0_8px_30px_rgba(0,0,0,0.55)] leading-relaxed text-left" style={{ left: copyPreviewPos.left, top: copyPreviewPos.top, tabSize: 8 }}>
                               {copyPreviewText}
                             </div>
                           )}
@@ -3077,229 +3440,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       });
                     })()}
                 </div>
-                {(() => {
-                    const currentKlines = bollData?.klines;
-                    if (!currentKlines || currentKlines.length === 0) return null;
-                    const selectedYear = getSelectedYear(stock);
-                    const dividend = getDividendForYear(stock, selectedYear);
-                    const maxRange = currentKlines.length;
-                    const range = Math.min(dividendRateChartRange, maxRange);
-                    const options = [5, 10, 20, 30, 60, 120, 250, 500].filter(opt => opt <= maxRange);
-                    const maxOffset = Math.max(0, maxRange - range);
-                    const offset = Math.min(dividendRateChartOffset, maxOffset);
-                    const chartData = currentKlines.slice(-range - offset, currentKlines.length - offset).map(k => {
-                      const byYear = stock.dividendByYear || {};
-                      const y = parseInt(k.date.slice(0, 4), 10);
-                      const pointDividend = (!isNaN(y) && byYear[y] && byYear[y] > 0) ? byYear[y]
-                        : (!isNaN(y) && byYear[y - 1] && byYear[y - 1] > 0) ? byYear[y - 1]
-                        : dividend;
-                      const rate = k.close > 0 ? (pointDividend / k.close) * 100 : 0;
-                      return {
-                        date: k.date,
-                        price: k.close,
-                        dividend: pointDividend,
-                        rate: parseFloat(rate.toFixed(2)),
-                      };
-                    });
-                    // 计算 Y 轴 5 条等间距标尺
-                    const rates = chartData.map(d => d.rate);
-                    const rawMin = rates.length > 0 ? Math.min(...rates) : 0;
-                    const rawMax = rates.length > 0 ? Math.max(...rates) : 1;
-                    const pad = rates.length > 0 ? Math.max((rawMax - rawMin) * 0.1, 0.1) : 0.25;
-                    const yMin = rawMin - pad;
-                    const yMax = rawMax + pad;
-                    const yTicks = rates.length > 0
-                      ? Array.from({ length: 5 }, (_, i) => yMin + (yMax - yMin) * i / 4)
-                      : [0, 0.25, 0.5, 0.75, 1];
-                    const maxTickLen = yTicks.reduce((max, v) => Math.max(max, v.toFixed(1).length + 1), 0);
-                    const yAxisFontSize = maxTickLen > 5 ? 7 : 8;
-                    // X 轴标尺：始终包含首尾日期，中间均匀分布
-                    const xTicks = chartData.length > 0
-                      ? Array.from({ length: 6 }, (_, i) => chartData[Math.round(i * (chartData.length - 1) / 5)]?.date).filter(Boolean)
-                      : [];
-                    return (
-                      <div className="border-t border-app-border pt-2">
-                        <div className="flex items-center mb-1">
-                          <span className="text-[10px] text-app-subtext">股息率曲线（{bollPeriod === 'daily' ? '日' : bollPeriod === 'weekly' ? '周' : '月'}线）</span>
-                        </div>
-                        <div className="h-[120px] w-full select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={chartData} margin={{ top: 5, right: 5, left: 2, bottom: 0 }}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
-                              <XAxis
-                                dataKey="date"
-                                tick={{ fontSize: 9, fill: '#94a3b8' }}
-                                stroke="rgba(148,163,184,0.3)"
-                                tickLine={false}
-                                axisLine={false}
-                                ticks={xTicks}
-                                tickMargin={6}
-                                tickFormatter={(v: string) => {
-                                  const xFirst = xTicks[0];
-                                  const xLast = xTicks[xTicks.length - 1];
-                                  if (v === xFirst) return v;
-                                  if (v === xLast && xLast?.slice(0, 4) !== xFirst?.slice(0, 4)) return v;
-                                  return v.length >= 10 ? v.slice(5, 10) : v;
-                                }}
-                              />
-                              <YAxis
-                                tick={{ fontSize: yAxisFontSize, fill: '#94a3b8' }}
-                                stroke="rgba(148,163,184,0.3)"
-                                tickLine={false}
-                                axisLine={false}
-                                domain={[yTicks[0], yTicks[4]]}
-                                ticks={yTicks}
-                                width={30}
-                                tickFormatter={(v: number) => `${v.toFixed(1)}%`}
-                              />
-                              <YAxis yAxisId="price" orientation="right" hide={true} />
-                              <Tooltip
-                                contentStyle={{
-                                  backgroundColor: 'rgba(15,23,42,0.95)',
-                                  border: '1px solid rgba(148,163,184,0.3)',
-                                  borderRadius: 6,
-                                  fontSize: 11,
-                                  color: 'inherit',
-                                }}
-                                content={({ active, payload, label }) => {
-                                  if (!active || !payload || !payload[0]) return null;
-                                  const d = payload[0].payload;
-                                  return (
-                                    <div className="bg-[rgba(15,23,42,0.95)] border border-[rgba(148,163,184,0.3)] rounded px-2 py-1.5 text-xs leading-relaxed">
-                                      <div className="text-app-subtext">{label}</div>
-                                      <div>股价: <span className="text-app-text">¥{d.price.toFixed(2)}</span></div>
-                                      <div>分红: <span className="text-app-text">{d.dividend.toFixed(3)} 元</span></div>
-                                      <div>股息率: <span className="text-green-400">{d.rate.toFixed(2)}%</span></div>
-                                    </div>
-                                  );
-                                }}
-                                cursor={{ stroke: 'rgba(99,102,241,0.4)', strokeWidth: 1 }}
-                              />
-                              <Line
-                                type="monotone"
-                                dataKey="rate"
-                                stroke="#3b82f6"
-                                strokeWidth={1.8}
-                                dot={range >= 120 ? false : { r: 2, fill: '#3b82f6', strokeWidth: 0 }}
-                                activeDot={range >= 120 ? { r: 3 } : { r: 4 }}
-                                isAnimationActive={false}
-                              />
-                              <Line
-                                yAxisId="price"
-                                type="monotone"
-                                dataKey="price"
-                                stroke="rgba(148,163,184,0.4)"
-                                strokeWidth={1}
-                                dot={false}
-                                activeDot={false}
-                                isAnimationActive={false}
-                              />
-                            </LineChart>
-                          </ResponsiveContainer>
-                        </div>
-                        <div className="flex items-center gap-2 mt-1 mb-1.5">
-                          <input
-                            type="range"
-                            min={0}
-                            max={maxOffset}
-                            value={maxOffset - offset}
-                            onChange={(e) => {
-                              const newOffset = maxOffset - Number(e.target.value);
-                              if (sliderRAFRef.current) cancelAnimationFrame(sliderRAFRef.current);
-                              sliderRAFRef.current = requestAnimationFrame(() => {
-                                sliderRAFRef.current = null;
-                                setDividendRateChartOffset(newOffset);
-                              });
-                            }}
-                            className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-gray-500 
-                              [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500
-                              [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-gray-500 [&::-moz-range-thumb]:border-0"
-                          />
-                          <div className="flex items-center gap-0.5 shrink-0">
-                            <button
-                              type="button"
-                              className="text-xs px-2.5 py-1 rounded-l bg-app-input text-app-text hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
-                              disabled={options.indexOf(range) <= 0}
-                              onClick={() => {
-                                const idx = options.indexOf(range);
-                                if (idx > 0) {
-                                  setDividendRateChartRange(options[idx - 1]);
-                                  setDividendRateChartOffset(0);
-                                }
-                              }}
-                            >−</button>
-                            <span className="text-xs px-2.5 py-1 bg-app-input text-app-text select-none">{range}</span>
-                            <button
-                              type="button"
-                              className="text-xs px-2.5 py-1 rounded-r bg-app-input text-app-text hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
-                              disabled={options.indexOf(range) >= options.length - 1}
-                              onClick={() => {
-                                const idx = options.indexOf(range);
-                                if (idx < options.length - 1) {
-                                  setDividendRateChartRange(options[idx + 1]);
-                                  setDividendRateChartOffset(0);
-                                }
-                              }}
-                            >+</button>
-                          </div>
-                        </div>
-                        {(() => {
-                          if (chartData.length === 0) return null;
-                          const byYear = stock.dividendByYear || {};
-                          const calcDividendForDate = (dateStr: string): { amount: number; isApproximate: boolean } => {
-                            if (!dateStr) return { amount: 0, isApproximate: false };
-                            const y = parseInt(dateStr.slice(0, 4), 10);
-                            if (isNaN(y)) return { amount: 0, isApproximate: false };
-                            if (byYear[y] && byYear[y] > 0) return { amount: byYear[y], isApproximate: false };
-                            if (byYear[y - 1] && byYear[y - 1] > 0) return { amount: byYear[y - 1], isApproximate: true };
-                            return { amount: 0, isApproximate: false };
-                          };
-                          const calcRate = (price: number, dividend: number): string => {
-                            if (!dividend || !price) return '-';
-                            return (dividend / price * 100).toFixed(2) + '%';
-                          };
-                          const calcRateColor = (price: number, dividend: number): string => {
-                            if (!dividend || !price) return 'text-app-subtext';
-                            return getDividendRateColor(dividend / price * 100, ranges);
-                          };
-                          const highItem = chartData.reduce((a, b) => a.price > b.price ? a : b);
-                          const lowItem = chartData.reduce((a, b) => a.price < b.price ? a : b);
-                          const highDiv = calcDividendForDate(highItem.date);
-                          const lowDiv = calcDividendForDate(lowItem.date);
-                          const highRate = calcRate(highItem.price, highDiv.amount);
-                          const lowRate = calcRate(lowItem.price, lowDiv.amount);
-                          const highRateColor = calcRateColor(highItem.price, highDiv.amount);
-                          const lowRateColor = calcRateColor(lowItem.price, lowDiv.amount);
-                          const highSymbol = !highDiv.amount ? '' : (highDiv.isApproximate ? '≈' : '=');
-                          const lowSymbol = !lowDiv.amount ? '' : (lowDiv.isApproximate ? '≈' : '=');
-                          return (
-                            <div className="flex flex-col gap-1">
-                              <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
-                                <span className="text-[10px] text-app-subtext shrink-0">最高价</span>
-                                <span className="font-mono text-[10px] font-bold text-red-500 shrink-0">{formatPrice(highItem.price, stock.name)}</span>
-                                <span className="text-[10px] shrink-0">
-                                  <span className="text-app-subtext">股息率</span>
-                                  {highSymbol && <span className="text-app-subtext mx-0.5">{highSymbol}</span>}
-                                  <span className={`font-mono font-bold ${highRateColor}`}>{highDiv.amount ? highRate : '-'}</span>
-                                </span>
-                                <span className="text-[10px] text-app-subtext ml-auto shrink-0">{highItem.date}</span>
-                              </div>
-                              <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
-                                <span className="text-[10px] text-app-subtext shrink-0">最低价</span>
-                                <span className="font-mono text-[10px] font-bold text-brand-green shrink-0">{formatPrice(lowItem.price, stock.name)}</span>
-                                <span className="text-[10px] shrink-0">
-                                  <span className="text-app-subtext">股息率</span>
-                                  {lowSymbol && <span className="text-app-subtext mx-0.5">{lowSymbol}</span>}
-                                  <span className={`font-mono font-bold ${lowRateColor}`}>{lowDiv.amount ? lowRate : '-'}</span>
-                                </span>
-                                <span className="text-[10px] text-app-subtext ml-auto shrink-0">{lowItem.date}</span>
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    );
-                  })()}
+                <DividendRateCurve
+                  klines={bollData?.klines || []}
+                  stock={stock}
+                  fallbackDividend={getDividendForYear(stock, getSelectedYear(stock))}
+                  title={`股息率曲线（${bollPeriod === 'daily' ? '日' : bollPeriod === 'weekly' ? '周' : '月'}线）`}
+                  ranges={ranges}
+                />
                   <div className="border-t border-app-border pt-2">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-[10px] text-app-subtext">年度分红（元/股）</span>
@@ -3643,7 +3790,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {priceInfoStock && (
         <div
           ref={priceInfoRef}
-          className="fixed z-[59] bg-app-input border border-app-border rounded-lg shadow-xl overflow-hidden"
+          className="fixed z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden"
           style={{ top: priceInfoPos.top, left: priceInfoPos.left, width: 210 }}
           onMouseEnter={() => { priceInfoHoveredRef.current = true; }}
           onMouseLeave={handlePriceInfoFloatLeave}
@@ -3651,7 +3798,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center">
             <span className="text-[11px] font-bold text-app-subtext">{priceInfoStock.name}</span>
           </div>
-          <div className="px-2.5 py-1.5">
+          <div className="px-2.5 py-1.5 bg-app-card">
             {priceInfoLoading && <div className="text-[10px] text-app-subtext py-2 text-center">加载中…</div>}
             {!priceInfoLoading && !priceInfoData && <div className="text-[10px] text-app-subtext py-2 text-center">暂无数据</div>}
             {!priceInfoLoading && priceInfoData && (() => {
@@ -3742,7 +3889,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         return (
           <div
             ref={positionInfoRef}
-            className="fixed z-[59] bg-app-input border border-app-border rounded-lg shadow-xl overflow-hidden"
+            className="fixed z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden"
             style={{ top: positionInfoPos.top, left: positionInfoPos.left, width: 220 }}
             onMouseEnter={() => { positionInfoHoveredRef.current = true; }}
             onMouseLeave={handlePositionInfoFloatLeave}
@@ -3750,7 +3897,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center">
               <span className="text-[11px] font-bold text-app-subtext">{s.name}</span>
             </div>
-            <div className="px-2.5 py-1.5 space-y-1">
+            <div className="px-2.5 py-1.5 space-y-1 bg-app-card">
               <div className="grid grid-cols-2 gap-x-4">{cell2('成本', cost > 0 ? fmtP(cost) : '-', costColor)}{cell2('现价', price > 0 ? fmtP(price) : '-', pctColor)}</div>
               <div className="grid grid-cols-2 gap-x-4">{cell2('股数', sharesText)}{cell2('市值', marketValue)}</div>
               <div className="grid grid-cols-2 gap-x-4">{cell2('浮盈', profitText, profitColor)}{cell2('盈亏', profitPctText, profitColor)}</div>
@@ -3760,11 +3907,41 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         );
       })()}
 
+      {/* 列表页股息率曲线浮窗（复用 DividendRateCurve 共享组件） */}
+      {divRateInfoStock && (
+        <div
+          ref={divRateInfoRef}
+          className="fixed z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden"
+          style={{ top: divRateInfoPos.top, left: divRateInfoPos.left, width: 330 }}
+          onMouseEnter={() => { divRateInfoHoveredRef.current = true; }}
+          onMouseLeave={handleDivRateInfoFloatLeave}
+        >
+          <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center">
+            <span className="text-[11px] font-bold text-app-subtext">{divRateInfoStock.name}</span>
+          </div>
+          <div className="p-2.5 bg-app-card">
+            {divRateInfoLoading ? (
+              <div className="text-[10px] text-app-subtext py-2 text-center">加载中…</div>
+            ) : divRateInfoKlines && divRateInfoKlines.length > 0 ? (
+              <DividendRateCurve
+                klines={divRateInfoKlines}
+                stock={divRateInfoStock}
+                fallbackDividend={getDividendForYear(divRateInfoStock, getSelectedYear(divRateInfoStock))}
+                title="股息率曲线"
+                ranges={ranges}
+              />
+            ) : (
+              <div className="text-[10px] text-app-subtext py-2 text-center">暂无数据</div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* 列表页支撑/压力位弹窗 */}
       {listSrPreviewText && listSrStock && (
         <div
           ref={listSrTooltipRef}
-          className={`fixed z-[60] bg-app-input border border-app-border rounded px-2.5 py-1.5 text-[11px] font-mono text-app-rowtext whitespace-pre shadow-lg leading-relaxed text-left ${listSrTooltipHidden ? ' invisible' : ''}`}
+          className={`fixed z-[60] bg-app-card border border-slate-500/40 rounded px-2.5 py-1.5 text-[11px] font-mono text-app-rowtext whitespace-pre shadow-[0_8px_30px_rgba(0,0,0,0.55)] leading-relaxed text-left ${listSrTooltipHidden ? ' invisible' : ''}`}
           style={{ top: listSrTooltipAbove, left: listSrTooltipOffset, tabSize: 8 }}
         >
           <button
