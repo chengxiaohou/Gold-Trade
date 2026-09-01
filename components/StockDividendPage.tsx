@@ -2162,6 +2162,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const costColor = cost > 0 ? (cost > (stock.price || 0) ? 'text-brand-green' : 'text-brand-red') : 'text-app-subtext';
                     const positionPct = cost > 0 && stock.price > 0 ? ((stock.price - cost) / cost) * 100 : 0;
                     const positionPctStr = cost > 0 && stock.price > 0 ? `${positionPct >= 0 ? '+' : ''}${positionPct.toFixed(2)}%` : '';
+                    // 股息率差值：基于成本的股息率 - 基于现价的股息率
+                    const costYield = dividend > 0 && cost > 0 ? (dividend / cost) * 100 : null;
+                    const priceYield = dividend > 0 && (stock.price || 0) > 0 ? (dividend / (stock.price || 0)) * 100 : null;
+                    const yieldDiff = costYield != null && priceYield != null ? costYield - priceYield : null;
+                    const yieldDiffStr = yieldDiff != null ? `${yieldDiff >= 0 ? '+' : ''}${yieldDiff.toFixed(2)}%` : '';
                     const showPct = (positionDisplayMode !== 'shares' && cost > 0 && stock.price > 0);
                     const totalAmount = shares > 0 && cost > 0 ? `¥${Math.round(shares * cost).toLocaleString()}` : '-';
                     const hasPosition = shares > 0 || cost > 0;
@@ -2215,7 +2220,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         ) : showPct ? (
                           <div className="flex flex-col items-center leading-tight">
                             <span className={`font-mono text-[11px] whitespace-nowrap ${costColor}`}>{displayValue}</span>
-                            <span className="font-mono text-[10px] text-app-rowtext">{positionPctStr}</span>
+                            <span className="font-mono text-[10px] text-app-rowtext">{positionDisplayMode === 'yield' ? yieldDiffStr : positionPctStr}</span>
                           </div>
                         ) : (
                           <span className={`font-mono text-[11px] whitespace-nowrap ${costColor}`}>{displayValue}</span>
@@ -3687,9 +3692,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </div>
                 );
               };
-              // 超买(数值偏高)用绿色，超卖(数值偏低)用红色
-              const rsiColor = (v: number | null) => v == null ? undefined : (v > 70 ? 'text-brand-green' : v < 30 ? 'text-brand-red' : undefined);
-              const kdjColor = (v: number | null, buyHigh: number, sellLow: number) => v == null ? undefined : (v > buyHigh ? 'text-brand-green' : v < sellLow ? 'text-brand-red' : undefined);
+              // 超买(数值偏高)用红色，超卖(数值偏低)用绿色
+              const rsiColor = (v: number | null) => v == null ? undefined : (v > 70 ? 'text-brand-red' : v < 30 ? 'text-brand-green' : undefined);
+              const kdjColor = (v: number | null, buyHigh: number, sellLow: number) => v == null ? undefined : (v > buyHigh ? 'text-brand-red' : v < sellLow ? 'text-brand-green' : undefined);
               return (
                 <div>
                   <div className="mb-1 space-y-1">
