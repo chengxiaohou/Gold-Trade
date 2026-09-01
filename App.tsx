@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Trash2, Eye, EyeOff } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
@@ -338,6 +338,9 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('stock_dividend_settings', JSON.stringify(stockSettings));
   }, [stockSettings]);
+
+  // 备忘录最近一次成功上传/下载的文字基线，用于判断是否有未同步的改动
+  const [memoBaseline, setMemoBaseline] = useState<string>(() => stockSettings.memo || '');
 
   const resetStockData = () => {
     setStocks(createDefaultStocks());
@@ -727,10 +730,8 @@ export default function App() {
     setCloudConfirm(action);
   };
 
-  const handleCloudUpload = async () => {
-    setCloudConfirm(null);
-    setIsSyncing(true);
-    setUploadSuccess(false);
+  // 共享的云端上传核心逻辑：上传股息页数据，返回是否成功
+  const performStockCloudUpload = useCallback(async (): Promise<boolean> => {
     try {
       let existingTrades: TradeRecord[] = [];
       let existingStocks: StockEntry[] = [];
@@ -790,15 +791,35 @@ export default function App() {
         setGithubConfig(newConfig);
         localStorage.setItem('gold_github_config', JSON.stringify(newConfig));
       }
-      
-      setUploadSuccess(true);
-      setTimeout(() => setUploadSuccess(false), 2000);
-    } catch (error) {
-      alert((error as Error).message);
-    } finally {
-      setIsSyncing(false);
+      return true;
+    } catch {
+      return false;
     }
+  }, [githubConfig, stockSettings, currentPage, trades, appSettings, stocks]);
+
+  const handleCloudUpload = async () => {
+    setCloudConfirm(null);
+    setIsSyncing(true);
+    setUploadSuccess(false);
+    const ok = await performStockCloudUpload();
+    if (ok) {
+      setUploadSuccess(true);
+      setMemoBaseline(stockSettings?.memo || '');
+      setTimeout(() => setUploadSuccess(false), 2000);
+    } else {
+      alert('云端上传失败，请检查网络或 Token 设置');
+    }
+    setIsSyncing(false);
   };
+
+  // 备忘录专用上传：与主上传按钮上传同一份数据，返回是否成功
+  const handleMemoUpload = useCallback(async (): Promise<boolean> => {
+    const ok = await performStockCloudUpload();
+    if (ok) {
+      setMemoBaseline(stockSettings?.memo || '');
+    }
+    return ok;
+  }, [performStockCloudUpload, stockSettings]);
 
   const handleCloudDownload = async () => {
     setCloudConfirm(null);
@@ -830,18 +851,16 @@ export default function App() {
           
           if (result.stockSettings) {
             // 从云端恢复时，保留本地的设备特定设置（maxRows、maxWidth、sortMode）
-            setStockSettings({
+            const restoredStockSettings = {
               ...result.stockSettings,
               maxRows: stockSettings?.maxRows ?? result.stockSettings.maxRows,
               maxWidth: stockSettings?.maxWidth ?? result.stockSettings.maxWidth,
               sortMode: stockSettings?.sortMode ?? result.stockSettings.sortMode,
-            });
-            localStorage.setItem('stock_dividend_settings', JSON.stringify({
-              ...result.stockSettings,
-              maxRows: stockSettings?.maxRows ?? result.stockSettings.maxRows,
-              maxWidth: stockSettings?.maxWidth ?? result.stockSettings.maxWidth,
-              sortMode: stockSettings?.sortMode ?? result.stockSettings.sortMode,
-            }));
+            };
+            setStockSettings(restoredStockSettings);
+            localStorage.setItem('stock_dividend_settings', JSON.stringify(restoredStockSettings));
+            // 下载成功后重置备忘录基线，与云端文字对齐
+            setMemoBaseline(result.stockSettings.memo || '');
           }
         }
         
@@ -1931,7 +1950,9 @@ export default function App() {
             onTagColorsChange={(colors) => setStockSettings(prev => ({ ...prev, tagColors: colors }))}
             memo={stockSettings.memo}
             memoUpdatedAt={stockSettings.memoUpdatedAt}
+            memoBaseline={memoBaseline}
             onMemoChange={(memo) => setStockSettings(prev => ({ ...prev, memo, memoUpdatedAt: Date.now() }))}
+            onMemoUpload={handleMemoUpload}
             maxRows={stockSettings.maxRows}
             maxWidth={stockSettings.maxWidth}
             actionButtons={renderStockActionButtons()}

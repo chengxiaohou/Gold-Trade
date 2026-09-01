@@ -228,7 +228,9 @@ interface StockDividendPageProps {
   onSortModeChange?: (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly') => void;
   memo?: string;
   memoUpdatedAt?: number;
+  memoBaseline?: string;
   onMemoChange?: (memo: string) => void;
+  onMemoUpload?: () => Promise<boolean>;
   showRequestStats?: boolean;
 }
 
@@ -776,7 +778,7 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges }: {
   );
 }
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 812, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, onMemoChange, showRequestStats = true }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 812, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, showRequestStats = true }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
   // 分红年份列（dividendLeft / dividendRight）：表头合并为一格，年份各自成列
@@ -843,6 +845,28 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [positionDisplayMode, setPositionDisplayMode] = useState<PositionDisplayMode>('yield');
   // 股票名称/代号显示切换（默认显示股票名称）
   const [showNickname, setShowNickname] = useState(false);
+  // 备忘录上传状态与错误提示
+  const [memoUploading, setMemoUploading] = useState(false);
+  const [memoToast, setMemoToast] = useState<string | null>(null);
+  const memoToastTimer = useRef<number | null>(null);
+
+  // 备忘录是否有未同步的改动（与最近一次上传/下载的文字不同）
+  const memoDirty = (memo || '') !== (memoBaseline || '');
+
+  const handleMemoUploadClick = async () => {
+    if (memoUploading || !onMemoUpload) return;
+    setMemoUploading(true);
+    try {
+      const ok = await onMemoUpload();
+      if (!ok) {
+        setMemoToast('备忘录上传失败，请检查网络或 Token 设置');
+        if (memoToastTimer.current) window.clearTimeout(memoToastTimer.current);
+        memoToastTimer.current = window.setTimeout(() => setMemoToast(null), 3000);
+      }
+    } finally {
+      setMemoUploading(false);
+    }
+  };
 
   useEffect(() => {
     if (resetSignal !== undefined && resetSignal > 0) {
@@ -2741,7 +2765,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       <div className="flex justify-center">
         <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full mt-1" style={{ maxWidth }}>
           <div className="flex items-center justify-between px-3 py-2 border-b border-app-border bg-app-input">
-            <span className="text-[12px] font-bold text-app-subtext tracking-wider uppercase">交易备忘录</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[12px] font-bold text-app-subtext tracking-wider uppercase">交易备忘录</span>
+              {memoDirty && (
+                <button
+                  onClick={handleMemoUploadClick}
+                  disabled={memoUploading}
+                  title="上传备忘录到云端"
+                  className="p-0.5 text-app-subtext hover:text-app-text transition-colors"
+                >
+                  {memoUploading ? (
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <CloudUpload className="w-3 h-3" />
+                  )}
+                </button>
+              )}
+            </div>
             <span className="text-[10px] text-app-rowtext font-mono opacity-60">{formatMemoTime(memoUpdatedAt)}</span>
           </div>
           <textarea
@@ -2753,6 +2793,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           />
         </div>
       </div>
+
+      {/* 备忘录上传失败 toast 提示 */}
+      {memoToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] bg-app-card border border-app-border rounded-lg px-4 py-2 text-xs text-app-text shadow-lg">
+          {memoToast}
+        </div>
+      )}
 
       {isAdding && createPortal(
         <>
