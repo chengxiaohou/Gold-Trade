@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, EyeOff, Download, BarChart3, List, ChevronDown, Copy } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
 import { fetchBollData, checkAllBollCache, countStaleBollCache, countVisibleBollItems, getBollCacheTimestamps, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getDynamicBollCacheTTL, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
@@ -519,6 +519,13 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges }: {
   const [chartRange, setChartRange] = useState(120);
   const [chartOffset, setChartOffset] = useState(0);
   const sliderRAFRef = useRef<number | null>(null);
+  // 价格曲线 Y 轴模式：'dynamic' = 按当前区间价格动态取范围；'history' = 按全历史价格区间锁定
+  const [priceAxisMode, setPriceAxisMode] = useState<'dynamic' | 'history'>(() => {
+    let v = 'dynamic';
+    try { v = localStorage.getItem('dividendPriceYAxisMode') || 'dynamic'; } catch { /* ignore */ }
+    // 兼容旧的 'fixed' 值，映射为最接近的 'dynamic'
+    return v === 'dynamic' || v === 'history' ? v : 'dynamic';
+  });
 
   const currentKlines = klines;
   if (!currentKlines || currentKlines.length === 0) return null;
@@ -554,6 +561,14 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges }: {
     : [0, 0.25, 0.5, 0.75, 1];
   const maxTickLen = yTicks.reduce((max, v) => Math.max(max, v.toFixed(1).length + 1), 0);
   const yAxisFontSize = maxTickLen > 5 ? 7 : 8;
+  // 价格曲线 Y 轴范围：dynamic = 按当前窗口 chartData 价格 min/max ±10%；history = 按全历史价格 min/max ±10% 锁定
+  const priceAxisDomain: [number, number] = (() => {
+    const prices = priceAxisMode === 'history' ? currentKlines.map(k => k.close) : chartData.map(d => d.price);
+    const pMin = Math.min(...prices);
+    const pMax = Math.max(...prices);
+    const pPad = Math.max((pMax - pMin) * 0.1, 0.1);
+    return [pMin - pPad, pMax + pPad];
+  })();
   // X 轴标尺：始终包含首尾日期，中间均匀分布
   const xTicks = chartData.length > 0
     ? Array.from({ length: 6 }, (_, i) => chartData[Math.round(i * (chartData.length - 1) / 5)]?.date).filter(Boolean)
@@ -562,11 +577,25 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges }: {
     <div className="border-t border-app-border bg-app-card pt-2">
       <div className="flex items-center mb-1">
         <span className="text-[10px] text-app-subtext">{title}</span>
+        <button
+          type="button"
+          title=""
+          className="ml-auto text-[9px] px-1.5 py-0.5 rounded border border-app-border text-[rgba(148,163,184,0.4)] hover:bg-app-hover/50 shrink-0"
+          onClick={() => {
+            const next = priceAxisMode === 'dynamic' ? 'history' : 'dynamic';
+            setPriceAxisMode(next);
+            try { localStorage.setItem('dividendPriceYAxisMode', next); } catch { /* ignore */ }
+          }}
+        >
+          {priceAxisMode === 'dynamic' ? '区间价格' : '历史价格'}
+        </button>
       </div>
       <div className="h-[120px] w-full select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 5, right: 5, left: 2, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
+            {yTicks.map((v, i) => (
+              <ReferenceLine key={`grid-h-${i}`} y={v} stroke="rgba(148,163,184,0.15)" strokeDasharray="3 3" />
+            ))}
             <XAxis
               dataKey="date"
               tick={{ fontSize: 9, fill: '#94a3b8' }}
@@ -593,7 +622,12 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges }: {
               width={30}
               tickFormatter={(v: number) => `${v.toFixed(1)}%`}
             />
-            <YAxis yAxisId="price" orientation="right" hide={true} />
+            <YAxis
+              yAxisId="price"
+              orientation="right"
+              hide={true}
+              domain={priceAxisDomain}
+            />
             <Tooltip
               contentStyle={{
                 backgroundColor: 'rgba(15,23,42,0.95)',
@@ -659,7 +693,7 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges }: {
         <div className="flex items-center gap-0.5 shrink-0">
           <button
             type="button"
-            className="text-xs px-2.5 py-1 rounded-l bg-app-input text-app-text hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="text-xs px-2.5 py-1 rounded-l bg-app-input text-app-subtext hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
             disabled={options.indexOf(range) <= 0}
             onClick={() => {
               const idx = options.indexOf(range);
@@ -669,10 +703,10 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges }: {
               }
             }}
           >−</button>
-          <span className="text-xs px-2.5 py-1 bg-app-input text-app-text select-none">{range}</span>
+          <span className="text-xs px-2.5 py-1 bg-app-input text-app-subtext select-none">{range}</span>
           <button
             type="button"
-            className="text-xs px-2.5 py-1 rounded-r bg-app-input text-app-text hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="text-xs px-2.5 py-1 rounded-r bg-app-input text-app-subtext hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
             disabled={options.indexOf(range) >= options.length - 1}
             onClick={() => {
               const idx = options.indexOf(range);
