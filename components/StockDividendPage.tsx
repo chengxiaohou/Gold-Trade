@@ -1352,6 +1352,39 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [stockBollErrorMap, setStockBollErrorMap] = useState<Map<string, { daily?: string; weekly?: string; monthly?: string }>>(new Map());
   const [isRefreshingBoll, setIsRefreshingBoll] = useState(false);
 
+  // 列表当前显示顺序（按排序规则重排；默认顺序即 stocks 原序）
+  const sortedStocks = useMemo(() => {
+    if (sortMode === 'dividendRate') {
+      return [...stocks].sort((a, b) => getDividendRate(b) - getDividendRate(a));
+    } else if (sortMode === 'tag') {
+      return [...stocks].sort((a, b) => {
+        const aHasTag = a.tag && a.tag.trim() ? 0 : 1;
+        const bHasTag = b.tag && b.tag.trim() ? 0 : 1;
+        if (aHasTag !== bHasTag) return aHasTag - bHasTag;
+        const aTag = (a.tag || '').trim();
+        const bTag = (b.tag || '').trim();
+        return aTag.localeCompare(bTag);
+      });
+    } else if (sortMode === 'daily' || sortMode === 'weekly' || sortMode === 'monthly') {
+      // 轨道分组排序：升序=下→中→上，降序=上→中→下；同一轨道内按偏离度百分比
+      // （负数代表向下偏离最远的“下中的下”），升序时负数靠前、正数靠后，降序时相反，
+      // 无数据排最后
+      const bandRank = bollSortReverse
+        ? { upper: 0, mid: 1, lower: 2, default: 3 }
+        : { lower: 0, mid: 1, upper: 2, default: 3 };
+      const rank = (stock: typeof stocks[number]) =>
+        stock.bollHidden ? null : getBollPosition(stockBollMap.get(stock.id)?.[sortMode] ?? null, stock.price || 0);
+      return [...stocks].sort((a, b) => {
+        const pa = rank(a), pb = rank(b);
+        if (!pa || !pb) return !pa && !pb ? 0 : pa ? -1 : 1;
+        const ba = bandRank[pa.band] ?? 3, bb = bandRank[pb.band] ?? 3;
+        if (ba !== bb) return ba - bb;
+        return bollSortReverse ? pb.percent - pa.percent : pa.percent - pb.percent;
+      });
+    }
+    return stocks;
+  }, [stocks, sortMode, stockBollMap, bollSortReverse]);
+
   // 请求日志状态
   const [requestLogs, setRequestLogs] = useState<RequestLogEntry[]>([]);
   const [requestStats, setRequestStats] = useState<RequestLogStats>({ total: 0, success: 0, failed: 0, cached: 0, pending: 0 });
@@ -1454,14 +1487,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     }
     
     // 部分或全部数据不在缓存中，逐个获取
-    for (let i = 0; i < stocks.length; i++) {
+    // 请求顺序遵循列表当前的排列顺序（sortedStocks），而非固定固有顺序
+    const order = sortedStocks;
+    for (let i = 0; i < order.length; i++) {
       // 检查版本号，如果已被新请求替代则取消
       if (fetchVersionRef.current !== currentVersion) {
         // 已被新请求取消，旧请求中止，新请求会负责最终的清理
         return;
       }
       
-      const stock = stocks[i];
+      const stock = order[i];
       
       // 跳过已隐藏布林线的股票
       if (stock.bollHidden) continue;
@@ -1515,7 +1550,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       }
       
       // 网络请求后，等待250ms再请求下一只股票（但期间要检查是否被取消）
-      if (i < stocks.length - 1) {
+      if (i < order.length - 1) {
         for (let w = 0; w < 25; w++) {
           await new Promise(resolve => setTimeout(resolve, 10));
           if (fetchVersionRef.current !== currentVersion) {
@@ -1527,7 +1562,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     }
     isFetchingRef.current = false;
     setIsRefreshingBoll(false);
-  }, [stocks, bollAdjust, apiSource]);
+  }, [stocks, bollAdjust, apiSource, sortedStocks]);
 
   // 防止 StrictMode 双重调用：标志在 effect 层设置，与 fetchAllBoll 内部守卫无关
   const didAutoRefreshBollRef = useRef(false);
@@ -1671,38 +1706,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     stocks.forEach(s => { if (s.tag && s.tag.trim()) tags.add(s.tag.trim()); });
     return Array.from(tags).sort();
   }, [stocks]);
-
-  const sortedStocks = useMemo(() => {
-    if (sortMode === 'dividendRate') {
-      return [...stocks].sort((a, b) => getDividendRate(b) - getDividendRate(a));
-    } else if (sortMode === 'tag') {
-      return [...stocks].sort((a, b) => {
-        const aHasTag = a.tag && a.tag.trim() ? 0 : 1;
-        const bHasTag = b.tag && b.tag.trim() ? 0 : 1;
-        if (aHasTag !== bHasTag) return aHasTag - bHasTag;
-        const aTag = (a.tag || '').trim();
-        const bTag = (b.tag || '').trim();
-        return aTag.localeCompare(bTag);
-      });
-    } else if (sortMode === 'daily' || sortMode === 'weekly' || sortMode === 'monthly') {
-      // 轨道分组排序：升序=下→中→上，降序=上→中→下；同一轨道内按偏离度百分比
-      // （负数代表向下偏离最远的“下中的下”），升序时负数靠前、正数靠后，降序时相反，
-      // 无数据排最后
-      const bandRank = bollSortReverse
-        ? { upper: 0, mid: 1, lower: 2, default: 3 }
-        : { lower: 0, mid: 1, upper: 2, default: 3 };
-      const rank = (stock: typeof stocks[number]) =>
-        stock.bollHidden ? null : getBollPosition(stockBollMap.get(stock.id)?.[sortMode] ?? null, stock.price || 0);
-      return [...stocks].sort((a, b) => {
-        const pa = rank(a), pb = rank(b);
-        if (!pa || !pb) return !pa && !pb ? 0 : pa ? -1 : 1;
-        const ba = bandRank[pa.band] ?? 3, bb = bandRank[pb.band] ?? 3;
-        if (ba !== bb) return ba - bb;
-        return bollSortReverse ? pb.percent - pa.percent : pa.percent - pb.percent;
-      });
-    }
-    return stocks;
-  }, [stocks, sortMode, stockBollMap, bollSortReverse]);
 
   const handleEditTagClick = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
