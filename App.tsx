@@ -1516,7 +1516,7 @@ export default function App() {
 
       {showFxModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setShowFxModal(false)}>
-          <div className="bg-app-card border border-app-border rounded-xl w-full max-w-sm shadow-2xl relative p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-app-card border border-app-border rounded-xl w-full max-w-[19rem] shadow-2xl relative p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-bold text-app-text">价格换算</h3>
               <button onClick={() => setShowFxModal(false)} className="text-app-subtext hover:text-app-text transition-colors"><X size={20} /></button>
@@ -1530,7 +1530,7 @@ export default function App() {
                   <RefreshCw size={14} className="text-app-subtext animate-spin" />
                 ) : (
                   effectiveFxRate > 0
-                    ? <span className="font-mono font-bold text-app-text">1 USD = {effectiveFxRate.toFixed(4)} CNY</span>
+                    ? <span className="font-mono font-bold text-app-text">1:{effectiveFxRate.toFixed(2)}</span>
                     : <span className="text-app-subtext text-xs">--</span>
                 )}
                 <button onClick={() => { setFxRateTime(0); fetchFxRate(); }} className="text-app-subtext hover:text-app-text" title="">
@@ -1547,31 +1547,33 @@ export default function App() {
               const priceBlock = (label: string, rmb: number, editable: boolean) => {
                 const uoz = usdOfOz(rmb);
                 return (
-                  <div key={label} className="bg-app-bg border border-app-border rounded-lg px-3.5 py-2 space-y-1.5">
-                    <div className="text-[11px] text-app-subtext">{label}</div>
-                    <div className="flex items-center justify-between gap-2 text-sm font-mono">
-                      <span className="text-xs text-app-subtext">人民币 (元/克)</span>
-                      {editable ? (
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="number"
-                            value={marketPrice}
-                            onChange={(e) => handleMarketPriceChange(e.target.value)}
-                            placeholder="0.00"
-                            className="no-spinners bg-transparent border-none p-0 w-20 outline-none text-right text-sm font-bold font-mono text-app-text"
-                          />
-                          <div className="flex flex-col gap-0.5 shrink-0">
-                            <button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm px-0.5"><ChevronUp size={12} strokeWidth={3} /></button>
-                            <button onClick={() => updateMarketPrice(-appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm px-0.5"><ChevronDown size={12} strokeWidth={3} /></button>
+                  <div key={label} className="space-y-1.5">
+                    <div className="text-sm font-medium text-app-text pl-0.5">{label}</div>
+                    <div className="bg-app-bg border border-app-border rounded-lg px-3.5 py-2 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2 text-sm font-mono">
+                        <span className="text-xs text-app-subtext">人民币 (元/克)</span>
+                        {editable ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              value={marketPrice}
+                              onChange={(e) => handleMarketPriceChange(e.target.value)}
+                              placeholder="0.00"
+                              className="no-spinners bg-transparent border-none p-0 w-20 outline-none text-right text-sm font-bold font-mono text-app-text"
+                            />
+                            <div className="flex flex-col gap-0.5 shrink-0">
+                              <button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm px-0.5"><ChevronUp size={12} strokeWidth={3} /></button>
+                              <button onClick={() => updateMarketPrice(-appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm px-0.5"><ChevronDown size={12} strokeWidth={3} /></button>
+                            </div>
                           </div>
-                        </div>
-                      ) : (
-                        <span className="font-bold text-app-text">¥{rmb.toFixed(2)}</span>
-                      )}
-                    </div>
-                    <div className="flex items-center justify-between text-sm font-mono">
-                      <span className="text-xs text-app-subtext">美元/盎司</span>
-                      {uoz != null ? <span className="font-bold text-app-text">${uoz.toFixed(2)}</span> : <span className="text-app-subtext text-xs">--</span>}
+                        ) : (
+                          <span className="font-bold text-app-text">¥{rmb.toFixed(2)}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between text-sm font-mono">
+                        <span className="text-xs text-app-subtext">美元/盎司</span>
+                        {uoz != null ? <span className="font-bold text-app-text">${uoz.toFixed(2)}</span> : <span className="text-app-subtext text-xs">--</span>}
+                      </div>
                     </div>
                   </div>
                 );
