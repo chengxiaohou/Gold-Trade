@@ -3886,6 +3886,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               const d = priceInfoData;
               const fmt = (v: number | null) => v == null ? '-' : formatPrice(v, priceInfoStock!.name);
               const pctColor = d.changePct == null ? 'text-app-subtext' : d.changePct >= 0 ? 'text-brand-red' : 'text-brand-green';
+              // 昨收价：现价 / (1 + 涨跌幅)
+              const prevClose = (d.changePct == null || priceInfoStock == null || priceInfoStock.price <= 0)
+                ? null : priceInfoStock.price / (1 + d.changePct / 100);
+              // 开/现/低/高 各自与昨收价比较着色（符合正规交易软件规则）
+              const priceColor = (v: number | null) => {
+                if (v == null || prevClose == null) return 'text-app-subtext';
+                if (v > prevClose) return 'text-brand-red';
+                if (v < prevClose) return 'text-brand-green';
+                return 'text-app-rowtext';
+              };
               const fmtPct = (v: number | null) => v == null ? '-' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
               const numFmt = (v: number | null, dec = 2) => v == null ? '-' : v.toFixed(dec);
               const cell2 = (label: string, val: React.ReactNode, colorClass = 'text-app-rowtext') => (
@@ -3926,8 +3936,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               return (
                 <div>
                   <div className="mb-1 space-y-1">
-                    <div className="grid grid-cols-2 gap-x-4">{cell2('开', fmt(d.open), pctColor)}{cell2('现', formatPrice(priceInfoStock.price, priceInfoStock.name), pctColor)}</div>
-                    <div className="grid grid-cols-2 gap-x-4">{cell2('低', fmt(d.low), pctColor)}{cell2('高', fmt(d.high), pctColor)}</div>
+                    <div className="grid grid-cols-2 gap-x-4">{cell2('开', fmt(d.open), priceColor(d.open))}{cell2('现', formatPrice(priceInfoStock.price, priceInfoStock.name), priceColor(priceInfoStock.price))}</div>
+                    <div className="grid grid-cols-2 gap-x-4">{cell2('低', fmt(d.low), priceColor(d.low))}{cell2('高', fmt(d.high), priceColor(d.high))}</div>
                     <div className="grid grid-cols-2 gap-x-4">{cell2('额', changeAmount, pctColor)}{cell2('幅', fmtPct(d.changePct), pctColor)}</div>
                     <div className="grid grid-cols-2 gap-x-4">{cell2('量', formatVolume(d.volume), volumeColor)}{cell2('量比', volumeRatioText, volumeColor)}</div>
                   </div>
