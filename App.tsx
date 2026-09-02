@@ -1542,27 +1542,45 @@ export default function App() {
 
             {/* 换算项 */}
             {(() => {
-              const rows = [
-                { label: '回本价', rmb: currentPosition.breakEvenPrice },
-                { label: '持仓均价', rmb: currentPosition.avgCost },
-              ];
-              const usdOf = (rmb: number) => effectiveFxRate > 0 ? rmb / effectiveFxRate : null;
+              const mkPrice = parseFloat(marketPrice) || 0;
+              const usdOfOz = (rmb: number) => effectiveFxRate > 0 && rmb > 0 ? (rmb / effectiveFxRate) * OZ_PER_GRAM : null;
+              const priceBlock = (label: string, rmb: number, editable: boolean) => {
+                const uoz = usdOfOz(rmb);
+                return (
+                  <div key={label} className="bg-app-bg border border-app-border rounded-lg px-3.5 py-2 space-y-1.5">
+                    <div className="text-[11px] text-app-subtext">{label}</div>
+                    <div className="flex items-center justify-between gap-2 text-sm font-mono">
+                      <span className="text-xs text-app-subtext">人民币 (元/克)</span>
+                      {editable ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            value={marketPrice}
+                            onChange={(e) => handleMarketPriceChange(e.target.value)}
+                            placeholder="0.00"
+                            className="no-spinners bg-transparent border-none p-0 w-20 outline-none text-right text-sm font-bold font-mono text-app-text"
+                          />
+                          <div className="flex flex-col gap-0.5 shrink-0">
+                            <button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm px-0.5"><ChevronUp size={12} strokeWidth={3} /></button>
+                            <button onClick={() => updateMarketPrice(-appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm px-0.5"><ChevronDown size={12} strokeWidth={3} /></button>
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="font-bold text-app-text">¥{rmb.toFixed(2)}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between text-sm font-mono">
+                      <span className="text-xs text-app-subtext">美元/盎司</span>
+                      {uoz != null ? <span className="font-bold text-app-text">${uoz.toFixed(2)}</span> : <span className="text-app-subtext text-xs">--</span>}
+                    </div>
+                  </div>
+                );
+              };
               return (
                 <div className="space-y-3">
-                  {rows.map(row => {
-                    const usdG = usdOf(row.rmb);
-                    const usdOz = usdG != null ? usdG * OZ_PER_GRAM : null;
-                    return (
-                      <div key={row.label} className="space-y-1.5">
-                        <div className="text-xs text-app-subtext">{row.label}</div>
-                        <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-sm font-mono">
-                          <div className="flex justify-between"><span className="text-app-subtext text-xs">人民币</span><span className="font-bold text-app-text">¥{row.rmb.toFixed(2)}</span></div>
-                          {usdG != null && <div className="flex justify-between"><span className="text-app-subtext text-xs">美元/克</span><span className="font-bold text-app-text">${usdG.toFixed(2)}</span></div>}
-                          {usdOz != null && <div className="flex justify-between col-span-2"><span className="text-app-subtext text-xs">美元/盎司</span><span className="font-bold text-app-text">${usdOz.toFixed(2)}</span></div>}
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {priceBlock('参考市价', mkPrice, true)}
+                  {priceBlock('回本价', currentPosition.breakEvenPrice, false)}
+                  {priceBlock('持仓均价', currentPosition.avgCost, false)}
                 </div>
               );
             })()}
