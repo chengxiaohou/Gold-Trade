@@ -850,6 +850,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [memoToast, setMemoToast] = useState<string | null>(null);
   const memoToastTimer = useRef<number | null>(null);
 
+  // 添加股票的进度提示与错误状态
+  const [addStep, setAddStep] = useState<string | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
+
   // 备忘录是否有未同步的改动（与最近一次上传/下载的文字不同）
   const memoDirty = (memo || '') !== (memoBaseline || '');
 
@@ -2145,15 +2149,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       return;
     }
 
+    setAddError(null);
+    setAddStep('正在获取股价…');
     setIsRefreshing(new Set(['new']));
     try {
+      // 步骤1：获取实时股价
       const priceLogCtx = requestLogService.beginBatch('添加股票查询股价：1 只股票 · 1 条请求');
       const result = await fetchStockPrice(stockCode, priceLogCtx);
+      if (!result) {
+        setAddError('未获取到实时价格，请检查股票代码或网络后重试');
+      }
 
-      // 自动查询该股票的 2024/2025 全年分红（查不到则保持 0，可稍后用"自动获取分红"批量补）
+      // 步骤2：自动查询该股票的 2024/2025 全年分红（查不到则保持 0，可稍后用"自动获取分红"批量补）
       let dividend2024 = 0;
       let dividend2025 = 0;
       let dividendByYear: Record<number, number> = {};
+      setAddStep('正在请求年度分红数据…');
       try {
         const divLogCtx = requestLogService.beginBatch('添加股票查询分红：1 只股票 · 1~2 条请求');
         const divResult = await fetchYearlyDividends(stockCode, divLogCtx);
@@ -2162,10 +2173,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           dividend2025 = divResult.dividend2025;
           dividendByYear = divResult.dividendByYear;
         }
-      } catch {
-        // 分红获取失败不影响添加股票
+      } catch (e) {
+        // 分红获取失败不影响添加股票，但给出可排查的状态
+        setAddError(e instanceof Error ? `查询分红失败：${e.message}` : '查询分红失败：未知错误');
       }
 
+      // 步骤3：写入列表
+      setAddStep('正在写入列表…');
       const newEntry: StockEntry = {
         id: Date.now().toString(),
         code: stockCode,
@@ -2188,9 +2202,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
       onStocksChange([...stocks, newEntry]);
       setNewStock({ code: '', name: '' });
+      setAddStep(null);
+      setAddError(null);
       onCloseAdding();
-    } catch {
-      alert('添加股票失败');
+    } catch (e) {
+      // 网络请求等异常：给出状态与错误信息便于排查，弹窗保持打开
+      setAddStep(null);
+      setAddError(e instanceof Error ? `添加失败：${e.message}` : '添加失败：未知错误');
     } finally {
       setIsRefreshing(new Set());
     }
@@ -2840,6 +2858,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 onClick={() => {
                   onCloseAdding();
                   setNewStock({ code: '', name: '' });
+                  setAddStep(null);
+                  setAddError(null);
                 }}
                 className="flex-1 py-2 rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transform active:scale-[0.98] border border-app-border text-app-subtext hover:bg-app-input hover:text-app-text"
               >
@@ -2847,12 +2867,29 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               </button>
               <button
                 onClick={handleAddStock}
-                disabled={!newStock.code.trim() || isRefreshing.has('new')}
+                disabled={!newStock.code.trim() || isRefreshing.has('new') || addStep !== null}
                 className="flex-1 py-2 rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 bg-brand-yellow text-slate-900 hover:bg-[#fdd835]"
               >
-                <Plus size={14} />添加
+                {addStep !== null ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+                {addStep !== null ? '添加中…' : '添加'}
               </button>
             </div>
+            {/* 添加进度与错误提示 */}
+            {(addStep !== null || addError) && (
+              <div className="mt-3 space-y-1.5">
+                {addStep !== null && (
+                  <div className="flex items-center gap-2 text-[11px] text-app-text bg-app-input border border-app-border rounded-lg px-2.5 py-1.5">
+                    <RefreshCw size={11} className="animate-spin text-app-subtext shrink-0" />
+                    <span>{addStep}</span>
+                  </div>
+                )}
+                {addError && (
+                  <div className="text-[11px] leading-snug text-brand-red bg-app-input border border-brand-red/30 rounded-lg px-2.5 py-1.5 break-all">
+                    <span className="font-bold mr-1">错误</span>{addError}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </>,
         document.body
