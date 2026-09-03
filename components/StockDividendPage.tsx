@@ -250,10 +250,9 @@ interface DividendDiffEntry {
   registerDate?: string; // 最新股权登记日
 }
 
-// 持仓列展示模式（表头按钮循环切换）
-type PositionDisplayMode = 'yield' | 'shares' | 'cost';
+// 持仓列中子列2的展示模式（表头按钮两态切换）
+type PositionDisplayMode = 'shares' | 'cost';
 const POSITION_MODE_LABEL: Record<PositionDisplayMode, string> = {
-  yield: '股息率',
   shares: '份额',
   cost: '成本',
 };
@@ -570,10 +569,13 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges, per
   const maxOffset = Math.max(0, maxRange - range);
   const offset = Math.min(period && offsetValue !== undefined && onOffsetChange ? offsetValue : chartOffset, maxOffset);
   const dividend = fallbackDividend;
+  // 最新一根K线所在的年份（当前交易年份）：今年分红未完成，统一用选中年份的预估分红（fallback）计算
+  const currentYear = parseInt((currentKlines[currentKlines.length - 1]?.date || '').slice(0, 4), 10);
   const chartData = currentKlines.slice(-range - offset, currentKlines.length - offset).map(k => {
     const byYear = stock.dividendByYear || {};
     const y = parseInt(k.date.slice(0, 4), 10);
-    const pointDividend = (!isNaN(y) && byYear[y] && byYear[y] > 0) ? byYear[y]
+    const pointDividend = (!isNaN(y) && y === currentYear) ? dividend
+      : (!isNaN(y) && byYear[y] && byYear[y] > 0) ? byYear[y]
       : (!isNaN(y) && byYear[y - 1] && byYear[y - 1] > 0) ? byYear[y - 1]
       : dividend;
     const rate = k.close > 0 ? (pointDividend / k.close) * 100 : 0;
@@ -874,8 +876,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [isFetchingSingleDividend, setIsFetchingSingleDividend] = useState<string | null>(null);
   const [dividendDiff, setDividendDiff] = useState<DividendDiffEntry[] | null>(null);
   const [selectedDividendIds, setSelectedDividendIds] = useState<Set<string>>(new Set());
-  // 持仓列当前展示的数据类型（默认股息率）
-  const [positionDisplayMode, setPositionDisplayMode] = useState<PositionDisplayMode>('yield');
+  // 持仓列子列2当前展示类型（默认成本，点击在成本/份额间切换）
+  const [positionDisplayMode, setPositionDisplayMode] = useState<PositionDisplayMode>('cost');
   // 股票名称/代号显示切换（默认显示股票名称）
   const [showNickname, setShowNickname] = useState(false);
   // 股息率曲线日线区间（本地记忆，供列表股息率列下方的历史比例计算使用）
@@ -2209,9 +2211,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setSelectedDividendIds(new Set());
   };
 
-  // 持仓列展示模式循环：股息率 → 股数 → 成本 → 股息率
+  // 持仓列子列2展示模式两态切换：成本 → 份额 → 成本
   const cyclePositionMode = () => {
-    setPositionDisplayMode(prev => prev === 'yield' ? 'shares' : prev === 'shares' ? 'cost' : 'yield');
+    setPositionDisplayMode(prev => prev === 'cost' ? 'shares' : 'cost');
   };
 
   const handleAddStock = useCallback(async () => {
@@ -2458,6 +2460,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 </div>
               </th>
                 {cols.includes('position') && <th
+                  colSpan={2}
                   className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-r border-app-border"
                 >
                   持仓
@@ -2486,13 +2489,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('daily')}>日线</th>
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('weekly')}>周线</th>
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('monthly')}>月线</th>
-                {cols.includes('position') && <th
-                  className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
-                  onClick={cyclePositionMode}
-                  title={`点击切换展示：股息率 / 份额 / 成本`}
-                >
-                  {POSITION_MODE_LABEL[positionDisplayMode]}
-                </th>}
+                {cols.includes('position') && <>
+                  <th
+                    className="w-[64px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border"
+                  >
+                    股息率
+                  </th>
+                  <th
+                    className="w-[64px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
+                    onClick={cyclePositionMode}
+                    title={'点击切换展示：成本 / 份额'}
+                  >
+                    {POSITION_MODE_LABEL[positionDisplayMode]}
+                  </th>
+                </>}
                 {dividendYearCols.map((yearCol, idx) => (
                   <th key={yearCol} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">
                     {yearCol === 'dividendLeft' ? dividendYearLeft : dividendYearRight}
@@ -2702,65 +2712,95 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const priceYield = dividend > 0 && (stock.price || 0) > 0 ? (dividend / (stock.price || 0)) * 100 : null;
                     const yieldDiff = costYield != null && priceYield != null ? costYield - priceYield : null;
                     const yieldDiffStr = yieldDiff != null ? `${yieldDiff >= 0 ? '+' : ''}${yieldDiff.toFixed(2)}%` : '';
-                    const showPct = (positionDisplayMode !== 'shares' && cost > 0 && stock.price > 0);
+                    const showCostPct = (positionDisplayMode === 'cost' && cost > 0 && stock.price > 0);
                     const totalAmount = shares > 0 && cost > 0 ? `¥${Math.round(shares * cost).toLocaleString()}` : '-';
                     const hasPosition = shares > 0 || cost > 0;
-                    const displayValue = positionDisplayMode === 'shares'
-                      ? sharesText
-                      : positionDisplayMode === 'cost'
-                        ? costText
-                        : yieldPct;
-                    return (
+                    const displayValue2 = positionDisplayMode === 'shares' ? sharesText : costText;
+                    // 子列1：固定展示股息率（详见标题）
+                    const col1 = (
                       <td
-                        className="px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
+                        className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
                         onMouseLeave={handlePositionInfoLeave}
                         onClick={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoClick(e, stock); }}
                       >
-                        {editingId === stock.id ? (
-                          <div className="flex flex-col gap-0.5">
-                            <input
-                              type="number"
-                              value={cost || ''}
-                              onChange={(e) => handleUpdateField(stock.id, 'positionCost', parseFloat(e.target.value) || 0)}
-                              onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
-                              step="0.01"
-                              min="0"
-                              placeholder="成本价"
-                              className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
-                              title="每股成本（买入均价）"
-                            />
-                            <input
-                              type="number"
-                              value={shares || ''}
-                              onChange={(e) => handleUpdateField(stock.id, 'positionShares', parseFloat(e.target.value) || 0)}
-                              onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
-                              enterKeyHint="done"
-                              step="1"
-                              min="0"
-                              placeholder="股数"
-                              className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
-                              title="持仓股数"
-                            />
-                          </div>
-                        ) : positionDisplayMode === 'shares' ? (
-                          hasPosition ? (
-                            <div className="flex flex-col items-center leading-tight">
-                              <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">{totalAmount}</span>
-                              <span className="font-mono text-[10px] text-app-rowtext">{displayValue}</span>
-                            </div>
-                          ) : (
-                            <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">-</span>
-                          )
-                        ) : showPct ? (
-                          <div className="flex flex-col items-center leading-tight">
-                            <span className={`font-mono text-[11px] whitespace-nowrap ${costColor}`}>{displayValue}</span>
-                            <span className="font-mono text-[10px] text-app-rowtext">{positionDisplayMode === 'yield' ? yieldDiffStr : positionPctStr}</span>
+                        {hasPosition ? (
+                          <div className="flex flex-col items-center leading-tight gap-px">
+                            <span className={`font-mono text-[11px] whitespace-nowrap ${costColor}`}>{yieldPct}</span>
+                            <span className="font-mono text-[10px] text-app-rowtext">{yieldDiffStr}</span>
                           </div>
                         ) : (
-                          <span className={`font-mono text-[11px] whitespace-nowrap ${costColor}`}>{displayValue}</span>
+                          <span className="font-mono text-[11px] whitespace-nowrap text-app-subtext">-</span>
                         )}
                       </td>
+                    );
+                    // 子列2：默认成本，点击表头切换为份额；编辑态展示成本+股数输入
+                    const col2 = editingId === stock.id ? (
+                      <td className="w-[64px] px-1 py-1.5 text-center border-r border-app-border">
+                        <div className="flex flex-col gap-0.5">
+                          <input
+                            type="number"
+                            value={cost || ''}
+                            onChange={(e) => handleUpdateField(stock.id, 'positionCost', parseFloat(e.target.value) || 0)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
+                            step="0.01"
+                            min="0"
+                            placeholder="成本价"
+                            className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
+                            title="每股成本（买入均价）"
+                          />
+                          <input
+                            type="number"
+                            value={shares || ''}
+                            onChange={(e) => handleUpdateField(stock.id, 'positionShares', parseFloat(e.target.value) || 0)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
+                            enterKeyHint="done"
+                            step="1"
+                            min="0"
+                            placeholder="股数"
+                            className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
+                            title="持仓股数"
+                          />
+                        </div>
+                      </td>
+                    ) : positionDisplayMode === 'shares' ? (
+                      <td
+                        className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
+                        onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
+                        onMouseLeave={handlePositionInfoLeave}
+                        onClick={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoClick(e, stock); }}
+                      >
+                        {hasPosition ? (
+                          <div className="flex flex-col items-center leading-tight gap-px">
+                            <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">{totalAmount}</span>
+                            <span className="font-mono text-[10px] text-app-rowtext">{displayValue2}</span>
+                          </div>
+                        ) : (
+                          <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">-</span>
+                        )}
+                      </td>
+                    ) : (
+                      <td
+                        className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
+                        onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
+                        onMouseLeave={handlePositionInfoLeave}
+                        onClick={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoClick(e, stock); }}
+                      >
+                        {showCostPct ? (
+                          <div className="flex flex-col items-center leading-tight gap-px">
+                            <span className={`font-mono text-[11px] whitespace-nowrap ${costColor}`}>{costText}</span>
+                            <span className="font-mono text-[10px] text-app-rowtext">{positionPctStr}</span>
+                          </div>
+                        ) : (
+                          <span className={`font-mono text-[11px] whitespace-nowrap ${costColor}`}>{costText}</span>
+                        )}
+                      </td>
+                    );
+                    return (
+                      <React.Fragment key="position-cols">
+                        {col1}
+                        {col2}
+                      </React.Fragment>
                     );
                   })()}
                   {dividendYearCols.map((yearCol, idx) => {
