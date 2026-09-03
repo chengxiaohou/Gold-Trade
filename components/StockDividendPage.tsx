@@ -898,10 +898,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     try { localStorage.setItem('dividendChartOffset_daily', String(v)); } catch { /* ignore */ }
   };
   // 股票列表股息率区间内每日股息率：与 DividendRateCurve 的速率算法保持一致
-  const rateForKline = (stock: StockEntry, k: BollKline, fallback: number): number => {
+  const rateForKline = (stock: StockEntry, k: BollKline, fallback: number, klines: BollKline[]): number => {
     const byYear = stock.dividendByYear || {};
     const y = parseInt(k.date.slice(0, 4), 10);
-    const pointDividend = (!isNaN(y) && byYear[y] && byYear[y] > 0) ? byYear[y]
+    // 最新一根K线所在的年份（当前交易年份）：今年分红未完成，统一用选中年份的预估分红（fallback）
+    const currentYear = klines.length > 0 ? parseInt((klines[klines.length - 1]?.date || '').slice(0, 4), 10) : NaN;
+    const pointDividend = (!isNaN(y) && y === currentYear) ? fallback
+      : (!isNaN(y) && byYear[y] && byYear[y] > 0) ? byYear[y]
       : (!isNaN(y) && byYear[y - 1] && byYear[y - 1] > 0) ? byYear[y - 1]
       : fallback;
     return k.close > 0 ? (pointDividend / k.close) * 100 : 0;
@@ -912,7 +915,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const fallback = getDividendForYear(stock, getSelectedYear(stock));
     const seg = klines.slice(-dailyChartRange - dailyChartOffset, klines.length - dailyChartOffset);
     if (seg.length === 0) return null;
-    const rates = seg.map(k => rateForKline(stock, k, fallback)).filter(r => r > 0);
+    const rates = seg.map(k => rateForKline(stock, k, fallback, klines)).filter(r => r > 0);
     // 取去重后的最大与次大值
     const uniq = Array.from(new Set(rates)).sort((a, b) => b - a);
     const maxRate = uniq[0];
