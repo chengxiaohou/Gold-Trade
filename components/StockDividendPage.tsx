@@ -511,16 +511,50 @@ const formatMemoTime = (ts?: number): string => {
 
 // 股息率曲线共享组件：详情弹窗与列表页“股息率”浮窗共用一套渲染逻辑，
 // 之后任一处的股息率曲线改动都会同时反映到另一处。
-function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges }: {
+function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges, period, rangeValue, offsetValue, onRangeChange, onOffsetChange }: {
   klines: BollKline[];
   stock: StockEntry;
   fallbackDividend: number;
   title?: string;
   ranges: DividendRateColorRange[];
+  period?: 'daily' | 'weekly' | 'monthly';
+  // 受控区间（列表页股息率列共享 daily 区间时传入）；未传入则内部自管理并本地记忆
+  rangeValue?: number;
+  offsetValue?: number;
+  onRangeChange?: (v: number) => void;
+  onOffsetChange?: (v: number) => void;
 }) {
-  const [chartRange, setChartRange] = useState(120);
-  const [chartOffset, setChartOffset] = useState(0);
+  const [chartRange, setChartRange] = useState(() => {
+    if (period) {
+      try { return Number(localStorage.getItem(`dividendChartRange_${period}`)) || 120; } catch { /* ignore */ }
+    }
+    return 120;
+  });
+  const [chartOffset, setChartOffset] = useState(() => {
+    if (period) {
+      try { return Number(localStorage.getItem(`dividendChartOffset_${period}`)) || 0; } catch { /* ignore */ }
+    }
+    return 0;
+  });
   const sliderRAFRef = useRef<number | null>(null);
+  // 兼容受控模式：有外部值则以外部值为准
+  const range = Math.min(period && rangeValue !== undefined && onRangeChange ? rangeValue : chartRange, klines.length);
+  const updateRange = (v: number) => {
+    if (period && rangeValue !== undefined && onRangeChange) {
+      onRangeChange(v);
+    } else {
+      setChartRange(v);
+    }
+    if (period) { try { localStorage.setItem(`dividendChartRange_${period}`, String(v)); } catch { /* ignore */ } }
+  };
+  const updateOffset = (v: number) => {
+    if (period && offsetValue !== undefined && onOffsetChange) {
+      onOffsetChange(v);
+    } else {
+      setChartOffset(v);
+    }
+    if (period) { try { localStorage.setItem(`dividendChartOffset_${period}`, String(v)); } catch { /* ignore */ } }
+  };
   // 价格曲线 Y 轴模式：'dynamic' = 按当前区间价格动态取范围；'history' = 按全历史价格区间锁定
   const [priceAxisMode, setPriceAxisMode] = useState<'dynamic' | 'history'>(() => {
     let v = 'dynamic';
@@ -532,10 +566,9 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges }: {
   const currentKlines = klines;
   if (!currentKlines || currentKlines.length === 0) return null;
   const maxRange = currentKlines.length;
-  const range = Math.min(chartRange, maxRange);
   const options = [5, 10, 20, 30, 60, 120, 250, 500].filter(opt => opt <= maxRange);
   const maxOffset = Math.max(0, maxRange - range);
-  const offset = Math.min(chartOffset, maxOffset);
+  const offset = Math.min(period && offsetValue !== undefined && onOffsetChange ? offsetValue : chartOffset, maxOffset);
   const dividend = fallbackDividend;
   const chartData = currentKlines.slice(-range - offset, currentKlines.length - offset).map(k => {
     const byYear = stock.dividendByYear || {};
@@ -685,7 +718,7 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges }: {
             if (sliderRAFRef.current) cancelAnimationFrame(sliderRAFRef.current);
             sliderRAFRef.current = requestAnimationFrame(() => {
               sliderRAFRef.current = null;
-              setChartOffset(newOffset);
+              updateOffset(newOffset);
             });
           }}
           className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-gray-500 
@@ -700,8 +733,8 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges }: {
             onClick={() => {
               const idx = options.indexOf(range);
               if (idx > 0) {
-                setChartRange(options[idx - 1]);
-                setChartOffset(0);
+                updateRange(options[idx - 1]);
+                updateOffset(0);
               }
             }}
           >−</button>
@@ -713,8 +746,8 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges }: {
             onClick={() => {
               const idx = options.indexOf(range);
               if (idx < options.length - 1) {
-                setChartRange(options[idx + 1]);
-                setChartOffset(0);
+                updateRange(options[idx + 1]);
+                updateOffset(0);
               }
             }}
           >+</button>
@@ -845,6 +878,45 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [positionDisplayMode, setPositionDisplayMode] = useState<PositionDisplayMode>('yield');
   // 股票名称/代号显示切换（默认显示股票名称）
   const [showNickname, setShowNickname] = useState(false);
+  // 股息率曲线日线区间（本地记忆，供列表股息率列下方的历史比例计算使用）
+  const [dailyChartRange, setDailyChartRange] = useState<number>(() => {
+    try { return Number(localStorage.getItem('dividendChartRange_daily')) || 120; } catch { return 120; }
+  });
+  const [dailyChartOffset, setDailyChartOffset] = useState<number>(() => {
+    try { return Number(localStorage.getItem('dividendChartOffset_daily')) || 0; } catch { return 0; }
+  });
+  const handleDailyRangeChange = (v: number) => {
+    setDailyChartRange(v);
+    try { localStorage.setItem('dividendChartRange_daily', String(v)); } catch { /* ignore */ }
+  };
+  const handleDailyOffsetChange = (v: number) => {
+    setDailyChartOffset(v);
+    try { localStorage.setItem('dividendChartOffset_daily', String(v)); } catch { /* ignore */ }
+  };
+  // 股票列表股息率区间内每日股息率：与 DividendRateCurve 的速率算法保持一致
+  const rateForKline = (stock: StockEntry, k: BollKline, fallback: number): number => {
+    const byYear = stock.dividendByYear || {};
+    const y = parseInt(k.date.slice(0, 4), 10);
+    const pointDividend = (!isNaN(y) && byYear[y] && byYear[y] > 0) ? byYear[y]
+      : (!isNaN(y) && byYear[y - 1] && byYear[y - 1] > 0) ? byYear[y - 1]
+      : fallback;
+    return k.close > 0 ? (pointDividend / k.close) * 100 : 0;
+  };
+  // 计算当前股息率相对区间内历史最高/次高股息率的比例（%）；无数据返回 null
+  const calcDivRateHistoryRatio = (stock: StockEntry, klines: BollKline[] | undefined, currentRate: number): number | null => {
+    if (!klines || klines.length === 0 || stock.bollHidden || currentRate <= 0) return null;
+    const fallback = getDividendForYear(stock, getSelectedYear(stock));
+    const seg = klines.slice(-dailyChartRange - dailyChartOffset, klines.length - dailyChartOffset);
+    if (seg.length === 0) return null;
+    const rates = seg.map(k => rateForKline(stock, k, fallback)).filter(r => r > 0);
+    // 取去重后的最大与次大值
+    const uniq = Array.from(new Set(rates)).sort((a, b) => b - a);
+    const maxRate = uniq[0];
+    const secondMaxRate = uniq[1];
+    const denom = (maxRate !== undefined && currentRate >= maxRate) ? secondMaxRate : maxRate;
+    if (denom === undefined || denom <= 0) return null;
+    return (currentRate / denom) * 100;
+  };
   // 备忘录上传状态与错误提示
   const [memoUploading, setMemoUploading] = useState(false);
   const [memoToast, setMemoToast] = useState<string | null>(null);
@@ -2167,6 +2239,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       let dividend2024 = 0;
       let dividend2025 = 0;
       let dividendByYear: Record<number, number> = {};
+      let registerDate: string | undefined;
       setAddStep('正在请求年度分红数据…');
       try {
         const divLogCtx = requestLogService.beginBatch('添加股票查询分红：1 只股票 · 1~2 条请求');
@@ -2175,6 +2248,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           dividend2024 = divResult.dividend2024;
           dividend2025 = divResult.dividend2025;
           dividendByYear = divResult.dividendByYear;
+          // 与批量获取分红一致的逻辑：从 records 提取最近一次股权登记日
+          registerDate = divResult.records
+            ?.filter(r => r.registerDate)
+            .map(r => r.registerDate!)
+            .sort()
+            .reverse()[0];
         }
       } catch (e) {
         // 分红获取失败不影响添加股票，但给出可排查的状态
@@ -2201,6 +2280,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         positionCost: 0,
         priceUpdatedAt: result ? Date.now() : null,
         dividendRates: calculateDividendRates(dividend2025),
+        registerDate,
       };
 
       onStocksChange([...stocks, newEntry]);
@@ -2508,9 +2588,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     className="px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
                     title=""
                   >
-                    <span className={`font-mono text-xs font-bold ${getDividendRateColor(getDividendRate(stock), ranges)}`}>
-                      {getDividendRate(stock) > 0 ? formatPercent(getDividendRate(stock)) : '--'}
-                    </span>
+                    <div className="flex flex-col items-center leading-none gap-0.5">
+                      <span className={`font-mono text-xs font-bold ${getDividendRateColor(getDividendRate(stock), ranges)}`}>
+                        {getDividendRate(stock) > 0 ? formatPercent(getDividendRate(stock)) : '--'}
+                      </span>
+                      {(() => {
+                        const cur = getDividendRate(stock);
+                        if (cur <= 0) return null;
+                        const klines = stockBollMap.get(stock.id)?.daily?.klines;
+                        const ratio = calcDivRateHistoryRatio(stock, klines, cur);
+                        return (
+                          <span className="font-mono text-[10px] text-app-rowtext">
+                            {ratio !== null ? `${Math.round(ratio)}%` : '--'}
+                          </span>
+                        );
+                      })()}
+                    </div>
                   </td>}
                   {cols.includes('price') && <td
                     onMouseEnter={(e) => handlePriceInfoEnter(e, stock)}
@@ -3567,6 +3660,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   fallbackDividend={getDividendForYear(stock, getSelectedYear(stock))}
                   title={`股息率曲线（${bollPeriod === 'daily' ? '日' : bollPeriod === 'weekly' ? '周' : '月'}线）`}
                   ranges={ranges}
+                  period={bollPeriod === 'weekly' ? 'weekly' : bollPeriod === 'monthly' ? 'monthly' : 'daily'}
                 />
                   <div className="border-t border-app-border pt-2">
                     <div className="flex items-center justify-between mb-1">
@@ -4058,8 +4152,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 klines={divRateInfoKlines}
                 stock={divRateInfoStock}
                 fallbackDividend={getDividendForYear(divRateInfoStock, getSelectedYear(divRateInfoStock))}
-                title="股息率曲线"
+                title="股息率曲线（日线）"
                 ranges={ranges}
+                period="daily"
+                rangeValue={dailyChartRange}
+                offsetValue={dailyChartOffset}
+                onRangeChange={handleDailyRangeChange}
+                onOffsetChange={handleDailyOffsetChange}
               />
             ) : (
               <div className="text-[10px] text-app-subtext py-2 text-center">暂无数据</div>
