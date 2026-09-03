@@ -924,6 +924,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (denom === undefined || denom <= 0) return null;
     return (currentRate / denom) * 100;
   };
+  // 周期内最低股息率 / 最高股息率的百分比（%），反映股息率的可能波动区间；无数据返回 null
+  const calcDivRateRangeRatio = (stock: StockEntry, klines: BollKline[] | undefined): number | null => {
+    if (!klines || klines.length === 0 || stock.bollHidden) return null;
+    const fallback = getDividendForYear(stock, getSelectedYear(stock));
+    const seg = klines.slice(-dailyChartRange - dailyChartOffset, klines.length - dailyChartOffset);
+    if (seg.length === 0) return null;
+    const rates = seg.map(k => rateForKline(stock, k, fallback, klines)).filter(r => r > 0);
+    if (rates.length === 0) return null;
+    const maxRate = Math.max(...rates);
+    const minRate = Math.min(...rates);
+    if (maxRate <= 0) return null;
+    return (minRate / maxRate) * 100;
+  };
   // 备忘录上传状态与错误提示
   const [memoUploading, setMemoUploading] = useState(false);
   const [memoToast, setMemoToast] = useState<string | null>(null);
@@ -2397,8 +2410,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <colgroup>
               <col style={{ width: '36px' }} />
               {(cols.includes('code') || cols.includes('name')) && <col style={{ width: '90px' }} />}
-              {cols.includes('dividendRate') && <col style={{ width: '55px' }} />}
-              {cols.includes('price') && <col style={{ width: '75px' }} />}
+              {cols.includes('dividendRate') && <col style={{ width: '70px' }} />}
+              {cols.includes('price') && <col style={{ width: '60px' }} />}
               {cols.includes('changePercent') && <col style={{ width: '55px' }} />}
               <col style={{ width: '65px' }} />
               <col style={{ width: '65px' }} />
@@ -2429,34 +2442,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     股息率
                   </th>
                 )}
-                {cols.includes('price') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">
-                    <div className="flex items-center justify-center gap-1 whitespace-nowrap">
-                      价格
-                      <button
-                        onClick={() => handleRefreshAll(false)}
-                        disabled={isRefreshing.size > 0}
-                        className="p-0.5 hover:bg-app-card rounded transition-colors disabled:opacity-50"
-                        title="刷新所有股价"
-                      >
-                        <RefreshCw size={10} className={isRefreshing.size > 0 ? 'animate-spin' : ''} />
-                      </button>
-                    </div>
-                  </th>}
+                {cols.includes('price') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">价格</th>}
                 {cols.includes('changePercent') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">涨跌幅</th>}
                 <th
-                className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none hover:bg-app-card transition-colors"
+                className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap"
                 colSpan={3}
-                onClick={() => { setBollAdjust(bollAdjust === 'qfq' ? 'none' : 'qfq'); setDividendRateChartRange(120); }}
-                title="点击切换前复权/除权"
               >
                 <div className="flex items-center justify-center gap-1">
-                  <span>布林线 - {bollAdjust === 'qfq' ? '前复权' : '除权'}</span>
+                  <span>BOLL</span>
+                  {(() => {
+                    const ts = getBollCacheTimestamps(stocks, bollAdjust, apiSource);
+                    const t = ts.length > 0 ? Math.max(...ts) : 0;
+                    return t > 0 ? <span className="text-[9px] text-app-subtext">{formatRelativeTime(t)}</span> : null;
+                  })()}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       fetchAllBoll('点击「布林线」列头刷新按钮');
                     }}
-                    disabled={isRefreshingBoll || bollAdjust === 'none'}
+                    disabled={isRefreshingBoll}
                     className="p-0.5 hover:bg-app-card rounded transition-colors disabled:opacity-50"
                     title="刷新所有BOLL数据"
                   >
@@ -2490,7 +2494,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               </tr>
               <tr className="bg-app-input">
                 {(cols.includes('code') || cols.includes('name')) && <th className="px-2 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border sticky left-[36px] z-10">代码</th>}
-                {(cols.includes('dividendRate') || cols.includes('price') || cols.includes('changePercent')) && <th colSpan={3} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap">{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</th>}
+                {(cols.includes('dividendRate') || cols.includes('price') || cols.includes('changePercent')) && <th colSpan={3} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap">
+                    <div className="flex items-center justify-center gap-1">
+                      <span>{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</span>
+                      <button
+                        onClick={() => handleRefreshAll(false)}
+                        disabled={isRefreshing.size > 0}
+                        className="p-0.5 hover:bg-app-card rounded transition-colors disabled:opacity-50"
+                        title="刷新所有股价"
+                      >
+                        <RefreshCw size={10} className={isRefreshing.size > 0 ? 'animate-spin' : ''} />
+                      </button>
+                    </div>
+                  </th>}
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('daily')}>日线</th>
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('weekly')}>周线</th>
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('monthly')}>月线</th>
@@ -2612,9 +2628,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         if (cur <= 0) return null;
                         const klines = stockBollMap.get(stock.id)?.daily?.klines;
                         const ratio = calcDivRateHistoryRatio(stock, klines, cur);
+                        const rangeRatio = calcDivRateRangeRatio(stock, klines);
                         return (
                           <span className="font-mono text-[10px] text-app-rowtext">
-                            {ratio !== null ? `${Math.round(ratio)}%` : '--'}
+                            {ratio !== null && rangeRatio !== null
+                              ? `${Math.round(rangeRatio)}-${Math.round(ratio)}%`
+                              : ratio !== null ? `${Math.round(ratio)}%` : '--'}
                           </span>
                         );
                       })()}
