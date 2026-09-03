@@ -762,6 +762,8 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges, per
           if (!dateStr) return { amount: 0, isApproximate: false };
           const y = parseInt(dateStr.slice(0, 4), 10);
           if (isNaN(y)) return { amount: 0, isApproximate: false };
+          // 今年（当前交易年份）分红未完成：统一用选中年份的预估分红
+          if (y === currentYear) return { amount: dividend, isApproximate: true };
           if (byYear[y] && byYear[y] > 0) return { amount: byYear[y], isApproximate: false };
           if (byYear[y - 1] && byYear[y - 1] > 0) return { amount: byYear[y - 1], isApproximate: true };
           return { amount: 0, isApproximate: false };
