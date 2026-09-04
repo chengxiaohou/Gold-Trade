@@ -5,7 +5,7 @@ import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, Tren
 import { GithubConfig, AppSettings, StockSettings, DividendRateColorRange, ApiSource, CacheInfo } from '../types';
 import { validateConnection } from '../services/githubService';
 import { getCacheInfo, getMarketStatusText, formatDatePart, formatTimePart, formatRelativeTime, clearCacheRecord } from '../services/cacheService';
-import { clearAllCache } from '../services/bollService';
+import { clearAllCache, getTencentDomain, setTencentDomain, TENCENT_DOMAINS } from '../services/bollService';
 
 // All available columns in gold trade list
 const GOLD_COLUMNS = [
@@ -85,6 +85,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [maxRows, setMaxRows] = useState<number>(stockSettings?.maxRows || 15);
   const [maxWidth, setMaxWidth] = useState<number>(stockSettings?.maxWidth || 812);
   const [apiSource, setApiSource] = useState<ApiSource>(appSettings.apiSource || 'tencent');
+  const [tencentDomain, setTencentDomainState] = useState<string>(getTencentDomain());
   const [cacheTTLMinutes, setCacheTTLMinutes] = useState<number>(appSettings.cacheTTLMinutes || 10);
   const [bollCacheTTLMinutes, setBollCacheTTLMinutes] = useState<number>(appSettings.bollCacheTTLMinutes || 120);
   const [manualFxRate, setManualFxRate] = useState<string>((appSettings.manualFxRate || '').toString());
@@ -570,6 +571,34 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                             新浪财经
                           </button>
                         </div>
+
+                        {/* 腾讯 K 线域名选择（仅腾讯数据源时显示，仅本地记忆） */}
+                        {apiSource === 'tencent' && (
+                          <div className="space-y-1.5 pt-2">
+                            <label className="text-xs font-medium text-app-subtext flex items-center gap-1.5">
+                              <RefreshCw size={12} className="text-indigo-400"/> 腾讯K线域名
+                            </label>
+                            <div className="flex gap-2">
+                              {TENCENT_DOMAINS.map(domain => (
+                                <button
+                                  key={domain}
+                                  type="button"
+                                  onClick={() => {
+                                    setTencentDomain(domain);
+                                    setTencentDomainState(domain);
+                                  }}
+                                  className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all truncate ${
+                                    tencentDomain === domain
+                                      ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50'
+                                      : 'bg-app-input text-app-subtext border border-app-border hover:border-app-text/30'
+                                  }`}
+                                >
+                                  {domain}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                      </div>
 
                      {/* Cache Management */}

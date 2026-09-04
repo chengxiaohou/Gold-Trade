@@ -496,6 +496,32 @@ const SINA_SUPPORTED_ADJUST: Record<BollAdjust, boolean> = {
   none: false  // 新浪不支持不复权
 };
 
+// 腾讯 K 线可选域名
+export const TENCENT_DOMAINS = ['ifzq.gtimg.cn', 'web.ifzq.gtimg.cn'];
+const TENCENT_DOMAIN_KEY = 'tencent_boll_domain';
+
+// 读取腾讯 K 线选中的域名（仅本地记忆，不同步云端）
+export function getTencentDomain(): string {
+  try {
+    const stored = localStorage.getItem(TENCENT_DOMAIN_KEY);
+    if (stored && TENCENT_DOMAINS.includes(stored)) return stored;
+  } catch (e) {
+    console.warn('读取腾讯域名失败:', e);
+  }
+  return 'ifzq.gtimg.cn'; // 默认使用当前验证可用的域名
+}
+
+// 设置腾讯 K 线选中域名（仅本地记忆）
+export function setTencentDomain(domain: string): void {
+  try {
+    if (TENCENT_DOMAINS.includes(domain)) {
+      localStorage.setItem(TENCENT_DOMAIN_KEY, domain);
+    }
+  } catch (e) {
+    console.warn('保存腾讯域名失败:', e);
+  }
+}
+
 export async function fetchBollData(
   stockCode: string,
   period: BollPeriod = 'daily',
@@ -566,32 +592,22 @@ async function fetchBollFromTencent(
   const count = 500;
 
   const urlPath = `/appstock/app/fqkline/get?param=${code},${periodParam},,,${count},${adjustParam}`;
-  const realUrl = `https://web.ifzq.gtimg.cn${urlPath}`;
-  const devUrl = `/api/tencent${urlPath}`;
+  // 使用设置页选中的腾讯 K 线域名（默认 ifzq.gtimg.cn），共享缓存不随域名隔离
+  const domain = getTencentDomain();
+  const realUrl = `https://${domain}${urlPath}`;
   const logUrl = logTencentUrl(urlPath);
 
   // 开始请求，记录日志
   const requestId = requestLogService.startRequest(logUrl, 'GET', logCtx);
 
   try {
-    let result: TencentKlineResponse | null = null;
-
-    if (isDev) {
-      const response = await fetch(devUrl);
-      if (!response.ok) {
-        requestLogService.failed(requestId, `腾讯接口请求失败 (${response.status})`);
-        return { data: null, error: `腾讯接口请求失败 (${response.status})` };
-      }
-      result = await response.json();
-    } else {
-      // 腾讯接口支持 CORS（access-control-allow-origin: *），可直接 fetch
-      const response = await fetch(realUrl);
-      if (!response.ok) {
-        requestLogService.failed(requestId, `腾讯接口请求失败 (${response.status})`);
-        return { data: null, error: `腾讯接口请求失败 (${response.status})` };
-      }
-      result = await response.json();
+    // 腾讯接口支持 CORS（access-control-allow-origin: *），开发与生产均直接 fetch 选中的域名
+    const response = await fetch(realUrl);
+    if (!response.ok) {
+      requestLogService.failed(requestId, `腾讯接口请求失败 (${response.status})`);
+      return { data: null, error: `腾讯接口请求失败 (${response.status})` };
     }
+    const result: TencentKlineResponse = await response.json();
 
     if (!result || !result.data || !result.data[code]) {
       requestLogService.failed(requestId, '腾讯接口无数据');

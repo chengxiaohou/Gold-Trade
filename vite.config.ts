@@ -26,7 +26,7 @@ export default defineConfig(({ mode }) => {
             }
           },
           '/api/tencent': {
-            target: 'https://web.ifzq.gtimg.cn',
+            target: 'https://ifzq.gtimg.cn',
             changeOrigin: true,
             rewrite: (path) => path.replace(/^\/api\/tencent/, ''),
             headers: {
