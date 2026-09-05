@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, CheckCircle2, Trash2, GripVertical, RotateCcw, Eye, EyeOff, Download, BarChart3, List, ChevronDown, Copy } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, BarChart3, List, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
-import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, ApiSource } from '../types';
+import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource } from '../types';
 import { fetchBollData, checkAllBollCache, countStaleBollCache, countVisibleBollItems, getBollCacheTimestamps, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getDynamicBollCacheTTL, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
 import { getNickname } from '../services/nicknameService';
+import { InputGroup } from './InputGroup';
 
 const TAG_PALETTE = [
   { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20', hover: 'hover:border-gray-500/50' },
@@ -2234,6 +2235,230 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setPositionDisplayMode(prev => prev === 'cost' ? 'shares' : 'cost');
   };
 
+  // ============ 交易记录列（持仓大列内子列3） ============
+  // 每只股票最多保留的已成交记录条数，控制 Gist 上传/下载负载；挂单不设上限
+  const MAX_FILLED_TRADES = 20;
+  const TRADE_STATUS_LABEL: Record<string, string> = {
+    'buy-pending': '买入挂单', 'sell-pending': '卖出挂单',
+    'buy-filled': '买入成功', 'sell-filled': '卖出成功',
+  };
+  const tradeStatusColor = (t: StockTrade) => t.status === 'pending' ? 'text-orange-400' : (t.side === 'buy' ? 'text-brand-red' : 'text-brand-green');
+  const getTrades = (stock: StockEntry): StockTrade[] => stock.stockTrades || [];
+
+  // 交易浮窗状态
+  const [tradeInfoStock, setTradeInfoStock] = useState<StockEntry | null>(null);
+  const [tradeInfoPos, setTradeInfoPos] = useState<{ top: number, left: number }>({ top: 0, left: 0 });
+  const [tradeInfoPinned, setTradeInfoPinned] = useState(false);
+  const tradeInfoBtnRef = useRef<HTMLTableCellElement | null>(null);
+  const tradeInfoRef = useRef<HTMLDivElement | null>(null);
+
+  // 新增挂单表单状态（提交成功后清空）
+  const [addTradeSide, setAddTradeSide] = useState<'buy' | 'sell'>('buy');
+  const [addTradePrice, setAddTradePrice] = useState('');
+  const [addTradeShares, setAddTradeShares] = useState('');
+  const [addTradeNote, setAddTradeNote] = useState('');
+
+  const openTradeInfo = (btn: HTMLElement, stock: StockEntry) => {
+    tradeInfoBtnRef.current = btn as unknown as HTMLTableCellElement;
+    setTradeInfoStock(stock);
+    // 挂单价格默认预填当前现价（股票/ETF 分别 2/3 位小数）
+    setAddTradePrice(stock.price > 0 ? formatPrice(stock.price, stock.name) : '');
+    const rect = btn.getBoundingClientRect();
+    const popupW = 304;
+    const estH = 340;
+    const gap = 8;
+    let left = rect.right + gap;
+    let top = rect.top + rect.height / 2 - estH / 2 + estH * 0.1;
+    if (left + popupW > window.innerWidth - 10) left = rect.left - popupW - gap;
+    if (left < 10) left = (window.innerWidth - popupW) / 2;
+    if (top + estH > window.innerHeight - 10) top = window.innerHeight - estH - 10;
+    if (top < 10) top = 10;
+    setTradeInfoPos({ left, top });
+  };
+
+  // 交易浮窗统一关闭：必须同时清除 pinned 与 stock，否则浮窗仍显示
+  const closeTradeInfo = useCallback(() => {
+    setTradeInfoPinned(false);
+    setTradeInfoStock(null);
+  }, []);
+
+  // 交易浮窗可拖拽（拖画画头部）——参考黄金项目 EditBubble，改用 window 级指针监听，
+  // 不依赖 pointer capture，避免捕获残留导致拖拽后点击空白无法关闭
+  const tradeDragOffset = useRef({ x: 0, y: 0 });
+  const isTradeDragging = useRef(false);
+  const tradeDragMove = (e: PointerEvent) => {
+    if (!isTradeDragging.current || !tradeInfoRef.current) return;
+    const el = tradeInfoRef.current;
+    el.style.left = `${e.clientX - tradeDragOffset.current.x}px`;
+    el.style.top = `${e.clientY - tradeDragOffset.current.y}px`;
+  };
+  const tradeDragEnd = () => {
+    if (!isTradeDragging.current) return;
+    isTradeDragging.current = false;
+    window.removeEventListener('pointermove', tradeDragMove);
+    window.removeEventListener('pointerup', tradeDragEnd);
+    window.removeEventListener('pointercancel', tradeDragEnd);
+    document.body.style.cursor = '';
+    const el = tradeInfoRef.current;
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      setTradeInfoPos({ left: rect.left, top: rect.top });
+      el.style.transition = '';
+    }
+  };
+  const handleTradeDragStart = (e: React.PointerEvent) => {
+    const el = tradeInfoRef.current;
+    if (!el || e.button !== 0) return;
+    isTradeDragging.current = true;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = el.getBoundingClientRect();
+    tradeDragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    el.style.transition = 'none';
+    document.body.style.cursor = 'grabbing';
+    window.addEventListener('pointermove', tradeDragMove);
+    window.addEventListener('pointerup', tradeDragEnd);
+    window.addEventListener('pointercancel', tradeDragEnd);
+  };
+
+  // 浮窗打开后，用实际渲染高度校准位置，保证上下不超出屏幕（尤其移动端）
+  useEffect(() => {
+    if (!tradeInfoStock || !tradeInfoRef.current) return;
+    const raf = requestAnimationFrame(() => {
+      const el = tradeInfoRef.current;
+      if (!el) return;
+      const pad = 8;
+      const r = el.getBoundingClientRect();
+      let left = r.left;
+      let top = r.top;
+      if (top < pad) top = pad;
+      if (top + r.height > window.innerHeight - pad) top = Math.max(pad, window.innerHeight - r.height - pad);
+      if (left < pad) left = pad;
+      if (left + r.width > window.innerWidth - pad) left = Math.max(pad, window.innerWidth - r.width - pad);
+      if (left !== r.left || top !== r.top) setTradeInfoPos({ left, top });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [tradeInfoStock, tradeInfoPos]);
+
+  // 点击交易列：切换固定/取消固定
+  const handleTradeInfoClick = (e: React.MouseEvent, stock: StockEntry) => {
+    e.stopPropagation();
+    if (tradeInfoPinned && tradeInfoStock?.id === stock.id) {
+      closeTradeInfo();
+      return;
+    }
+    openTradeInfo(e.currentTarget as HTMLElement, stock);
+    setTradeInfoPinned(true);
+  };
+
+  // 交易浮窗：点击外部关闭（与价格浮窗机制一致）
+  useEffect(() => {
+    if (!tradeInfoPinned) return;
+    const handler = (e: MouseEvent) => {
+      if (tradeInfoRef.current && !tradeInfoRef.current.contains(e.target as Node) &&
+          tradeInfoBtnRef.current && !tradeInfoBtnRef.current.contains(e.target as Node)) {
+        closeTradeInfo();
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [tradeInfoPinned, closeTradeInfo]);
+
+  // 新增一条挂单（默认 pending，不影响持仓）
+  const handleAddTrade = useCallback((stockId: string) => {
+    const price = parseFloat(addTradePrice);
+    const shares = parseFloat(addTradeShares);
+    if (!(price > 0) || !(shares > 0)) return;
+    const newTrade: StockTrade = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      side: addTradeSide,
+      price,
+      shares,
+      status: 'pending',
+      createdAt: Date.now(),
+      note: addTradeNote.trim() || undefined,
+    };
+    onStocksChange(stocks.map(s => s.id === stockId ? { ...s, stockTrades: [...(s.stockTrades || []), newTrade] } : s));
+    setAddTradePrice('');
+    setAddTradeShares('');
+    setAddTradeNote('');
+  }, [stocks, onStocksChange, addTradeSide, addTradePrice, addTradeShares, addTradeNote]);
+
+  // 撤单/删除一条交易记录：挂单直接删除；已成交记录删除时同步回退持仓（买入回减股数与成本加权、卖出回增股数与已实现盈亏）
+  const handleRemoveTrade = useCallback((stockId: string, tradeId: string) => {
+    onStocksChange(stocks.map(s => {
+      if (s.id !== stockId) return s;
+      const trade = (s.stockTrades || []).find(t => t.id === tradeId);
+      if (!trade) return s;
+      let shares = s.positionShares || 0;
+      let cost = s.positionCost || 0;
+      // 已成交记录删除：回退其持仓影响（与"取消成交"回退逻辑一致）
+      if (trade.status === 'filled') {
+        if (trade.side === 'buy') {
+          shares = Math.max(0, shares - trade.shares);
+          if (shares > 0) cost = (cost * (shares + trade.shares) - trade.price * trade.shares) / shares;
+          else cost = 0;
+        } else {
+          shares = shares + trade.shares;
+          // 若此前卖出已清仓导致成本归零，此处成本无法精准恢复，保持当前值
+        }
+      }
+      return { ...s, stockTrades: (s.stockTrades || []).filter(t => t.id !== tradeId), positionShares: shares, positionCost: cost };
+    }));
+  }, [stocks, onStocksChange]);
+
+  // 标记挂单成交：买入加权成本、卖出结算已实现盈亏；并控制已成交记录条数上限
+  const handleToggleTrade = useCallback((stockId: string, tradeId: string) => {
+    onStocksChange(stocks.map(s => {
+      if (s.id !== stockId) return s;
+      const trade = (s.stockTrades || []).find(t => t.id === tradeId);
+      if (!trade) return s;
+      let shares = s.positionShares || 0;
+      let cost = s.positionCost || 0;
+      let updatedTrade: StockTrade;
+      let newTrades: StockTrade[];
+      if (trade.status === 'pending') {
+        // 标记成交：买入加权成本，卖出按当前均价结算已实现盈亏
+        let realizedPnL: number | undefined;
+        if (trade.side === 'buy') {
+          shares = shares + trade.shares;
+          cost = shares > 0 ? (cost * (shares - trade.shares) + trade.price * trade.shares) / shares : 0;
+        } else {
+          shares = Math.max(0, shares - trade.shares);
+          realizedPnL = cost > 0 ? (trade.price - cost) * trade.shares : 0;
+          if (shares === 0) cost = 0;
+        }
+        updatedTrade = { ...trade, status: 'filled', filledAt: Date.now(), realizedPnL };
+      } else {
+        // 取消成交（反选）：反向回退持仓，已实现盈亏与成交时间一并清除
+        if (trade.side === 'buy') {
+          shares = Math.max(0, shares - trade.shares);
+          if (shares > 0) cost = (cost * (shares + trade.shares) - trade.price * trade.shares) / shares;
+          else cost = 0;
+        } else {
+          shares = shares + trade.shares;
+          // 若此前卖出已清仓（cost 归零），此处成本无法精准恢复，保持当前值，可手动校正
+        }
+        updatedTrade = { ...trade, status: 'pending', filledAt: undefined, realizedPnL: undefined };
+      }
+      newTrades = (s.stockTrades || []).map(t => t.id === tradeId ? updatedTrade : t);
+      // 已成交记录超限：移除最旧的，避免 Gist 数据过于臃肿（仅在标记成交时触发）
+      if (updatedTrade.status === 'filled') {
+        const filled = newTrades.filter(t => t.status === 'filled');
+        if (filled.length > MAX_FILLED_TRADES) {
+          const removeIds = new Set(
+            [...filled]
+              .sort((a, b) => (a.filledAt || a.createdAt) - (b.filledAt || b.createdAt))
+              .slice(0, filled.length - MAX_FILLED_TRADES)
+              .map(t => t.id)
+          );
+          newTrades = newTrades.filter(t => !removeIds.has(t.id));
+        }
+      }
+      return { ...s, stockTrades: newTrades, positionShares: shares, positionCost: cost };
+    }));
+  }, [stocks, onStocksChange]);
+
   const handleAddStock = useCallback(async () => {
     if (!newStock.code.trim()) return;
 
@@ -2417,6 +2642,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <col style={{ width: '65px' }} />
               <col style={{ width: '65px' }} />
               {cols.includes('position') && <col style={{ width: '70px' }} />}
+              {cols.includes('position') && <col style={{ width: '56px' }} />}
               {dividendYearCols.map(yearCol => <col key={yearCol} style={{ width: '50px' }} />)}
               <col style={{ width: '60px' }} />
             </colgroup>
@@ -2469,7 +2695,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 </div>
               </th>
                 {cols.includes('position') && <th
-                  colSpan={2}
+                  colSpan={3}
                   className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-r border-app-border"
                 >
                   持仓
@@ -2522,6 +2748,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     title={'点击切换展示：成本 / 份额'}
                   >
                     {POSITION_MODE_LABEL[positionDisplayMode]}
+                  </th>
+                  <th className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">
+                    交易
                   </th>
                 </>}
                 {dividendYearCols.map((yearCol, idx) => (
@@ -2820,10 +3049,29 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         )}
                       </td>
                     );
+                    const col3 = (
+                      <td
+                        className="w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
+                        onClick={(e) => { if (editingId !== stock.id) handleTradeInfoClick(e, stock); }}
+                      >
+                        {(() => {
+                          const trades = getTrades(stock);
+                          const latest = trades.length > 0 ? trades[trades.length - 1] : null;
+                          if (!latest) return <span className="font-mono text-[11px] whitespace-nowrap text-app-subtext">-</span>;
+                          return (
+                            <div className="flex flex-col items-center leading-tight gap-px">
+                              <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">{formatPrice(latest.price, stock.name)}</span>
+                              <span className={`text-[9px] whitespace-nowrap ${tradeStatusColor(latest)}`}>{TRADE_STATUS_LABEL[`${latest.side}-${latest.status}`]}</span>
+                            </div>
+                          );
+                        })()}
+                      </td>
+                    );
                     return (
                       <React.Fragment key="position-cols">
                         {col1}
                         {col2}
+                        {col3}
                       </React.Fragment>
                     );
                   })()}
@@ -4191,6 +4439,207 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <div className="grid grid-cols-2 gap-x-4">{cell2('股数', sharesText)}{cell2('市值', marketValue)}</div>
               <div className="grid grid-cols-2 gap-x-4">{cell2('浮盈', profitText, profitColor)}{cell2('盈亏', profitPctText, profitColor)}</div>
               <div className="grid grid-cols-2 gap-x-4">{cell2('总成本', totalCost)}{cell2('股息率', yieldText)}</div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 交易记录浮窗：管理买卖/挂单，标记成交联动持仓 */}
+      {tradeInfoStock && (() => {
+        const s = stocks.find(x => x.id === tradeInfoStock.id) || tradeInfoStock;
+        const trades = getTrades(s);
+        const sortedTrades = [...trades].sort((a, b) => b.createdAt - a.createdAt);
+        const orderAmount = (parseFloat(addTradePrice) || 0) * (parseFloat(addTradeShares) || 0);
+        const fmtP = (v: number) => formatPrice(v, s.name);
+        const timeStr = (ts: number) => {
+          const d = new Date(ts);
+          return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        };
+        const noteCls = "no-spinners w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-[11px] text-app-text outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all placeholder-app-subtext/50";
+        // 当前持仓概要（口径与黄金项目一致：均价=总成本/持仓量，回本价考虑已落袋盈亏）
+        const posShares = s.positionShares || 0;
+        const avgCost = s.positionCost || 0;
+        const marketPrice = s.price || 0;
+        const realizedPnl = getTrades(s).reduce((sum, t) => t.status === 'filled' && t.side === 'sell' ? sum + (t.realizedPnL || 0) : sum, 0);
+        const totalCost = posShares * avgCost;
+        const breakEven = posShares > 0 ? Math.max(0, (totalCost - realizedPnl) / posShares) : 0;
+        const floatingPnl = marketPrice > 0 && posShares > 0 ? (marketPrice - avgCost) * posShares : 0;
+        return (
+          <div
+            ref={tradeInfoRef}
+            className="fixed z-[60] bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl overflow-hidden text-app-text"
+            style={{ top: tradeInfoPos.top, left: tradeInfoPos.left, width: 304 }}
+          >
+            {/* 可拖拽头部 */}
+            <div
+              onPointerDown={handleTradeDragStart}
+              className="bg-app-bg/80 backdrop-blur-md px-3 py-2.5 flex items-center justify-between border-b border-app-border cursor-grab active:cursor-grabbing touch-none select-none group"
+            >
+              <div className="flex items-center gap-2 text-app-subtext pointer-events-none">
+                <GripHorizontal size={15} className="opacity-80" />
+                <h4 className="text-[12px] font-bold tracking-wider text-app-text">{s.name} · 交易</h4>
+              </div>
+              <div className="flex items-center gap-1">
+                <button type="button" onClick={closeTradeInfo} onPointerDown={(e) => e.stopPropagation()} className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1" title="关闭">
+                  <X size={15} />
+                </button>
+              </div>
+            </div>
+
+            <div className="px-3 py-3 space-y-3 bg-app-card max-h-[80vh] overflow-y-auto">
+              {/* 当前持仓概要 */}
+              <div className="border border-app-border rounded-lg divide-y divide-app-border bg-app-input/50">
+                <div className="px-2.5 py-2">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] uppercase font-bold text-app-subtext tracking-wider">当前持仓</span>
+                    <span className="text-[10px] text-app-subtext">{posShares} 股</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">现价</span>
+                      <span className="font-mono font-bold text-app-text">{marketPrice > 0 ? fmtP(marketPrice) : '-'}</span>
+                    </div>
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">持仓均价</span>
+                      <span className="font-mono font-bold text-app-text">{posShares > 0 ? fmtP(avgCost) : '-'}</span>
+                    </div>
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">回本价</span>
+                      <span className="font-mono font-bold text-app-text">{posShares > 0 ? fmtP(breakEven) : '-'}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="px-2.5 py-1.5 flex items-center justify-between">
+                  <div>
+                    <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider mb-0.5 block">浮动盈亏</span>
+                    <span className={`font-mono font-bold text-[11px] ${floatingPnl >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                      {posShares > 0 ? `${floatingPnl >= 0 ? '+' : '-'}¥${Math.abs(floatingPnl).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}` : '-'}
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider mb-0.5 block">已实现盈亏</span>
+                    <span className={`font-mono font-bold text-[11px] ${realizedPnl >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                      {realizedPnl !== 0 ? `${realizedPnl >= 0 ? '+' : '-'}¥${Math.abs(realizedPnl).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}` : '-'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 交易方向：买入/卖出 */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">交易方向</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAddTradeSide('buy')}
+                    className={`h-10 text-sm font-bold rounded-lg border transition-all ${addTradeSide === 'buy' ? 'bg-brand-red text-white border-brand-red shadow-sm' : 'bg-app-input border-app-border text-app-subtext'}`}
+                  >
+                    买入
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddTradeSide('sell')}
+                    className={`h-10 text-sm font-bold rounded-lg border transition-all ${addTradeSide === 'sell' ? 'bg-brand-green text-white border-brand-green shadow-sm' : 'bg-app-input border-app-border text-app-subtext'}`}
+                  >
+                    卖出
+                  </button>
+                </div>
+              </div>
+
+              {/* 挂单价 + 数量（复用黄金项目 InputGroup 步进输入，支持鼠标滚轮与触屏手势调节） */}
+              <div className="grid grid-cols-2 gap-3">
+                <InputGroup label="挂单价格" value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={0.01} min={0} touchMode onEnter={() => handleAddTrade(s.id)} className="text-sm" />
+                <InputGroup label="数量(股)" value={addTradeShares} onChange={setAddTradeShares} placeholder="100" step={100} min={0} touchMode onEnter={() => handleAddTrade(s.id)} className="text-sm" />
+              </div>
+
+              {/* 挂单金额预览 */}
+              <div className="flex items-center justify-between px-0.5 pt-0.5">
+                <span className="text-[10px] font-medium text-app-subtext">挂单金额</span>
+                <span className="font-mono font-bold text-app-text">
+                  ¥{orderAmount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+
+              {/* 备注 */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">备注</label>
+                <input
+                  type="text"
+                  value={addTradeNote}
+                  onChange={(e) => setAddTradeNote(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleAddTrade(s.id); }}
+                  enterKeyHint="done"
+                  placeholder="可选，如：分批建仓"
+                  className={noteCls}
+                />
+              </div>
+
+              {/* 添加挂单 */}
+              <button
+                type="button"
+                onClick={() => handleAddTrade(s.id)}
+                disabled={!addTradePrice || !addTradeShares}
+                className="w-full h-10 text-sm font-bold rounded-lg border transition-all disabled:opacity-40 bg-indigo-500/90 text-white border-indigo-500 hover:bg-indigo-500 shadow-sm"
+              >
+                添加{addTradeSide === 'buy' ? '买入' : '卖出'}挂单
+              </button>
+
+              {/* 历史记录 */}
+              <div className="pt-1 border-t border-app-border">
+                <div className="flex items-center justify-between px-0.5 pb-1.5">
+                  <span className="text-[10px] uppercase font-bold text-app-subtext tracking-wider">历史记录</span>
+                </div>
+                {sortedTrades.length === 0 && (
+                  <div className="text-[10px] text-app-subtext text-center py-2 border border-dashed border-app-border rounded-lg">暂无记录，添加第一条挂单吧</div>
+                )}
+                <div className="space-y-1 max-h-56 overflow-y-auto pr-0.5 custom-scrollbar" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                  {sortedTrades.map(t => (
+                    <div key={t.id} className="bg-app-input rounded-lg px-2 py-1.5 space-y-1">
+                      {/* 第一行：公式 + 已实现盈亏 + 状态徽标 */}
+                      <div className="flex items-center gap-1.5 text-[11px] leading-tight">
+                        <span className="font-mono font-bold text-app-text whitespace-nowrap">
+                          {fmtP(t.price)}
+                          <span className="font-normal text-app-subtext"> × </span>
+                          {Number.isInteger(t.shares) ? t.shares : t.shares.toFixed(2)}
+                          <span className="font-normal text-app-subtext"> = </span>
+                          <span className={`font-bold ${t.side === 'buy' ? 'text-brand-red' : 'text-brand-green'}`}>
+                            {(t.price * t.shares).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
+                          </span>
+                        </span>
+                        {t.realizedPnL != null && (
+                          <span className={`font-mono text-[10px] ${t.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                            {`${t.realizedPnL >= 0 ? '+' : ''}${fmtP(t.realizedPnL)}`}
+                          </span>
+                        )}
+                        {/* 状态徽标：点击切换成交/挂单（联动持仓） */}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleTrade(s.id, t.id)}
+                          title={t.status === 'filled' ? '取消成交（恢复挂单）' : '标记为成交（联动持仓）'}
+                          className={`shrink-0 text-[8px] px-1 py-px rounded-full border font-bold ml-auto cursor-pointer ${t.status === 'pending' ? 'text-orange-400 border-orange-400/40 bg-orange-400/10' : t.side === 'buy' ? 'text-brand-red border-brand-red/40 bg-brand-red/10' : 'text-brand-green border-brand-green/40 bg-brand-green/10'}`}
+                        >
+                          {TRADE_STATUS_LABEL[`${t.side}-${t.status}`]}
+                        </button>
+                      </div>
+                      {/* 第二行：时间 + 删除 + 备注 */}
+                      <div className="flex items-center gap-2 text-[9px] text-app-subtext leading-none">
+                        <span className="font-mono font-bold whitespace-nowrap self-center leading-none">{timeStr(t.createdAt)}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveTrade(s.id, t.id)}
+                          className="shrink-0 px-1 rounded text-[9px] text-app-subtext/50 hover:text-brand-red hover:bg-app-text/5 transition-colors inline-flex items-center justify-center self-center leading-none translate-y-[1px]"
+                          title="撤单（删除该记录）"
+                        >
+                          撤单
+                        </button>
+                        {t.note && (
+                          <span className="truncate min-w-0 ml-auto self-center leading-none translate-y-[1px]" title={t.note}>{t.note}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         );

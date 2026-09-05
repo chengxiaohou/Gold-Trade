@@ -104,6 +104,22 @@ export interface StockEntry {
   selectedDividendYear?: number; // Which dividend year this stock uses for rate calc, default = right year
   bollHidden?: boolean; // Whether BOLL data is hidden for this stock
   registerDate?: string; // 最近一次股权登记日（同步分红数据时获取）
+  stockTrades?: StockTrade[]; // 该股的买卖/挂单记录，随股票整体同步到 Gist
+}
+
+export type StockTradeSide = 'buy' | 'sell';
+export type StockTradeStatus = 'pending' | 'filled'; // 挂单中 / 已成交
+
+export interface StockTrade {
+  id: string;
+  side: StockTradeSide;      // 买入 / 卖出
+  price: number;             // 点位
+  shares: number;            // 股数
+  status: StockTradeStatus;  // 挂单中 / 已成交
+  createdAt: number;         // 创建时间戳
+  filledAt?: number;         // 成交时间戳
+  note?: string;             // 备注
+  realizedPnL?: number;      // 卖出成交时按当前均价结算的落袋盈亏
 }
 
 export interface DividendRateColorRange {
