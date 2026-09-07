@@ -593,6 +593,122 @@ function analyzeMarketConditions(klines: BollKline[], lastDays = 5): MarketEvent
 }
 
 
+// ── K线形态分析：十字星 / 金针探底 / 吊颈线 / 射击之星 / 倒锤子线 ──
+// 基础数据单元（基于 OHLC）：
+//   实体高度 = |收盘-开盘|；上影线 = 最高-MAX(开,收)；下影线 = MIN(开,收)-最低；振幅 = 最高-最低
+// 通用阈值：小实体 ≤ 振幅*10%；长影线 ≥ 实体*2；极短影线 ≤ 振幅*5%；十字星实体 ≤ 振幅*5%
+interface KlinePattern {
+  type: 'doji' | 'hammer' | 'hangingMan' | 'shootingStar' | 'invertedHammer';
+  date: string;   // 形态当天日期 YYYY-MM-DD
+  label: string;  // 完整名称（十字星 / 金针探底 / 吊颈线 / 射击之星 / 倒锤子线）
+  single: string; // 列表单元格单字（十 / 金 / 吊 / 射 / 倒）
+  color: 'green' | 'red' | 'slate'; // 红=买/看多 绿=卖/看空 灰=中性
+  boosted?: boolean;   // 放量金针：当日成交量 > 前5日均量
+  direction?: 'high' | 'low' | 'flat'; // 十字星趋势上下文
+  detail: string[];    // 判定依据文案
+}
+
+function analyzeKlinePatterns(klines: BollKline[], fmt: (v: number) => string): KlinePattern[] {
+  const n = klines.length;
+  if (n < 21) return []; // 需 ≥21 根K线（前20日趋势 / 平均振幅）
+  const i = n - 1; // 仅分析最新收盘交易日
+  const k = klines[i];
+  const body = Math.abs(k.close - k.open);
+  const upper = k.high - Math.max(k.open, k.close);
+  const lower = Math.min(k.open, k.close) - k.low;
+  const range = k.high - k.low;
+  if (range <= 0) return [];
+  const smallBody = body <= range * 0.1; // 小实体
+  const tinyBody = body <= range * 0.05; // 十字星实体
+  // 前20日均线方向（今日 vs 昨日）
+  let sum = 0, sumPrev = 0;
+  for (let j = i - 19; j <= i; j++) sum += klines[j].close;
+  for (let j = i - 20; j <= i - 1; j++) sumPrev += klines[j].close;
+  const ma20Up = sum / 20 > sumPrev / 20;
+  const ma20Down = sum / 20 < sumPrev / 20;
+  // 近20日高低点与平均振幅（十字星用于排除一字板）
+  let high20 = -Infinity, low20 = Infinity, rangeSum = 0;
+  for (let j = i - 19; j <= i; j++) {
+    if (klines[j].high > high20) high20 = klines[j].high;
+    if (klines[j].low < low20) low20 = klines[j].low;
+    rangeSum += klines[j].high - klines[j].low;
+  }
+  const avgRange = rangeSum / 20;
+  const nearHigh = k.close >= high20 * 0.95; // 位于近20日最高价5%区间内
+  const nearLow = k.close <= low20 * 1.05;   // 位于近20日最低价5%区间内
+  // 放量增强：当日成交量 > 前5日均量
+  let avgVolPrev = 0;
+  for (let j = i - 5; j <= i - 1; j++) avgVolPrev += klines[j].volume;
+  avgVolPrev /= 5;
+  const boostedVol = k.volume > avgVolPrev;
+  const fmtVol = (v: number) => (v >= 1e8 ? `${(v / 1e8).toFixed(2)}亿` : v >= 1e4 ? `${(v / 1e4).toFixed(1)}万` : `${v.toFixed(0)}`);
+  const ds = k.date.slice(5).replace('-', '/'); // MM/DD
+  const pct = (body / range * 100).toFixed(1);
+  const patterns: KlinePattern[] = [];
+  // 1. 十字星：实体 ≤ 振幅*5%，且振幅 > 平均振幅*10%（区分一字板）；结合前20日趋势定方向
+  if (tinyBody && range > avgRange * 0.1) {
+    const dir: 'high' | 'low' | 'flat' = nearHigh ? 'high' : nearLow ? 'low' : 'flat';
+    patterns.push({
+      type: 'doji', date: k.date, label: '十字星', single: '十', color: 'slate', direction: dir,
+      detail: [
+        `${ds} 十字星：开 ${fmt(k.open)} ≈ 收 ${fmt(k.close)}`,
+        `实体占比 ${pct}% ≤ 5%（多空平衡）`,
+        dir === 'high' ? '现价贴近近20日高点（≥95%区间）→ 高位警示'
+          : dir === 'low' ? '现价贴近近20日低点（≤105%区间）→ 低位关注'
+          : '趋势方向中性',
+      ],
+    });
+    return patterns; // 十字星优先：实体过小，其余形态不再判定
+  }
+  // 2/3. 金针探底 & 吊颈线：下影线长、上影线短、实体小，仅前置趋势不同
+  if (smallBody && upper <= body * 0.3) {
+    if (lower >= body * 2.5 && (ma20Down || nearLow)) {
+      patterns.push({
+        type: 'hammer', date: k.date, label: boostedVol ? '放量金针' : '金针探底', single: '金', color: 'red', boosted: boostedVol,
+        detail: [
+          `${ds} ${boostedVol ? '放量金针' : '金针探底'}：收 ${fmt(k.close)}`,
+          `下影 ${fmt(lower)} ≥ 实体×2.5（${fmt(body)}），上影 ${fmt(upper)} ≤ 实体×30%`,
+          `${ma20Down ? 'MA20 方向向下' : '现价贴近近20日低点'} → 下跌末端承接`,
+          ...(boostedVol ? [`成交量 ${fmtVol(k.volume)} > 前5日均量 ${fmtVol(avgVolPrev)} → 放量金针（权重提升）`] : []),
+        ],
+      });
+    } else if (lower >= body * 2 && ma20Up && nearHigh) {
+      patterns.push({
+        type: 'hangingMan', date: k.date, label: '吊颈线', single: '吊', color: 'green',
+        detail: [
+          `${ds} 吊颈线：收 ${fmt(k.close)}`,
+          `下影 ${fmt(lower)} ≥ 实体×2（${fmt(body)}），上影 ${fmt(upper)} ≤ 实体×30%`,
+          'MA20 方向向上 且 现价贴近近20日高点 → 上涨末端假承接',
+        ],
+      });
+    }
+  }
+  // 4/5. 射击之星 & 倒锤子线：上影线长、下影线短、实体小，仅前置趋势不同
+  if (smallBody && lower <= body * 0.3) {
+    if (upper >= body * 2 && (ma20Up || nearHigh)) {
+      patterns.push({
+        type: 'shootingStar', date: k.date, label: '射击之星', single: '射', color: 'green',
+        detail: [
+          `${ds} 射击之星：收 ${fmt(k.close)}`,
+          `上影 ${fmt(upper)} ≥ 实体×2（${fmt(body)}），下影 ${fmt(lower)} ≤ 实体×30%`,
+          `${ma20Up ? 'MA20 方向向上' : '现价贴近近20日高点'} → 冲高诱多砸盘`,
+        ],
+      });
+    } else if (upper >= body * 2 && (ma20Down || nearLow)) {
+      patterns.push({
+        type: 'invertedHammer', date: k.date, label: '倒锤子线', single: '倒', color: 'red',
+        detail: [
+          `${ds} 倒锤子线：收 ${fmt(k.close)}`,
+          `上影 ${fmt(upper)} ≥ 实体×2（${fmt(body)}），下影 ${fmt(lower)} ≤ 实体×30%`,
+          `${ma20Down ? 'MA20 方向向下' : '现价贴近近20日低点'} → 下跌末端试盘`,
+        ],
+      });
+    }
+  }
+  return patterns;
+}
+
+
 // 股息率曲线共享组件：详情弹窗与列表页“股息率”浮窗共用一套渲染逻辑，
 // 之后任一处的股息率曲线改动都会同时反映到另一处。
 function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges, period, rangeValue, offsetValue, onRangeChange, onOffsetChange }: {
@@ -1276,7 +1392,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const mktInfoHoveredRef = useRef(false);
   const mktInfoActiveIdRef = useRef<string | undefined>(undefined);
   // 底部判定依据区：当前选中的标签（hover 展示 / 点击固定）
-  const [mktSel, setMktSel] = useState<{ date: string; kind: 'event' | 'status' } | null>(null);
+  // event/status = 破位类标签；pattern = K线形态标签
+  type MktSel = { date: string; kind: 'event' | 'status' } | { date: string; kind: 'pattern'; ptype: KlinePattern['type'] };
+  const [mktSel, setMktSel] = useState<MktSel | null>(null);
   const [mktSelPinned, setMktSelPinned] = useState(false);
   const resetMktSel = () => { setMktSel(null); setMktSelPinned(false); };
 
@@ -1332,17 +1450,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
 
   // 悬停标签：展示判定依据（固定状态时不切换）
-  const handleMktTagEnter = (date: string, kind: 'event' | 'status') => {
+  const mktSelEq = (a: MktSel, b: MktSel): boolean => {
+    if (a.kind !== b.kind || a.date !== b.date) return false;
+    if (a.kind === 'pattern') return a.ptype === (b as { ptype: KlinePattern['type'] }).ptype;
+    return true;
+  };
+  const handleMktTagEnter = (sel: MktSel) => {
     if (mktSelPinned) return;
-    setMktSel({ date, kind });
+    setMktSel(sel);
   };
 
   // 点击标签：固定/取消固定判定依据
-  const handleMktTagClick = (date: string, kind: 'event' | 'status') => {
-    if (mktSelPinned && mktSel?.date === date && mktSel.kind === kind) {
+  const handleMktTagClick = (sel: MktSel) => {
+    if (mktSelPinned && mktSel && mktSelEq(mktSel, sel)) {
       resetMktSel();
     } else {
-      setMktSel({ date, kind });
+      setMktSel(sel);
       setMktSelPinned(true);
     }
   };
@@ -1613,7 +1736,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [nameSubMode, setNameSubMode] = useState<'tags' | 'code'>('tags');
   // 最新收盘交易日状态标签（按 klines 引用缓存，数据未变时不重复计算）
   // 标签文本/逻辑变更时需 +1 版本号，避免 HMR 保留旧缓存导致缩写不生效
-  const LATEST_TAG_VERSION = 3;
+  const LATEST_TAG_VERSION = 4;
   const latestTagsCache = useRef(new Map<string, { v: number; key: unknown; tags: { key: string; text: string; cls: string }[] }>());
   const getLatestDayTags = (stock: StockEntry): { key: string; text: string; cls: string }[] => {
     const daily = stockBollMap.get(stock.id)?.daily;
@@ -1638,6 +1761,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         // 观测窗口恰好在最新交易日收盘后定论
         tags.push({ key: `d-${ev.date}`, text: ev.status === 'trueBreak' ? '真' : '假', cls: ev.status === 'trueBreak' ? 'bg-green-500/10 text-green-500 border-green-500/20' : 'bg-red-500/10 text-red-500 border-red-500/20' });
       }
+    }
+    // K线形态单字标签（十字星/金针/吊颈/射击/倒锤）放最前，确保优先可见
+    const patterns = analyzeKlinePatterns(klines, v => formatPrice(v, stock.name));
+    for (const p of patterns) {
+      tags.unshift({
+        key: `p-${p.type}`,
+        text: p.single,
+        cls: p.color === 'red' ? 'bg-red-500/10 text-red-500 border-red-500/20'
+          : p.color === 'green' ? 'bg-green-500/10 text-green-500 border-green-500/20'
+          : 'bg-slate-500/10 text-slate-400 border-slate-500/30',
+      });
     }
     latestTagsCache.current.set(stock.id, { v: LATEST_TAG_VERSION, key: klines, tags });
     return tags;
@@ -3202,7 +3336,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             if (tags.length === 0) return null;
                             return (
                               <div className="flex items-center justify-center gap-0.5 mt-1.5 leading-none">
-                                {tags.slice(0, 4).map(t => (
+                                {tags.slice(0, 6).map(t => (
                                   <span key={t.key} className={`inline-flex items-center justify-center rounded text-[8px] font-medium border px-0.5 py-px whitespace-nowrap ${t.cls}`}>{t.text}</span>
                                 ))}
                               </div>
@@ -5126,6 +5260,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const daily = stockBollMap.get(mktInfoStock.id)?.daily;
         const klines = daily?.klines;
         const events = klines && klines.length > 0 ? analyzeMarketConditions(klines) : null;
+        const patterns = klines && klines.length > 0 ? analyzeKlinePatterns(klines, v => formatPrice(v, mktInfoStock.name)) : null;
         const fmtDay = (d: string) => {
           const p = d.split('-');
           return p.length === 3 ? `${parseInt(p[1], 10)}月${parseInt(p[2], 10)}日` : d;
@@ -5142,12 +5277,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         // 默认选中：无指向时展示最新日期事件的“破位”标签
         const defaultSel = events && events.length > 0 ? { date: events[events.length - 1].date, kind: 'event' as const } : null;
         const selKey = mktSel ?? defaultSel;
-        const isSel = (ev: MarketEvent, kind: 'event' | 'status') => !!selKey && selKey.date === ev.date && selKey.kind === kind;
+        const isSel = (ev: MarketEvent, kind: 'event' | 'status') => !!selKey && selKey.kind !== 'pattern' && selKey.date === ev.date && selKey.kind === kind;
+        const isPatSel = (p: KlinePattern) => !!selKey && selKey.kind === 'pattern' && selKey.ptype === p.type;
+        const patChipCls: Record<KlinePattern['color'], { cls: string; sel: string }> = {
+          red: { cls: 'bg-red-500/10 text-red-500 border-red-500/20', sel: ' border-red-500/60' },
+          green: { cls: 'bg-green-500/10 text-green-500 border-green-500/20', sel: ' border-green-500/60' },
+          slate: { cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30', sel: ' border-slate-400/60' },
+        };
         const fp = (v: number) => formatPrice(v, mktInfoStock.name);
-        const selEv = selKey && events ? events.find(e => e.date === selKey.date) : null;
+        const selEv = selKey && selKey.kind !== 'pattern' && events ? events.find(e => e.date === selKey.date) : null;
         // 判定依据文案
         const explainLines: string[] = [];
-        if (selEv) {
+        if (selKey && selKey.kind === 'pattern') {
+          const p = patterns?.find(x => x.type === selKey.ptype);
+          if (p) explainLines.push(...p.detail);
+        } else if (selEv) {
           const maStr = selEv.brokenList.map(b => `MA${b.period} ${fp(b.value)}`).join(' · ');
           if (selKey!.kind === 'event') {
             explainLines.push(`${fmtDay(selEv.date)} 收盘 ${fp(selEv.close)}`, `当日下穿 ${selEv.brokenCount} 条均线：${maStr}`);
@@ -5183,6 +5327,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           >
             <div className="text-[11px] font-bold text-app-subtext mb-1 text-center">{mktInfoStock.name} <span className="font-mono text-[9px] font-normal text-app-rowtext">{getDisplayCode(mktInfoStock.code)}</span></div>
             <div className="text-[9px] text-app-subtext border-t border-app-border pt-1 mb-1.5">近5交易日行情</div>
+            {patterns && patterns.length > 0 && (
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <span className="text-[9px] text-app-subtext shrink-0 w-[52px]">最新</span>
+                {patterns.map(p => (
+                  <span
+                    key={p.type}
+                    className={`${chipBase} ${patChipCls[p.color].cls}${isPatSel(p) ? patChipCls[p.color].sel : ''}`}
+                    onMouseEnter={() => handleMktTagEnter({ date: p.date, kind: 'pattern', ptype: p.type })}
+                    onClick={() => handleMktTagClick({ date: p.date, kind: 'pattern', ptype: p.type })}
+                  >{p.label}</span>
+                ))}
+              </div>
+            )}
             {events === null ? (
               <div className="text-[10px] text-app-rowtext py-1">暂无K线数据</div>
             ) : events.length === 0 ? (
@@ -5194,13 +5351,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   <span className="text-[9px] text-app-rowtext shrink-0 w-[52px]">{fmtDay(ev.date)}</span>
                   <span
                     className={`${chipBase} ${greenCls}${isSel(ev, 'event') ? greenSelCls : ''}`}
-                    onMouseEnter={() => handleMktTagEnter(ev.date, 'event')}
-                    onClick={() => handleMktTagClick(ev.date, 'event')}
+                    onMouseEnter={() => handleMktTagEnter({ date: ev.date, kind: 'event' })}
+                    onClick={() => handleMktTagClick({ date: ev.date, kind: 'event' })}
                   >破位 x{ev.brokenCount}</span>
                   <span
                     className={`${chipBase} ${s.cls}${isSel(ev, 'status') ? s.selCls : ''}`}
-                    onMouseEnter={() => handleMktTagEnter(ev.date, 'status')}
-                    onClick={() => handleMktTagClick(ev.date, 'status')}
+                    onMouseEnter={() => handleMktTagEnter({ date: ev.date, kind: 'status' })}
+                    onClick={() => handleMktTagClick({ date: ev.date, kind: 'status' })}
                   >{s.label} x{ev.brokenCount}</span>
                 </div>
               );
