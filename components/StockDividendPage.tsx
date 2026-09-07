@@ -1551,16 +1551,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const cacheTimestamps = getBollCacheTimestamps(stocks, bollAdjust, apiSource);
     const now = Date.now();
     let cacheInfoStr = '';
+    let oldCacheInfoStr = '';
     if (cacheTimestamps.length > 0) {
       const maxTs = Math.max(...cacheTimestamps); // 使用最新缓存时间，更准确反映缓存有效期
       const isTrading = isTradingHours();
       const expiryTime = isTrading ? maxTs + dynamicTTL : now + dynamicTTL;
-      cacheInfoStr = `（缓存时间：${formatCacheTime(maxTs)}，有效期至：${formatCacheTime(expiryTime)}）`;
+      cacheInfoStr = `（缓存有效期至：${formatCacheTime(expiryTime)}）`;
+      // 原缓存有效期：按其缓存时间 + TTL 计算（标注在"已过期"后，区别于新缓存的有效期）
+      oldCacheInfoStr = `（原缓存有效期至 ${formatCacheTime(maxTs + dynamicTTL)}）`;
     }
     const logCtx = requestLogService.beginBatch(
       staleCount === 0
         ? `${trigger}：${visibleTotal} 项缓存均未过期，无需请求${cacheInfoStr}`
-        : `${trigger}：${staleCount}/${visibleTotal} 项已过期，重新请求 ${staleCount} 条请求${cacheInfoStr}`
+        : `${trigger}：${staleCount}/${visibleTotal} 项已过期${oldCacheInfoStr}，重新请求 ${staleCount} 条请求${cacheInfoStr}`
     );
     const { allCached, cachedData } = checkAllBollCache(stocks, bollAdjust, apiSource, dynamicTTL, logCtx, batchTimestamp);
     
@@ -2257,6 +2260,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [addTradePrice, setAddTradePrice] = useState('');
   const [addTradeShares, setAddTradeShares] = useState('');
   const [addTradeNote, setAddTradeNote] = useState('');
+  const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
 
   const openTradeInfo = (btn: HTMLElement, stock: StockEntry) => {
     tradeInfoBtnRef.current = btn as unknown as HTMLTableCellElement;
@@ -2280,6 +2284,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const closeTradeInfo = useCallback(() => {
     setTradeInfoPinned(false);
     setTradeInfoStock(null);
+    setEditingTradeId(null);
   }, []);
 
   // 交易浮窗可拖拽（拖画画头部）——参考黄金项目 EditBubble，改用 window 级指针监听，
@@ -2364,24 +2369,126 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return () => document.removeEventListener('mousedown', handler);
   }, [tradeInfoPinned, closeTradeInfo]);
 
-  // 新增一条挂单（默认 pending，不影响持仓）
-  const handleAddTrade = useCallback((stockId: string) => {
+  // 新增一条交易记录：status 传 'pending' 为挂单（不影响持仓），传 'filled' 为直接成交（立即联动持仓）
+  const handleAddTrade = useCallback((stockId: string, status: 'pending' | 'filled') => {
     const price = parseFloat(addTradePrice);
-    const shares = parseFloat(addTradeShares);
+    let shares = parseFloat(addTradeShares);
     if (!(price > 0) || !(shares > 0)) return;
-    const newTrade: StockTrade = {
+    // 卖出数量上限：不得超过现有持仓（静默截断，不做弹窗提示）
+    if (addTradeSide === 'sell') {
+      const avail = stocks.find(x => x.id === stockId)?.positionShares || 0;
+      if (shares > avail) shares = avail;
+    }
+    const baseTrade: StockTrade = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       side: addTradeSide,
       price,
       shares,
-      status: 'pending',
+      status,
       createdAt: Date.now(),
       note: addTradeNote.trim() || undefined,
     };
-    onStocksChange(stocks.map(s => s.id === stockId ? { ...s, stockTrades: [...(s.stockTrades || []), newTrade] } : s));
-    setAddTradePrice('');
+    onStocksChange(stocks.map(s => {
+      if (s.id !== stockId) return s;
+      let shares2 = s.positionShares || 0;
+      let cost = s.positionCost || 0;
+      let realizedPnL: number | undefined;
+      let newTrade: StockTrade = baseTrade;
+      if (status === 'filled') {
+        // 直接成交：买入加权成本，卖出按当前均价结算已实现盈亏（与切换成交逻辑一致）
+        if (addTradeSide === 'buy') {
+          shares2 = shares2 + shares;
+          cost = shares2 > 0 ? (cost * (shares2 - shares) + price * shares) / shares2 : 0;
+        } else {
+          shares2 = Math.max(0, shares2 - shares);
+          realizedPnL = cost > 0 ? (price - cost) * shares : 0;
+          if (shares2 === 0) cost = 0;
+        }
+        newTrade = { ...baseTrade, filledAt: Date.now(), realizedPnL };
+      }
+      let newTrades = [...(s.stockTrades || []), newTrade];
+      // 已成交记录超限：移除最旧的，避免 Gist 数据过于臃肿（仅成交时触发）
+      if (status === 'filled') {
+        const filled = newTrades.filter(t => t.status === 'filled');
+        if (filled.length > MAX_FILLED_TRADES) {
+          const removeIds = new Set(
+            [...filled]
+              .sort((a, b) => (a.filledAt || a.createdAt) - (b.filledAt || b.createdAt))
+              .slice(0, filled.length - MAX_FILLED_TRADES)
+              .map(t => t.id)
+          );
+          newTrades = newTrades.filter(t => !removeIds.has(t.id));
+        }
+      }
+      return { ...s, stockTrades: newTrades, positionShares: shares2, positionCost: cost };
+    }));
+    // 挂单/成交后仅清空数量与备注，保留价格（常为现价，方便连续操作）
     setAddTradeShares('');
     setAddTradeNote('');
+  }, [stocks, onStocksChange, addTradeSide, addTradePrice, addTradeShares, addTradeNote]);
+
+  // 保存编辑一条交易记录：先从原记录回退持仓影响，再按新字段与目标状态重算
+  const handleSaveEditTrade = useCallback((stockId: string, tradeId: string, status: 'pending' | 'filled') => {
+    const price = parseFloat(addTradePrice);
+    let shares = parseFloat(addTradeShares);
+    if (!(price > 0) || !(shares > 0)) return;
+    onStocksChange(stocks.map(s => {
+      if (s.id !== stockId) return s;
+      const trades = s.stockTrades || [];
+      const trade = trades.find(tr => tr.id === tradeId);
+      if (!trade) return s;
+      // 1) 移除该记录并回退其原有持仓影响
+      const baseTrades = trades.filter(tr => tr.id !== tradeId);
+      let shares2 = s.positionShares || 0;
+      let cost = s.positionCost || 0;
+      if (trade.status === 'filled') {
+        if (trade.side === 'buy') {
+          shares2 = Math.max(0, shares2 - trade.shares);
+          if (shares2 > 0) cost = (cost * (shares2 + trade.shares) - trade.price * trade.shares) / shares2;
+          else cost = 0;
+        } else {
+          // 原卖出清仓导致成本归零时无法精准恢复，保持当前值
+          shares2 = shares2 + trade.shares;
+        }
+      }
+      // 2) 卖出数量上限：不得超过回退原记录后的可用持仓（静默截断）
+      if (addTradeSide === 'sell' && shares > shares2) shares = shares2;
+      // 3) 按新字段构造记录
+      let newTrade: StockTrade = {
+        ...trade, side: addTradeSide, price, shares, note: addTradeNote.trim() || undefined,
+        status, filledAt: undefined, realizedPnL: undefined,
+      };
+      if (status === 'filled') {
+        if (addTradeSide === 'buy') {
+          shares2 = shares2 + shares;
+          cost = shares2 > 0 ? (cost * (shares2 - shares) + price * shares) / shares2 : 0;
+        } else {
+          shares2 = Math.max(0, shares2 - shares);
+          const rp = cost > 0 ? (price - cost) * shares : 0;
+          if (shares2 === 0) cost = 0;
+          newTrade = { ...newTrade, filledAt: Date.now(), realizedPnL: rp };
+        }
+      }
+      let newTrades = [...baseTrades, newTrade];
+      // 已成交记录超限：移除最旧的
+      if (status === 'filled') {
+        const filled = newTrades.filter(t => t.status === 'filled');
+        if (filled.length > MAX_FILLED_TRADES) {
+          const removeIds = new Set(
+            [...filled]
+              .sort((a, b) => (a.filledAt || a.createdAt) - (b.filledAt || b.createdAt))
+              .slice(0, filled.length - MAX_FILLED_TRADES)
+              .map(t => t.id)
+          );
+          newTrades = newTrades.filter(t => !removeIds.has(t.id));
+        }
+      }
+      return { ...s, stockTrades: newTrades, positionShares: shares2, positionCost: cost };
+    }));
+    // 保存编辑后仅清空数量与备注，保留价格
+    setAddTradeShares('');
+    setAddTradeNote('');
+    setEditingTradeId(null);
   }, [stocks, onStocksChange, addTradeSide, addTradePrice, addTradeShares, addTradeNote]);
 
   // 撤单/删除一条交易记录：挂单直接删除；已成交记录删除时同步回退持仓（买入回减股数与成本加权、卖出回增股数与已实现盈亏）
@@ -4458,12 +4565,58 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const noteCls = "no-spinners w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-[11px] text-app-text outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all placeholder-app-subtext/50";
         // 当前持仓概要（口径与黄金项目一致：均价=总成本/持仓量，回本价考虑已落袋盈亏）
         const posShares = s.positionShares || 0;
-        const avgCost = s.positionCost || 0;
+        let avgCost = s.positionCost || 0;
         const marketPrice = s.price || 0;
-        const realizedPnl = getTrades(s).reduce((sum, t) => t.status === 'filled' && t.side === 'sell' ? sum + (t.realizedPnL || 0) : sum, 0);
+        // 按成交顺序用移动加权成本重算每笔卖出的已实现盈亏（不依赖可能为 0 的存储 positionCost/realizedPnL）
+        const recalcPnL = (() => {
+          const filled = getTrades(s)
+            .filter(t => t.status === 'filled')
+            .sort((a, b) => a.createdAt - b.createdAt);
+          let rs = 0, rc = 0, total = 0;
+          const map: Record<string, number> = {};
+          for (const t of filled) {
+            if (t.side === 'buy') {
+              rs += t.shares;
+              rc = rs > 0 ? (rc * (rs - t.shares) + t.price * t.shares) / rs : 0;
+            } else {
+              map[t.id] = rs > 0 ? (t.price - rc) * t.shares : 0;
+              total += map[t.id];
+              rs = Math.max(0, rs - t.shares);
+              if (rs === 0) rc = 0;
+            }
+          }
+          return { map, total };
+        })();
+        const realizedPnl = recalcPnL.total;
+        // 兜底：无显式成本但有已成交买入记录时，用成交加权均价代替（避免建仓后显示 0）
+        if (avgCost <= 0 && posShares > 0) {
+          const buys = getTrades(s).filter(t => t.status === 'filled' && t.side === 'buy');
+          const totSharesB = buys.reduce((a, t) => a + t.shares, 0);
+          if (totSharesB > 0) avgCost = buys.reduce((a, t) => a + t.price * t.shares, 0) / totSharesB;
+        }
         const totalCost = posShares * avgCost;
         const breakEven = posShares > 0 ? Math.max(0, (totalCost - realizedPnl) / posShares) : 0;
         const floatingPnl = marketPrice > 0 && posShares > 0 ? (marketPrice - avgCost) * posShares : 0;
+        // 当前持仓总金额（市值 = 持仓 × 现价）
+        const totalValue = marketPrice > 0 ? posShares * marketPrice : 0;
+        // 卖出数量上限：编辑模式下"视作未发生这笔交易"，回退其持仓影响后再限制（买入已回退则更严，卖出已回退则放宽）
+        const editingCap = (() => {
+          if (addTradeSide !== 'sell') return undefined;
+          const base = s.positionShares || 0;
+          const et = getTrades(s).find(x => x.id === editingTradeId);
+          if (et) {
+            if (et.status === 'filled' && et.side === 'buy') return Math.max(0, base - et.shares);
+            if (et.status === 'filled' && et.side === 'sell') return base + et.shares;
+          }
+          return base;
+        })();
+        // 价格红绿着色：现价相对均价（高红低绿）；均价/回本价相对现价反向（高绿低红）
+        const priceColor = (p: number, base: number, invert = false) => {
+          if (!(marketPrice > 0) || p <= 0 || base <= 0) return 'text-app-text';
+          if (Math.abs(p - base) < 0.005) return 'text-app-text';
+          const higher = p > base;
+          return (invert ? !higher : higher) ? 'text-brand-red' : 'text-brand-green';
+        };
         return (
           <div
             ref={tradeInfoRef}
@@ -4489,37 +4642,42 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <div className="px-3 py-3 space-y-3 bg-app-card max-h-[80vh] overflow-y-auto">
               {/* 当前持仓概要 */}
               <div className="border border-app-border rounded-lg divide-y divide-app-border bg-app-input/50">
-                <div className="px-2.5 py-2">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[10px] uppercase font-bold text-app-subtext tracking-wider">当前持仓</span>
-                    <span className="text-[10px] text-app-subtext">{posShares} 股</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
+                <div className="px-2.5 pt-2 pb-1.5 flex items-center justify-center">
+                  <span className="text-[10px] uppercase font-bold text-app-subtext tracking-wider">当前持仓</span>
+                </div>
+              <div className="grid grid-cols-3 gap-2 px-2.5 pb-2 pt-1.5">
                     <div className="flex flex-col items-center gap-0.5">
                       <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">现价</span>
-                      <span className="font-mono font-bold text-app-text">{marketPrice > 0 ? fmtP(marketPrice) : '-'}</span>
+                      <span className={`font-mono font-bold ${marketPrice > 0 && posShares > 0 ? priceColor(marketPrice, avgCost) : 'text-app-text'}`}>{marketPrice > 0 ? fmtP(marketPrice) : '-'}</span>
                     </div>
                     <div className="flex flex-col items-center gap-0.5">
                       <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">持仓均价</span>
-                      <span className="font-mono font-bold text-app-text">{posShares > 0 ? fmtP(avgCost) : '-'}</span>
+                      <span className={`font-mono font-bold ${posShares > 0 && avgCost > 0 ? priceColor(avgCost, marketPrice, true) : 'text-app-text'}`}>{posShares > 0 && avgCost > 0 ? fmtP(avgCost) : '-'}</span>
                     </div>
                     <div className="flex flex-col items-center gap-0.5">
                       <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">回本价</span>
-                      <span className="font-mono font-bold text-app-text">{posShares > 0 ? fmtP(breakEven) : '-'}</span>
+                      <span className={`font-mono font-bold ${posShares > 0 && avgCost > 0 ? priceColor(breakEven, marketPrice, true) : 'text-app-text'}`}>{posShares > 0 && avgCost > 0 ? fmtP(breakEven) : '-'}</span>
                     </div>
                   </div>
-                </div>
-                <div className="px-2.5 py-1.5 flex items-center justify-between">
-                  <div>
-                    <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider mb-0.5 block">浮动盈亏</span>
-                    <span className={`font-mono font-bold text-[11px] ${floatingPnl >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                      {posShares > 0 ? `${floatingPnl >= 0 ? '+' : '-'}¥${Math.abs(floatingPnl).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}` : '-'}
+                <div className="px-2.5 pt-1.5 pb-2 grid grid-cols-4 gap-1">
+                  <div className="flex flex-col items-center gap-0.5">
+                    <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">持仓</span>
+                    <span className="font-mono font-bold text-[11px]">{posShares}</span>
+                  </div>
+                  <div className="flex flex-col items-center gap-0.5">
+                    <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">总金额</span>
+                    <span className="font-mono font-bold text-[11px]">{marketPrice > 0 ? totalValue.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) : '-'}</span>
+                  </div>
+                  <div className="flex flex-col items-center gap-0.5">
+                    <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">浮动盈亏</span>
+                    <span className={`font-mono font-bold text-[11px] ${posShares > 0 && marketPrice > 0 ? (floatingPnl >= 0 ? 'text-brand-red' : 'text-brand-green') : 'text-app-subtext'}`}>
+                      {posShares > 0 && marketPrice > 0 ? `${floatingPnl >= 0 ? '+' : '-'}${Math.abs(floatingPnl).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
                     </span>
                   </div>
-                  <div className="text-right">
-                    <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider mb-0.5 block">已实现盈亏</span>
-                    <span className={`font-mono font-bold text-[11px] ${realizedPnl >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                      {realizedPnl !== 0 ? `${realizedPnl >= 0 ? '+' : '-'}¥${Math.abs(realizedPnl).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}` : '-'}
+                  <div className="flex flex-col items-center gap-0.5">
+                    <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">实现盈亏</span>
+                    <span className={`font-mono font-bold text-[11px] ${realizedPnl !== 0 ? (realizedPnl >= 0 ? 'text-brand-red' : 'text-brand-green') : 'text-app-subtext'}`}>
+                      {realizedPnl !== 0 ? `${realizedPnl >= 0 ? '+' : '-'}${Math.abs(realizedPnl).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
                     </span>
                   </div>
                 </div>
@@ -4548,8 +4706,24 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
               {/* 挂单价 + 数量（复用黄金项目 InputGroup 步进输入，支持鼠标滚轮与触屏手势调节） */}
               <div className="grid grid-cols-2 gap-3">
-                <InputGroup label="挂单价格" value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={0.01} min={0} touchMode onEnter={() => handleAddTrade(s.id)} className="text-sm" />
-                <InputGroup label="数量(股)" value={addTradeShares} onChange={setAddTradeShares} placeholder="100" step={100} min={0} touchMode onEnter={() => handleAddTrade(s.id)} className="text-sm" />
+                <InputGroup label="挂单价格" value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={0.01} min={0} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
+                {/* 数量：卖出时以当前持仓为上限（静默截断） */}
+                <InputGroup
+                  label="数量(股)"
+                  value={addTradeShares}
+                  onChange={(v) => {
+                    // 手输超上限时截断到可编辑上限（卖出方向，编辑模式视作未成交回退后）
+                    if (editingCap !== undefined) {
+                      const n = parseFloat(v);
+                      setAddTradeShares(Number.isNaN(n) || n <= editingCap ? v : String(editingCap));
+                    } else setAddTradeShares(v);
+                  }}
+                  placeholder="100" step={100} min={0}
+                  max={editingCap}
+                  touchMode
+                  onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')}
+                  className="text-sm"
+                />
               </div>
 
               {/* 挂单金额预览 */}
@@ -4567,22 +4741,32 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   type="text"
                   value={addTradeNote}
                   onChange={(e) => setAddTradeNote(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleAddTrade(s.id); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending'); } }}
                   enterKeyHint="done"
                   placeholder="可选，如：分批建仓"
                   className={noteCls}
                 />
               </div>
 
-              {/* 添加挂单 */}
-              <button
-                type="button"
-                onClick={() => handleAddTrade(s.id)}
-                disabled={!addTradePrice || !addTradeShares}
-                className="w-full h-10 text-sm font-bold rounded-lg border transition-all disabled:opacity-40 bg-indigo-500/90 text-white border-indigo-500 hover:bg-indigo-500 shadow-sm"
-              >
-                添加{addTradeSide === 'buy' ? '买入' : '卖出'}挂单
-              </button>
+              {/* 下单：挂单 / 直接成交（编辑模式下变为 保存挂单 / 保存成交） */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')}
+                  disabled={!addTradePrice || !addTradeShares}
+                  className="h-10 text-sm font-bold rounded-lg border transition-all disabled:opacity-40 bg-indigo-500/90 text-white border-indigo-500 hover:opacity-90 shadow-sm"
+                >
+                  {editingTradeId ? '保存挂单' : (addTradeSide === 'buy' ? '买入挂单' : '卖出挂单')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'filled') : handleAddTrade(s.id, 'filled')}
+                  disabled={!addTradePrice || !addTradeShares}
+                  className={`h-10 text-sm font-bold rounded-lg transition-all disabled:opacity-40 text-white shadow-sm ${addTradeSide === 'buy' ? 'bg-brand-red hover:opacity-90' : 'bg-brand-green hover:opacity-90'}`}
+                >
+                  {editingTradeId ? '保存成交' : (addTradeSide === 'buy' ? '买入成交' : '卖出成交')}
+                </button>
+              </div>
 
               {/* 历史记录 */}
               <div className="pt-1 border-t border-app-border">
@@ -4606,9 +4790,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             {(t.price * t.shares).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
                           </span>
                         </span>
-                        {t.realizedPnL != null && (
-                          <span className={`font-mono text-[10px] ${t.realizedPnL >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                            {`${t.realizedPnL >= 0 ? '+' : ''}${fmtP(t.realizedPnL)}`}
+                        {t.side === 'sell' && t.status === 'filled' && recalcPnL.map[t.id] !== undefined && (
+                          <span className={`font-mono text-[10px] ${recalcPnL.map[t.id] >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                            {`${recalcPnL.map[t.id] >= 0 ? '+' : ''}${fmtP(recalcPnL.map[t.id])}`}
                           </span>
                         )}
                         {/* 状态徽标：点击切换成交/挂单（联动持仓） */}
@@ -4624,16 +4808,27 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       {/* 第二行：时间 + 删除 + 备注 */}
                       <div className="flex items-center gap-2 text-[9px] text-app-subtext leading-none">
                         <span className="font-mono font-bold whitespace-nowrap self-center leading-none">{timeStr(t.createdAt)}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveTrade(s.id, t.id)}
-                          className="shrink-0 px-1 rounded text-[9px] text-app-subtext/50 hover:text-brand-red hover:bg-app-text/5 transition-colors inline-flex items-center justify-center self-center leading-none translate-y-[1px]"
-                          title="撤单（删除该记录）"
-                        >
-                          撤单
-                        </button>
+                        <div className="flex items-center -space-x-1 -ml-1">
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTrade(s.id, t.id)}
+                            className="shrink-0 px-1 rounded text-[9px] text-app-subtext/50 hover:text-brand-red hover:bg-app-text/5 transition-colors inline-flex items-center justify-center self-center leading-none"
+                            title="撤单（删除该记录）"
+                          >
+                            撤单
+                          </button>
+                          {/* 编辑：把记录填回输入框进入编辑模式 */}
+                          <button
+                            type="button"
+                            onClick={() => { setEditingTradeId(t.id); setAddTradeSide(t.side); setAddTradePrice(String(t.price)); setAddTradeShares(String(t.shares)); setAddTradeNote(t.note || ''); }}
+                            className="shrink-0 px-1 rounded text-[9px] text-app-subtext/50 hover:text-app-text hover:bg-app-text/5 transition-colors inline-flex items-center justify-center self-center leading-none"
+                            title="编辑该记录"
+                          >
+                            编辑
+                          </button>
+                        </div>
                         {t.note && (
-                          <span className="truncate min-w-0 ml-auto self-center leading-none translate-y-[1px]" title={t.note}>{t.note}</span>
+                          <span className="truncate min-w-0 ml-auto self-center leading-none" title={t.note}>{t.note}</span>
                         )}
                       </div>
                     </div>
