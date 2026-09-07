@@ -2241,6 +2241,49 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // ============ 交易记录列（持仓大列内子列3） ============
   // 每只股票最多保留的已成交记录条数，控制 Gist 上传/下载负载；挂单不设上限
   const MAX_FILLED_TRADES = 20;
+  // 超出上限的已成交记录压缩为两条只读合并汇总（买入最底、卖出倒数第二），不计入上限；用金额精确延续成本链
+  const compactFilledTrades = (trades: StockTrade[]): StockTrade[] => {
+    const ordinary = trades.filter(t => t.status === 'filled' && !t.isMerged);
+    const excess = ordinary.length - MAX_FILLED_TRADES;
+    if (excess <= 0) return trades;
+    const sorted = [...ordinary].sort((a, b) => (a.filledAt || a.createdAt) - (b.filledAt || b.createdAt));
+    const fold = sorted.slice(0, excess);
+    const keepIds = new Set(sorted.slice(excess).map(t => t.id));
+    // 汇总被折叠段：按方向累加总股数/总金额
+    let buyShares = 0, buyAmt = 0, sellShares = 0, sellAmt = 0;
+    for (const t of fold) {
+      if (t.side === 'buy') { buyShares += t.shares; buyAmt += t.price * t.shares; }
+      else { sellShares += t.shares; sellAmt += t.price * t.shares; }
+    }
+    const kept = trades.filter(t => t.status !== 'filled' || t.isMerged || keepIds.has(t.id));
+    const existingBuy = kept.find(t => t.isMerged && t.side === 'buy');
+    const existingSell = kept.find(t => t.isMerged && t.side === 'sell');
+    const globalMin = trades.length ? Math.min(...trades.map(t => t.createdAt)) : Date.now();
+    const res = kept.filter(t => !t.isMerged); // 撤销旧合并，下方按当前汇总重建
+    // 买入合并：最底（createdAt 最小）
+    const newBuyShares = (existingBuy ? existingBuy.shares : 0) + buyShares;
+    const newBuyAmt = (existingBuy ? existingBuy.amount || 0 : 0) + buyAmt;
+    if (newBuyShares > 0) {
+      res.push({
+        id: existingBuy?.id || `merged-buy-${globalMin}`, side: 'buy', price: newBuyAmt / newBuyShares,
+        shares: newBuyShares, status: 'filled', createdAt: globalMin - 2,
+        filledAt: existingBuy?.filledAt ?? fold[0]?.filledAt, isMerged: true,
+        amount: newBuyAmt, note: existingBuy?.note ?? '合并买入',
+      });
+    }
+    // 卖出合并：倒数第二（createdAt 略大于买入合并）
+    const newSellShares = (existingSell ? existingSell.shares : 0) + sellShares;
+    const newSellAmt = (existingSell ? existingSell.amount || 0 : 0) + sellAmt;
+    if (newSellShares > 0) {
+      res.push({
+        id: existingSell?.id || `merged-sell-${globalMin}`, side: 'sell', price: newSellAmt / newSellShares,
+        shares: newSellShares, status: 'filled', createdAt: globalMin - 1,
+        filledAt: existingSell?.filledAt ?? fold[fold.length - 1]?.filledAt, isMerged: true,
+        amount: newSellAmt, note: existingSell?.note ?? '合并卖出',
+      });
+    }
+    return res;
+  };
   const TRADE_STATUS_LABEL: Record<string, string> = {
     'buy-pending': '买入挂单', 'sell-pending': '卖出挂单',
     'buy-filled': '买入成功', 'sell-filled': '卖出成功',
@@ -2252,6 +2295,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [tradeInfoStock, setTradeInfoStock] = useState<StockEntry | null>(null);
   const [tradeInfoPos, setTradeInfoPos] = useState<{ top: number, left: number }>({ top: 0, left: 0 });
   const [tradeInfoPinned, setTradeInfoPinned] = useState(false);
+  const [tradeInfoSettled, setTradeInfoSettled] = useState(false);
+  const tradeSettledOnceRef = useRef(false);
   const tradeInfoBtnRef = useRef<HTMLTableCellElement | null>(null);
   const tradeInfoRef = useRef<HTMLDivElement | null>(null);
 
@@ -2265,18 +2310,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const openTradeInfo = (btn: HTMLElement, stock: StockEntry) => {
     tradeInfoBtnRef.current = btn as unknown as HTMLTableCellElement;
     setTradeInfoStock(stock);
+    setTradeInfoSettled(false);
+    tradeSettledOnceRef.current = false;
     // 挂单价格默认预填当前现价（股票/ETF 分别 2/3 位小数）
     setAddTradePrice(stock.price > 0 ? formatPrice(stock.price, stock.name) : '');
     const rect = btn.getBoundingClientRect();
     const popupW = 304;
-    const estH = 340;
+    const estH = 520;
     const gap = 8;
     let left = rect.right + gap;
-    let top = rect.top + rect.height / 2 - estH / 2 + estH * 0.1;
+    // X 轴位置保持不动（沿用左右翻店逻辑），仅确定垂直居中 Y 轴
     if (left + popupW > window.innerWidth - 10) left = rect.left - popupW - gap;
     if (left < 10) left = (window.innerWidth - popupW) / 2;
-    if (top + estH > window.innerHeight - 10) top = window.innerHeight - estH - 10;
-    if (top < 10) top = 10;
+    // 垂直居中于浏览器中心（最终位置由隐藏态测量后一次性确定，避免弹跳）
+    const top = Math.max(10, Math.min(window.innerHeight - estH - 10, (window.innerHeight - estH) / 2));
     setTradeInfoPos({ left, top });
   };
 
@@ -2284,6 +2331,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const closeTradeInfo = useCallback(() => {
     setTradeInfoPinned(false);
     setTradeInfoStock(null);
+    setTradeInfoSettled(false);
     setEditingTradeId(null);
   }, []);
 
@@ -2326,7 +2374,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     window.addEventListener('pointercancel', tradeDragEnd);
   };
 
-  // 浮窗打开后，用实际渲染高度校准位置，保证上下不超出屏幕（尤其移动端）
+  // 首次打开：隐藏态测量真实高度后一次性定位居中（避免弹跳）；之后仅做边界钳制，不影响拖拽自由定位
   useEffect(() => {
     if (!tradeInfoStock || !tradeInfoRef.current) return;
     const raf = requestAnimationFrame(() => {
@@ -2334,13 +2382,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       if (!el) return;
       const pad = 8;
       const r = el.getBoundingClientRect();
-      let left = r.left;
+      if (!tradeSettledOnceRef.current) {
+        // 首次：垂直居中于浏览器中心，X 轴保持不动，然后一次性显示
+        tradeSettledOnceRef.current = true;
+        const top = Math.max(pad, (window.innerHeight - r.height - pad) / 2);
+        setTradeInfoPos({ left: r.left, top });
+        setTradeInfoSettled(true);
+        return;
+      }
+      // 拖拽/后续：仅防止超出视口
       let top = r.top;
+      let left = r.left;
       if (top < pad) top = pad;
       if (top + r.height > window.innerHeight - pad) top = Math.max(pad, window.innerHeight - r.height - pad);
       if (left < pad) left = pad;
       if (left + r.width > window.innerWidth - pad) left = Math.max(pad, window.innerWidth - r.width - pad);
-      if (left !== r.left || top !== r.top) setTradeInfoPos({ left, top });
+      if (top !== r.top || left !== r.left) setTradeInfoPos({ left, top });
     });
     return () => cancelAnimationFrame(raf);
   }, [tradeInfoStock, tradeInfoPos]);
@@ -2407,19 +2464,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         newTrade = { ...baseTrade, filledAt: Date.now(), realizedPnL };
       }
       let newTrades = [...(s.stockTrades || []), newTrade];
-      // 已成交记录超限：移除最旧的，避免 Gist 数据过于臃肿（仅成交时触发）
-      if (status === 'filled') {
-        const filled = newTrades.filter(t => t.status === 'filled');
-        if (filled.length > MAX_FILLED_TRADES) {
-          const removeIds = new Set(
-            [...filled]
-              .sort((a, b) => (a.filledAt || a.createdAt) - (b.filledAt || b.createdAt))
-              .slice(0, filled.length - MAX_FILLED_TRADES)
-              .map(t => t.id)
-          );
-          newTrades = newTrades.filter(t => !removeIds.has(t.id));
-        }
-      }
+      // 已成交记录超限：把最旧的折叠为两条合并汇总（只读，不计入上限），避免 Gist 负载膨胀且成本链可精确追溯
+      if (status === 'filled') newTrades = compactFilledTrades(newTrades);
       return { ...s, stockTrades: newTrades, positionShares: shares2, positionCost: cost };
     }));
     // 挂单/成交后仅清空数量与备注，保留价格（常为现价，方便连续操作）
@@ -2470,19 +2516,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         }
       }
       let newTrades = [...baseTrades, newTrade];
-      // 已成交记录超限：移除最旧的
-      if (status === 'filled') {
-        const filled = newTrades.filter(t => t.status === 'filled');
-        if (filled.length > MAX_FILLED_TRADES) {
-          const removeIds = new Set(
-            [...filled]
-              .sort((a, b) => (a.filledAt || a.createdAt) - (b.filledAt || b.createdAt))
-              .slice(0, filled.length - MAX_FILLED_TRADES)
-              .map(t => t.id)
-          );
-          newTrades = newTrades.filter(t => !removeIds.has(t.id));
-        }
-      }
+      // 已成交记录超限：折叠最旧成交为合并汇总（只读，不计入上限）
+      if (status === 'filled') newTrades = compactFilledTrades(newTrades);
       return { ...s, stockTrades: newTrades, positionShares: shares2, positionCost: cost };
     }));
     // 保存编辑后仅清空数量与备注，保留价格
@@ -2496,7 +2531,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     onStocksChange(stocks.map(s => {
       if (s.id !== stockId) return s;
       const trade = (s.stockTrades || []).find(t => t.id === tradeId);
-      if (!trade) return s;
+      if (!trade || trade.isMerged) return s;
       let shares = s.positionShares || 0;
       let cost = s.positionCost || 0;
       // 已成交记录删除：回退其持仓影响（与"取消成交"回退逻辑一致）
@@ -2519,7 +2554,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     onStocksChange(stocks.map(s => {
       if (s.id !== stockId) return s;
       const trade = (s.stockTrades || []).find(t => t.id === tradeId);
-      if (!trade) return s;
+      if (!trade || trade.isMerged) return s;
       let shares = s.positionShares || 0;
       let cost = s.positionCost || 0;
       let updatedTrade: StockTrade;
@@ -2549,19 +2584,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         updatedTrade = { ...trade, status: 'pending', filledAt: undefined, realizedPnL: undefined };
       }
       newTrades = (s.stockTrades || []).map(t => t.id === tradeId ? updatedTrade : t);
-      // 已成交记录超限：移除最旧的，避免 Gist 数据过于臃肿（仅在标记成交时触发）
-      if (updatedTrade.status === 'filled') {
-        const filled = newTrades.filter(t => t.status === 'filled');
-        if (filled.length > MAX_FILLED_TRADES) {
-          const removeIds = new Set(
-            [...filled]
-              .sort((a, b) => (a.filledAt || a.createdAt) - (b.filledAt || b.createdAt))
-              .slice(0, filled.length - MAX_FILLED_TRADES)
-              .map(t => t.id)
-          );
-          newTrades = newTrades.filter(t => !removeIds.has(t.id));
-        }
-      }
+      // 已成交记录超限：折叠最旧成交为合并汇总（只读，不计入上限），仅在标记成交时触发
+      if (updatedTrade.status === 'filled') newTrades = compactFilledTrades(newTrades);
       return { ...s, stockTrades: newTrades, positionShares: shares, positionCost: cost };
     }));
   }, [stocks, onStocksChange]);
@@ -3163,7 +3187,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       >
                         {(() => {
                           const trades = getTrades(stock);
-                          const latest = trades.length > 0 ? trades[trades.length - 1] : null;
+                          const ordinary = trades.filter(t => !t.isMerged);
+                          const latest = ordinary.length ? [...ordinary].sort((a, b) => b.createdAt - a.createdAt)[0] : null;
                           if (!latest) return <span className="font-mono text-[11px] whitespace-nowrap text-app-subtext">-</span>;
                           return (
                             <div className="flex flex-col items-center leading-tight gap-px">
@@ -4562,7 +4587,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           const d = new Date(ts);
           return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
         };
-        const noteCls = "no-spinners w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-[11px] text-app-text outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all placeholder-app-subtext/50";
+        const noteCls = "no-spinners w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-[11px] text-app-text outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all placeholder:text-app-subtext/40";
         // 当前持仓概要（口径与黄金项目一致：均价=总成本/持仓量，回本价考虑已落袋盈亏）
         const posShares = s.positionShares || 0;
         let avgCost = s.positionCost || 0;
@@ -4575,11 +4600,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           let rs = 0, rc = 0, total = 0;
           const map: Record<string, number> = {};
           for (const t of filled) {
+            // 金额优先取自 amount（合并记录必填），普通记录退化为 price*shares
+            const amt = t.amount ?? t.price * t.shares;
             if (t.side === 'buy') {
+              const prevRs = rs;
               rs += t.shares;
-              rc = rs > 0 ? (rc * (rs - t.shares) + t.price * t.shares) / rs : 0;
+              rc = rs > 0 ? (rc * prevRs + amt) / rs : 0;
             } else {
-              map[t.id] = rs > 0 ? (t.price - rc) * t.shares : 0;
+              map[t.id] = rs > 0 ? amt - rc * t.shares : 0;
               total += map[t.id];
               rs = Math.max(0, rs - t.shares);
               if (rs === 0) rc = 0;
@@ -4592,7 +4620,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         if (avgCost <= 0 && posShares > 0) {
           const buys = getTrades(s).filter(t => t.status === 'filled' && t.side === 'buy');
           const totSharesB = buys.reduce((a, t) => a + t.shares, 0);
-          if (totSharesB > 0) avgCost = buys.reduce((a, t) => a + t.price * t.shares, 0) / totSharesB;
+          if (totSharesB > 0) avgCost = buys.reduce((a, t) => a + (t.amount ?? t.price * t.shares), 0) / totSharesB;
         }
         const totalCost = posShares * avgCost;
         const breakEven = posShares > 0 ? Math.max(0, (totalCost - realizedPnl) / posShares) : 0;
@@ -4621,7 +4649,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div
             ref={tradeInfoRef}
             className="fixed z-[60] bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl overflow-hidden text-app-text"
-            style={{ top: tradeInfoPos.top, left: tradeInfoPos.left, width: 304 }}
+            style={{ top: tradeInfoPos.top, left: tradeInfoPos.left, width: 304, opacity: tradeInfoSettled ? 1 : 0, transform: tradeInfoSettled ? 'none' : 'translate(0,0)' }}
           >
             {/* 可拖拽头部 */}
             <div
@@ -4686,18 +4714,18 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               {/* 交易方向：买入/卖出 */}
               <div className="space-y-1.5">
                 <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">交易方向</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 rounded-lg overflow-hidden border border-app-border bg-app-input/50 h-8">
                   <button
                     type="button"
                     onClick={() => setAddTradeSide('buy')}
-                    className={`h-10 text-sm font-bold rounded-lg border transition-all ${addTradeSide === 'buy' ? 'bg-brand-red text-white border-brand-red shadow-sm' : 'bg-app-input border-app-border text-app-subtext'}`}
+                    className={`text-sm font-bold transition-all ${addTradeSide === 'buy' ? 'bg-brand-red text-white shadow-sm' : 'text-app-subtext hover:text-app-text'}`}
                   >
                     买入
                   </button>
                   <button
                     type="button"
                     onClick={() => setAddTradeSide('sell')}
-                    className={`h-10 text-sm font-bold rounded-lg border transition-all ${addTradeSide === 'sell' ? 'bg-brand-green text-white border-brand-green shadow-sm' : 'bg-app-input border-app-border text-app-subtext'}`}
+                    className={`text-sm font-bold transition-all ${addTradeSide === 'sell' ? 'bg-brand-green text-white shadow-sm' : 'text-app-subtext hover:text-app-text'}`}
                   >
                     卖出
                   </button>
@@ -4729,22 +4757,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               {/* 挂单金额预览 */}
               <div className="flex items-center justify-between px-0.5 pt-0.5">
                 <span className="text-[10px] font-medium text-app-subtext">挂单金额</span>
-                <span className="font-mono font-bold text-app-text">
+                <span className="font-mono font-bold text-[12px] text-app-text">
                   ¥{orderAmount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
 
               {/* 备注 */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">备注</label>
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5 shrink-0">备注</label>
                 <input
                   type="text"
                   value={addTradeNote}
                   onChange={(e) => setAddTradeNote(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending'); } }}
                   enterKeyHint="done"
-                  placeholder="可选，如：分批建仓"
-                  className={noteCls}
+                  placeholder="记录本次挂单的思路策略"
+                  className={noteCls + ' flex-1'}
                 />
               </div>
 
@@ -4773,11 +4801,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <div className="flex items-center justify-between px-0.5 pb-1.5">
                   <span className="text-[10px] uppercase font-bold text-app-subtext tracking-wider">历史记录</span>
                 </div>
-                {sortedTrades.length === 0 && (
-                  <div className="text-[10px] text-app-subtext text-center py-2 border border-dashed border-app-border rounded-lg">暂无记录，添加第一条挂单吧</div>
-                )}
-                <div className="space-y-1 max-h-56 overflow-y-auto pr-0.5 custom-scrollbar" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-                  {sortedTrades.map(t => (
+                <div className="space-y-1 h-[132px] overflow-y-auto pr-0.5 custom-scrollbar" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                  {sortedTrades.length === 0 ? (
+                    // 空态占满固定高度，与有记录时高度一致，保证弹窗垂直居中不跳动
+                    <div className="h-full flex items-center justify-center text-[10px] text-app-subtext border border-dashed border-app-border rounded-lg">暂无记录，添加第一条挂单吧</div>
+                  ) : sortedTrades.map(t => (
                     <div key={t.id} className="bg-app-input rounded-lg px-2 py-1.5 space-y-1">
                       {/* 第一行：公式 + 已实现盈亏 + 状态徽标 */}
                       <div className="flex items-center gap-1.5 text-[11px] leading-tight">
@@ -4795,19 +4823,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             {`${recalcPnL.map[t.id] >= 0 ? '+' : ''}${fmtP(recalcPnL.map[t.id])}`}
                           </span>
                         )}
-                        {/* 状态徽标：点击切换成交/挂单（联动持仓） */}
-                        <button
-                          type="button"
-                          onClick={() => handleToggleTrade(s.id, t.id)}
-                          title={t.status === 'filled' ? '取消成交（恢复挂单）' : '标记为成交（联动持仓）'}
-                          className={`shrink-0 text-[8px] px-1 py-px rounded-full border font-bold ml-auto cursor-pointer ${t.status === 'pending' ? 'text-orange-400 border-orange-400/40 bg-orange-400/10' : t.side === 'buy' ? 'text-brand-red border-brand-red/40 bg-brand-red/10' : 'text-brand-green border-brand-green/40 bg-brand-green/10'}`}
-                        >
-                          {TRADE_STATUS_LABEL[`${t.side}-${t.status}`]}
-                        </button>
+                        {/* 状态徽标：普通记录点击切换成交/挂单；合并记录只读灰显 */}
+                        {t.isMerged ? (
+                          <span className="shrink-0 text-[8px] px-1 py-px rounded-full border font-bold ml-auto text-app-subtext/60 border-app-border/60 bg-app-text/5">
+                            {t.side === 'buy' ? '买入汇总' : '卖出汇总'}
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleTrade(s.id, t.id)}
+                            title={t.status === 'filled' ? '取消成交（恢复挂单）' : '标记为成交（联动持仓）'}
+                            className={`shrink-0 text-[8px] px-1 py-px rounded-full border font-bold ml-auto cursor-pointer ${t.status === 'pending' ? 'text-orange-400 border-orange-400/40 bg-orange-400/10' : t.side === 'buy' ? 'text-brand-red border-brand-red/40 bg-brand-red/10' : 'text-brand-green border-brand-green/40 bg-brand-green/10'}`}
+                          >
+                            {TRADE_STATUS_LABEL[`${t.side}-${t.status}`]}
+                          </button>
+                        )}
                       </div>
                       {/* 第二行：时间 + 删除 + 备注 */}
                       <div className="flex items-center gap-2 text-[9px] text-app-subtext leading-none">
                         <span className="font-mono font-bold whitespace-nowrap self-center leading-none">{timeStr(t.createdAt)}</span>
+                        {!t.isMerged && (
                         <div className="flex items-center -space-x-1 -ml-1">
                           <button
                             type="button"
@@ -4827,6 +4862,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             编辑
                           </button>
                         </div>
+                        )}
                         {t.note && (
                           <span className="truncate min-w-0 ml-auto self-center leading-none" title={t.note}>{t.note}</span>
                         )}

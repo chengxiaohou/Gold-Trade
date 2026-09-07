@@ -113,13 +113,15 @@ export type StockTradeStatus = 'pending' | 'filled'; // 挂单中 / 已成交
 export interface StockTrade {
   id: string;
   side: StockTradeSide;      // 买入 / 卖出
-  price: number;             // 点位
+  price: number;             // 点位（合并记录为加权均价）
   shares: number;            // 股数
   status: StockTradeStatus;  // 挂单中 / 已成交
   createdAt: number;         // 创建时间戳
   filledAt?: number;         // 成交时间戳
   note?: string;             // 备注
   realizedPnL?: number;      // 卖出成交时按当前均价结算的落袋盈亏
+  isMerged?: boolean;        // 是否为超出上限后自动合并的汇总记录（只读，不计入上限）
+  amount?: number;           // 合并记录该段成交总金额（用于精确追溯成本链）
 }
 
 export interface DividendRateColorRange {
