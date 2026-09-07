@@ -251,11 +251,11 @@ interface DividendDiffEntry {
   registerDate?: string; // 最新股权登记日
 }
 
-// 持仓列中子列2的展示模式（表头按钮两态切换）
+// 持仓列中子列1的展示模式（表头按钮两态切换：股息率 ↔ 份额）
 type PositionDisplayMode = 'shares' | 'cost';
 const POSITION_MODE_LABEL: Record<PositionDisplayMode, string> = {
   shares: '份额',
-  cost: '成本',
+  cost: '股息率',
 };
 
 const DEFAULT_DIVIDEND_RATES: StockDividendRates = {
@@ -2869,16 +2869,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('monthly')}>月线</th>
                 {cols.includes('position') && <>
                   <th
-                    className="w-[64px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border"
-                  >
-                    股息率
-                  </th>
-                  <th
                     className="w-[64px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
                     onClick={cyclePositionMode}
-                    title={'点击切换展示：成本 / 份额'}
+                    title={'点击切换展示：股息率 / 份额'}
                   >
                     {POSITION_MODE_LABEL[positionDisplayMode]}
+                  </th>
+                  <th
+                    className="w-[64px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border"
+                  >
+                    成本
                   </th>
                   <th className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">
                     交易
@@ -3096,12 +3096,27 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const priceYield = dividend > 0 && (stock.price || 0) > 0 ? (dividend / (stock.price || 0)) * 100 : null;
                     const yieldDiff = costYield != null && priceYield != null ? costYield - priceYield : null;
                     const yieldDiffStr = yieldDiff != null ? `${yieldDiff >= 0 ? '+' : ''}${yieldDiff.toFixed(2)}%` : '';
-                    const showCostPct = (positionDisplayMode === 'cost' && cost > 0 && stock.price > 0);
+                    const showCostPct = cost > 0 && stock.price > 0;
                     const totalAmount = shares > 0 && cost > 0 ? `¥${Math.round(shares * cost).toLocaleString()}` : '-';
                     const hasPosition = shares > 0 || cost > 0;
-                    const displayValue2 = positionDisplayMode === 'shares' ? sharesText : costText;
-                    // 子列1：固定展示股息率（详见标题）
-                    const col1 = (
+                    // 子列1：默认展示股息率，点击表头切换为份额（详见标题）
+                    const col1 = positionDisplayMode === 'shares' ? (
+                      <td
+                        className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
+                        onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
+                        onMouseLeave={handlePositionInfoLeave}
+                        onClick={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoClick(e, stock); }}
+                      >
+                        {hasPosition ? (
+                          <div className="flex flex-col items-center leading-tight gap-px">
+                            <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">{totalAmount}</span>
+                            <span className="font-mono text-[10px] text-app-rowtext">{sharesText}</span>
+                          </div>
+                        ) : (
+                          <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">-</span>
+                        )}
+                      </td>
+                    ) : (
                       <td
                         className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
@@ -3118,7 +3133,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         )}
                       </td>
                     );
-                    // 子列2：默认成本，点击表头切换为份额；编辑态展示成本+股数输入
+                    // 子列2：固定展示成本；编辑态展示成本+股数输入
                     const col2 = editingId === stock.id ? (
                       <td className="w-[64px] px-1 py-1.5 text-center border-r border-app-border">
                         <div className="flex flex-col gap-0.5">
@@ -3146,22 +3161,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             title="持仓股数"
                           />
                         </div>
-                      </td>
-                    ) : positionDisplayMode === 'shares' ? (
-                      <td
-                        className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
-                        onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
-                        onMouseLeave={handlePositionInfoLeave}
-                        onClick={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoClick(e, stock); }}
-                      >
-                        {hasPosition ? (
-                          <div className="flex flex-col items-center leading-tight gap-px">
-                            <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">{totalAmount}</span>
-                            <span className="font-mono text-[10px] text-app-rowtext">{displayValue2}</span>
-                          </div>
-                        ) : (
-                          <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">-</span>
-                        )}
                       </td>
                     ) : (
                       <td
