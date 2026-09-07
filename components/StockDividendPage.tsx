@@ -1342,11 +1342,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     openDivRateInfo(e.currentTarget as HTMLElement, stock);
   };
 
-  // 股息率悬停离开：若鼠标移入浮窗内部则保留，否则关闭（未固定时）
+  // 股息率悬停离开：非固定模式下直接关闭，不因鼠标快速移入浮窗（relatedTarget 命中图表）而残留
   const handleDivRateInfoLeave = (e?: React.MouseEvent) => {
     divRateInfoHoveredRef.current = false;
     if (divRateInfoPinned) return;
-    if (e && isInsideDivRateInfo(e.relatedTarget as Node | null)) return;
     divRateInfoActiveIdRef.current = undefined;
     setDivRateInfoStock(null);
     setDivRateInfoKlines(null);
@@ -2969,7 +2968,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           />}
                         </div>
                       ) : (
-                        <div className="relative flex items-center justify-center h-8 whitespace-nowrap cursor-pointer" onClick={(e) => handleListSrClick(e, stock, true)} onMouseEnter={(e) => handleListSrHoverEnter(e, stock)} onMouseLeave={() => handleListSrHoverLeave()}>
+                        <div className="relative flex items-center justify-center h-8 whitespace-nowrap">
                           <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
                             const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
                             const n = raw.replace(/\s/g, '');
@@ -3023,7 +3022,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           )}
                     </div>
                   </td>}
-                  {cols.includes('changePercent') && <td className="px-1 py-1.5 text-center border-r border-app-border">
+                  {cols.includes('changePercent') && <td
+                    onMouseEnter={(e) => handleListSrHoverEnter(e, stock)}
+                    onMouseLeave={() => handleListSrHoverLeave()}
+                    onClick={(e) => handleListSrClick(e, stock, true)}
+                    className="px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
+                    title=""
+                  >
                     <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                       {stock.changePercent >= 0 ? '+' : ''}{formatPercent(stock.changePercent)}
                     </span>
