@@ -2293,8 +2293,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return res;
   };
   const TRADE_STATUS_LABEL: Record<string, string> = {
-    'buy-pending': '买入挂单', 'sell-pending': '卖出挂单',
-    'buy-filled': '买入成交', 'sell-filled': '卖出成交',
+    'buy-pending': '挂买', 'sell-pending': '挂卖',
+    'buy-filled': '买入', 'sell-filled': '卖出',
   };
   const tradeStatusColor = (t: StockTrade) => t.status === 'pending' ? 'text-orange-400' : (t.side === 'buy' ? 'text-brand-red' : 'text-brand-green');
   const getTrades = (stock: StockEntry): StockTrade[] => stock.stockTrades || [];
