@@ -664,7 +664,7 @@ function analyzeKlinePatterns(klines: BollKline[], fmt: (v: number) => string): 
   if (smallBody && upper <= body * 0.3) {
     if (lower >= body * 2.5 && (ma20Down || nearLow)) {
       patterns.push({
-        type: 'hammer', date: k.date, label: boostedVol ? '放量金针' : '金针探底', single: '金', color: 'red', boosted: boostedVol,
+        type: 'hammer', date: k.date, label: boostedVol ? '放量金针' : '金针探底', single: '针', color: 'red', boosted: boostedVol,
         detail: [
           `${ds} ${boostedVol ? '放量金针' : '金针探底'}：收 ${fmt(k.close)}`,
           `下影 ${fmt(lower)} ≥ 实体×2.5（${fmt(body)}），上影 ${fmt(upper)} ≤ 实体×30%`,
@@ -706,6 +706,318 @@ function analyzeKlinePatterns(klines: BollKline[], fmt: (v: number) => string): 
     }
   }
   return patterns;
+}
+
+
+// ── 交易环境标签体系：趋势结构 / 量价关系 / 动能背离 / 波动率 / 综合强弱周期 ──
+// 参考 docs/行情标签体系说明书.md 实现。打分制：均线30% + 量价30% + MACD背离25% + 布林带15%，
+// 总分 ≥0.6 强周期 / ≤-0.6 弱周期，中间为震荡/变盘期；强弱细分再叠加关键信号确认。
+interface EnvTag {
+  key: string;      // 唯一标识（cycle 或维度标签）
+  label: string;    // 完整名称
+  single: string;   // 单字（单元格备用）
+  color: 'red' | 'green' | 'orange' | 'indigo' | 'slate';
+  score: number;    // 得分 -1~1
+  dim: 'cycle' | 'trend' | 'volume' | 'momentum' | 'volatility';
+  detail: string[]; // 判定依据
+}
+interface EnvResult {
+  tags: EnvTag[]; // cycle + 各维度触发的标签
+  total: number;  // 综合得分
+  dimScores: { trend: number; volume: number; momentum: number; volatility: number };
+}
+
+// 序列化指标计算（供环境分析使用，输入为完整K线序列）
+function calcMaSeries(klines: BollKline[], period: number): (number | null)[] {
+  const closes = klines.map(k => k.close);
+  const res: (number | null)[] = new Array(klines.length).fill(null);
+  let sum = 0;
+  for (let i = 0; i < klines.length; i++) {
+    sum += closes[i];
+    if (i >= period) sum -= closes[i - period];
+    if (i >= period - 1) res[i] = sum / period;
+  }
+  return res;
+}
+function calcRsiSeries(klines: BollKline[], n: number): (number | null)[] {
+  const res: (number | null)[] = new Array(klines.length).fill(null);
+  for (let i = 0; i < klines.length; i++) {
+    if (i < n) continue;
+    let up = 0, down = 0;
+    for (let j = i - n + 1; j <= i; j++) {
+      const diff = klines[j].close - klines[j - 1].close;
+      if (diff > 0) up += diff; else down -= diff;
+    }
+    if (down === 0) res[i] = up === 0 ? 50 : 100;
+    else res[i] = 100 - 100 / (1 + up / down);
+  }
+  return res;
+}
+function calcMacdSeries(klines: BollKline[]): { dif: number | null; dea: number | null }[] {
+  const closes = klines.map(k => k.close);
+  const ema = (arr: number[], n: number): number[] => {
+    const res: number[] = [];
+    const alpha = 2 / (n + 1);
+    let prev = 0;
+    arr.forEach((v, i) => {
+      if (i === 0) { prev = v; res.push(v); }
+      else { prev = alpha * v + (1 - alpha) * prev; res.push(prev); }
+    });
+    return res;
+  };
+  const res: { dif: number | null; dea: number | null }[] = new Array(klines.length).fill({ dif: null, dea: null });
+  if (closes.length >= 26) {
+    const ema12 = ema(closes, 12);
+    const ema26 = ema(closes, 26);
+    const difArr = closes.map((_, i) => ema12[i] - ema26[i]);
+    const deaArr = ema(difArr, 9);
+    for (let i = 0; i < closes.length; i++) res[i] = { dif: difArr[i], dea: deaArr[i] };
+  }
+  return res;
+}
+function calcBollSeries(klines: BollKline[]): { mid: number | null; upper: number | null; lower: number | null }[] {
+  const closes = klines.map(k => k.close);
+  const res: { mid: number | null; upper: number | null; lower: number | null }[] = new Array(klines.length).fill({ mid: null, upper: null, lower: null });
+  for (let i = 19; i < klines.length; i++) {
+    let sum = 0;
+    for (let j = i - 19; j <= i; j++) sum += closes[j];
+    const mid = sum / 20;
+    const variance = closes.slice(i - 19, i + 1).reduce((s, v) => s + Math.pow(v - mid, 2), 0) / 20;
+    const std = Math.sqrt(variance);
+    res[i] = { mid, upper: mid + 2 * std, lower: mid - 2 * std };
+  }
+  return res;
+}
+
+function analyzeEnvironment(klines: BollKline[], fmt: (v: number) => string): EnvResult | null {
+  const n = klines.length;
+  if (n < 130) return null; // 需 120 日均线 + 近20日高低点 + 近60日带宽分位 + MACD
+  const i = n - 1;
+  const k = klines[i];
+  const close = k.close;
+  const prev = klines[i - 1];
+  const fmt3 = (v: number) => v.toFixed(3);
+  const fmtVol = (v: number) => (v >= 1e8 ? `${(v / 1e8).toFixed(2)}亿` : v >= 1e4 ? `${(v / 1e4).toFixed(1)}万` : `${v.toFixed(0)}`);
+  const fmtScore = (s: number) => (s >= 0 ? '+' : '') + s.toFixed(2);
+  const ds = k.date.slice(5).replace('-', '/'); // MM/DD
+  // 近20日高低点
+  let high20 = -Infinity, low20 = Infinity;
+  for (let j = i - 19; j <= i; j++) {
+    if (klines[j].high > high20) high20 = klines[j].high;
+    if (klines[j].low < low20) low20 = klines[j].low;
+  }
+  const nearHigh = close >= high20 * 0.95;
+
+  // 序列指标
+  const m5s = calcMaSeries(klines, 5), m10s = calcMaSeries(klines, 10), m20s = calcMaSeries(klines, 20),
+    m60s = calcMaSeries(klines, 60), m120s = calcMaSeries(klines, 120);
+  const rsi6s = calcRsiSeries(klines, 6);
+  const macd = calcMacdSeries(klines);
+  const bolls = calcBollSeries(klines);
+
+  const m5 = m5s[i], m10 = m10s[i], m20 = m20s[i], m60 = m60s[i], m120 = m120s[i];
+  const m5p = m5s[i - 1], m10p = m10s[i - 1], m20p = m20s[i - 1], m60p = m60s[i - 1], m120p = m120s[i - 1];
+
+  // ── 趋势结构维度（30%）──
+  let trendScore = 0;
+  let trendTag: EnvTag | null = null;
+  if (m5 && m10 && m20 && m60 && m120 && m5p && m10p && m20p && m60p && m120p) {
+    const spread = Math.max(m5, m10, m20, m60) - Math.min(m5, m10, m20, m60);
+    if (spread < close * 0.04) {
+      trendScore = 0;
+      trendTag = { key: 'trend-squeeze', label: '均线粘合', single: '粘', color: 'slate', score: 0, dim: 'trend', detail: [
+        `${ds} 5/10/20/60 均线最大差值 ${fmt(spread)} < 股价×4%（${fmt(close)}）`,
+        '方向选择的前夜：上破粘合区进强周期，下破进弱周期',
+      ] };
+    } else if (m5 > m10 && m10 > m20 && m20 > m60 && m60 > m120
+      && m5 > m5p && m10 > m10p && m20 > m20p && m60 > m60p && m120 > m120p) {
+      trendScore = 1;
+      trendTag = { key: 'trend-strong-up', label: '多头强排列', single: '多', color: 'red', score: 1, dim: 'trend', detail: [
+        `5>10>20>60>120（${fmt(m5)}>${fmt(m10)}>${fmt(m20)}>${fmt(m60)}>${fmt(m120)}）且斜率全部向上`,
+        '主升浪进攻期：回踩 5/10 日线是高胜算买点',
+      ] };
+    } else if (m5 < m10 && m10 < m20 && m20 < m60 && m60 < m120
+      && m5 < m5p && m10 < m10p && m20 < m20p && m60 < m60p && m120 < m120p) {
+      trendScore = -1;
+      trendTag = { key: 'trend-strong-down', label: '空头强排列', single: '空', color: 'green', score: -1, dim: 'trend', detail: [
+        `120>60>20>10>5（${fmt(m120)}>${fmt(m60)}>${fmt(m20)}>${fmt(m10)}>${fmt(m5)}）且斜率全部向下`,
+        '主跌浪/系统性风险：反弹到 5/10 日线是逃命线',
+      ] };
+    } else if (m5 > m10 && m10 > m20 && m20 > m60) {
+      trendScore = 0.4;
+      trendTag = { key: 'trend-weak-up', label: '多头弱排列', single: '弱', color: 'orange', score: 0.4, dim: 'trend', detail: [
+        `5/10/20 短中期均线在 60 日之上（${fmt(m5)}>${fmt(m10)}>${fmt(m20)}>${fmt(m60)}）但缠绕粘合、斜率未全向上`,
+        '高位震荡/上涨中继：适合高抛低吸，不宜追涨',
+      ] };
+    } else if (m5 < m10 && m10 < m20 && m20 < m60) {
+      trendScore = -0.4;
+      trendTag = { key: 'trend-weak-down', label: '空头弱排列', single: '空弱', color: 'slate', score: -0.4, dim: 'trend', detail: [
+        `5/10/20 短中期均线在 60 日之下（${fmt(m5)}<${fmt(m10)}<${fmt(m20)}<${fmt(m60)}）且走平粘合`,
+        '震荡筑底期：小仓位试盘，等短期均线上穿的金叉确认',
+      ] };
+    }
+  }
+
+  // ── 量价关系维度（30%）──
+  let volumeScore = 0;
+  let volTag: EnvTag;
+  let volMa5 = 0;
+  for (let j = i - 5; j <= i - 1; j++) volMa5 += klines[j].volume;
+  volMa5 /= 5;
+  const up = close > prev.close;
+  const down = close < prev.close;
+  const volUp = k.volume >= volMa5;
+  let minVol = Infinity;
+  for (let j = i - 19; j <= i; j++) minVol = Math.min(minVol, klines[j].volume);
+  const isLowVol = k.volume <= minVol;
+  if (up && volUp) {
+    volumeScore = 1;
+    volTag = { key: 'vol-up-up', label: '量增价升', single: '增', color: 'red', score: 1, dim: 'volume', detail: [
+      `${ds} 收 ${fmt(close)} > 昨收 ${fmt(prev.close)}，量 ${fmtVol(k.volume)} ≥ 5日均量 ${fmtVol(volMa5)}`,
+      '真金白银的拉升：趋势具持续性，持仓不动是最优解',
+    ] };
+  } else if (up) {
+    volumeScore = 0.2;
+    volTag = { key: 'vol-up-down', label: '量缩价升', single: '缩', color: 'orange', score: 0.2, dim: 'volume', detail: [
+      `${ds} 收 ${fmt(close)} > 昨收 ${fmt(prev.close)}，但量 ${fmtVol(k.volume)} < 5日均量 ${fmtVol(volMa5)}`,
+      '动能衰竭警告：高位易形成诱多陷阱，需提高警惕',
+    ] };
+  } else if (down && volUp) {
+    volumeScore = -1;
+    volTag = { key: 'vol-down-up', label: '量增价跌', single: '跌', color: 'green', score: -1, dim: 'volume', detail: [
+      `${ds} 收 ${fmt(close)} < 昨收 ${fmt(prev.close)}，量 ${fmtVol(k.volume)} ≥ 5日均量 ${fmtVol(volMa5)}`,
+      nearHigh ? '出现在高位：机构高位出货，坚决离场' : '出现在大跌末端：恐慌盘涌出，往往接近最后一跌',
+    ] };
+  } else {
+    volumeScore = -0.2;
+    volTag = { key: 'vol-down-down', label: '量缩价跌', single: '阴', color: 'slate', score: -0.2, dim: 'volume', detail: [
+      `${ds} 收 ${fmt(close)} < 昨收 ${fmt(prev.close)}，量 ${fmtVol(k.volume)} < 5日均量 ${fmtVol(volMa5)}`,
+      '无人接盘的阴跌：除非放量恐慌盘或大阳线，否则不抄底',
+    ] };
+  }
+  if (isLowVol) {
+    volumeScore = Math.min(1, volumeScore + 0.4);
+    volTag.detail.push(`量 ${fmtVol(k.volume)} 创近20日最低 → 地量见地价（抛售枯竭）`);
+  }
+
+  // ── 动能背离维度（25%：MACD 为主，RSI 辅助）──
+  let momentumScore = 0;
+  let momTag: EnvTag | null = null;
+  let topDiv = false, botDiv = false;
+  const dif = macd[i].dif, dea = macd[i].dea;
+  if (dif != null && dea != null) {
+    // 背离：近20日价格极值日对比当日 DIF
+    let hiIdx = i, liIdx = i;
+    for (let j = i - 19; j <= i; j++) {
+      if (klines[j].high >= klines[hiIdx].high) hiIdx = j;
+      if (klines[j].low <= klines[liIdx].low) liIdx = j;
+    }
+    const difHi = macd[hiIdx].dif, difLo = macd[liIdx].dif;
+    topDiv = i - hiIdx <= 3 && close >= high20 && difHi != null && dif < difHi - Math.abs(difHi) * 0.005;
+    botDiv = i - liIdx <= 3 && close <= low20 && difLo != null && dif > difLo + Math.abs(difLo) * 0.005;
+    if (topDiv) {
+      momentumScore = -1;
+      momTag = { key: 'mom-topdiv', label: 'MACD顶背离', single: '顶', color: 'green', score: -1, dim: 'momentum', detail: [
+        `${ds} 价创近20日新高 ${fmt(close)}，但 DIF ${fmt3(dif)} < 高点日(${klines[hiIdx].date.slice(5).replace('-', '/')}) ${fmt3(difHi!)}`,
+        '上涨发动机熄火（核心风险）：最可靠的减仓信号',
+      ] };
+    } else if (botDiv) {
+      momentumScore = 1;
+      momTag = { key: 'mom-botdiv', label: 'MACD底背离', single: '底', color: 'red', score: 1, dim: 'momentum', detail: [
+        `${ds} 价创近20日新低 ${fmt(close)}，但 DIF ${fmt3(dif)} > 低点日(${klines[liIdx].date.slice(5).replace('-', '/')}) ${fmt3(difLo!)}`,
+        '下跌力量衰竭（核心机会）：准备抄底信号，等放量阳线确认',
+      ] };
+    } else {
+      momentumScore = (dif > dea ? 0.4 : -0.4) + (dif > 0 ? 0.3 : -0.3);
+      const bullish = dif > dea && dif > 0;
+      const bearish = dif < dea && dif < 0;
+      momTag = {
+        key: 'mom-flat', label: bullish ? 'MACD多头' : bearish ? 'MACD空头' : 'MACD中性',
+        single: bullish ? '金' : bearish ? '死' : '中', color: bullish ? 'red' : bearish ? 'green' : 'slate',
+        score: momentumScore, dim: 'momentum',
+        detail: [
+          `DIF ${fmt3(dif)} ${dif > dea ? '>' : '<'} DEA ${fmt3(dea)}，${dif > 0 ? '零轴上方' : '零轴下方'}`,
+          bullish ? '金叉/零轴上：动能偏多' : bearish ? '死叉/零轴下：动能偏空' : '动能方向未明',
+        ],
+      };
+      const r6 = rsi6s[i];
+      if (r6 != null) {
+        if (r6 >= 80) { momentumScore -= 0.25; momTag.detail.push(`RSI6 ${r6.toFixed(0)} ≥ 80 → 超买过热`); }
+        else if (r6 >= 70) { momentumScore -= 0.15; momTag.detail.push(`RSI6 ${r6.toFixed(0)} ≥ 70 → 接近超买`); }
+        if (r6 <= 20) { momentumScore += 0.25; momTag.detail.push(`RSI6 ${r6.toFixed(0)} ≤ 20 → 超卖恐慌`); }
+        else if (r6 <= 30) { momentumScore += 0.15; momTag.detail.push(`RSI6 ${r6.toFixed(0)} ≤ 30 → 接近超卖`); }
+      }
+      momentumScore = Math.max(-1, Math.min(1, momentumScore));
+    }
+  }
+
+  // ── 波动率维度（15%：BOLL 20,2）──
+  let bollScore = 0;
+  let bollTag: EnvTag | null = null;
+  let squeeze = false;
+  const b = bolls[i], b3 = bolls[i - 3];
+  if (b.mid && b.upper && b.lower && b3.upper && b3.lower) {
+    const band = (b.upper - b.lower) / b.mid;
+    const start = Math.max(0, i - 59);
+    const bands: number[] = [];
+    for (let j = start; j <= i; j++) {
+      const bb = bolls[j];
+      if (bb.mid && bb.upper && bb.lower) bands.push((bb.upper - bb.lower) / bb.mid);
+    }
+    bands.sort((a, b2) => a - b2);
+    const p20 = bands[Math.floor(bands.length * 0.2)];
+    squeeze = band < p20;
+    const touchUpper = close >= b.mid + (b.upper - b.mid) * 0.7;
+    const touchLower = close <= b.mid - (b.mid - b.lower) * 0.7;
+    const upperRising = b.upper > b3.upper;
+    const lowerFalling = b.lower < b3.lower;
+    if (squeeze) {
+      bollScore = 0;
+      bollTag = { key: 'vol-squeeze', label: '布林收口', single: '收', color: 'slate', score: 0, dim: 'volatility', detail: [
+        `带宽 ${(band * 100).toFixed(1)}% 低于近60日20%分位（${(p20 * 100).toFixed(1)}%）`,
+        '大变盘前的宁静：盯方向，上破中轨做多、下破做空/离场',
+      ] };
+    } else if (touchUpper && upperRising) {
+      bollScore = 1;
+      bollTag = { key: 'vol-up', label: '上轨扩张', single: '涨', color: 'red', score: 1, dim: 'volatility', detail: [
+        `上轨 ${fmt(b.upper)} 向上翘起，价 ${fmt(close)} 贴上轨运行`,
+        '单边强趋势进行中：持仓者拿住，追高风险极大',
+      ] };
+    } else if (touchLower && lowerFalling) {
+      bollScore = -1;
+      bollTag = { key: 'vol-down', label: '下轨扩张', single: '跌', color: 'green', score: -1, dim: 'volatility', detail: [
+        `下轨 ${fmt(b.lower)} 向下翘起，价 ${fmt(close)} 贴下轨运行`,
+        '单边下跌恐慌中：不接飞刀，等价格站回下轨上方',
+      ] };
+    } else {
+      bollScore = close >= b.mid ? 0.3 : -0.3;
+    }
+  }
+
+  // ── 综合强弱周期（打分定档 + 关键信号确认）──
+  const total = 0.3 * trendScore + 0.3 * volumeScore + 0.25 * momentumScore + 0.15 * bollScore;
+  const dimLine = `均线 ${fmtScore(trendScore)} · 量价 ${fmtScore(volumeScore)} · MACD ${fmtScore(momentumScore)} · 波动 ${fmtScore(bollScore)}`;
+  const bear = trendScore <= -0.4;
+  let cycle: EnvTag;
+  if (total >= 0.6) {
+    cycle = { key: 'cycle', label: '强进攻周期', single: '攻', color: 'red', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '趋势/量能/动能共振：重仓持有，逢回踩均线加仓'] };
+  } else if (total <= -0.6) {
+    cycle = { key: 'cycle', label: '弱筑底周期', single: '筑', color: 'indigo', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '下跌力量衰竭：轻仓试盘，等放量大阳线确认反转'] };
+  } else if (total >= 0.2 && (topDiv || (up && !volUp) || squeeze)) {
+    cycle = { key: 'cycle', label: '强防守周期', single: '防', color: 'orange', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '趋势还在但内核转弱：只出不进，锁定利润，等方向明朗'] };
+  } else if (total <= -0.2 && bear && (botDiv || isLowVol || squeeze)) {
+    cycle = { key: 'cycle', label: '弱筑底周期', single: '筑', color: 'indigo', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '空头衰竭信号（底背离/地量/收口）：轻仓试盘，急跌敢买'] };
+  } else if (total <= -0.2 && bear) {
+    cycle = { key: 'cycle', label: '弱反弹周期', single: '弹', color: 'green', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '空头下的超跌反抽：借反弹坚决减仓，绝不追高'] };
+  } else {
+    cycle = { key: 'cycle', label: '震荡变盘期', single: '震', color: 'slate', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '方向未明：控制仓位，等待突破确认'] };
+  }
+  const tags: EnvTag[] = [cycle];
+  if (trendTag) tags.push(trendTag);
+  if (volTag) tags.push(volTag);
+  if (momTag) tags.push(momTag);
+  if (bollTag) tags.push(bollTag);
+  return { tags, total, dimScores: { trend: trendScore, volume: volumeScore, momentum: momentumScore, volatility: bollScore } };
 }
 
 
@@ -1392,8 +1704,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const mktInfoHoveredRef = useRef(false);
   const mktInfoActiveIdRef = useRef<string | undefined>(undefined);
   // 底部判定依据区：当前选中的标签（hover 展示 / 点击固定）
-  // event/status = 破位类标签；pattern = K线形态标签
-  type MktSel = { date: string; kind: 'event' | 'status' } | { date: string; kind: 'pattern'; ptype: KlinePattern['type'] };
+  // event/status = 破位类标签；pattern = K线形态标签；env = 环境标签
+  type MktSel = { date: string; kind: 'event' | 'status' }
+    | { date: string; kind: 'pattern'; ptype: KlinePattern['type'] }
+    | { date: string; kind: 'env'; ekey: string };
   const [mktSel, setMktSel] = useState<MktSel | null>(null);
   const [mktSelPinned, setMktSelPinned] = useState(false);
   const resetMktSel = () => { setMktSel(null); setMktSelPinned(false); };
@@ -1406,7 +1720,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     resetMktSel();
     const rect = btn.getBoundingClientRect();
     const popupW = 260;
-    const estH = 300;
+    const estH = 420;
     const gap = 8;
     let left = rect.right + gap;
     let top = rect.top + rect.height / 2 - estH / 2;
@@ -1453,6 +1767,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const mktSelEq = (a: MktSel, b: MktSel): boolean => {
     if (a.kind !== b.kind || a.date !== b.date) return false;
     if (a.kind === 'pattern') return a.ptype === (b as { ptype: KlinePattern['type'] }).ptype;
+    if (a.kind === 'env') return a.ekey === (b as { ekey: string }).ekey;
     return true;
   };
   const handleMktTagEnter = (sel: MktSel) => {
@@ -1736,7 +2051,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [nameSubMode, setNameSubMode] = useState<'tags' | 'code'>('tags');
   // 最新收盘交易日状态标签（按 klines 引用缓存，数据未变时不重复计算）
   // 标签文本/逻辑变更时需 +1 版本号，避免 HMR 保留旧缓存导致缩写不生效
-  const LATEST_TAG_VERSION = 4;
+  const LATEST_TAG_VERSION = 6;
   const latestTagsCache = useRef(new Map<string, { v: number; key: unknown; tags: { key: string; text: string; cls: string }[] }>());
   const getLatestDayTags = (stock: StockEntry): { key: string; text: string; cls: string }[] => {
     const daily = stockBollMap.get(stock.id)?.daily;
@@ -1762,7 +2077,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         tags.push({ key: `d-${ev.date}`, text: ev.status === 'trueBreak' ? '真' : '假', cls: ev.status === 'trueBreak' ? 'bg-green-500/10 text-green-500 border-green-500/20' : 'bg-red-500/10 text-red-500 border-red-500/20' });
       }
     }
-    // K线形态单字标签（十字星/金针/吊颈/射击/倒锤）放最前，确保优先可见
+    // 综合强弱周期单字（置最前）：攻/防/弹/筑/震
+    const env = analyzeEnvironment(klines, v => formatPrice(v, stock.name));
+    const cycle = env ? env.tags.find(t => t.key === 'cycle') : null;
+    if (cycle) {
+      const envCls: Record<EnvTag['color'], string> = {
+        red: 'bg-red-500/10 text-red-500 border-red-500/20',
+        green: 'bg-green-500/10 text-green-500 border-green-500/20',
+        orange: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
+        indigo: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30',
+        slate: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
+      };
+      tags.unshift({ key: 'env-cycle', text: cycle.single, cls: envCls[cycle.color] });
+    }
+    // K线形态单字标签（十字星/金针/吊颈/射击/倒锤）
     const patterns = analyzeKlinePatterns(klines, v => formatPrice(v, stock.name));
     for (const p of patterns) {
       tags.unshift({
@@ -5261,6 +5589,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const klines = daily?.klines;
         const events = klines && klines.length > 0 ? analyzeMarketConditions(klines) : null;
         const patterns = klines && klines.length > 0 ? analyzeKlinePatterns(klines, v => formatPrice(v, mktInfoStock.name)) : null;
+        const env = klines && klines.length > 0 ? analyzeEnvironment(klines, v => formatPrice(v, mktInfoStock.name)) : null;
         const fmtDay = (d: string) => {
           const p = d.split('-');
           return p.length === 3 ? `${parseInt(p[1], 10)}月${parseInt(p[2], 10)}日` : d;
@@ -5279,18 +5608,30 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const selKey = mktSel ?? defaultSel;
         const isSel = (ev: MarketEvent, kind: 'event' | 'status') => !!selKey && selKey.kind !== 'pattern' && selKey.date === ev.date && selKey.kind === kind;
         const isPatSel = (p: KlinePattern) => !!selKey && selKey.kind === 'pattern' && selKey.ptype === p.type;
+        const isEnvSel = (t: EnvTag) => !!selKey && selKey.kind === 'env' && selKey.ekey === t.key;
+        const envChipCls: Record<EnvTag['color'], { cls: string; sel: string }> = {
+          red: { cls: 'bg-red-500/10 text-red-500 border-red-500/20', sel: ' border-red-500/60' },
+          green: { cls: 'bg-green-500/10 text-green-500 border-green-500/20', sel: ' border-green-500/60' },
+          orange: { cls: 'bg-orange-500/10 text-orange-500 border-orange-500/20', sel: ' border-orange-500/60' },
+          indigo: { cls: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30', sel: ' border-indigo-400/60' },
+          slate: { cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30', sel: ' border-slate-400/60' },
+        };
+        const envDate = klines && klines.length > 0 ? klines[klines.length - 1].date : '';
         const patChipCls: Record<KlinePattern['color'], { cls: string; sel: string }> = {
           red: { cls: 'bg-red-500/10 text-red-500 border-red-500/20', sel: ' border-red-500/60' },
           green: { cls: 'bg-green-500/10 text-green-500 border-green-500/20', sel: ' border-green-500/60' },
           slate: { cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30', sel: ' border-slate-400/60' },
         };
         const fp = (v: number) => formatPrice(v, mktInfoStock.name);
-        const selEv = selKey && selKey.kind !== 'pattern' && events ? events.find(e => e.date === selKey.date) : null;
+        const selEv = selKey && selKey.kind !== 'pattern' && selKey.kind !== 'env' && events ? events.find(e => e.date === selKey.date) : null;
         // 判定依据文案
         const explainLines: string[] = [];
         if (selKey && selKey.kind === 'pattern') {
           const p = patterns?.find(x => x.type === selKey.ptype);
           if (p) explainLines.push(...p.detail);
+        } else if (selKey && selKey.kind === 'env') {
+          const t = env?.tags.find(x => x.key === selKey.ekey);
+          if (t) explainLines.push(...t.detail);
         } else if (selEv) {
           const maStr = selEv.brokenList.map(b => `MA${b.period} ${fp(b.value)}`).join(' · ');
           if (selKey!.kind === 'event') {
@@ -5326,6 +5667,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             style={{ top: mktInfoPos.top, left: mktInfoPos.left, width: 260 }}
           >
             <div className="text-[11px] font-bold text-app-subtext mb-1 text-center">{mktInfoStock.name} <span className="font-mono text-[9px] font-normal text-app-rowtext">{getDisplayCode(mktInfoStock.code)}</span></div>
+            {env && env.tags.length > 0 && (
+              <div className="border-t border-app-border pt-1.5 mb-1.5">
+                <div className="flex items-center gap-1 flex-wrap">
+                  <span className="text-[9px] text-app-subtext shrink-0 mr-0.5">环境</span>
+                  {env.tags.map(t => (
+                    <span
+                      key={t.key}
+                      className={`${chipBase} ${envChipCls[t.color].cls}${isEnvSel(t) ? envChipCls[t.color].sel : ''}`}
+                      onMouseEnter={() => handleMktTagEnter({ date: envDate, kind: 'env', ekey: t.key })}
+                      onClick={() => handleMktTagClick({ date: envDate, kind: 'env', ekey: t.key })}
+                    >{t.dim === 'cycle' ? `${t.label} ${(t.score >= 0 ? '+' : '') + t.score.toFixed(2)}` : t.label}</span>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="text-[9px] text-app-subtext border-t border-app-border pt-1 mb-1.5">近5交易日行情</div>
             {patterns && patterns.length > 0 && (
               <div className="flex items-center gap-1.5 mb-1.5">
