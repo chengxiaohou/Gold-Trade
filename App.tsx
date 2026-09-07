@@ -315,6 +315,8 @@ export default function App() {
         ],
         tagColors: parsed.tagColors || {},
         sortMode: parsed.sortMode || 'default',
+        maxRows: parsed.maxRows || 15,
+        maxWidth: parsed.maxWidth || 812,
         memo: parsed.memo || '',
         memoUpdatedAt: parsed.memoUpdatedAt || 0
       };
@@ -329,6 +331,8 @@ export default function App() {
         ],
         tagColors: {},
         sortMode: 'default',
+        maxRows: 15,
+        maxWidth: 812,
         memo: '',
         memoUpdatedAt: 0
       };
@@ -359,7 +363,7 @@ export default function App() {
     clearCacheRecord('tencent');
   };
 
-  const handleSortModeChange = (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly') => {
+  const handleSortModeChange = (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent') => {
     setStockSettings(prev => ({ ...prev, sortMode: mode }));
   };
 

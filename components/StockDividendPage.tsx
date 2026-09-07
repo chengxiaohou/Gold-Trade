@@ -225,8 +225,8 @@ interface StockDividendPageProps {
   resetSignal?: number;
   dividendYearLeft?: number;
   dividendYearRight?: number;
-  sortMode?: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly';
-  onSortModeChange?: (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly') => void;
+  sortMode?: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent';
+  onSortModeChange?: (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent') => void;
   memo?: string;
   memoUpdatedAt?: number;
   memoBaseline?: string;
@@ -970,7 +970,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       setShowResetConfirm(true);
     }
   }, [resetSignal]);
-  const handleSortModeChange = (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly') => {
+  const handleSortModeChange = (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent') => {
     if (onSortModeChange) onSortModeChange(mode);
   };
   // 布林线列排序方向：false=下→中→上，true=上→中→下
@@ -1449,6 +1449,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const sortedStocks = useMemo(() => {
     if (sortMode === 'dividendRate') {
       return [...stocks].sort((a, b) => getDividendRate(b) - getDividendRate(a));
+    } else if (sortMode === 'changePercent') {
+      return [...stocks].sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0));
     } else if (sortMode === 'tag') {
       return [...stocks].sort((a, b) => {
         const aHasTag = a.tag && a.tag.trim() ? 0 : 1;
@@ -2286,7 +2288,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
   const TRADE_STATUS_LABEL: Record<string, string> = {
     'buy-pending': '买入挂单', 'sell-pending': '卖出挂单',
-    'buy-filled': '买入成功', 'sell-filled': '卖出成功',
+    'buy-filled': '买入成交', 'sell-filled': '卖出成交',
   };
   const tradeStatusColor = (t: StockTrade) => t.status === 'pending' ? 'text-orange-400' : (t.side === 'buy' ? 'text-brand-red' : 'text-brand-green');
   const getTrades = (stock: StockEntry): StockTrade[] => stock.stockTrades || [];
@@ -2800,7 +2802,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </th>
                 )}
                 {cols.includes('price') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">价格</th>}
-                {cols.includes('changePercent') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">涨跌幅</th>}
+                {cols.includes('changePercent') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none" onClick={() => handleSortModeChange(sortMode === 'changePercent' ? 'default' : 'changePercent')}>涨跌幅</th>}
                 <th
                 className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap"
                 colSpan={3}
@@ -3188,7 +3190,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           const trades = getTrades(stock);
                           const ordinary = trades.filter(t => !t.isMerged);
                           const latest = ordinary.length ? [...ordinary].sort((a, b) => b.createdAt - a.createdAt)[0] : null;
-                          if (!latest) return <span className="font-mono text-[11px] whitespace-nowrap text-app-subtext">-</span>;
+                          if (!latest) return (
+                            <div className="flex flex-col items-center leading-tight gap-px">
+                              <span className="text-[9px]">&nbsp;</span>
+                              <span className="font-mono text-[10px] whitespace-nowrap text-app-subtext">-</span>
+                              <span className="font-mono text-[8px]">&nbsp;</span>
+                            </div>
+                          );
                           const tradePrice = latest.price;
                           const diffValid = (stock.price || 0) > 0 && tradePrice > 0;
                           const diffNum = diffValid ? ((stock.price - tradePrice) / tradePrice) * 100 : null;
