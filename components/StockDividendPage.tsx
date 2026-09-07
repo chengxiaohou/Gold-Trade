@@ -5701,55 +5701,61 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <div className="text-[10px] text-app-rowtext py-1">暂无K线数据</div>
             ) : events.length === 0 ? (
               <div className="text-[10px] text-app-rowtext py-1">近5日无异常</div>
-            ) : events.slice().reverse().map(ev => {
-              const s = statusChip(ev);
-              // 中间观测日（不含首尾）：处于“修复观察”状态，逐日展示
-              const midDays = ev.window.slice(1, -1);
-              const lastDay = ev.window[ev.window.length - 1];
-              const statusChipNode = (
-                <span
-                  className={`${chipBase} ${s.cls}${isSel(ev, 'status') ? s.selCls : ''}`}
-                  onMouseEnter={() => handleMktTagEnter({ date: ev.date, kind: 'status' })}
-                  onClick={() => handleMktTagClick({ date: ev.date, kind: 'status' })}
-                >{s.label} x{ev.brokenCount}</span>
-              );
-              // 修复观察徽标：展示观测进度（已观测天数/3天观测期）
-              const repairChipNode = (progress: number) => (
+            ) : (() => {
+              // 每个事件按观测窗口拆成逐日行，整体按日期倒序（最新在上）
+              const rows: { date: string; ev: MarketEvent; kind: 'break' | 'repair' | 'status'; progress?: number }[] = [];
+              for (const ev of events) {
+                rows.push({ date: ev.date, ev, kind: 'break' });
+                if (ev.window.length > 1) {
+                  // 中间观测日：修复观察（进度从第2天起）
+                  for (let i = 1; i < ev.window.length - 1; i++) {
+                    rows.push({ date: ev.window[i].date, ev, kind: 'repair', progress: i + 1 });
+                  }
+                  // 观测末尾：定论（真/假）或当前状态（修复观察带进度）
+                  const last = ev.window[ev.window.length - 1];
+                  rows.push({
+                    date: last.date, ev,
+                    kind: ev.status === 'confirming' ? 'repair' : 'status',
+                    progress: ev.status === 'confirming' ? ev.window.length : undefined,
+                  });
+                }
+              }
+              rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+              const repairChip = (ev: MarketEvent, progress: number) => (
                 <span
                   className={`${chipBase} bg-orange-500/10 text-orange-500 border-orange-500/20${isSel(ev, 'repair') ? ' border-orange-500/60' : ''}`}
                   onMouseEnter={() => handleMktTagEnter({ date: ev.date, kind: 'repair' })}
                   onClick={() => handleMktTagClick({ date: ev.date, kind: 'repair' })}
                 >修复观察 {progress}/3</span>
               );
-              return (
-                <div key={ev.date}>
-                  {/* 破位当天 */}
-                  <div className="flex items-center gap-1.5 mb-1 last:mb-0">
-                    <span className="text-[9px] text-app-rowtext shrink-0 w-[52px]">{fmtDay(ev.date)}</span>
-                    <span
-                      className={`${chipBase} ${greenCls}${isSel(ev, 'event') ? greenSelCls : ''}`}
-                      onMouseEnter={() => handleMktTagEnter({ date: ev.date, kind: 'event' })}
-                      onClick={() => handleMktTagClick({ date: ev.date, kind: 'event' })}
-                    >破位 x{ev.brokenCount}</span>
-                    {ev.window.length === 1 && repairChipNode(1)}
+              return rows.map(row => {
+                const ev = row.ev;
+                const s = statusChip(ev);
+                return (
+                  <div key={`${ev.date}-${row.date}-${row.kind}`} className="flex items-center gap-1.5 mb-1 last:mb-0">
+                    <span className="text-[9px] text-app-rowtext shrink-0 w-[52px]">{fmtDay(row.date)}</span>
+                    {row.kind === 'break' && (
+                      <>
+                        <span
+                          className={`${chipBase} ${greenCls}${isSel(ev, 'event') ? greenSelCls : ''}`}
+                          onMouseEnter={() => handleMktTagEnter({ date: ev.date, kind: 'event' })}
+                          onClick={() => handleMktTagClick({ date: ev.date, kind: 'event' })}
+                        >破位 x{ev.brokenCount}</span>
+                        {ev.window.length === 1 && repairChip(ev, 1)}
+                      </>
+                    )}
+                    {row.kind === 'repair' && repairChip(ev, row.progress!)}
+                    {row.kind === 'status' && (
+                      <span
+                        className={`${chipBase} ${s.cls}${isSel(ev, 'status') ? s.selCls : ''}`}
+                        onMouseEnter={() => handleMktTagEnter({ date: ev.date, kind: 'status' })}
+                        onClick={() => handleMktTagClick({ date: ev.date, kind: 'status' })}
+                      >{s.label} x{ev.brokenCount}</span>
+                    )}
                   </div>
-                  {/* 中间观测日：修复观察（进度从第2天起） */}
-                  {midDays.map(w => (
-                    <div key={w.date} className="flex items-center gap-1.5 mb-1 last:mb-0">
-                      <span className="text-[9px] text-app-rowtext shrink-0 w-[52px]">{fmtDay(w.date)}</span>
-                      {repairChipNode(ev.window.indexOf(w) + 1)}
-                    </div>
-                  ))}
-                  {/* 观测末尾：定论（真/假）或当前状态（修复观察带进度） */}
-                  {ev.window.length > 1 && (
-                    <div className="flex items-center gap-1.5 mb-1.5 last:mb-0">
-                      <span className="text-[9px] text-app-rowtext shrink-0 w-[52px]">{fmtDay(lastDay.date)}</span>
-                      {ev.status === 'confirming' ? repairChipNode(ev.window.length) : statusChipNode}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                );
+              });
+            })()}
             <div className="border-t border-app-border mt-1 pt-1.5">
               <div className="text-[9px] text-app-subtext mb-1">判定依据</div>
               {explainLines.length > 0 ? (
