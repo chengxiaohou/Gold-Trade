@@ -509,6 +509,90 @@ const formatMemoTime = (ts?: number): string => {
   return `编辑于 ${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
+// ── 行情状态分析：近 N 个交易日“破位”事件 ──
+const MARKET_MA_PERIODS = [5, 10, 20, 30, 60, 120, 250, 500];
+
+// 被跌破的均线明细
+interface MarketMaInfo {
+  period: number;
+  value: number; // 破位当天的均线值
+}
+
+interface MarketEvent {
+  date: string; // 破位当天日期 YYYY-MM-DD
+  brokenCount: number; // 当日跌破的均线条数 N
+  brokenList: MarketMaInfo[]; // 当日下穿的均线明细（按周期升序）
+  ref: MarketMaInfo; // 参照均线：被跌破中数值最高的一条
+  close: number; // 破位当天收盘价
+  status: 'confirming' | 'trueBreak' | 'falseBreak'; // 修复观察 / 真破位 / 假破位
+  returnDay?: { date: string; close: number; refMa: number }; // 假破位：回到均线上方那天
+  window: { date: string; close: number; refMa: number }[]; // 观测窗口每日数据（破位日起）
+}
+
+// 破位：当日收盘价下穿若干条均线（前一日收盘≥均线、当日收盘<均线）
+// 真/假破位：以被跌破均线中数值最高的一条为参照，破位当天算第1天，3天内
+// 收盘价（每日对比该日最新均线值）回到其上方即假破位，否则第3天收盘后判真破位；
+// 数据不足（事件距今天太近）时保持“修复观察”。
+function analyzeMarketConditions(klines: BollKline[], lastDays = 5): MarketEvent[] {
+  const n = klines.length;
+  if (n < lastDays + 1) return [];
+  const closes = klines.map(k => k.close);
+  // 各周期均线序列：maSeries[pi][i] 为第 i 天该周期均线值，历史不足时为 null
+  const maSeries = MARKET_MA_PERIODS.map(period => {
+    const res: (number | null)[] = new Array(n).fill(null);
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      sum += closes[i];
+      if (i >= period) sum -= closes[i - period];
+      if (i >= period - 1) res[i] = sum / period;
+    }
+    return res;
+  });
+  const events: MarketEvent[] = [];
+  for (let t = n - lastDays; t < n; t++) {
+    if (t - 1 < 0) continue;
+    // 统计当日下穿的均线集合
+    const broken: MarketMaInfo[] = [];
+    for (let pi = 0; pi < MARKET_MA_PERIODS.length; pi++) {
+      const period = MARKET_MA_PERIODS[pi];
+      const maT = maSeries[pi][t];
+      const maPrev = maSeries[pi][t - 1];
+      if (maT == null || maPrev == null) continue;
+      if (closes[t] < maT && closes[t - 1] >= maPrev) broken.push({ period, value: maT });
+    }
+    if (broken.length === 0) continue;
+    // 参照均线：被跌破中数值最高的一条（价格下跌时最先触到）
+    const ref = broken.reduce((a, b) => (b.value > a.value ? b : a));
+    const refPi = MARKET_MA_PERIODS.indexOf(ref.period);
+    // 3 天观测：破位当天为第 1 天，记录每日收盘与当日最新参照均线值
+    const window: { date: string; close: number; refMa: number }[] = [];
+    let returned = false;
+    for (let d = t; d <= t + 2 && d < n; d++) {
+      const maD = maSeries[refPi][d];
+      const refMa = maD ?? 0;
+      window.push({ date: klines[d].date, close: closes[d], refMa });
+      if (maD != null && closes[d] >= maD) { returned = true; break; }
+    }
+    let status: MarketEvent['status'];
+    if (returned) status = 'falseBreak';
+    else if (n - 1 >= t + 2) status = 'trueBreak';
+    else status = 'confirming';
+    const ev: MarketEvent = {
+      date: klines[t].date,
+      brokenCount: broken.length,
+      brokenList: broken.slice().sort((a, b) => a.period - b.period),
+      ref,
+      close: closes[t],
+      status,
+      window,
+    };
+    if (status === 'falseBreak') ev.returnDay = window[window.length - 1];
+    events.push(ev);
+  }
+  return events;
+}
+
+
 // 股息率曲线共享组件：详情弹窗与列表页“股息率”浮窗共用一套渲染逻辑，
 // 之后任一处的股息率曲线改动都会同时反映到另一处。
 function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges, period, rangeValue, offsetValue, onRangeChange, onOffsetChange }: {
@@ -1100,7 +1184,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 悬停名称显示支撑/压力位（临时，不固定）
   const handleListSrHoverEnter = (e: React.MouseEvent, stock: StockEntry) => {
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
-    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned) return;
+    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned || mktInfoPinned) return;
     handleListSrClick(e, stock, false);
   };
 
@@ -1183,6 +1267,87 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const divRateInfoActiveIdRef = useRef<string | undefined>(undefined);
   const isInsideDivRateInfo = (node: Node | null) => !!node && !!divRateInfoRef.current?.contains(node);
 
+  // 行情状态浮窗（近5交易日“破位”事件分析，数据复用 stockBollMap 日线，无需额外请求）
+  const [mktInfoStock, setMktInfoStock] = useState<StockEntry | null>(null);
+  const [mktInfoPos, setMktInfoPos] = useState({ left: 0, top: 0 });
+  const [mktInfoPinned, setMktInfoPinned] = useState(false);
+  const mktInfoBtnRef = useRef<HTMLTableCellElement | null>(null);
+  const mktInfoRef = useRef<HTMLDivElement | null>(null);
+  const mktInfoHoveredRef = useRef(false);
+  const mktInfoActiveIdRef = useRef<string | undefined>(undefined);
+  // 底部判定依据区：当前选中的标签（hover 展示 / 点击固定）
+  const [mktSel, setMktSel] = useState<{ date: string; kind: 'event' | 'status' } | null>(null);
+  const [mktSelPinned, setMktSelPinned] = useState(false);
+  const resetMktSel = () => { setMktSel(null); setMktSelPinned(false); };
+
+  // 显示行情状态浮窗（位置参考价格浮窗：右侧垂直居中）
+  const openMktInfo = (btn: HTMLElement, stock: StockEntry) => {
+    mktInfoBtnRef.current = btn as unknown as HTMLTableCellElement;
+    mktInfoActiveIdRef.current = stock.id;
+    setMktInfoStock(stock);
+    resetMktSel();
+    const rect = btn.getBoundingClientRect();
+    const popupW = 260;
+    const estH = 300;
+    const gap = 8;
+    let left = rect.right + gap;
+    let top = rect.top + rect.height / 2 - estH / 2;
+    if (left + popupW > window.innerWidth - 10) left = rect.left - popupW - gap;
+    if (left < 10) left = (window.innerWidth - popupW) / 2;
+    if (top + estH > window.innerHeight - 10) top = window.innerHeight - estH - 10;
+    if (top < 10) top = 10;
+    setMktInfoPos({ left, top });
+  };
+
+  // 悬停名称显示行情状态（临时，不固定）
+  const handleMktInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
+    // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
+    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned || mktInfoPinned) return;
+    mktInfoHoveredRef.current = true;
+    openMktInfo(e.currentTarget as HTMLElement, stock);
+  };
+
+  // 移开名称：非固定模式下直接关闭
+  const handleMktInfoLeave = () => {
+    mktInfoHoveredRef.current = false;
+    if (mktInfoPinned) return;
+    mktInfoActiveIdRef.current = undefined;
+    setMktInfoStock(null);
+    resetMktSel();
+  };
+
+  // 点击名称：切换固定/取消固定
+  const handleMktInfoClick = (e: React.MouseEvent, stock: StockEntry) => {
+    e.stopPropagation();
+    if (mktInfoPinned && mktInfoStock?.id === stock.id) {
+      mktInfoHoveredRef.current = false;
+      mktInfoActiveIdRef.current = undefined;
+      setMktInfoPinned(false);
+      setMktInfoStock(null);
+      resetMktSel();
+      return;
+    }
+    openMktInfo(e.currentTarget as HTMLElement, stock);
+    setMktInfoPinned(true);
+  };
+
+  // 悬停标签：展示判定依据（固定状态时不切换）
+  const handleMktTagEnter = (date: string, kind: 'event' | 'status') => {
+    if (mktSelPinned) return;
+    setMktSel({ date, kind });
+  };
+
+  // 点击标签：固定/取消固定判定依据
+  const handleMktTagClick = (date: string, kind: 'event' | 'status') => {
+    if (mktSelPinned && mktSel?.date === date && mktSel.kind === kind) {
+      resetMktSel();
+    } else {
+      setMktSel({ date, kind });
+      setMktSelPinned(true);
+    }
+  };
+
+
   // 持仓详情浮窗（hover 临时显示 / 点击固定，逻辑与价格浮窗一致，浮窗朝左侧展示）
   const [positionInfoStock, setPositionInfoStock] = useState<StockEntry | null>(null);
   const [positionInfoPos, setPositionInfoPos] = useState({ left: 0, top: 0 });
@@ -1245,7 +1410,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 悬停价格显示
   const handlePriceInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
-    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned) return;
+    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned || mktInfoPinned) return;
     priceInfoHoveredRef.current = true;
     openPriceInfo(e.currentTarget as HTMLElement, stock);
   };
@@ -1337,7 +1502,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 悬停股息率列显示
   const handleDivRateInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
-    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned) return;
+    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned || mktInfoPinned) return;
     divRateInfoHoveredRef.current = true;
     openDivRateInfo(e.currentTarget as HTMLElement, stock);
   };
@@ -1402,7 +1567,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 悬停持仓显示（临时，不固定）
   const handlePositionInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
-    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned) return;
+    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned || mktInfoPinned) return;
     positionInfoHoveredRef.current = true;
     openPositionInfo(e.currentTarget as HTMLElement, stock);
   };
@@ -1443,6 +1608,40 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
   const [stockBollErrorMap, setStockBollErrorMap] = useState<Map<string, { daily?: string; weekly?: string; monthly?: string }>>(new Map());
   const [isRefreshingBoll, setIsRefreshingBoll] = useState(false);
+
+  // 名称列第二行展示模式：默认“状态标签”，点击“代码”表头切换为展示代码
+  const [nameSubMode, setNameSubMode] = useState<'tags' | 'code'>('tags');
+  // 最新收盘交易日状态标签（按 klines 引用缓存，数据未变时不重复计算）
+  // 标签文本/逻辑变更时需 +1 版本号，避免 HMR 保留旧缓存导致缩写不生效
+  const LATEST_TAG_VERSION = 3;
+  const latestTagsCache = useRef(new Map<string, { v: number; key: unknown; tags: { key: string; text: string; cls: string }[] }>());
+  const getLatestDayTags = (stock: StockEntry): { key: string; text: string; cls: string }[] => {
+    const daily = stockBollMap.get(stock.id)?.daily;
+    const klines = daily?.klines;
+    if (!klines || klines.length === 0) return [];
+    const cached = latestTagsCache.current.get(stock.id);
+    if (cached && cached.key === klines && cached.v === LATEST_TAG_VERSION) return cached.tags;
+    const events = analyzeMarketConditions(klines);
+    const lastDate = klines[klines.length - 1].date;
+    const tags: { key: string; text: string; cls: string }[] = [];
+    for (const ev of events) {
+      // 仅保留“观测窗口覆盖最新交易日”的事件标签（含当天新破位）
+      if (!ev.window.some(w => w.date === lastDate)) continue;
+      if (ev.date === lastDate) {
+        // 当天破位 + 修复观察（观测窗口刚开启）
+        tags.push({ key: `r-${lastDate}`, text: '破', cls: 'bg-green-500/10 text-green-500 border-green-500/20' });
+        tags.push({ key: `c-${lastDate}`, text: '修', cls: 'bg-orange-500/10 text-orange-500 border-orange-500/20' });
+      } else if (ev.status === 'confirming') {
+        // 更早的破位仍在观测期内，最新交易日当天定论前先展示“修复观察”
+        tags.push({ key: `c-${ev.date}`, text: '修', cls: 'bg-orange-500/10 text-orange-500 border-orange-500/20' });
+      } else {
+        // 观测窗口恰好在最新交易日收盘后定论
+        tags.push({ key: `d-${ev.date}`, text: ev.status === 'trueBreak' ? '真' : '假', cls: ev.status === 'trueBreak' ? 'bg-green-500/10 text-green-500 border-green-500/20' : 'bg-red-500/10 text-red-500 border-red-500/20' });
+      }
+    }
+    latestTagsCache.current.set(stock.id, { v: LATEST_TAG_VERSION, key: klines, tags });
+    return tags;
+  };
 
   // 列表当前显示顺序（按排序规则重排；默认顺序即 stocks 原序）
   const sortedStocks = useMemo(() => {
@@ -1738,6 +1937,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [divRateInfoPinned]);
+
+  // 列表页行情状态浮窗：点击外部关闭
+  useEffect(() => {
+    if (!mktInfoPinned) return;
+    const handler = (e: MouseEvent) => {
+      if (mktInfoRef.current && !mktInfoRef.current.contains(e.target as Node) &&
+          mktInfoBtnRef.current && !mktInfoBtnRef.current.contains(e.target as Node)) {
+        mktInfoHoveredRef.current = false;
+        mktInfoActiveIdRef.current = undefined;
+        setMktInfoPinned(false);
+        setMktInfoStock(null);
+        resetMktSel();
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [mktInfoPinned]);
 
   // 支撑/压力位弹窗固定模式：点击弹窗外部关闭
   useEffect(() => {
@@ -2857,7 +3073,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border" rowSpan={2}>操作</th>
               </tr>
               <tr className="bg-app-input">
-                {(cols.includes('code') || cols.includes('name')) && <th className="px-2 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border sticky left-[36px] z-10">代码</th>}
+                {(cols.includes('code') || cols.includes('name')) && <th
+                  className="px-2 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border sticky left-[36px] z-10 cursor-pointer select-none hover:bg-app-card transition-colors"
+                  onClick={() => setNameSubMode(m => m === 'tags' ? 'code' : 'tags')}
+                  title="点击在状态标签/代码之间切换"
+                >{nameSubMode === 'tags' ? '状态' : '代码'}</th>}
                 {(cols.includes('dividendRate') || cols.includes('price') || cols.includes('changePercent')) && <th colSpan={3} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap">
                     <div className="flex items-center justify-center gap-1">
                       <span>{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</span>
@@ -2967,8 +3187,33 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[9px] leading-tight font-mono text-app-text outline-none text-center"
                           />}
                         </div>
+                      ) : nameSubMode === 'tags' ? (
+                        <div className="relative flex flex-col items-center justify-center cursor-pointer"
+                          onMouseEnter={(e) => handleMktInfoEnter(e, stock)}
+                          onMouseLeave={handleMktInfoLeave}
+                          onClick={(e) => handleMktInfoClick(e, stock)}>
+                          <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
+                            const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
+                            const n = raw.replace(/\s/g, '');
+                            return n.length > 5 ? n.slice(0, 5) + '…' : n;
+                          })()}</span>
+                          {(() => {
+                            const tags = getLatestDayTags(stock);
+                            if (tags.length === 0) return null;
+                            return (
+                              <div className="flex items-center justify-center gap-0.5 mt-1.5 leading-none">
+                                {tags.slice(0, 4).map(t => (
+                                  <span key={t.key} className={`inline-flex items-center justify-center rounded text-[8px] font-medium border px-0.5 py-px whitespace-nowrap ${t.cls}`}>{t.text}</span>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
                       ) : (
-                        <div className="relative flex items-center justify-center h-8 whitespace-nowrap">
+                        <div className="relative flex items-center justify-center h-8 whitespace-nowrap cursor-pointer"
+                          onMouseEnter={(e) => handleMktInfoEnter(e, stock)}
+                          onMouseLeave={handleMktInfoLeave}
+                          onClick={(e) => handleMktInfoClick(e, stock)}>
                           <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
                             const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
                             const n = raw.replace(/\s/g, '');
@@ -4871,6 +5116,102 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   ))}
                 </div>
               </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 列表页行情状态浮窗（近5交易日破位分析） */}
+      {mktInfoStock && (() => {
+        const daily = stockBollMap.get(mktInfoStock.id)?.daily;
+        const klines = daily?.klines;
+        const events = klines && klines.length > 0 ? analyzeMarketConditions(klines) : null;
+        const fmtDay = (d: string) => {
+          const p = d.split('-');
+          return p.length === 3 ? `${parseInt(p[1], 10)}月${parseInt(p[2], 10)}日` : d;
+        };
+        const fmtShort = (d: string) => d.slice(5).replace('-', '/');
+        const chipBase = 'inline-flex items-center justify-center rounded text-[9px] font-medium border px-1 py-px cursor-pointer transition-colors';
+        const greenCls = 'bg-green-500/10 text-green-500 border-green-500/20';
+        const greenSelCls = ' border-green-500/60';
+        const statusChip = (ev: MarketEvent) => {
+          if (ev.status === 'trueBreak') return { cls: greenCls, selCls: greenSelCls, label: '真破位' };
+          if (ev.status === 'falseBreak') return { cls: 'bg-red-500/10 text-red-500 border-red-500/20', selCls: ' border-red-500/60', label: '假破位' };
+          return { cls: 'bg-orange-500/10 text-orange-500 border-orange-500/20', selCls: ' border-orange-500/60', label: '修复观察' };
+        };
+        // 默认选中：无指向时展示最新日期事件的“破位”标签
+        const defaultSel = events && events.length > 0 ? { date: events[events.length - 1].date, kind: 'event' as const } : null;
+        const selKey = mktSel ?? defaultSel;
+        const isSel = (ev: MarketEvent, kind: 'event' | 'status') => !!selKey && selKey.date === ev.date && selKey.kind === kind;
+        const fp = (v: number) => formatPrice(v, mktInfoStock.name);
+        const selEv = selKey && events ? events.find(e => e.date === selKey.date) : null;
+        // 判定依据文案
+        const explainLines: string[] = [];
+        if (selEv) {
+          const maStr = selEv.brokenList.map(b => `MA${b.period} ${fp(b.value)}`).join(' · ');
+          if (selKey!.kind === 'event') {
+            explainLines.push(`${fmtDay(selEv.date)} 收盘 ${fp(selEv.close)}`, `当日下穿 ${selEv.brokenCount} 条均线：${maStr}`);
+          } else if (selEv.status === 'trueBreak') {
+            explainLines.push(
+              `${fmtDay(selEv.date)} 收盘 ${fp(selEv.close)}，下穿 ${selEv.brokenCount} 条均线`,
+              `参照均线 MA${selEv.ref.period}（破位日 ${fp(selEv.ref.value)}）`,
+              ...selEv.window.map((w, i) => `${i + 1}天 ${fmtShort(w.date)}：收 ${fp(w.close)} < 均线 ${fp(w.refMa)}`),
+              `3 天观测收盘均未回到均线上方 → 真破位`,
+            );
+          } else if (selEv.status === 'falseBreak') {
+            const r = selEv.returnDay!;
+            explainLines.push(
+              `${fmtDay(selEv.date)} 收盘 ${fp(selEv.close)}，下穿 ${selEv.brokenCount} 条均线`,
+              `参照均线 MA${selEv.ref.period}（破位日 ${fp(selEv.ref.value)}）`,
+              `${fmtShort(r.date)} 收盘 ${fp(r.close)} 回到均线上方（MA${selEv.ref.period} ${fp(r.refMa)}）→ 假破位`,
+            );
+          } else {
+            const last = selEv.window[selEv.window.length - 1];
+            explainLines.push(
+              `${fmtDay(selEv.date)} 收盘 ${fp(selEv.close)}，下穿 ${selEv.brokenCount} 条均线`,
+              `参照均线 MA${selEv.ref.period}（破位日 ${fp(selEv.ref.value)}）`,
+              `已观测 ${selEv.window.length}/3 天，最新 ${fmtShort(last.date)} 收盘 ${fp(last.close)} 仍低于均线 ${fp(last.refMa)}`,
+              `观测未满 3 天 → 修复观察`,
+            );
+          }
+        }
+        return (
+          <div
+            ref={mktInfoRef}
+            className="fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2.5 py-2"
+            style={{ top: mktInfoPos.top, left: mktInfoPos.left, width: 260 }}
+          >
+            <div className="text-[11px] font-bold text-app-subtext mb-1 text-center">{mktInfoStock.name} <span className="font-mono text-[9px] font-normal text-app-rowtext">{getDisplayCode(mktInfoStock.code)}</span></div>
+            <div className="text-[9px] text-app-subtext border-t border-app-border pt-1 mb-1.5">近5交易日行情</div>
+            {events === null ? (
+              <div className="text-[10px] text-app-rowtext py-1">暂无K线数据</div>
+            ) : events.length === 0 ? (
+              <div className="text-[10px] text-app-rowtext py-1">近5日无异常</div>
+            ) : events.slice().reverse().map(ev => {
+              const s = statusChip(ev);
+              return (
+                <div key={ev.date} className="flex items-center gap-1.5 mb-1.5 last:mb-0">
+                  <span className="text-[9px] text-app-rowtext shrink-0 w-[52px]">{fmtDay(ev.date)}</span>
+                  <span
+                    className={`${chipBase} ${greenCls}${isSel(ev, 'event') ? greenSelCls : ''}`}
+                    onMouseEnter={() => handleMktTagEnter(ev.date, 'event')}
+                    onClick={() => handleMktTagClick(ev.date, 'event')}
+                  >破位 x{ev.brokenCount}</span>
+                  <span
+                    className={`${chipBase} ${s.cls}${isSel(ev, 'status') ? s.selCls : ''}`}
+                    onMouseEnter={() => handleMktTagEnter(ev.date, 'status')}
+                    onClick={() => handleMktTagClick(ev.date, 'status')}
+                  >{s.label} x{ev.brokenCount}</span>
+                </div>
+              );
+            })}
+            <div className="border-t border-app-border mt-1 pt-1.5">
+              <div className="text-[9px] text-app-subtext mb-1">判定依据</div>
+              {explainLines.length > 0 ? (
+                <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{explainLines.map((l, i) => <div key={i}>{l}</div>)}</div>
+              ) : (
+                <div className="text-[9px] text-app-rowtext/70">悬停或点击上方标签查看判定依据</div>
+              )}
             </div>
           </div>
         );
