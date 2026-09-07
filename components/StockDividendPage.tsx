@@ -2106,6 +2106,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     for (let i = 0; i < stocks.length; i++) {
       const stock = stocks[i];
       const result = await fetchYearlyDividends(stock.code, logCtx);
+      // 第一条请求失败即终止所有请求，并提示网络异常
+      if (i === 0 && result.error) {
+        showNotice('分红数据查询失败，请检查网络环境。');
+        setIsFetchingDividends(false);
+        return;
+      }
       const fetchedByYear = result.found ? result.dividendByYear : {};
       const existingByYear = stock.dividendByYear || {};
       // 提取最近一次股权登记日
@@ -3135,36 +3141,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         )}
                       </td>
                     );
-                    // 子列2：固定展示成本；编辑态展示成本+股数输入
-                    const col2 = editingId === stock.id ? (
-                      <td className="w-[64px] px-1 py-1.5 text-center border-r border-app-border">
-                        <div className="flex flex-col gap-0.5">
-                          <input
-                            type="number"
-                            value={cost || ''}
-                            onChange={(e) => handleUpdateField(stock.id, 'positionCost', parseFloat(e.target.value) || 0)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
-                            step="0.01"
-                            min="0"
-                            placeholder="成本价"
-                            className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
-                            title="每股成本（买入均价）"
-                          />
-                          <input
-                            type="number"
-                            value={shares || ''}
-                            onChange={(e) => handleUpdateField(stock.id, 'positionShares', parseFloat(e.target.value) || 0)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
-                            enterKeyHint="done"
-                            step="1"
-                            min="0"
-                            placeholder="股数"
-                            className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
-                            title="持仓股数"
-                          />
-                        </div>
-                      </td>
-                    ) : (
+                    // 子列2：固定展示成本
+                    const col2 = (
                       <td
                         className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
@@ -3208,9 +3186,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             : 'text-app-rowtext';
                           return (
                             <div className="flex flex-col items-center leading-tight gap-px">
-                              <span className={`text-[9px] whitespace-nowrap ${tradeStatusColor(latest)}`}>{TRADE_STATUS_LABEL[`${latest.side}-${latest.status}`]}</span>
+                              <span className={`text-[9px] font-bold whitespace-nowrap ${tradeStatusColor(latest)}`}>{TRADE_STATUS_LABEL[`${latest.side}-${latest.status}`]}</span>
                               <span className="font-mono text-[10px] whitespace-nowrap text-app-rowtext">{formatPrice(latest.price, stock.name)}</span>
-                              {priceDiffPct && <span className={`font-mono text-[8px] whitespace-nowrap ${pctColor}`}>{priceDiffPct}</span>}
+                              {priceDiffPct && <span className={`font-mono text-[8px] font-semibold whitespace-nowrap ${pctColor}`}>{priceDiffPct}</span>}
                             </div>
                           );
                         })()}
