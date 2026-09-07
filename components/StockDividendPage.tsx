@@ -3189,10 +3189,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           const ordinary = trades.filter(t => !t.isMerged);
                           const latest = ordinary.length ? [...ordinary].sort((a, b) => b.createdAt - a.createdAt)[0] : null;
                           if (!latest) return <span className="font-mono text-[11px] whitespace-nowrap text-app-subtext">-</span>;
+                          const tradePrice = latest.price;
+                          const diffValid = (stock.price || 0) > 0 && tradePrice > 0;
+                          const diffNum = diffValid ? ((stock.price - tradePrice) / tradePrice) * 100 : null;
+                          const priceDiffPct = diffNum != null ? `${diffNum >= 0 ? '+' : ''}${diffNum.toFixed(2)}%` : '';
+                          const isSellFilled = latest.side === 'sell' && latest.status === 'filled';
+                          const isBuyFilled = latest.side === 'buy' && latest.status === 'filled';
+                          const pctColor = diffNum != null && isSellFilled && diffNum < 0 ? 'text-brand-green'
+                            : diffNum != null && isBuyFilled && diffNum > 0 ? 'text-brand-red'
+                            : 'text-app-rowtext';
                           return (
                             <div className="flex flex-col items-center leading-tight gap-px">
-                              <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">{formatPrice(latest.price, stock.name)}</span>
                               <span className={`text-[9px] whitespace-nowrap ${tradeStatusColor(latest)}`}>{TRADE_STATUS_LABEL[`${latest.side}-${latest.status}`]}</span>
+                              <span className="font-mono text-[10px] whitespace-nowrap text-app-rowtext">{formatPrice(latest.price, stock.name)}</span>
+                              {priceDiffPct && <span className={`font-mono text-[8px] whitespace-nowrap ${pctColor}`}>{priceDiffPct}</span>}
                             </div>
                           );
                         })()}
