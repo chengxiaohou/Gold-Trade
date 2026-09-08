@@ -387,7 +387,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stockName, pnlMap, o
             </div>
           )
         )}
-        {t.note && <span className="truncate min-w-0 ml-auto self-center leading-none" title={t.note}>{t.note}</span>}
+        {t.note && <span className="truncate min-w-0 ml-auto pl-2 self-center leading-none" title={t.note}>{t.note}</span>} {/* pl-2 保证备注与编辑按钮的间距，长备注截断时也不会贴在一起 */}
       </div>
     </div>
   );
@@ -5921,7 +5921,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div
             ref={tradeSimpleRef}
             className="fixed z-[59] bg-app-card border border-app-border rounded-lg px-2 py-2 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] text-app-text"
-            style={{ top: tradeSimplePos.top, left: tradeSimplePos.left, width: 230 }}
+            style={{ top: tradeSimplePos.top, left: tradeSimplePos.left, width: 304 }} // 宽度与交易窗口一致，保证备注完整展示
             onMouseEnter={cancelTradeSimpleClose}
             onMouseLeave={scheduleTradeSimpleClose}
           >
