@@ -15,6 +15,53 @@ import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecor
 
 const APP_VERSION = 'v2.16.1';
 
+// 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
+const ERRLOG_KEY = 'gold_trade_error_log';
+function recordError(tag: string, err: unknown) {
+  try {
+    const msg = err instanceof Error ? `${err.message}\n${err.stack || ''}` : String(err);
+    const entry = { t: Date.now(), tag, msg };
+    const prev = JSON.parse(localStorage.getItem(ERRLOG_KEY) || '[]') as unknown[];
+    prev.push(entry);
+    localStorage.setItem(ERRLOG_KEY, JSON.stringify(prev.slice(-20)));
+    // 同步推送一份到控制台与 sessionStorage（双保险）
+    console.error('[CRASH]', tag, err);
+    sessionStorage.setItem(ERRLOG_KEY, JSON.stringify(prev.slice(-20)));
+  } catch { /* 日志本身失败则忽略 */ }
+}
+// 监听全局错误与未处理的 Promise 拒绝，避免异步崩溃也丢失线索
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (e) => recordError('window.error', e.error || e.message));
+  window.addEventListener('unhandledrejection', (e) => recordError('unhandledrejection', (e as PromiseRejectionEvent).reason));
+}
+
+// 页面级错误边界：捕获渲染崩溃，记录日志并提供可复制的报错信息，避免整页白屏
+class PageErrorBoundary extends React.Component<{ children: React.ReactNode }, { err: Error | null }> {
+  state: { err: Error | null } = { err: null };
+  static getDerivedStateFromError(err: Error) { return { err }; }
+  componentDidCatch(err: Error, info: React.ErrorInfo) {
+    recordError('render', new Error(`${err.message}\n${info.componentStack || ''}`));
+  }
+  render() {
+    if (this.state.err) {
+      const text = `${this.state.err.message}\n${this.state.err.stack || ''}`;
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-app-bg p-6">
+          <div className="max-w-md w-full bg-app-input border border-brand-red/50 rounded-xl p-5">
+            <div className="text-brand-red font-bold text-base mb-2">页面渲染出错</div>
+            <pre className="bg-black/30 text-app-text text-[11px] whitespace-pre-wrap break-all rounded-lg p-3 mb-3 select-all">{text}</pre>
+            <div className="flex gap-2">
+              <button className="flex-1 py-2 rounded-lg bg-brand-red text-white text-sm font-semibold" onClick={() => location.reload()}>重新加载</button>
+              <button className="flex-1 py-2 rounded-lg bg-app-border text-app-text text-sm font-semibold" onClick={() => { navigator.clipboard.writeText(text); alert('报错信息已复制'); }}>复制报错</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return (this as any).props.children;
+  }
+}
+
 // 生成股息率对应股价的辅助函数
 function calcDividendRates(dividend2025: number): Record<string, number> {
   const rates = ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'];
@@ -1963,9 +2010,10 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <StockDividendPage 
-            stocks={stocks} 
-            onStocksChange={setStocks}
+          <PageErrorBoundary>
+            <StockDividendPage 
+              stocks={stocks} 
+              onStocksChange={setStocks}
             isAdding={isAddingStock}
             onCloseAdding={() => setIsAddingStock(false)}
             dividendRateColumns={stockSettings.dividendRateColumns}
@@ -1990,7 +2038,8 @@ export default function App() {
             sortMode={stockSettings.sortMode}
             onSortModeChange={handleSortModeChange}
             showRequestStats={showRequestStats}
-          />
+            />
+          </PageErrorBoundary>
         )}
         <div className="lg:hidden mt-2 order-3">{currentPage === 'gold' && renderActionButtons()}</div>
       </div>
