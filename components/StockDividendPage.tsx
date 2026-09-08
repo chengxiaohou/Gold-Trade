@@ -5962,7 +5962,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const statusChip = (ev: MarketEvent) => {
           if (ev.status === 'trueBreak') return { cls: greenCls, selCls: greenSelCls, label: '真破位' };
           if (ev.status === 'falseBreak') return { cls: 'bg-red-500/10 text-red-500 border-red-500/20', selCls: ' border-red-500/60', label: '假破位' };
-          return { cls: 'bg-orange-500/10 text-orange-500 border-orange-500/20', selCls: ' border-orange-500/60', label: '修复观察' };
+          return { cls: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30', selCls: ' border-indigo-400/60', label: '观察' };
         };
         // 收盘价着色：对照前一交易日，当日收盘涨红、跌绿
         const kIdx = new Map<string, number>();
@@ -6047,8 +6047,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <div className="text-[11px] font-bold text-app-subtext mb-1 text-center">{mktInfoStock.name} <span className="font-mono text-[9px] font-normal text-app-rowtext">{getDisplayCode(mktInfoStock.code)}</span></div>
             {env && env.tags.length > 0 && (
               <div className="border-t border-app-border pt-1.5 mb-1.5">
+                <div className="text-[9px] text-app-subtext mb-2">环境</div>
                 <div className="flex items-center gap-1 flex-wrap">
-                  <span className="text-[9px] text-app-subtext shrink-0 mr-0.5">环境</span>
                   {env.tags.map(t => (
                     <span
                       key={t.key}
@@ -6076,10 +6076,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               };
               const repairChip = (ev: MarketEvent) => (
                 <span
-                  className={`${chipBase} bg-orange-500/10 text-orange-500 border-orange-500/20${isSel(ev, 'repair') ? ' border-orange-500/60' : ''}`}
+                  className={`${chipBase} bg-indigo-500/10 text-indigo-400 border-indigo-500/30${isSel(ev, 'repair') ? ' border-indigo-400/60' : ''}`}
                   onMouseEnter={() => handleMktTagEnter({ date: ev.date, kind: 'repair' })}
                   onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date: ev.date, kind: 'repair' }); }}
-                >修复观察 x{ev.brokenCount}</span>
+                >观察 x{ev.brokenCount}</span>
               );
               // 每日信号徽标（color+缩写，区别于环境量价的"当前状态"chip）
               const sigChipCls: Record<DailySignal['kind'], { cls: string; sel: string }> = {
