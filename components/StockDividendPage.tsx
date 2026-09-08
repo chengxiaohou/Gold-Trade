@@ -1778,6 +1778,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const divRateInfoBtnRef = useRef<HTMLTableCellElement | null>(null);
   const divRateInfoRef = useRef<HTMLDivElement | null>(null);
   const divRateInfoHoveredRef = useRef(false);
+  const divRateTouchGuardRef = useRef(false); // 触摸点按中保护：避免合成mouseleave在点击固定前关闭浮窗
+  const divRateTouchTimerRef = useRef<number | undefined>(undefined);
   const divRateInfoActiveIdRef = useRef<string | undefined>(undefined);
   const isInsideDivRateInfo = (node: Node | null) => !!node && !!divRateInfoRef.current?.contains(node);
 
@@ -2036,11 +2038,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     openDivRateInfo(e.currentTarget as HTMLElement, stock);
   };
 
-  // 股息率悬停离开：非固定模式下直接关闭，不因鼠标快速移入浮窗（relatedTarget 命中图表）而残留
+  // 触摸开始：短时间内跳过合成 mouseleave（点按闪现缺陷），放大最后的 click 固定
+  const handleDivRateInfoTouchStart = () => {
+    divRateTouchGuardRef.current = true;
+    if (divRateTouchTimerRef.current !== undefined) clearTimeout(divRateTouchTimerRef.current);
+    divRateTouchTimerRef.current = window.setTimeout(() => {
+      divRateTouchGuardRef.current = false;
+      divRateTouchTimerRef.current = undefined;
+    }, 400);
+  };
+
+  // 股息率悬停离开：非固定模式下直接关闭。
+// 注意不在此处判断 isInsideDivRateInfo——桌面 hover 从单元格移进浮窗(图表)也应关闭临时弹窗。
+// 移动端"点按闪现"由触摸保护(divRateTouchGuardRef)处理：触摸触发时不关闭，交由 click 固定。
   const handleDivRateInfoLeave = (e?: React.MouseEvent) => {
     divRateInfoHoveredRef.current = false;
     if (divRateInfoPinned) return;
-    if (e && isInsideDivRateInfo(e.relatedTarget as Node | null)) return; // 移动端点按合成mouseleave指向浮窗时保留（与价格弹窗一致）
+    if (divRateTouchGuardRef.current) return; // 触摸点按中：跳过合成 mouseleave，等待 click 固定
     divRateInfoActiveIdRef.current = undefined;
     setDivRateInfoStock(null);
     setDivRateInfoKlines(null);
@@ -3804,6 +3818,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   {cols.includes('dividendRate') && <td
                     onMouseEnter={(e) => handleDivRateInfoEnter(e, stock)}
                     onMouseLeave={handleDivRateInfoLeave}
+                    onTouchStart={handleDivRateInfoTouchStart}
                     onClick={(e) => handleDivRateInfoClick(e, stock)}
                     className="px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
                     title=""
