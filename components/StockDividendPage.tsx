@@ -1020,6 +1020,32 @@ function analyzeEnvironment(klines: BollKline[], fmt: (v: number) => string): En
   return { tags, total, dimScores: { trend: trendScore, volume: volumeScore, momentum: momentumScore, volatility: bollScore } };
 }
 
+// 环境标签参考价值（实战含义）：key 为 EnvTag.label，文案取自 docs/行情标签体系说明书.md 第一部分
+const ENV_REFERENCE: Record<string, string> = {
+  '强进攻周期': '趋势/量能/动能三方共振的黄金时期。策略：重仓持有，逢回踩均线加仓，不轻易言顶。',
+  '强防守周期': '鱼尾行情或变盘前夜，趋势还在但内核已弱。策略：只出不进，逐步减仓，锁定利润，等待方向明朗。',
+  '弱反弹周期': '空头下的超跌反抽，标准的“逃命波”。策略：仓位重借此坚决减仓，持币观望，绝不追高。',
+  '弱筑底周期': '黎明前的黑暗，下跌力量衰竭，大资金暗中吸筹。策略：轻仓试盘，急跌敢买，等放量大阳线确认反转。',
+  '震荡变盘期': '方向选择前夜，多空未决。策略：控制仓位，等待突破方向确认。',
+  '多头强排列': '主升浪进攻期。回踩 5/10 日线都是高胜算买点，只考虑止盈，不考虑止损离场（除非均线结构被破坏）。',
+  '多头弱排列': '高位震荡/上涨中继。趋势未坏但短期赚钱效应下降，适合高抛低吸，不宜追涨杀跌。',
+  '空头强排列': '主跌浪/系统性风险。反弹到 5/10 日线是标准“逃命线”，严禁抄底，持仓者应利用反弹止损。',
+  '空头弱排列': '震荡筑底期。下跌动能衰竭但上涨趋势未起，适合小仓位试盘，等短期均线上穿的金叉确认。',
+  '均线粘合': '方向选择的前夜（极强信号）。向上突破粘合区进入强周期，向下跌破进入弱周期。',
+  '量增价升': '真金白银的拉升，趋势具有持续性。持仓不动是最优解。',
+  '量缩价升': '动能衰竭的警告。高位易形成“诱多”陷阱，需立刻提高警惕。',
+  '量增价跌': '视位置而定：高位是机构高位出货，坚决离场；大跌末端是恐慌盘涌出，往往接近“最后一跌”。',
+  '量缩价跌': '无人接盘的阴跌，极其磨人。除非出现放量恐慌盘或大阳线，否则绝不能抄底。',
+  'MACD顶背离': '上涨发动机熄火（核心风险信号）。即使均线仍多头，强周期也已进入尾声，是最可靠的减仓信号。',
+  'MACD底背离': '下跌力量衰竭（核心机会信号）。弱周期即将结束，是最可靠的准备抄底信号，只等放量阳线确认。',
+  'MACD多头': '金叉且零轴上方：动能偏多，顺势看涨。',
+  'MACD空头': '死叉且零轴下方：动能偏空，顺势看跌。',
+  'MACD中性': '动能方向未明，需结合其他维度（量价/波动）综合判断。',
+  '布林收口': '大变盘前的宁静（高价值信号）。盯紧方向：向上突破中轨做多，向下跌破中轨做空或离场。',
+  '上轨扩张': '单边强趋势进行中，加速上涨标志。持仓者要拿住，但追高风险极大。',
+  '下轨扩张': '单边下跌恐慌中，加速赶底。不要试图接飞刀，必须等价格重新站回下轨之上。',
+};
+
 
 // 股息率曲线共享组件：详情弹窗与列表页“股息率”浮窗共用一套渲染逻辑，
 // 之后任一处的股息率曲线改动都会同时反映到另一处。
@@ -5584,11 +5610,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         );
       })()}
 
-      {/* 列表页行情状态浮窗（近5交易日破位分析） */}
+      {/* 列表页行情状态浮窗（近10交易日破位分析） */}
       {mktInfoStock && (() => {
         const daily = stockBollMap.get(mktInfoStock.id)?.daily;
         const klines = daily?.klines;
-        const events = klines && klines.length > 0 ? analyzeMarketConditions(klines) : null;
+        const events = klines && klines.length > 0 ? analyzeMarketConditions(klines, 10) : null;
         const patterns = klines && klines.length > 0 ? analyzeKlinePatterns(klines, v => formatPrice(v, mktInfoStock.name)) : null;
         const env = klines && klines.length > 0 ? analyzeEnvironment(klines, v => formatPrice(v, mktInfoStock.name)) : null;
         const fmtDay = (d: string) => {
@@ -5683,26 +5709,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 </div>
               </div>
             )}
-            <div className="text-[9px] text-app-subtext border-t border-app-border pt-1 mb-1.5">近5交易日行情</div>
-            {patterns && patterns.length > 0 && (
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <span className="text-[9px] text-app-subtext shrink-0 w-[52px]">最新</span>
-                {patterns.map(p => (
-                  <span
-                    key={p.type}
-                    className={`${chipBase} ${patChipCls[p.color].cls}${isPatSel(p) ? patChipCls[p.color].sel : ''}`}
-                    onMouseEnter={() => handleMktTagEnter({ date: p.date, kind: 'pattern', ptype: p.type })}
-                    onClick={() => handleMktTagClick({ date: p.date, kind: 'pattern', ptype: p.type })}
-                  >{p.label}</span>
-                ))}
-              </div>
-            )}
+            <div className="text-[9px] text-app-subtext border-t border-app-border pt-1 mb-1.5">近10交易日行情</div>
             {events === null ? (
               <div className="text-[10px] text-app-rowtext py-1">暂无K线数据</div>
             ) : events.length === 0 ? (
-              <div className="text-[10px] text-app-rowtext py-1">近5日无异常</div>
+              <div className="text-[10px] text-app-rowtext py-1">近10日无异常</div>
             ) : (() => {
-              // 每个事件按观测窗口拆成逐日行，整体按日期倒序（最新在上）
+              // 每个事件按观测窗口拆成逐日行，整体按日期正序（最新在下）
               const rows: { date: string; ev: MarketEvent; kind: 'break' | 'repair' | 'status'; progress?: number }[] = [];
               for (const ev of events) {
                 rows.push({ date: ev.date, ev, kind: 'break' });
@@ -5720,7 +5733,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   });
                 }
               }
-              rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+              rows.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
               const repairChip = (ev: MarketEvent, progress: number) => (
                 <span
                   className={`${chipBase} bg-orange-500/10 text-orange-500 border-orange-500/20${isSel(ev, 'repair') ? ' border-orange-500/60' : ''}`}
@@ -5756,12 +5769,39 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 );
               });
             })()}
+            {patterns && patterns.length > 0 && (
+              <div className="flex items-center gap-1.5 mt-1 mb-1.5">
+                <span className="text-[9px] text-app-subtext shrink-0 w-[52px]">最新</span>
+                {patterns.map(p => (
+                  <span
+                    key={p.type}
+                    className={`${chipBase} ${patChipCls[p.color].cls}${isPatSel(p) ? patChipCls[p.color].sel : ''}`}
+                    onMouseEnter={() => handleMktTagEnter({ date: p.date, kind: 'pattern', ptype: p.type })}
+                    onClick={() => handleMktTagClick({ date: p.date, kind: 'pattern', ptype: p.type })}
+                  >{p.label}</span>
+                ))}
+              </div>
+            )}
             <div className="border-t border-app-border mt-1 pt-1.5">
               <div className="text-[9px] text-app-subtext mb-1">判定依据</div>
               {explainLines.length > 0 ? (
                 <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{explainLines.map((l, i) => <div key={i}>{l}</div>)}</div>
               ) : (
                 <div className="text-[9px] text-app-rowtext/70">悬停或点击上方标签查看判定依据</div>
+              )}
+            </div>
+            <div className="border-t border-app-border mt-1 pt-1.5">
+              <div className="text-[9px] text-app-subtext mb-1">参考价值</div>
+              {selKey && selKey.kind === 'env' ? (() => {
+                const t = env?.tags.find(x => x.key === selKey.ekey);
+                const ref = t ? ENV_REFERENCE[t.label] : null;
+                return ref ? (
+                  <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{ref}</div>
+                ) : (
+                  <div className="text-[9px] text-app-rowtext/70">该标签暂无参考价值说明</div>
+                );
+              })() : (
+                <div className="text-[9px] text-app-rowtext/70">该标签暂无参考价值说明</div>
               )}
             </div>
           </div>
