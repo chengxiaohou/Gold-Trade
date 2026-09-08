@@ -4005,19 +4005,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           const isSellFilled = latest.side === 'sell' && latest.status === 'filled';
                           const isBuyFilled = latest.side === 'buy' && latest.status === 'filled';
                           const isPending = latest.status === 'pending';
-                          // 「可能已成交」智能判断：挂单方向 + 现价/挂单价符号对比 + 挂单当日盘中高低价对比
-                          // 挂买百分比为负（现价<=挂单价）或当日最低<=挂单价 → 可能触发；挂卖百分比为正（现价>=挂单价）或当日最高>=挂单价 → 可能触发
+                          // 「可能已成交」仅按现价对比挂单价判断：挂买现价<=挂单价、挂卖现价>=挂单价 → 可能触发
                           let likelyFill = false;
                           if (isPending && latest.price > 0 && (stock.price || 0) > 0) {
-                            const todayRange = (() => {
-                              const d = new Date(latest.createdAt); const n = new Date();
-                              return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
-                            })();
-                            if (latest.side === 'buy') {
-                              likelyFill = stock.price <= latest.price || (todayRange && stock.low > 0 && stock.low <= latest.price);
-                            } else {
-                              likelyFill = stock.price >= latest.price || (todayRange && stock.high > 0 && stock.high >= latest.price);
-                            }
+                            likelyFill = latest.side === 'buy' ? stock.price <= latest.price : stock.price >= latest.price;
                           }
                           const pctColor = diffNum != null && isSellFilled && diffNum < 0 ? 'text-brand-green'
                             : diffNum != null && isBuyFilled && diffNum > 0 ? 'text-brand-red'
