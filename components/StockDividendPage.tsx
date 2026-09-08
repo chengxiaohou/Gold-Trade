@@ -4,7 +4,7 @@ import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, C
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource } from '../types';
 import { fetchBollData, checkAllBollCache, countStaleBollCache, countVisibleBollItems, getBollCacheTimestamps, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
-import { isStockPriceFresh, isTradingHours, getDynamicBollCacheTTL, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
+import { isStockPriceFresh, isTradingHours, getMarketStatus, getDynamicBollCacheTTL, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
 import { getNickname } from '../services/nicknameService';
@@ -789,6 +789,25 @@ function calcBollSeries(klines: BollKline[]): { mid: number | null; upper: numbe
   return res;
 }
 
+// 量价判定资格：最新K线若是"未收盘的今日"，盘中（距收盘>30分钟）不给出任何量价关系标签，
+// 避免量价未定型误导；当日交易时间还剩最后半小时（14:30 后）才开始计算展示今日量价标签。
+function canJudgeTodayVolume(date: Date = new Date()): boolean {
+  const status = getMarketStatus(date);
+  if (status === 'closed') return true; // 15:00后已收盘
+  if (status === 'afternoon_session') {
+    return date.getHours() + date.getMinutes() / 60 >= 14.5; // 13:00-15:00：仅最后半小时
+  }
+  return false; // 盘前/上午时段/午间休市/全天休市
+}
+function isTodayVolumeEligible(klines: BollKline[]): boolean {
+  if (!klines || klines.length === 0) return false;
+  const lastDate = klines[klines.length - 1].date;
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  if (lastDate !== today) return true; // 最新K线为历史交易日（已收盘）
+  return canJudgeTodayVolume(d);
+}
+
 // 每日行情信号（近10日）：MACD 金叉/死叉 + 量价显著信号（放量≥1.5×/极度缩量≤0.5×，按涨跌红绿）。
 // 只展示足够明显/典型的信号，量价一般波动不标信号；与"环境量价（当前状态截面）"区分。
 interface DailySignal {
@@ -797,7 +816,7 @@ interface DailySignal {
   ratio: number | null;      // 量/5日均量 倍数（量价类；MACD 类为 null）
   detail: string[];          // 判定依据（区别于环境的当前状态描述）
 }
-function analyzeDailySignals(klines: BollKline[]): DailySignal[] {
+function analyzeDailySignals(klines: BollKline[], allowTodayVolume = true): DailySignal[] {
   const n = klines.length;
   if (n < 30) return [];
   const macd = calcMacdSeries(klines);
@@ -813,6 +832,7 @@ function analyzeDailySignals(klines: BollKline[]): DailySignal[] {
   const fmtV = (v: number) => (v >= 1e8 ? `${(v / 1e8).toFixed(2)}亿` : v >= 1e4 ? `${(v / 1e4).toFixed(1)}万` : `${v.toFixed(0)}`);
   const start = Math.max(5, n - 10);
   const signals: DailySignal[] = [];
+  const latestDate = klines[n - 1].date; // 最新K线日（未收盘的今日：非最后半小时不判定量价）
   for (let i = start; i < n; i++) {
     const k2 = klines[i], pk = klines[i - 1];
     const date = k2.date;
@@ -827,9 +847,10 @@ function analyzeDailySignals(klines: BollKline[]): DailySignal[] {
         }
       }
     }
-    // ── 量价显著信号 / 切换拐点 ──
+    // ── 量价显著信号（未收盘的今日：非最后半小时不判定）──
     const vol = k2.volume, ma5 = volMa5s[i];
     if (ma5 <= 0) continue;
+    if (date === latestDate && !allowTodayVolume) continue;
     const ratio = vol / ma5;
     const up = k2.close > pk.close;
     if (ratio >= 1.5) {
@@ -841,7 +862,7 @@ function analyzeDailySignals(klines: BollKline[]): DailySignal[] {
   return signals;
 }
 
-function analyzeEnvironment(klines: BollKline[], fmt: (v: number) => string): EnvResult | null {
+function analyzeEnvironment(klines: BollKline[], fmt: (v: number) => string, allowVolume = true): EnvResult | null {
   const n = klines.length;
   if (n < 130) return null; // 需 120 日均线 + 近20日高低点 + 近60日带宽分位
   const i = n - 1;
@@ -907,46 +928,50 @@ function analyzeEnvironment(klines: BollKline[], fmt: (v: number) => string): En
     }
   }
 
-  // ── 量价关系维度（30%）──
+  // ── 量价关系维度（40%：未收盘的今日非最后半小时不判定，量价缺席不参与打分）──
   let volumeScore = 0;
-  let volTag: EnvTag;
-  let volMa5 = 0;
-  for (let j = i - 5; j <= i - 1; j++) volMa5 += klines[j].volume;
-  volMa5 /= 5;
+  let volTag: EnvTag | null = null;
   const up = close > prev.close;
   const down = close < prev.close;
-  const volUp = k.volume >= volMa5;
-  let minVol = Infinity;
-  for (let j = i - 19; j <= i; j++) minVol = Math.min(minVol, klines[j].volume);
-  const isLowVol = k.volume <= minVol;
-  if (up && volUp) {
-    volumeScore = 1;
-    volTag = { key: 'vol-up-up', label: '量增价升', single: '增', color: 'red', score: 1, dim: 'volume', detail: [
-      `${ds} 收 ${fmt(close)} > 昨收 ${fmt(prev.close)}，量 ${fmtVol(k.volume)} ≥ 5日均量 ${fmtVol(volMa5)}`,
-      '真金白银的拉升：趋势具持续性，持仓不动是最优解',
-    ] };
-  } else if (up) {
-    volumeScore = 0.2;
-    volTag = { key: 'vol-up-down', label: '量缩价升', single: '缩', color: 'red', score: 0.2, dim: 'volume', detail: [
-      `${ds} 收 ${fmt(close)} > 昨收 ${fmt(prev.close)}，但量 ${fmtVol(k.volume)} < 5日均量 ${fmtVol(volMa5)}`,
-      '动能衰竭警告：高位易形成诱多陷阱，需提高警惕',
-    ] };
-  } else if (down && volUp) {
-    volumeScore = -1;
-    volTag = { key: 'vol-down-up', label: '量增价跌', single: '增', color: 'green', score: -1, dim: 'volume', detail: [
-      `${ds} 收 ${fmt(close)} < 昨收 ${fmt(prev.close)}，量 ${fmtVol(k.volume)} ≥ 5日均量 ${fmtVol(volMa5)}`,
-      nearHigh ? '出现在高位：机构高位出货，坚决离场' : '出现在大跌末端：恐慌盘涌出，往往接近最后一跌',
-    ] };
-  } else {
-    volumeScore = -0.2;
-    volTag = { key: 'vol-down-down', label: '量缩价跌', single: '缩', color: 'green', score: -0.2, dim: 'volume', detail: [
-      `${ds} 收 ${fmt(close)} < 昨收 ${fmt(prev.close)}，量 ${fmtVol(k.volume)} < 5日均量 ${fmtVol(volMa5)}`,
-      '无人接盘的阴跌：除非放量恐慌盘或大阳线，否则不抄底',
-    ] };
-  }
-  if (isLowVol) {
-    volumeScore = Math.min(1, volumeScore + 0.4);
-    volTag.detail.push(`量 ${fmtVol(k.volume)} 创近20日最低 → 地量见地价（抛售枯竭）`);
+  let volUp = false;
+  let isLowVol = false;
+  if (allowVolume) {
+    let volMa5 = 0;
+    for (let j = i - 5; j <= i - 1; j++) volMa5 += klines[j].volume;
+    volMa5 /= 5;
+    volUp = k.volume >= volMa5;
+    let minVol = Infinity;
+    for (let j = i - 19; j <= i; j++) minVol = Math.min(minVol, klines[j].volume);
+    isLowVol = k.volume <= minVol;
+    if (up && volUp) {
+      volumeScore = 1;
+      volTag = { key: 'vol-up-up', label: '量增价升', single: '增', color: 'red', score: 1, dim: 'volume', detail: [
+        `${ds} 收 ${fmt(close)} > 昨收 ${fmt(prev.close)}，量 ${fmtVol(k.volume)} ≥ 5日均量 ${fmtVol(volMa5)}`,
+        '真金白银的拉升：趋势具持续性，持仓不动是最优解',
+      ] };
+    } else if (up) {
+      volumeScore = 0.2;
+      volTag = { key: 'vol-up-down', label: '量缩价升', single: '缩', color: 'red', score: 0.2, dim: 'volume', detail: [
+        `${ds} 收 ${fmt(close)} > 昨收 ${fmt(prev.close)}，但量 ${fmtVol(k.volume)} < 5日均量 ${fmtVol(volMa5)}`,
+        '动能衰竭警告：高位易形成诱多陷阱，需提高警惕',
+      ] };
+    } else if (down && volUp) {
+      volumeScore = -1;
+      volTag = { key: 'vol-down-up', label: '量增价跌', single: '增', color: 'green', score: -1, dim: 'volume', detail: [
+        `${ds} 收 ${fmt(close)} < 昨收 ${fmt(prev.close)}，量 ${fmtVol(k.volume)} ≥ 5日均量 ${fmtVol(volMa5)}`,
+        nearHigh ? '出现在高位：机构高位出货，坚决离场' : '出现在大跌末端：恐慌盘涌出，往往接近最后一跌',
+      ] };
+    } else {
+      volumeScore = -0.2;
+      volTag = { key: 'vol-down-down', label: '量缩价跌', single: '缩', color: 'green', score: -0.2, dim: 'volume', detail: [
+        `${ds} 收 ${fmt(close)} < 昨收 ${fmt(prev.close)}，量 ${fmtVol(k.volume)} < 5日均量 ${fmtVol(volMa5)}`,
+        '无人接盘的阴跌：除非放量恐慌盘或大阳线，否则不抄底',
+      ] };
+    }
+    if (isLowVol) {
+      volumeScore = Math.min(1, volumeScore + 0.4);
+      volTag.detail.push(`量 ${fmtVol(k.volume)} 创近20日最低 → 地量见地价（抛售枯竭）`);
+    }
   }
 
   // ── 动能/MACD 维度（已移除：金叉/死叉改由每日行情信号展示，不参与环境打分）──
@@ -995,18 +1020,22 @@ function analyzeEnvironment(klines: BollKline[], fmt: (v: number) => string): En
   }
 
   // ── 综合强弱周期（打分定档 + 关键信号确认）──
-  // 权重重分配：均线40% + 量价40% + 波动20%（MACD已移除，权重归一）
-  const total = 0.4 * trendScore + 0.4 * volumeScore + 0.2 * bollScore;
-  const dimLine = `均线 ${fmtScore(trendScore)} · 量价 ${fmtScore(volumeScore)} · 波动 ${fmtScore(bollScore)}`;
+  // 权重重分配：均线40% + 量价40% + 波动20%（MACD已移除，权重归一）；量价缺席时剔除并归一
+  const total = allowVolume
+    ? 0.4 * trendScore + 0.4 * volumeScore + 0.2 * bollScore
+    : (0.4 * trendScore + 0.2 * bollScore) / 0.6;
+  const dimLine = allowVolume
+    ? `均线 ${fmtScore(trendScore)} · 量价 ${fmtScore(volumeScore)} · 波动 ${fmtScore(bollScore)}`
+    : `均线 ${fmtScore(trendScore)} · 量价 -- · 波动 ${fmtScore(bollScore)}`;
   const bear = trendScore <= -0.4;
   let cycle: EnvTag;
   if (total >= 0.6) {
     cycle = { key: 'cycle', label: '强进攻周期', single: '攻', color: 'red', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '趋势/量价/波动共振：重仓持有，逢回踩均线加仓'] };
   } else if (total <= -0.6) {
     cycle = { key: 'cycle', label: '弱筑底周期', single: '筑', color: 'indigo', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '下跌力量衰竭：轻仓试盘，等放量大阳线确认反转'] };
-  } else if (total >= 0.2 && ((up && !volUp) || squeeze)) {
+  } else if (total >= 0.2 && ((allowVolume && up && !volUp) || squeeze)) {
     cycle = { key: 'cycle', label: '强防守周期', single: '防', color: 'orange', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '趋势还在但内核转弱：只出不进，锁定利润，等方向明朗'] };
-  } else if (total <= -0.2 && bear && (isLowVol || squeeze)) {
+  } else if (total <= -0.2 && bear && ((allowVolume && isLowVol) || squeeze)) {
     cycle = { key: 'cycle', label: '弱筑底周期', single: '筑', color: 'indigo', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '空头衰竭信号（地量/收口）：轻仓试盘，急跌敢买'] };
   } else if (total <= -0.2 && bear) {
     cycle = { key: 'cycle', label: '弱反弹周期', single: '弹', color: 'green', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '空头下的超跌反抽：借反弹坚决减仓，绝不追高'] };
@@ -2136,7 +2165,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       }
     }
     // 环境标签
-    const env = analyzeEnvironment(klines, v => formatPrice(v, stock.name));
+    const env = analyzeEnvironment(klines, v => formatPrice(v, stock.name), isTodayVolumeEligible(klines));
     const envCls: Record<EnvTag['color'], string> = {
       red: 'bg-red-500/10 text-red-500 border-red-500/20',
       green: 'bg-green-500/10 text-green-500 border-green-500/20',
@@ -3975,8 +4004,24 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           const priceDiffPct = diffNum != null ? `${diffNum >= 0 ? '+' : ''}${diffNum.toFixed(2)}%` : '';
                           const isSellFilled = latest.side === 'sell' && latest.status === 'filled';
                           const isBuyFilled = latest.side === 'buy' && latest.status === 'filled';
+                          const isPending = latest.status === 'pending';
+                          // 「可能已成交」智能判断：挂单方向 + 现价/挂单价符号对比 + 挂单当日盘中高低价对比
+                          // 挂买百分比为负（现价<=挂单价）或当日最低<=挂单价 → 可能触发；挂卖百分比为正（现价>=挂单价）或当日最高>=挂单价 → 可能触发
+                          let likelyFill = false;
+                          if (isPending && latest.price > 0 && (stock.price || 0) > 0) {
+                            const todayRange = (() => {
+                              const d = new Date(latest.createdAt); const n = new Date();
+                              return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+                            })();
+                            if (latest.side === 'buy') {
+                              likelyFill = stock.price <= latest.price || (todayRange && stock.low > 0 && stock.low <= latest.price);
+                            } else {
+                              likelyFill = stock.price >= latest.price || (todayRange && stock.high > 0 && stock.high >= latest.price);
+                            }
+                          }
                           const pctColor = diffNum != null && isSellFilled && diffNum < 0 ? 'text-brand-green'
                             : diffNum != null && isBuyFilled && diffNum > 0 ? 'text-brand-red'
+                            : diffNum != null && isPending && likelyFill ? 'text-orange-400'
                             : 'text-app-rowtext';
                           return (
                             <div className="flex flex-col items-center leading-tight gap-px">
@@ -5670,9 +5715,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const daily = stockBollMap.get(mktInfoStock.id)?.daily;
         const klines = daily?.klines;
         const events = klines && klines.length > 0 ? analyzeMarketConditions(klines, 10) : null;
-        const dailySignals = klines && klines.length > 0 ? analyzeDailySignals(klines) : [];
+        const allowVol = klines && klines.length > 0 ? isTodayVolumeEligible(klines) : false;
+        const dailySignals = klines && klines.length > 0 ? analyzeDailySignals(klines, allowVol) : [];
         const patterns = klines && klines.length > 0 ? analyzeKlinePatterns(klines, v => formatPrice(v, mktInfoStock.name)) : null;
-        const env = klines && klines.length > 0 ? analyzeEnvironment(klines, v => formatPrice(v, mktInfoStock.name)) : null;
+        const env = klines && klines.length > 0 ? analyzeEnvironment(klines, v => formatPrice(v, mktInfoStock.name), allowVol) : null;
         const fmtDay = (d: string) => {
           const p = d.split('-');
           return p.length === 3 ? `${parseInt(p[1], 10)}月${parseInt(p[2], 10)}日` : d;
