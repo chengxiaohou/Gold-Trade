@@ -1489,6 +1489,11 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges, per
   );
 }
 
+// 支撑/压力位浮窗中的一行：plain 为纯文本行，cell 为带名称的表格行（名称可着色）
+type SrRow =
+  | { kind: 'plain'; text: string }
+  | { kind: 'cell'; name: string; color?: string; rest: string };
+
 export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 812, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, showRequestStats = true }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
@@ -1688,6 +1693,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       listSrActiveIdRef.current = undefined;
       setListSrTooltipPinned(false);
       setListSrPreviewText(null);
+      setListSrPreviewRows(null);
       setListSrStock(null);
       return;
     }
@@ -1744,23 +1750,32 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       const resistances = sorted.filter(l => l.price > (stock.price || 0)).sort((a, b) => a.price - b.price).slice(0, 10).reverse();
       const supports = sorted.filter(l => l.price < (stock.price || 0)).sort((a, b) => b.price - a.price).slice(0, 10);
       const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
-      const lines: string[] = [`${stock.name}（${adjustLabel}）`];
-      lines.push('───────────────────────────────');
+      // 彩虹色（红橙黄绿青蓝紫）用于「日5」~「日250」标题
+      const maRainbow: Record<string, string> = {
+        '5': '#ef4444', '10': '#f97316', '20': '#facc15',
+        '30': '#22c55e', '60': '#06b6d4', '120': '#3b82f6', '250': '#8b5cf6',
+      };
+      const colorForName = (name: string) => {
+        const m = /^日(\d+)$/.exec(name);
+        return m ? maRainbow[m[1]] : undefined;
+      };
+      const rows: SrRow[] = [{ kind: 'plain', text: `${stock.name}（${adjustLabel}）` }];
+      rows.push({ kind: 'plain', text: '───────────────────────────────' });
       for (const r of resistances) {
         const diff = r.price - (stock.price || 0);
         const pct = (diff / (stock.price || 1)) * 100;
         const diffStr = (diff >= 0 ? '+' : '') + formatPrice(diff, stock.name);
-        lines.push(`${r.name}\t${formatPrice(r.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
+        rows.push({ kind: 'cell', name: r.name, color: colorForName(r.name), rest: `\t${formatPrice(r.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` });
       }
-      lines.push(`现价\t${fmt(stock.price)}\t------\t------`);
+      rows.push({ kind: 'cell', name: '现价', color: undefined, rest: `\t${fmt(stock.price)}\t------\t------` });
       for (const s of supports) {
         const diff = s.price - (stock.price || 0);
         const pct = (diff / (stock.price || 1)) * 100;
         const diffStr = (diff >= 0 ? '+' : '') + formatPrice(diff, stock.name);
-        lines.push(`${s.name}\t${formatPrice(s.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
+        rows.push({ kind: 'cell', name: s.name, color: colorForName(s.name), rest: `\t${formatPrice(s.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` });
       }
-      lines.push('───────────────────────────────');
-      const text = lines.join('\n');
+      rows.push({ kind: 'plain', text: '───────────────────────────────' });
+      const text = rows.map(r => (r.kind === 'plain' ? r.text : r.name + r.rest)).join('\n');
       const measureEl = document.createElement('div');
       measureEl.style.cssText = 'position:fixed;visibility:hidden;white-space:pre;font-family:monospace;font-size:10px;padding:6px 10px;border:1px solid;line-height:1.5';
       measureEl.textContent = text;
@@ -1787,6 +1802,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       setListSrTooltipOffset(calcLeft);
       setListSrTooltipAbove(calcTop);
       setListSrPreviewText(text);
+      setListSrPreviewRows(rows);
     });
   };
 
@@ -1804,6 +1820,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       listSrHoveredRef.current = false;
       listSrActiveIdRef.current = undefined;
       setListSrPreviewText(null);
+      setListSrPreviewRows(null);
     }
   };
 
@@ -1846,6 +1863,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 列表页支撑/压力位弹窗状态
   const [listSrPreviewText, setListSrPreviewText] = useState<string | null>(null);
+  const [listSrPreviewRows, setListSrPreviewRows] = useState<SrRow[] | null>(null);
   const [listSrTooltipOffset, setListSrTooltipOffset] = useState(0);
   const [listSrTooltipAbove, setListSrTooltipAbove] = useState(0);
   const listSrBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -2714,6 +2732,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           listSrBtnRef.current && !listSrBtnRef.current.contains(e.target as Node)) {
         setListSrTooltipPinned(false);
         setListSrPreviewText(null);
+        setListSrPreviewRows(null);
         setListSrStock(null);
       }
     };
@@ -6246,7 +6265,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           >
             {listSrCopied ? <Check size={10} className="text-indigo-400" /> : <Copy size={10} className="text-app-subtext" />}
           </button>
-          {listSrPreviewText}
+          {listSrPreviewRows && listSrPreviewRows.length > 0 ? (
+            listSrPreviewRows.map((row, i) =>
+              row.kind === 'plain' ? (
+                <div key={i} className="whitespace-pre">{row.text}</div>
+              ) : (
+                <div key={i} className="whitespace-pre" style={row.color ? { color: row.color } : undefined}>
+                  <span>{row.name}</span>
+                  <span>{row.rest}</span>
+                </div>
+              )
+            )
+          ) : (
+            listSrPreviewText
+          )}
         </div>
       )}
 
