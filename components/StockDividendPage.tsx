@@ -1702,13 +1702,24 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     handleListSrClick(e, stock, false);
   };
 
-  // 移开名称：非固定时关闭
+  // 移开名称：非固定时关闭；触摸点按中跳过关闭，交由 click 固定
   const handleListSrHoverLeave = () => {
     if (!listSrTooltipPinned) {
+      if (listSrTouchGuardRef.current) return;
       listSrHoveredRef.current = false;
       listSrActiveIdRef.current = undefined;
       setListSrPreviewText(null);
     }
+  };
+
+  // 触摸开始：短时间内跳过合成 mouseleave，放大最后的 click 固定
+  const handleListSrTouchStart = () => {
+    listSrTouchGuardRef.current = true;
+    if (listSrTouchTimerRef.current !== undefined) clearTimeout(listSrTouchTimerRef.current);
+    listSrTouchTimerRef.current = window.setTimeout(() => {
+      listSrTouchGuardRef.current = false;
+      listSrTouchTimerRef.current = undefined;
+    }, 400);
   };
 
   const [bollData, setBollData] = useState<BollData | null>(null);
@@ -1749,6 +1760,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [listSrTooltipPinned, setListSrTooltipPinned] = useState(false);
   const listSrTooltipRef = useRef<HTMLDivElement | null>(null);
   const listSrTooltipMeasuredSize = useRef({ w: 0, h: 0 });
+  const listSrTouchGuardRef = useRef(false); // 触摸点按中保护：避免合成mouseleave在点击固定前关闭浮窗
+  const listSrTouchTimerRef = useRef<number | undefined>(undefined);
   const [listSrTooltipHidden, setListSrTooltipHidden] = useState(false);
   const listCopyHoveredRef = useRef(false);
   const [listCopyPreviewText, setListCopyPreviewText] = useState<string | null>(null);
@@ -1766,6 +1779,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const priceInfoRef = useRef<HTMLDivElement | null>(null);
   const priceInfoHoveredRef = useRef(false);
   const priceInfoActiveIdRef = useRef<string | undefined>(undefined);
+  const priceInfoTouchGuardRef = useRef(false); // 触摸点按中保护：避免合成mouseleave在点击固定前关闭浮窗
+  const priceInfoTouchTimerRef = useRef<number | undefined>(undefined);
   // 判断鼠标是否停留在价格浮窗内部（用 relatedTarget 配平，避免计数器泄漏）
   const isInsidePriceInfo = (node: Node | null) => !!node && !!priceInfoRef.current?.contains(node);
 
@@ -1791,6 +1806,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const mktInfoRef = useRef<HTMLDivElement | null>(null);
   const mktInfoHoveredRef = useRef(false);
   const mktInfoActiveIdRef = useRef<string | undefined>(undefined);
+  const mktInfoTouchGuardRef = useRef(false); // 触摸点按中保护：避免合成mouseleave在点击固定前关闭浮窗
+  const mktInfoTouchTimerRef = useRef<number | undefined>(undefined);
   // 底部判定依据区：当前选中的标签（hover 展示 / 点击固定）
   // event/status = 破位类标签；pattern = K线形态标签；env = 环境标签
   // status = 观测末尾状态徽标（真/假/修）；repair = 中间观测日的“修复观察”徽标
@@ -1829,13 +1846,24 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     openMktInfo(e.currentTarget as HTMLElement, stock);
   };
 
-  // 移开名称：非固定模式下直接关闭
+  // 移开名称：非固定模式下直接关闭；触摸点按中跳过关闭，交由 click 固定
   const handleMktInfoLeave = () => {
     mktInfoHoveredRef.current = false;
     if (mktInfoPinned) return;
+    if (mktInfoTouchGuardRef.current) return;
     mktInfoActiveIdRef.current = undefined;
     setMktInfoStock(null);
     resetMktSel();
+  };
+
+  // 触摸开始：短时间内跳过合成 mouseleave，放大最后的 click 固定
+  const handleMktInfoTouchStart = () => {
+    mktInfoTouchGuardRef.current = true;
+    if (mktInfoTouchTimerRef.current !== undefined) clearTimeout(mktInfoTouchTimerRef.current);
+    mktInfoTouchTimerRef.current = window.setTimeout(() => {
+      mktInfoTouchGuardRef.current = false;
+      mktInfoTouchTimerRef.current = undefined;
+    }, 400);
   };
 
   // 点击名称：切换固定/取消固定
@@ -1887,6 +1915,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const positionInfoRef = useRef<HTMLDivElement | null>(null);
   const positionInfoHoveredRef = useRef(false);
   const positionInfoActiveIdRef = useRef<string | undefined>(undefined);
+  const positionInfoTouchGuardRef = useRef(false); // 触摸点按中保护：避免合成mouseleave在点击固定前关闭浮窗
+  const positionInfoTouchTimerRef = useRef<number | undefined>(undefined);
   const isInsidePositionInfo = (node: Node | null) => !!node && !!positionInfoRef.current?.contains(node);
 
   // 显示价格技术指标浮窗（位置逻辑参考股票名称弹窗：右侧垂直居中）
@@ -1946,15 +1976,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     openPriceInfo(e.currentTarget as HTMLElement, stock);
   };
 
-  // 价格悬停离开：若鼠标移入浮窗内部则保留，否则关闭（未固定时）
+  // 价格悬停离开：非固定模式下直接关闭；不判断 isInside，桌面 hover 从单元格移进浮窗也应关闭。
+  // 移动端"点按闪现"由触摸保护(priceInfoTouchGuardRef)处理。
   const handlePriceInfoLeave = (e?: React.MouseEvent) => {
     priceInfoHoveredRef.current = false;
     if (priceInfoPinned) return;
-    if (e && isInsidePriceInfo(e.relatedTarget as Node | null)) return;
+    if (priceInfoTouchGuardRef.current) return; // 触摸点按中：跳过合成 mouseleave，等待 click 固定
     priceInfoActiveIdRef.current = undefined;
     setPriceInfoStock(null);
     setPriceInfoData(null);
     setPriceInfoLoading(false);
+  };
+
+  // 触摸开始：短时间内跳过合成 mouseleave，放大最后的 click 固定
+  const handlePriceInfoTouchStart = () => {
+    priceInfoTouchGuardRef.current = true;
+    if (priceInfoTouchTimerRef.current !== undefined) clearTimeout(priceInfoTouchTimerRef.current);
+    priceInfoTouchTimerRef.current = window.setTimeout(() => {
+      priceInfoTouchGuardRef.current = false;
+      priceInfoTouchTimerRef.current = undefined;
+    }, 400);
   };
 
   // 浮窗悬停离开：仍在浮窗内部（子元素间移动）则保留，真正离开且未固定时关闭
@@ -2116,13 +2157,24 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     openPositionInfo(e.currentTarget as HTMLElement, stock);
   };
 
-  // 持仓悬停离开：若鼠标移入浮窗内部则保留，否则关闭（未固定时）
+  // 持仓悬停离开：非固定模式下直接关闭；不判断 isInside，桌面 hover 移进浮窗也应关闭。
+  // 移动端"点按闪现"由触摸保护(positionInfoTouchGuardRef)处理。
   const handlePositionInfoLeave = (e?: React.MouseEvent) => {
     positionInfoHoveredRef.current = false;
     if (positionInfoPinned) return;
-    if (e && isInsidePositionInfo(e.relatedTarget as Node | null)) return;
+    if (positionInfoTouchGuardRef.current) return; // 触摸点按中：跳过合成 mouseleave，等待 click 固定
     positionInfoActiveIdRef.current = undefined;
     setPositionInfoStock(null);
+  };
+
+  // 触摸开始：短时间内跳过合成 mouseleave，放大最后的 click 固定
+  const handlePositionInfoTouchStart = () => {
+    positionInfoTouchGuardRef.current = true;
+    if (positionInfoTouchTimerRef.current !== undefined) clearTimeout(positionInfoTouchTimerRef.current);
+    positionInfoTouchTimerRef.current = window.setTimeout(() => {
+      positionInfoTouchGuardRef.current = false;
+      positionInfoTouchTimerRef.current = undefined;
+    }, 400);
   };
 
   // 浮窗悬停离开：仍在浮窗内部（子元素间移动）则保留，真正离开且未固定时关闭
@@ -3781,8 +3833,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       ) : nameSubMode === 'tags' ? (
                         <div className="relative flex flex-col items-center justify-center cursor-pointer"
                           onMouseEnter={(e) => handleMktInfoEnter(e, stock)}
-                          onMouseLeave={handleMktInfoLeave}
-                          onClick={(e) => handleMktInfoClick(e, stock)}>
+                            onMouseLeave={handleMktInfoLeave}
+                            onTouchStart={handleMktInfoTouchStart}
+                            onClick={(e) => handleMktInfoClick(e, stock)}>
                           <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
                             const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
                             const n = raw.replace(/\s/g, '');
@@ -3803,8 +3856,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       ) : (
                         <div className="relative flex items-center justify-center h-8 whitespace-nowrap cursor-pointer"
                           onMouseEnter={(e) => handleMktInfoEnter(e, stock)}
-                          onMouseLeave={handleMktInfoLeave}
-                          onClick={(e) => handleMktInfoClick(e, stock)}>
+                            onMouseLeave={handleMktInfoLeave}
+                            onTouchStart={handleMktInfoTouchStart}
+                            onClick={(e) => handleMktInfoClick(e, stock)}>
                           <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
                             const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
                             const n = raw.replace(/\s/g, '');
@@ -3846,6 +3900,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   {cols.includes('price') && <td
                     onMouseEnter={(e) => handlePriceInfoEnter(e, stock)}
                     onMouseLeave={handlePriceInfoLeave}
+                    onTouchStart={handlePriceInfoTouchStart}
                     onClick={(e) => handlePriceInfoClick(e, stock)}
                     className="px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
                     title=""
@@ -3862,6 +3917,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   {cols.includes('changePercent') && <td
                     onMouseEnter={(e) => handleListSrHoverEnter(e, stock)}
                     onMouseLeave={() => handleListSrHoverLeave()}
+                    onTouchStart={handleListSrTouchStart}
                     onClick={(e) => handleListSrClick(e, stock, true)}
                     className="px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
                     title=""
@@ -3955,6 +4011,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
                         onMouseLeave={handlePositionInfoLeave}
+                        onTouchStart={handlePositionInfoTouchStart}
                         onClick={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoClick(e, stock); }}
                       >
                         {hasPosition ? (
@@ -3971,6 +4028,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
                         onMouseLeave={handlePositionInfoLeave}
+                        onTouchStart={handlePositionInfoTouchStart}
                         onClick={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoClick(e, stock); }}
                       >
                         {hasPosition ? (
@@ -3989,6 +4047,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
                         onMouseLeave={handlePositionInfoLeave}
+                        onTouchStart={handlePositionInfoTouchStart}
                         onClick={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoClick(e, stock); }}
                       >
                         {showCostPct ? (
