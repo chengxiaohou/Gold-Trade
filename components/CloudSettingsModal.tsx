@@ -5,6 +5,7 @@ import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, Tren
 import { GithubConfig, AppSettings, StockSettings, DividendRateColorRange, ApiSource, CacheInfo } from '../types';
 import { validateConnection } from '../services/githubService';
 import { getCacheInfo, getMarketStatusText, formatDatePart, formatTimePart, formatRelativeTime, clearCacheRecord } from '../services/cacheService';
+import { getBollCacheSizeBytes, getStorageQuotaBytes } from '../services/bollCacheStore';
 import { clearAllCache, getTencentDomain, setTencentDomain, TENCENT_DOMAINS } from '../services/bollService';
 
 // All available columns in gold trade list
@@ -94,6 +95,25 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     tencent: getCacheInfo('tencent')
   });
 
+  // localStorage 占用空间（以 5MB 为最大参考值）
+  const LS_MAX_BYTES = 5 * 1024 * 1024;
+  const computeLsUsage = (): number => {
+    let total = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k == null) continue;
+        const v = localStorage.getItem(k);
+        total += (k.length + (v ? v.length : 0)) * 2; // UTF-16 每字符 2 字节
+      }
+    } catch { /* 忽略无权限/隐私模式 */ }
+    return total;
+  };
+  const [lsUsageBytes, setLsUsageBytes] = useState<number>(computeLsUsage);
+  // IndexedDB（BOLL 缓存）占用 + 浏览器总配额
+  const [idbUsageBytes, setIdbUsageBytes] = useState<number>(0);
+  const [idbQuotaBytes, setIdbQuotaBytes] = useState<number>(0);
+
   const COLOR_OPTIONS = [
     { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20' },
     { key: 'indigo', label: '默认', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20' },
@@ -152,7 +172,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     wasOpenRef.current = isOpen;
   }, [isOpen, githubConfig, appSettings, stockSettings, currentPage, initialTab]);
 
-  // 定期刷新缓存信息显示
+  // 打开设置时刷新一次缓存信息显示
   useEffect(() => {
     if (!isOpen) return;
 
@@ -161,12 +181,12 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         sina: getCacheInfo('sina'),
         tencent: getCacheInfo('tencent')
       });
+      setLsUsageBytes(computeLsUsage());
+      getBollCacheSizeBytes().then(setIdbUsageBytes).catch(() => setIdbUsageBytes(0));
+      getStorageQuotaBytes().then(setIdbQuotaBytes).catch(() => setIdbQuotaBytes(0));
     };
 
     updateCacheInfo();
-    const interval = setInterval(updateCacheInfo, 5000); // 每5秒刷新
-
-    return () => clearInterval(interval);
   }, [isOpen]);
 
   const handleSave = async (e: React.FormEvent | React.MouseEvent) => {
@@ -617,11 +637,64 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                 sina: getCacheInfo('sina'),
                                 tencent: getCacheInfo('tencent')
                               });
+                              setLsUsageBytes(computeLsUsage());
+                              getBollCacheSizeBytes().then(setIdbUsageBytes).catch(() => setIdbUsageBytes(0));
                             }}
                             className="text-xs text-app-subtext hover:text-indigo-400 flex items-center gap-1 transition-colors"
                           >
                             <RefreshCw size={12}/> 清除所有缓存
                           </button>
+                        </div>
+
+                        {/* localStorage / IndexedDB 占用空间 */}
+                        <div className="bg-app-input rounded-lg p-3 space-y-3">
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs text-app-subtext">localStorage 占用</span>
+                              <span className="text-xs font-mono text-app-text/80">
+                                {(lsUsageBytes / 1024 / 1024).toFixed(2)} MB / {LS_MAX_BYTES / 1024 / 1024} MB
+                              </span>
+                            </div>
+                            <div className="w-full h-2 bg-app-border rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-300 ${
+                                  lsUsageBytes / LS_MAX_BYTES < 0.5
+                                    ? 'bg-green-500'
+                                    : lsUsageBytes / LS_MAX_BYTES < 0.8
+                                    ? 'bg-yellow-500'
+                                    : 'bg-red-500'
+                                }`}
+                                style={{ width: `${Math.min(100, (lsUsageBytes / LS_MAX_BYTES) * 100)}%` }}
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs text-app-subtext">IndexedDB 占用</span>
+                              <span className="text-xs font-mono text-app-text/80">
+                                {(idbUsageBytes / 1024 / 1024).toFixed(2)} MB
+                                {idbQuotaBytes > 0 ? ` / ${(idbQuotaBytes / 1024 / 1024).toFixed(0)} MB` : ''}
+                              </span>
+                            </div>
+                            <div className="w-full h-2 bg-app-border rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-300 ${
+                                  idbQuotaBytes === 0 || idbUsageBytes / idbQuotaBytes < 0.5
+                                    ? 'bg-indigo-500'
+                                    : idbUsageBytes / idbQuotaBytes < 0.8
+                                    ? 'bg-yellow-500'
+                                    : 'bg-red-500'
+                                }`}
+                                style={{
+                                  width: `${
+                                    idbQuotaBytes > 0
+                                      ? Math.min(100, (idbUsageBytes / idbQuotaBytes) * 100)
+                                      : Math.max(2, Math.min(idbUsageBytes > 0 ? 8 : 2, 100))
+                                  }%`
+                                }}
+                              />
+                            </div>
+                          </div>
                         </div>
 
                         {/* Cache Status by Source */}

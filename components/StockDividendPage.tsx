@@ -3,11 +3,12 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, BarChart3, List, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource } from '../types';
-import { fetchBollData, checkAllBollCache, countStaleBollCache, countVisibleBollItems, getBollCacheTimestamps, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
+import { fetchBollData, checkAllBollCache, countStaleBollCache, countVisibleBollItems, getBollCacheTimestamps, ensureBollCacheRestored, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getMarketStatus, getDynamicBollCacheTTL, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
 import { getNickname } from '../services/nicknameService';
+import { safeSetItem } from '../services/storageSafe';
 import { InputGroup } from './InputGroup';
 
 const TAG_PALETTE = [
@@ -2039,6 +2040,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const handleDivRateInfoLeave = (e?: React.MouseEvent) => {
     divRateInfoHoveredRef.current = false;
     if (divRateInfoPinned) return;
+    if (e && isInsideDivRateInfo(e.relatedTarget as Node | null)) return; // 移动端点按合成mouseleave指向浮窗时保留（与价格弹窗一致）
     divRateInfoActiveIdRef.current = undefined;
     setDivRateInfoStock(null);
     setDivRateInfoKlines(null);
@@ -2288,6 +2290,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const fetchVersionRef = useRef(0);
 
   const fetchAllBoll = useCallback(async (trigger = '打开股息页自动刷新布林线') => {
+    // 等待从 IndexedDB 恢复缓存，确保日志能展示原缓存有效期时间
+    await ensureBollCacheRestored();
     // 先递增版本号，让旧请求通过版本检查自行取消，避免新请求被阻塞无法产生日志
     const currentVersion = ++fetchVersionRef.current;
     // 同一批次所有请求共享同一时间戳，确保缓存时间统一
@@ -2615,7 +2619,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
 
   useEffect(() => {
-    localStorage.setItem('stock_dividend_stocks', JSON.stringify(stocks));
+    safeSetItem('stock_dividend_stocks', JSON.stringify(stocks));
   }, [stocks]);
 
   const handleDragStart = (e: React.DragEvent, id: string) => {

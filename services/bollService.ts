@@ -1,6 +1,7 @@
 import { ApiSource } from '../types';
 import { getDynamicBollCacheTTL, getLastTradingOpen, getMarketStatus, setLastFetchTime } from './cacheService';
 import { requestLogService, type LogBatchContext } from './requestLogService';
+import { getBollCacheFromStore, saveBollCacheToStore, clearBollCacheFromStore } from './bollCacheStore';
 
 // 生产环境配置
 const isDev = import.meta.env.DEV;
@@ -163,56 +164,65 @@ const cache = new Map<string, { data: BollData; timestamp: number }>();
 const CACHE_STORAGE_KEY = 'boll_cache_v2';
 const CACHE_EXPIRY_MS = 4 * 60 * 60 * 1000; // 4小时
 
-// 从 LocalStorage 恢复缓存
-function restoreCacheFromStorage(): void {
+// 从 IndexedDB 恢复缓存（替代原 localStorage 方案）。不做迁移：版本切换后旧 localStorage 缓存直接移除。
+async function restoreCacheFromStore(): Promise<void> {
   try {
-    const stored = localStorage.getItem(CACHE_STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      const now = Date.now();
-      
-      // 各数据源最新的拉取时间
-      let latestTencent = 0;
-      let latestSina = 0;
+    // 移除旧的 localStorage BOLL 缓存（一次性释放存储空间，数据重新拉取后存 IndexedDB）
+    localStorage.removeItem(CACHE_STORAGE_KEY);
+  } catch { /* 忽略 */ }
+  try {
+    const stored = await getBollCacheFromStore();
 
-      for (const [key, value] of Object.entries(parsed)) {
-        const entry = value as { data: BollData; timestamp: number };
-        // 不管缓存是否过期，都记录最新拉取时间（用于缓存管理显示和日志）
-        if (key.endsWith('_tencent') && entry.timestamp > latestTencent) {
-          latestTencent = entry.timestamp;
-        } else if (key.endsWith('_sina') && entry.timestamp > latestSina) {
-          latestSina = entry.timestamp;
-        }
-        // 只恢复未过期的缓存到内存（过期数据不恢复，但拉取时间仍记录）
-        if (now - entry.timestamp < CACHE_EXPIRY_MS) {
-          cache.set(key, entry);
-        }
+    // 各数据源最新的拉取时间
+    let latestTencent = 0;
+    let latestSina = 0;
+
+    for (const [key, entry] of Object.entries(stored)) {
+      // 不管缓存是否过期，都记录最新拉取时间（用于缓存管理显示和日志）
+      if (key.endsWith('_tencent') && entry.timestamp > latestTencent) {
+        latestTencent = entry.timestamp;
+      } else if (key.endsWith('_sina') && entry.timestamp > latestSina) {
+        latestSina = entry.timestamp;
       }
-      
-      // 恢复缓存管理中的"上次拉取时间"
-      if (latestTencent > 0) setLastFetchTime('tencent', latestTencent);
-      if (latestSina > 0) setLastFetchTime('sina', latestSina);
+      // 全部恢复到内存（含过期数据），便于日志展示原缓存有效期；
+      // 是否判定过期/是否真正使用由 freshness 判断（isBollCacheFresh）决定，过期数据不会被命中。
+      if (!cache.has(key)) {
+        cache.set(key, entry);
+      }
     }
+
+    // 恢复缓存管理中的"上次拉取时间"
+    if (latestTencent > 0) setLastFetchTime('tencent', latestTencent);
+    if (latestSina > 0) setLastFetchTime('sina', latestSina);
+    console.log(`[BOLL] 从 IndexedDB 恢复缓存 ${cache.size} 条`);
   } catch (e) {
-    console.warn('Failed to restore BOLL cache from localStorage:', e);
+    console.warn('Failed to restore BOLL cache from IndexedDB:', e);
   }
 }
 
-// 保存缓存到 LocalStorage
-function saveCacheToStorage(): void {
+// 保存缓存到 IndexedDB（异步 fire-and-forget，不阻塞主线程）
+function saveCacheToStore(): void {
   try {
     const obj: Record<string, { data: BollData; timestamp: number }> = {};
     cache.forEach((value, key) => {
       obj[key] = value;
     });
-    localStorage.setItem(CACHE_STORAGE_KEY, JSON.stringify(obj));
+    saveBollCacheToStore(obj);
   } catch (e) {
-    console.warn('Failed to save BOLL cache to localStorage:', e);
+    console.warn('Failed to save BOLL cache to IndexedDB:', e);
   }
 }
 
-// 初始化时恢复缓存
-restoreCacheFromStorage();
+// 初始化：移除旧 localStorage 缓存并异步从 IndexedDB 恢复
+// 保存恢复 promise，供前端在发起请求前 await，避免"打开页面立即刷新"时读到未恢复的内存缓存
+let cacheRestorePromise: Promise<void> | null = null;
+export function ensureBollCacheRestored(): Promise<void> {
+  if (!cacheRestorePromise) {
+    cacheRestorePromise = restoreCacheFromStore();
+  }
+  return cacheRestorePromise;
+}
+void ensureBollCacheRestored();
 
 function getCacheKey(stockCode: string, period: BollPeriod, adjust: BollAdjust, apiSource: ApiSource): string {
   return `${stockCode}_${period}_${adjust}_${apiSource}`;
@@ -366,7 +376,7 @@ export function checkAllBollCache(
           // 同批次共用触发时间：缓存命中的条目也把时间戳统一到本次触发时间
           if (touchTime) {
             cache.set(cacheKey, { ...cached, timestamp: touchTime });
-            saveCacheToStorage();
+            saveCacheToStore();
           }
         }
         // 记录缓存命中日志（配合 fetchAllBoll 开始时的 reset，只显示本次缓存命中）
@@ -707,7 +717,7 @@ async function fetchBollFromTencent(
 
     const cacheKey = getCacheKey(code, period, adjust, 'tencent');
     cache.set(cacheKey, { data: result_data, timestamp: fetchedAt });
-    saveCacheToStorage();
+    saveCacheToStore();
 
     // 记录腾讯数据源的拉取时间
     setLastFetchTime('tencent', fetchedAt);
@@ -846,7 +856,7 @@ async function fetchBollFromSina(
 
     const cacheKey = getCacheKey(fullCode, period, adjust, 'sina');
     cache.set(cacheKey, { data: result_data, timestamp: fetchedAt });
-    saveCacheToStorage();
+    saveCacheToStore();
 
     // 记录新浪数据源的拉取时间
     setLastFetchTime('sina', fetchedAt);
@@ -865,5 +875,6 @@ async function fetchBollFromSina(
 // 清除所有BOLL缓存数据
 export function clearAllCache(): void {
   cache.clear();
-  localStorage.removeItem(CACHE_STORAGE_KEY);
+  clearBollCacheFromStore();
+  try { localStorage.removeItem(CACHE_STORAGE_KEY); } catch { /* 忽略 */ }
 }

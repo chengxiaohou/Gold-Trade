@@ -12,6 +12,7 @@ import { saveToGist, loadFromGist } from './services/githubService';
 import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings } from './types';
+import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
 const APP_VERSION = 'v2.16.1';
 
@@ -23,10 +24,10 @@ function recordError(tag: string, err: unknown) {
     const entry = { t: Date.now(), tag, msg };
     const prev = JSON.parse(localStorage.getItem(ERRLOG_KEY) || '[]') as unknown[];
     prev.push(entry);
-    localStorage.setItem(ERRLOG_KEY, JSON.stringify(prev.slice(-20)));
+    safeSetItem(ERRLOG_KEY, JSON.stringify(prev.slice(-20)));
     // 同步推送一份到控制台与 sessionStorage（双保险）
     console.error('[CRASH]', tag, err);
-    sessionStorage.setItem(ERRLOG_KEY, JSON.stringify(prev.slice(-20)));
+    try { sessionStorage.setItem(ERRLOG_KEY, JSON.stringify(prev.slice(-20))); } catch { /* 忽略 */ }
   } catch { /* 日志本身失败则忽略 */ }
 }
 // 监听全局错误与未处理的 Promise 拒绝，避免异步崩溃也丢失线索
@@ -53,6 +54,7 @@ class PageErrorBoundary extends React.Component<{ children: React.ReactNode }, {
             <div className="flex gap-2">
               <button className="flex-1 py-2 rounded-lg bg-brand-red text-white text-sm font-semibold" onClick={() => location.reload()}>重新加载</button>
               <button className="flex-1 py-2 rounded-lg bg-app-border text-app-text text-sm font-semibold" onClick={() => { navigator.clipboard.writeText(text); alert('报错信息已复制'); }}>复制报错</button>
+              <button className="flex-1 py-2 rounded-lg bg-app-border text-app-text text-sm font-semibold" onClick={() => { freeCacheSpace(); setTimeout(() => location.reload(), 100); }}>清理缓存恢复</button>
             </div>
           </div>
         </div>
