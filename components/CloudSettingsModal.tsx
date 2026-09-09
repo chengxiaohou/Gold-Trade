@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, TrendingUp, Database, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
-import { GithubConfig, AppSettings, StockSettings, DividendRateColorRange, ApiSource, CacheInfo } from '../types';
+import { GithubConfig, AppSettings, StockSettings, DividendRateColorRange, ApiSource, CacheInfo, TagParams, TagParamEntry, DEFAULT_TAG_PARAMS } from '../types';
 import { validateConnection } from '../services/githubService';
 import { getCacheInfo, getMarketStatusText, formatDatePart, formatTimePart, formatRelativeTime, clearCacheRecord } from '../services/cacheService';
 import { getBollCacheSizeBytes, getStorageQuotaBytes } from '../services/bollCacheStore';
@@ -32,6 +32,33 @@ const getStockColumns = (leftYear: number, rightYear: number) => [
   { key: 'dividendRate', label: `股息率(${rightYear})` },
   { key: 'dividendRates', label: '股息率对应股价' },
 ];
+
+// 标签判定参数：各参数的中文名与说明（用于设置 UI）
+const FENG_PARAM_LABELS: Record<keyof TagParams['feng'], { label: string; desc: string }> = {
+  fengLowBuy: { label: '缩量入场·低位容差', desc: '现价 ≤ 近20日低点 × 该值，判定为“低位”' },
+  fengPullback: { label: '回踩放量·触达容差', desc: '回踩距MA5 ≤ (该值-1)×100%，视为触达' },
+  fengVolBreak: { label: '放量突破·倍数', desc: '量 ≥ 5日均量 × 该值，才算放量' },
+};
+const CLASSIC_PARAM_LABELS: Record<keyof TagParams['classic'], { label: string; desc: string }> = {
+  classicDojiBody: { label: '十字星实体比例', desc: '实体 ≤ 振幅 × 该值，判为十字星' },
+  classicSmallBody: { label: '小实体比例', desc: '实体 ≤ 振幅 × 该值，判为小实体' },
+  classicNearHigh: { label: '接近近20日新高', desc: '收 ≥ 近20日高 × 该值，判为接近新高' },
+  classicNearLow: { label: '接近近20日新低', desc: '收 ≤ 近20日低 × 该值，判为接近新低' },
+  classicMaSqueeze: { label: '均线粘合比例', desc: '相邻均线最大偏差 ≤ 该值，判为均线粘合' },
+};
+
+// 用保存值覆盖默认值，返回完整可用的 TagParams（处理老用户缺字段）
+const mergeTagParams = (saved?: TagParams): TagParams => {
+  const feng = {} as TagParams['feng'];
+  const classic = {} as TagParams['classic'];
+  (Object.keys(DEFAULT_TAG_PARAMS.feng) as Array<keyof TagParams['feng']>).forEach(k => {
+    feng[k] = { ...DEFAULT_TAG_PARAMS.feng[k], ...(saved?.feng?.[k] || {}) };
+  });
+  (Object.keys(DEFAULT_TAG_PARAMS.classic) as Array<keyof TagParams['classic']>).forEach(k => {
+    classic[k] = { ...DEFAULT_TAG_PARAMS.classic[k], ...(saved?.classic?.[k] || {}) };
+  });
+  return { feng, classic };
+};
 
 interface CloudSettingsModalProps {
   isOpen: boolean;
@@ -94,6 +121,31 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     sina: getCacheInfo('sina'),
     tencent: getCacheInfo('tencent')
   });
+  // 标签判定参数（风系 + 原有），需深合并默认值
+  const [tagParams, setTagParams] = useState<TagParams>(() => mergeTagParams(stockSettings?.tagParams));
+
+  // 标签判定参数操作辅助
+  const updateTagParam = (group: 'feng' | 'classic', key: string, patch: Partial<TagParamEntry>) => {
+    setTagParams(prev => {
+      const g = (group === 'feng' ? { ...prev.feng } : { ...prev.classic }) as Record<string, TagParamEntry>;
+      g[key] = { ...g[key], ...patch };
+      return group === 'feng'
+        ? { ...prev, feng: g as TagParams['feng'] }
+        : { ...prev, classic: g as TagParams['classic'] };
+    });
+  };
+  const toggleTagGroup = (group: 'feng' | 'classic', enabled: boolean) => {
+    setTagParams(prev => {
+      const src = (group === 'feng' ? prev.feng : prev.classic) as unknown as Record<string, TagParamEntry>;
+      const next: Record<string, TagParamEntry> = {};
+      Object.keys(src).forEach(k => {
+        next[k] = { ...src[k], enabled };
+      });
+      return group === 'feng'
+        ? { ...prev, feng: next as TagParams['feng'] }
+        : { ...prev, classic: next as TagParams['classic'] };
+    });
+  };
 
   // localStorage 占用空间（以 5MB 为最大参考值）
   const LS_MAX_BYTES = 5 * 1024 * 1024;
@@ -125,7 +177,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     { key: 'pink', label: '粉色', bg: 'bg-pink-500/10', text: 'text-pink-500', border: 'border-pink-500/20' },
   ];
 
-  const [activeTab, setActiveTab] = useState<'general' | 'cloud'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'general' | 'tagparams' | 'cloud'>(initialTab);
   const [isVerifying, setIsVerifying] = useState(false);
   const [logState, setLogState] = useState<{ type: 'success' | 'error', lines: string[] } | null>(null);
   
@@ -237,6 +289,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       sortMode: stockSettings?.sortMode ?? 'default',
       memo: stockSettings?.memo ?? '',
       memoUpdatedAt: stockSettings?.memoUpdatedAt ?? 0,
+      tagParams,
     };
 
     // If Cloud tab is not active and no changes to cloud config, just save app settings
@@ -339,6 +392,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       sortMode: stockSettings?.sortMode ?? 'default',
       memo: stockSettings?.memo ?? '',
       memoUpdatedAt: stockSettings?.memoUpdatedAt ?? 0,
+      tagParams,
     };
     
     // 保留现有云端配置，避免关闭弹窗时意外清空 GitHub token/gistId
@@ -382,6 +436,15 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
           >
             通用设置
             {activeTab === 'general' && (
+              <div className="absolute inset-x-0 -bottom-[1px] h-0.5 bg-indigo-500 animate-in fade-in duration-200" />
+            )}
+          </button>
+          <button 
+             onClick={() => setActiveTab('tagparams')}
+             className={`flex-1 py-3 text-sm font-bold transition-colors relative ${activeTab === 'tagparams' ? 'text-indigo-400 bg-indigo-500/5' : 'text-app-subtext hover:text-app-text'}`}
+          >
+            标签判定参数
+            {activeTab === 'tagparams' && (
               <div className="absolute inset-x-0 -bottom-[1px] h-0.5 bg-indigo-500 animate-in fade-in duration-200" />
             )}
           </button>
@@ -1138,6 +1201,116 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                      </div>
                    </>
                  )}
+              </div>
+            )}
+
+            {/* Tab: 标签判定参数 */}
+            {activeTab === 'tagparams' && (
+              <div className="space-y-4 animate-in fade-in initial:opacity-0 slide-in-from-left-4 duration-200">
+                 <div>
+                    <span className="text-sm font-medium text-app-text flex items-center gap-2">
+                       <Sliders size={16} className="text-indigo-400"/> 标签判定参数
+                    </span>
+                    <p className="text-xs text-app-subtext mt-1">
+                       调整各标签判定用的比例/容差，或整体/逐个开关。仅影响“加仓/减仓”与十字星等形态判定，随设置持久化并上云同步。
+                    </p>
+                 </div>
+
+                 {/* 通用标签参数 */}
+                 <div className="space-y-2 pt-2 border-t border-app-border">
+                    <div className="flex items-center justify-between">
+                       <span className="text-sm font-medium text-app-text">通用标签参数</span>
+                       <label className="flex items-center gap-1.5 text-xs text-app-subtext">
+                          <span>整体开关</span>
+                          <button
+                            type="button"
+                            onClick={() => toggleTagGroup('classic', !Object.values(tagParams.classic as Record<string, TagParamEntry>).every(p => p.enabled))}
+                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${Object.values(tagParams.classic as Record<string, TagParamEntry>).every(p => p.enabled) ? 'bg-indigo-600' : 'bg-app-input border border-app-border'}`}
+                          >
+                            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${Object.values(tagParams.classic as Record<string, TagParamEntry>).every(p => p.enabled) ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                          </button>
+                       </label>
+                    </div>
+                    {(Object.keys(CLASSIC_PARAM_LABELS) as Array<keyof TagParams['classic']>).map(key => {
+                      const entry = tagParams.classic[key];
+                      const meta = CLASSIC_PARAM_LABELS[key];
+                      return (
+                        <div key={key} className="bg-app-input rounded-lg p-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                               <span className="text-xs font-medium text-app-text">{meta.label}</span>
+                               <span className="block text-[10px] text-app-subtext mt-0.5 leading-snug">{meta.desc}</span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                               <input
+                                 type="number"
+                                 value={entry.value}
+                                 step="0.01"
+                                 min="0"
+                                 onChange={(e) => updateTagParam('classic', key, { value: parseFloat(e.target.value) || 0 })}
+                                 className="w-16 bg-app-input border border-white/5 rounded-lg px-2 py-1 text-right text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
+                               />
+                               <button
+                                 type="button"
+                                 onClick={() => updateTagParam('classic', key, { enabled: !entry.enabled })}
+                                 className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${entry.enabled ? 'bg-indigo-600' : 'bg-app-input border border-app-border'}`}
+                               >
+                                 <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${entry.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                               </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                 </div>
+
+                 {/* 风系标签参数 */}
+                 <div className="space-y-2 pt-2 border-t border-app-border">
+                    <div className="flex items-center justify-between">
+                       <span className="text-sm font-medium text-app-text">风系标签参数</span>
+                       <label className="flex items-center gap-1.5 text-xs text-app-subtext">
+                          <span>整体开关</span>
+                          <button
+                            type="button"
+                            onClick={() => toggleTagGroup('feng', !Object.values(tagParams.feng as Record<string, TagParamEntry>).every(p => p.enabled))}
+                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${Object.values(tagParams.feng as Record<string, TagParamEntry>).every(p => p.enabled) ? 'bg-indigo-600' : 'bg-app-input border border-app-border'}`}
+                          >
+                            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${Object.values(tagParams.feng as Record<string, TagParamEntry>).every(p => p.enabled) ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                          </button>
+                       </label>
+                    </div>
+                    {(Object.keys(FENG_PARAM_LABELS) as Array<keyof TagParams['feng']>).map(key => {
+                      const entry = tagParams.feng[key];
+                      const meta = FENG_PARAM_LABELS[key];
+                      return (
+                        <div key={key} className="bg-app-input rounded-lg p-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                               <span className="text-xs font-medium text-app-text">{meta.label}</span>
+                               <span className="block text-[10px] text-app-subtext mt-0.5 leading-snug">{meta.desc}</span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                               <input
+                                 type="number"
+                                 value={entry.value}
+                                 step="0.01"
+                                 min="0"
+                                 onChange={(e) => updateTagParam('feng', key, { value: parseFloat(e.target.value) || 0 })}
+                                 className="w-16 bg-app-input border border-white/5 rounded-lg px-2 py-1 text-right text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
+                               />
+                               <button
+                                 type="button"
+                                 onClick={() => updateTagParam('feng', key, { enabled: !entry.enabled })}
+                                 className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${entry.enabled ? 'bg-indigo-600' : 'bg-app-input border border-app-border'}`}
+                               >
+                                 <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${entry.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                               </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                 </div>
               </div>
             )}
 

@@ -11,10 +11,10 @@ import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
-import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings } from './types';
+import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.16.1';
+const APP_VERSION = 'v2.17.1';
 
 // 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
 const ERRLOG_KEY = 'gold_trade_error_log';
@@ -367,7 +367,8 @@ export default function App() {
         maxRows: parsed.maxRows || 15,
         maxWidth: parsed.maxWidth || 812,
         memo: parsed.memo || '',
-        memoUpdatedAt: parsed.memoUpdatedAt || 0
+        memoUpdatedAt: parsed.memoUpdatedAt || 0,
+        tagParams: parsed.tagParams || DEFAULT_TAG_PARAMS
       };
     } catch {
       return {
@@ -383,7 +384,8 @@ export default function App() {
         maxRows: 15,
         maxWidth: 812,
         memo: '',
-        memoUpdatedAt: 0
+        memoUpdatedAt: 0,
+        tagParams: DEFAULT_TAG_PARAMS
       };
     }
   });
@@ -405,7 +407,8 @@ export default function App() {
         { min: 0, max: 4.5, color: 'red' },
         { min: 4.5, max: 5.5, color: 'yellow' },
         { min: 5.5, max: 100, color: 'green' }
-      ]
+      ],
+      tagParams: DEFAULT_TAG_PARAMS
     });
     clearAllCache();
     clearCacheRecord('sina');
@@ -909,6 +912,7 @@ export default function App() {
               maxRows: stockSettings?.maxRows ?? result.stockSettings.maxRows,
               maxWidth: stockSettings?.maxWidth ?? result.stockSettings.maxWidth,
               sortMode: stockSettings?.sortMode ?? result.stockSettings.sortMode,
+              tagParams: result.stockSettings.tagParams || DEFAULT_TAG_PARAMS,
             };
             setStockSettings(restoredStockSettings);
             localStorage.setItem('stock_dividend_settings', JSON.stringify(restoredStockSettings));
@@ -2033,6 +2037,7 @@ export default function App() {
             appVersion={APP_VERSION}
             onTogglePage={togglePage}
             apiSource={appSettings.apiSource || 'tencent'}
+            tagParams={stockSettings.tagParams || DEFAULT_TAG_PARAMS}
             onResetStocks={resetStockData}
             resetSignal={stockResetSignal}
             dividendYearLeft={stockSettings.dividendYearLeft}

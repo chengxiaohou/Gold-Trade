@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffe
 import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, BarChart3, List, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
-import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource } from '../types';
+import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS } from '../types';
 import { fetchBollData, checkAllBollCache, countStaleBollCache, countVisibleBollItems, getBollCacheTimestamps, ensureBollCacheRestored, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getMarketStatus, getDynamicBollCacheTTL, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
@@ -222,6 +222,7 @@ interface StockDividendPageProps {
   appVersion?: string;
   onTogglePage?: () => void;
   apiSource?: ApiSource;
+  tagParams?: TagParams;
   onResetStocks?: () => void;
   resetSignal?: number;
   dividendYearLeft?: number;
@@ -704,7 +705,9 @@ interface KlinePattern {
   detail: string[];    // 判定依据文案
 }
 
-function analyzeKlinePatterns(klines: BollKline[], fmt: (v: number) => string): KlinePattern[] {
+function analyzeKlinePatterns(klines: BollKline[], fmt: (v: number) => string, cfg: TagParams = DEFAULT_TAG_PARAMS): KlinePattern[] {
+  const classic = cfg.classic;
+  const dojiBody = classic.classicDojiBody, smallBodyP = classic.classicSmallBody, nearHighP = classic.classicNearHigh, nearLowP = classic.classicNearLow;
   const n = klines.length;
   if (n < 21) return []; // 需 ≥21 根K线（前20日趋势 / 平均振幅）
   const i = n - 1; // 仅分析最新收盘交易日
@@ -714,8 +717,8 @@ function analyzeKlinePatterns(klines: BollKline[], fmt: (v: number) => string): 
   const lower = Math.min(k.open, k.close) - k.low;
   const range = k.high - k.low;
   if (range <= 0) return [];
-  const smallBody = body <= range * 0.1; // 小实体
-  const tinyBody = body <= range * 0.05; // 十字星实体
+  const smallBody = smallBodyP.enabled && body <= range * smallBodyP.value; // 小实体
+  const tinyBody = dojiBody.enabled && body <= range * dojiBody.value; // 十字星实体
   // 前20日均线方向（今日 vs 昨日）
   let sum = 0, sumPrev = 0;
   for (let j = i - 19; j <= i; j++) sum += klines[j].close;
@@ -730,8 +733,8 @@ function analyzeKlinePatterns(klines: BollKline[], fmt: (v: number) => string): 
     rangeSum += klines[j].high - klines[j].low;
   }
   const avgRange = rangeSum / 20;
-  const nearHigh = k.close >= high20 * 0.95; // 位于近20日最高价5%区间内
-  const nearLow = k.close <= low20 * 1.05;   // 位于近20日最低价5%区间内
+  const nearHigh = nearHighP.enabled && k.close >= high20 * nearHighP.value; // 位于近20日最高价区间
+  const nearLow = nearLowP.enabled && k.close <= low20 * nearLowP.value;   // 位于近20日最低价区间
   // 放量增强：当日成交量 > 前5日均量
   let avgVolPrev = 0;
   for (let j = i - 5; j <= i - 1; j++) avgVolPrev += klines[j].volume;
@@ -748,9 +751,9 @@ function analyzeKlinePatterns(klines: BollKline[], fmt: (v: number) => string): 
       type: 'doji', date: k.date, label: '十字星', single: '十', color: 'slate', direction: dir,
       detail: [
         `${ds} 十字星：开 ${fmt(k.open)} ≈ 收 ${fmt(k.close)}`,
-        `实体占比 ${pct}% ≤ 5%（多空平衡）`,
-        dir === 'high' ? '现价贴近近20日高点（≥95%区间）→ 高位警示'
-          : dir === 'low' ? '现价贴近近20日低点（≤105%区间）→ 低位关注'
+        `实体占比 ${pct}% ≤ ${(dojiBody.value * 100).toFixed(1)}%（多空平衡）`,
+        dir === 'high' ? `现价贴近近20日高点（≥${(nearHighP.value * 100).toFixed(1)}%区间）→ 高位警示`
+          : dir === 'low' ? `现价贴近近20日低点（≤${(nearLowP.value * 100).toFixed(1)}%区间）→ 低位关注`
           : '趋势方向中性',
       ],
     });
@@ -962,7 +965,9 @@ function analyzeDailySignals(klines: BollKline[], allowTodayVolume = true): Dail
 // 列表单元格展示红色“加”/绿色“减”单字（优先级最高）；浮窗近10日按日展示“加仓 xN / 减仓 xN”明细，判定依据逐条列出。
 interface FengHit { name: string; detail: string[] }
 interface FengDaySignal { date: string; add: FengHit[]; reduce: FengHit[] }
-function analyzeFengSignals(klines: BollKline[], fmt: (v: number) => string, allowTodayVolume = true): { latest: FengDaySignal; days: FengDaySignal[] } {
+function analyzeFengSignals(klines: BollKline[], fmt: (v: number) => string, allowTodayVolume = true, cfg: TagParams = DEFAULT_TAG_PARAMS): { latest: FengDaySignal; days: FengDaySignal[] } {
+  const feng = cfg.feng;
+  const lowBuy = feng.fengLowBuy, pullback = feng.fengPullback, volBreak = feng.fengVolBreak;
   const n = klines.length;
   const empty = (date: string): FengDaySignal => ({ date, add: [], reduce: [] });
   if (n < 25) return { latest: empty(klines[n - 1]?.date ?? ''), days: [] };
@@ -986,18 +991,18 @@ function analyzeFengSignals(klines: BollKline[], fmt: (v: number) => string, all
     const vb = volMa5 > 0 ? v / volMa5 : 0; // 量比：今量/5日均量
     const shrink = v < volMa5;
     // ── 加仓信号 ──
-    if (c <= l20 * 1.05 && shrink) {
-      res.add.push({ name: '缩量入场（低位）', detail: [`现价 ${fmt(c)} ≤ 近20日低点 ${fmt(l20)}×1.05 = ${fmt(l20 * 1.05)}（低位）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，缩量）`, '低位+缩量 → 连续下跌抛压衰竭，可低吸/试探仓'] });
+    if (lowBuy.enabled && c <= l20 * lowBuy.value && shrink) {
+      res.add.push({ name: '缩量入场（低位）', detail: [`现价 ${fmt(c)} ≤ 近20日低点 ${fmt(l20)}×${lowBuy.value} = ${fmt(l20 * lowBuy.value)}（低位）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，缩量）`, '低位+缩量 → 连续下跌抛压衰竭，可低吸/试探仓'] });
     }
     if (i >= 2 && v < klines[i - 1].volume && klines[i - 1].volume < klines[i - 2].volume) {
       res.add.push({ name: '缩量续加', detail: [`连续3日量能递减：${fmtV(klines[i - 2].volume)} → ${fmtV(klines[i - 1].volume)} → ${fmtV(v)}`, '缩量续跌 → 抛压逐步衰竭，按计划逐级加仓'] });
     }
     const crossMA5 = c > ma5 && klines[i - 1].close <= ma5s[i - 1]!;
     const crossMA10 = c > ma10 && klines[i - 1].close <= ma10s[i - 1]!;
-    if ((crossMA5 || crossMA10) && v >= volMa5 * 1.2) {
-      res.add.push({ name: '放量突破均线', detail: [`收 ${fmt(c)} ${crossMA5 ? `上穿 MA5 ${fmt(ma5)}（前收 ${fmt(klines[i - 1].close)} ≤ MA5 ${fmt(ma5s[i - 1])}）` : ''}${crossMA10 ? `上穿 MA10 ${fmt(ma10)}（前收 ${fmt(klines[i - 1].close)} ≤ MA10 ${fmt(ma10s[i - 1])}）` : ''}`, `今量 ${fmtV(v)} ≥ 5日均量 ${fmtV(volMa5)}×1.2 = ${fmtV(volMa5 * 1.2)}（量比 ${vb.toFixed(2)}，放量）`, '放量突破 → 真突破概率大，加仓跟随'] });
+    if (volBreak.enabled && (crossMA5 || crossMA10) && v >= volMa5 * volBreak.value) {
+      res.add.push({ name: '放量突破均线', detail: [`收 ${fmt(c)} ${crossMA5 ? `上穿 MA5 ${fmt(ma5)}（前收 ${fmt(klines[i - 1].close)} ≤ MA5 ${fmt(ma5s[i - 1])}）` : ''}${crossMA10 ? `上穿 MA10 ${fmt(ma10)}（前收 ${fmt(klines[i - 1].close)} ≤ MA10 ${fmt(ma10s[i - 1])}）` : ''}`, `今量 ${fmtV(v)} ≥ 5日均量 ${fmtV(volMa5)}×${volBreak.value} = ${fmtV(volMa5 * volBreak.value)}（量比 ${vb.toFixed(2)}，放量）`, '放量突破 → 真突破概率大，加仓跟随'] });
     }
-    if (i >= 1 && klines[i - 1].close >= ma5s[i - 1]! && k.low <= ma5 * 1.01 && c > ma5 && v >= volMa5) {
+    if (pullback.enabled && i >= 1 && klines[i - 1].close >= ma5s[i - 1]! && k.low <= ma5 * pullback.value && c > ma5 && v >= volMa5) {
       res.add.push({ name: '回踩放量', detail: [`前日收 ${fmt(klines[i - 1].close)} 在 MA5 ${fmt(ma5s[i - 1])} 上方；盘中低 ${fmt(k.low)} 触及 MA5 ${fmt(ma5)} 后收回 ${fmt(c)}`, `今量 ${fmtV(v)} ≥ 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，放量）`, '放量回踩支撑 → 主力回补，加仓'] });
     }
     if (i >= 3 && klines[i - 1].close < klines[i - 2].close && klines[i - 2].close < klines[i - 3].close && shrink && k.low >= klines[i - 1].low) {
@@ -1026,7 +1031,8 @@ function analyzeFengSignals(klines: BollKline[], fmt: (v: number) => string, all
   return { latest: evalDay(n - 1), days };
 }
 
-function analyzeEnvironment(klines: BollKline[], fmt: (v: number) => string, allowVolume = true): EnvResult | null {
+function analyzeEnvironment(klines: BollKline[], fmt: (v: number) => string, allowVolume = true, cfg: TagParams = DEFAULT_TAG_PARAMS): EnvResult | null {
+  const nearHighP = cfg.classic.classicNearHigh, masSqueezeP = cfg.classic.classicMaSqueeze;
   const n = klines.length;
   if (n < 130) return null; // 需 120 日均线 + 近20日高低点 + 近60日带宽分位
   const i = n - 1;
@@ -1042,7 +1048,7 @@ function analyzeEnvironment(klines: BollKline[], fmt: (v: number) => string, all
     if (klines[j].high > high20) high20 = klines[j].high;
     if (klines[j].low < low20) low20 = klines[j].low;
   }
-  const nearHigh = close >= high20 * 0.95;
+  const nearHigh = nearHighP.enabled && close >= high20 * nearHighP.value;
 
   // 序列指标
   const m5s = calcMaSeries(klines, 5), m10s = calcMaSeries(klines, 10), m20s = calcMaSeries(klines, 20),
@@ -1057,10 +1063,10 @@ function analyzeEnvironment(klines: BollKline[], fmt: (v: number) => string, all
   let trendTag: EnvTag | null = null;
   if (m5 && m10 && m20 && m60 && m120 && m5p && m10p && m20p && m60p && m120p) {
     const spread = Math.max(m5, m10, m20, m60) - Math.min(m5, m10, m20, m60);
-    if (spread < close * 0.04) {
+    if (masSqueezeP.enabled && spread < close * masSqueezeP.value) {
       trendScore = 0;
       trendTag = { key: 'trend-squeeze', label: '均线粘合', single: '粘', color: 'slate', score: 0, dim: 'trend', detail: [
-        `${ds} 5/10/20/60 均线最大差值 ${fmt(spread)} < 股价×4%（${fmt(close)}）`,
+        `${ds} 5/10/20/60 均线最大差值 ${fmt(spread)} < 股价×${(masSqueezeP.value * 100).toFixed(1)}%（${fmt(close)}）`,
         '方向选择的前夜：上破粘合区进强周期，下破进弱周期',
       ] };
     } else if (m5 > m10 && m10 > m20 && m20 > m60 && m60 > m120
@@ -1562,7 +1568,7 @@ type SrRow =
   | { kind: 'plain'; text: string }
   | { kind: 'cell'; name: string; color?: string; rest: string };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 812, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, showRequestStats = true }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 812, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, showRequestStats = true }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
   // 分红年份列（dividendLeft / dividendRight）：表头合并为一格，年份各自成列
@@ -2471,8 +2477,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const daily = stockBollMap.get(stock.id)?.daily;
     const klines = daily?.klines;
     if (!klines || klines.length === 0) return [];
+    const tagKey = JSON.stringify(tagParams); // 参数变化时缓存失效
+    const cacheKey = `${klines}::${tagKey}`;
     const cached = latestTagsCache.current.get(stock.id);
-    if (cached && cached.key === klines && cached.v === LATEST_TAG_VERSION) return cached.tags;
+    if (cached && cached.key === cacheKey && cached.v === LATEST_TAG_VERSION) return cached.tags;
     const events = analyzeMarketConditions(klines);
     const lastDate = klines[klines.length - 1].date;
     // 破位类事件标签（不含“修复观察”）
@@ -2489,7 +2497,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       }
     }
     // 环境标签
-    const env = analyzeEnvironment(klines, v => formatPrice(v, stock.name), isTodayVolumeEligible(klines));
+    const env = analyzeEnvironment(klines, v => formatPrice(v, stock.name), isTodayVolumeEligible(klines), tagParams);
     const envCls: Record<EnvTag['color'], string> = {
       red: 'bg-red-500/10 text-red-500 border-red-500/20',
       green: 'bg-green-500/10 text-green-500 border-green-500/20',
@@ -2500,10 +2508,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // 依次拼装：风系(加/减) → K线形态 → 综合周期 → 量价 → 布林 → 破位
     const tags: { key: string; text: string; cls: string }[] = [];
     // 风系加/减复合标签：优先级最高（红加/绿减），置于所有现有标签之前
-    const feng = analyzeFengSignals(klines, v => formatPrice(v, stock.name), isTodayVolumeEligible(klines));
+    const feng = analyzeFengSignals(klines, v => formatPrice(v, stock.name), isTodayVolumeEligible(klines), tagParams);
     if (feng.latest.reduce.length > 0) tags.push({ key: `feng-reduce-${feng.latest.date}`, text: '减', cls: 'bg-green-500/10 text-green-500 border-green-500/20' });
     if (feng.latest.add.length > 0) tags.push({ key: `feng-add-${feng.latest.date}`, text: '加', cls: 'bg-red-500/10 text-red-500 border-red-500/20' });
-    const patterns = analyzeKlinePatterns(klines, v => formatPrice(v, stock.name));
+    const patterns = analyzeKlinePatterns(klines, v => formatPrice(v, stock.name), tagParams);
     for (const p of patterns) {
       tags.push({
         key: `p-${p.type}`,
@@ -2523,7 +2531,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       }
     }
     tags.push(...breakTags);
-    latestTagsCache.current.set(stock.id, { v: LATEST_TAG_VERSION, key: klines, tags });
+    latestTagsCache.current.set(stock.id, { v: LATEST_TAG_VERSION, key: cacheKey, tags });
     return tags;
   };
 
@@ -6120,9 +6128,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const events = klines && klines.length > 0 ? analyzeMarketConditions(klines, 10) : null;
         const allowVol = klines && klines.length > 0 ? isTodayVolumeEligible(klines) : false;
         const dailySignals = klines && klines.length > 0 ? analyzeDailySignals(klines, allowVol) : [];
-        const patterns = klines && klines.length > 0 ? analyzeKlinePatterns(klines, v => formatPrice(v, mktInfoStock.name)) : null;
-        const env = klines && klines.length > 0 ? analyzeEnvironment(klines, v => formatPrice(v, mktInfoStock.name), allowVol) : null;
-        const feng = klines && klines.length > 0 ? analyzeFengSignals(klines, v => formatPrice(v, mktInfoStock.name), allowVol) : null;
+        const patterns = klines && klines.length > 0 ? analyzeKlinePatterns(klines, v => formatPrice(v, mktInfoStock.name), tagParams) : null;
+        const env = klines && klines.length > 0 ? analyzeEnvironment(klines, v => formatPrice(v, mktInfoStock.name), allowVol, tagParams) : null;
+        const feng = klines && klines.length > 0 ? analyzeFengSignals(klines, v => formatPrice(v, mktInfoStock.name), allowVol, tagParams) : null;
         const fmtDay = (d: string) => {
           const p = d.split('-');
           return p.length === 3 ? `${parseInt(p[1], 10)}月${parseInt(p[2], 10)}日` : d;

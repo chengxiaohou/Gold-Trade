@@ -130,6 +130,33 @@ export interface DividendRateColorRange {
   color: string;
 }
 
+export interface TagParamEntry {
+  enabled: boolean; // 该参数的开关
+  value: number;    // 比例/容差数值
+}
+
+// 标签判定参数：仅比例/容差类。feng=风系加/减，classic=原有形态/环境。随 stockSettings 云端同步。
+export interface TagParams {
+  feng: Record<'fengLowBuy' | 'fengPullback' | 'fengVolBreak', TagParamEntry>;
+  classic: Record<'classicDojiBody' | 'classicSmallBody' | 'classicNearHigh' | 'classicNearLow' | 'classicMaSqueeze', TagParamEntry>;
+}
+export type TagParamKey = keyof TagParams['feng'] | keyof TagParams['classic'];
+
+export const DEFAULT_TAG_PARAMS: TagParams = {
+  feng: {
+    fengLowBuy: { enabled: true, value: 1.05 },    // 缩量入场·低位容差
+    fengPullback: { enabled: true, value: 1.01 },  // 回踩放量·触达容差
+    fengVolBreak: { enabled: true, value: 1.2 },   // 放量突破·倍数
+  },
+  classic: {
+    classicDojiBody: { enabled: true, value: 0.05 },  // 十字星实体比例
+    classicSmallBody: { enabled: true, value: 0.1 },  // 小实体比例
+    classicNearHigh: { enabled: true, value: 0.95 },  // 接近近20日新高
+    classicNearLow: { enabled: true, value: 1.05 },   // 接近近20日新低
+    classicMaSqueeze: { enabled: true, value: 0.04 }, // 均线粘合比例
+  },
+};
+
 export interface StockSettings {
   visibleColumns?: string[];
   dividendRateColumns?: string[];
@@ -140,4 +167,5 @@ export interface StockSettings {
   sortMode?: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent'; // 列表排序规则
   memo?: string; // 股息率列表下方备忘录文字（随云端同步）
   memoUpdatedAt?: number; // 备忘录最后编辑时间戳（ms）
+  tagParams?: TagParams; // 标签判定比例/容差参数（风系 + 原有），随云端同步
 }
