@@ -5958,7 +5958,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {/* 列表页行情状态浮窗（近10交易日破位分析） */}
       {mktInfoStock && (() => {
         const daily = stockBollMap.get(mktInfoStock.id)?.daily;
-        const klines = daily?.klines;
+        // 用实时价覆盖最新一根K线收盘价：BOLL/K线缓存（前复权）比实时报价滞后，
+        // 若不覆盖，十字星/破位/环境等判定会使用滞后的收盘价。
+        let klines = daily?.klines;
+        if (klines && klines.length > 0 && mktInfoStock.price > 0) {
+          klines = [
+            ...klines.slice(0, -1),
+            { ...klines[klines.length - 1], close: mktInfoStock.price },
+          ];
+        }
         const events = klines && klines.length > 0 ? analyzeMarketConditions(klines, 10) : null;
         const allowVol = klines && klines.length > 0 ? isTodayVolumeEligible(klines) : false;
         const dailySignals = klines && klines.length > 0 ? analyzeDailySignals(klines, allowVol) : [];
