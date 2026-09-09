@@ -973,7 +973,7 @@ function analyzeFengSignals(klines: BollKline[], fmt: (v: number) => string, all
     let s = 0;
     for (let i = 0; i < n; i++) { s += klines[i].volume; if (i >= 5) s -= klines[i - 5].volume; volMa5s[i] = i >= 4 ? s / 5 : (i > 0 ? s / i : 0); } // 前5日（不含当日）
   }
-  const high20 = (i: number) => { let h = -Infinity; for (let j = Math.max(0, i - 19); j <= i; j++) h = Math.max(h, klines[j].high); return h; };
+  const high20 = (i: number) => { let h = -Infinity, d = ''; for (let j = Math.max(0, i - 19); j <= i - 1; j++) if (klines[j].close > h) { h = klines[j].close; d = klines[j].date; } return { v: h, d }; }; // 前高：不含当日近20日最高收盘价
   const low20 = (i: number) => { let l = Infinity; for (let j = Math.max(0, i - 19); j <= i; j++) l = Math.min(l, klines[j].low); return l; };
   const evalDay = (i: number): FengDaySignal => {
     const res = empty(klines[i].date);
@@ -1010,8 +1010,8 @@ function analyzeFengSignals(klines: BollKline[], fmt: (v: number) => string, all
     if (c > pk.close && pct >= 5 && shrink) {
       res.reduce.push({ name: '无量/缩量急拉', detail: [`收 ${fmt(c)} 较昨收 ${fmt(pk.close)} 涨 ${pct.toFixed(2)}%（≥ 5%，急拉）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，无量）`, '无量急拉 → 诱多风险高，减仓'] });
     }
-    if (c >= h20 * 0.98 && shrink) {
-      res.reduce.push({ name: '新高量能不足', detail: [`收 ${fmt(c)} ≥ 近20日最高 ${fmt(h20)}×0.98 = ${fmt(h20 * 0.98)}（创近20日新高）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，量能不足）`, '新高无量 → 价量背离，获利减仓'] });
+    if (c > h20.v && shrink) {
+      res.reduce.push({ name: '新高量能不足', detail: [`收 ${fmt(c)} 突破前高 ${fmt(h20.v)}（${h20.d.slice(5)}，近20日最高收盘），收盘创新高`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，量能不足）`, '新高无量 → 价量背离，获利减仓'] });
     }
     if (c < ma20 && klines[i - 1].close >= ma20s[i - 1]! && pct <= -3) {
       res.reduce.push({ name: '急跌破20日线止损', detail: [`收 ${fmt(c)} 当天下穿 MA20 ${fmt(ma20)}（前收 ${fmt(klines[i - 1].close)} ≥ MA20 ${fmt(ma20s[i - 1])}）`, `跌幅 ${Math.abs(pct).toFixed(2)}%（≥ 3%，急跌）收盘未拉回`, '急跌破20日线 → 中期趋势破坏，止损'] });
@@ -1625,8 +1625,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [isFetchingSingleDividend, setIsFetchingSingleDividend] = useState<string | null>(null);
   const [dividendDiff, setDividendDiff] = useState<DividendDiffEntry[] | null>(null);
   const [selectedDividendIds, setSelectedDividendIds] = useState<Set<string>>(new Set());
-  // 持仓列子列2当前展示类型（默认成本，点击在成本/份额间切换）
-  const [positionDisplayMode, setPositionDisplayMode] = useState<PositionDisplayMode>('cost');
+  // 持仓列子列2当前展示类型（默认股息率，点击在股息率/份额间切换，本地记忆）
+  const [positionDisplayMode, setPositionDisplayMode] = useState<PositionDisplayMode>(() => {
+    try {
+      return localStorage.getItem('stockPositionDisplayMode') === 'shares' ? 'shares' : 'cost';
+    } catch { return 'cost'; }
+  });
   // 股票名称/代号显示切换（默认显示股票名称）
   const [showNickname, setShowNickname] = useState(false);
   // 股息率曲线日线区间（本地记忆，供列表股息率列下方的历史比例计算使用）
@@ -1999,6 +2003,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     | { date: string; kind: 'feng'; dir: 'add' | 'reduce' };
   const [mktSel, setMktSel] = useState<MktSel | null>(null);
   const [mktSelPinned, setMktSelPinned] = useState(false);
+  const [mktBodyMaxH, setMktBodyMaxH] = useState<number | null>(null);
   const resetMktSel = () => { setMktSel(null); setMktSelPinned(false); };
 
   // 显示行情状态浮窗（位置参考价格浮窗：右侧垂直居中）
@@ -2007,6 +2012,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     mktInfoActiveIdRef.current = stock.id;
     setMktInfoStock(stock);
     resetMktSel();
+    setMktBodyMaxH(null);
     const rect = btn.getBoundingClientRect();
     const popupW = 260;
     const estH = 420;
@@ -2088,6 +2094,73 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       setMktSelPinned(true);
     }
   };
+  // 关闭行情状态浮窗
+  const closeMktInfo = () => {
+    mktInfoHoveredRef.current = false;
+    mktInfoActiveIdRef.current = undefined;
+    setMktInfoPinned(false);
+    setMktInfoStock(null);
+    resetMktSel();
+  };
+
+  // 行情状态浮窗可拖拽（拖拽头部）——与交易弹窗一致的 window 级指针实现
+  const mktDragOffset = useRef({ x: 0, y: 0 });
+  const isMktDragging = useRef(false);
+  const mktDragMove = (e: PointerEvent) => {
+    if (!isMktDragging.current || !mktInfoRef.current) return;
+    const el = mktInfoRef.current;
+    el.style.left = `${e.clientX - mktDragOffset.current.x}px`;
+    el.style.top = `${e.clientY - mktDragOffset.current.y}px`;
+  };
+  const mktDragEnd = () => {
+    if (!isMktDragging.current) return;
+    isMktDragging.current = false;
+    window.removeEventListener('pointermove', mktDragMove);
+    window.removeEventListener('pointerup', mktDragEnd);
+    window.removeEventListener('pointercancel', mktDragEnd);
+    document.body.style.cursor = '';
+    const el = mktInfoRef.current;
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      setMktInfoPos({ left: rect.left, top: rect.top });
+      el.style.transition = '';
+    }
+  };
+  const handleMktDragStart = (e: React.PointerEvent) => {
+    const el = mktInfoRef.current;
+    if (!el || e.button !== 0) return;
+    isMktDragging.current = true;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = el.getBoundingClientRect();
+    mktDragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    el.style.transition = 'none';
+    document.body.style.cursor = 'grabbing';
+    window.addEventListener('pointermove', mktDragMove);
+    window.addEventListener('pointerup', mktDragEnd);
+    window.addEventListener('pointercancel', mktDragEnd);
+  };
+
+
+  // 判定依据变高导致浮窗超出视口时自动纠正位置；上下都超出则内容区内部滚动（与交易弹窗一致）
+  useLayoutEffect(() => {
+    if (!mktInfoStock || !mktInfoRef.current) return;
+    const el = mktInfoRef.current;
+    const pad = 8;
+    const availableH = window.innerHeight - pad * 2;
+    const r = el.getBoundingClientRect();
+    // 头部约 40px；总高超出可用视口时压缩内容区，让它内部滚动
+    if (r.height > availableH) {
+      setMktBodyMaxH(Math.max(80, availableH - 40));
+    }
+    let top = r.top;
+    let left = r.left;
+    if (top < pad) top = pad;
+    if (top + r.height > window.innerHeight - pad) top = Math.max(pad, window.innerHeight - r.height - pad);
+    if (left < pad) left = pad;
+    if (left + r.width > window.innerWidth - pad) left = Math.max(pad, window.innerWidth - r.width - pad);
+    if (top !== r.top || left !== r.left) setMktInfoPos({ left, top });
+  }, [mktInfoStock, mktInfoPos, mktBodyMaxH, mktSel, mktSelPinned]);
 
 
   // 持仓详情浮窗（hover 临时显示 / 点击固定，逻辑与价格浮窗一致，浮窗朝左侧展示）
@@ -3285,9 +3358,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setSelectedDividendIds(new Set());
   };
 
-  // 持仓列子列2展示模式两态切换：成本 → 份额 → 成本
+  // 持仓列子列2展示模式两态切换：股息率 → 份额 → 股息率（切换结果本地记忆）
   const cyclePositionMode = () => {
-    setPositionDisplayMode(prev => prev === 'cost' ? 'shares' : 'cost');
+    setPositionDisplayMode(prev => {
+      const next = prev === 'cost' ? 'shares' : 'cost';
+      try { localStorage.setItem('stockPositionDisplayMode', next); } catch { /* ignore */ }
+      return next;
+    });
   };
 
   // ============ 交易记录列（持仓大列内子列3） ============
@@ -6143,15 +6220,32 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         return (
           <div
             ref={mktInfoRef}
-            className="fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2.5 py-2 max-h-[80vh] overflow-y-auto custom-scrollbar"
+            className="fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden"
             style={{ top: mktInfoPos.top, left: mktInfoPos.left, width: 260, scrollbarWidth: 'none', msOverflowStyle: 'none' }}
             onTouchStart={handleMktInfoTouchStart}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={() => setMktSelPinned(false)}
           >
-            <div className="text-[11px] font-bold text-app-subtext mb-1 text-center">{mktInfoStock.name} <span className="font-mono text-[9px] font-normal text-app-rowtext">{getDisplayCode(mktInfoStock.code)}</span></div>
+            {/* 可拖拽头部（样式与交易弹窗一致） */}
+            <div
+              onPointerDown={handleMktDragStart}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-app-bg/80 backdrop-blur-md px-3 py-2 flex items-center justify-between border-b border-app-border cursor-grab active:cursor-grabbing touch-none select-none group"
+            >
+              <div className="flex items-center gap-2 text-app-subtext pointer-events-none">
+                <GripHorizontal size={15} className="opacity-80" />
+                <h4 className="text-[12px] font-bold tracking-wider text-app-text">{mktInfoStock.name} <span className="font-mono text-[9px] font-normal text-app-rowtext">{getDisplayCode(mktInfoStock.code)}</span></h4>
+              </div>
+              <div className="flex items-center gap-1">
+                <button type="button" onClick={closeMktInfo} onPointerDown={(e) => e.stopPropagation()} className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1" title="关闭">
+                  <X size={15} />
+                </button>
+              </div>
+            </div>
+            <div className="px-2.5 py-2 overflow-y-auto custom-scrollbar" style={{ maxHeight: mktBodyMaxH ?? undefined }}>
             {env && env.tags.length > 0 && (
-              <div className="border-t border-app-border pt-1.5 mb-1.5">
+              <div className="pt-1.5 mb-1.5">
                 <div className="text-[9px] text-app-subtext mb-2">环境</div>
                 <div className="flex items-center gap-1 flex-wrap">
                   {env.tags.map(t => (
@@ -6301,6 +6395,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               ) : (
                 <div className="text-[9px] text-app-rowtext">-</div>
               )}
+            </div>
             </div>
           </div>
         );
