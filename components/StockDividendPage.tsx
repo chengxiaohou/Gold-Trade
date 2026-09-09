@@ -958,6 +958,74 @@ function analyzeDailySignals(klines: BollKline[], allowTodayVolume = true): Dail
   return signals;
 }
 
+// 风系（风轻云淡）加/减仓复合信号：按日线可算数据判定，输出当日命中的加仓/减仓信号列表。
+// 列表单元格展示红色“加”/绿色“减”单字（优先级最高）；浮窗近10日按日展示“加仓 xN / 减仓 xN”明细，判定依据逐条列出。
+interface FengHit { name: string; detail: string[] }
+interface FengDaySignal { date: string; add: FengHit[]; reduce: FengHit[] }
+function analyzeFengSignals(klines: BollKline[], fmt: (v: number) => string, allowTodayVolume = true): { latest: FengDaySignal; days: FengDaySignal[] } {
+  const n = klines.length;
+  const empty = (date: string): FengDaySignal => ({ date, add: [], reduce: [] });
+  if (n < 25) return { latest: empty(klines[n - 1]?.date ?? ''), days: [] };
+  const fmtV = (v: number) => (v >= 1e8 ? `${(v / 1e8).toFixed(2)}亿` : v >= 1e4 ? `${(v / 1e4).toFixed(1)}万` : `${v.toFixed(0)}`);
+  const ma5s = calcMaSeries(klines, 5), ma10s = calcMaSeries(klines, 10), ma20s = calcMaSeries(klines, 20);
+  const volMa5s: number[] = new Array(n).fill(0);
+  {
+    let s = 0;
+    for (let i = 0; i < n; i++) { s += klines[i].volume; if (i >= 5) s -= klines[i - 5].volume; volMa5s[i] = i >= 4 ? s / 5 : (i > 0 ? s / i : 0); } // 前5日（不含当日）
+  }
+  const high20 = (i: number) => { let h = -Infinity; for (let j = Math.max(0, i - 19); j <= i; j++) h = Math.max(h, klines[j].high); return h; };
+  const low20 = (i: number) => { let l = Infinity; for (let j = Math.max(0, i - 19); j <= i; j++) l = Math.min(l, klines[j].low); return l; };
+  const evalDay = (i: number): FengDaySignal => {
+    const res = empty(klines[i].date);
+    if (i < 6 || ma5s[i] == null || ma10s[i] == null || ma20s[i] == null || volMa5s[i] <= 0) return res;
+    if (i === n - 1 && !allowTodayVolume) return res; // 未收盘的今日不判定量价类信号
+    const k = klines[i], pk = klines[i - 1];
+    const c = k.close, v = k.volume, ma5 = ma5s[i]!, ma10 = ma10s[i]!, ma20 = ma20s[i]!, volMa5 = volMa5s[i];
+    const h20 = high20(i), l20 = low20(i);
+    const pct = pk.close ? ((c - pk.close) / pk.close) * 100 : 0;
+    const vb = volMa5 > 0 ? v / volMa5 : 0; // 量比：今量/5日均量
+    const shrink = v < volMa5;
+    // ── 加仓信号 ──
+    if (c <= l20 * 1.05 && shrink) {
+      res.add.push({ name: '缩量入场（低位）', detail: [`现价 ${fmt(c)} ≤ 近20日低点 ${fmt(l20)}×1.05 = ${fmt(l20 * 1.05)}（低位）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，缩量）`, '低位+缩量 → 连续下跌抛压衰竭，可低吸/试探仓'] });
+    }
+    if (i >= 2 && v < klines[i - 1].volume && klines[i - 1].volume < klines[i - 2].volume) {
+      res.add.push({ name: '缩量续加', detail: [`连续3日量能递减：${fmtV(klines[i - 2].volume)} → ${fmtV(klines[i - 1].volume)} → ${fmtV(v)}`, '缩量续跌 → 抛压逐步衰竭，按计划逐级加仓'] });
+    }
+    const crossMA5 = c > ma5 && klines[i - 1].close <= ma5s[i - 1]!;
+    const crossMA10 = c > ma10 && klines[i - 1].close <= ma10s[i - 1]!;
+    if ((crossMA5 || crossMA10) && v >= volMa5 * 1.2) {
+      res.add.push({ name: '放量突破均线', detail: [`收 ${fmt(c)} ${crossMA5 ? `上穿 MA5 ${fmt(ma5)}（前收 ${fmt(klines[i - 1].close)} ≤ MA5 ${fmt(ma5s[i - 1])}）` : ''}${crossMA10 ? `上穿 MA10 ${fmt(ma10)}（前收 ${fmt(klines[i - 1].close)} ≤ MA10 ${fmt(ma10s[i - 1])}）` : ''}`, `今量 ${fmtV(v)} ≥ 5日均量 ${fmtV(volMa5)}×1.2 = ${fmtV(volMa5 * 1.2)}（量比 ${vb.toFixed(2)}，放量）`, '放量突破 → 真突破概率大，加仓跟随'] });
+    }
+    if (i >= 1 && klines[i - 1].close >= ma5s[i - 1]! && k.low <= ma5 * 1.01 && c > ma5 && v >= volMa5) {
+      res.add.push({ name: '回踩放量', detail: [`前日收 ${fmt(klines[i - 1].close)} 在 MA5 ${fmt(ma5s[i - 1])} 上方；盘中低 ${fmt(k.low)} 触及 MA5 ${fmt(ma5)} 后收回 ${fmt(c)}`, `今量 ${fmtV(v)} ≥ 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，放量）`, '放量回踩支撑 → 主力回补，加仓'] });
+    }
+    if (i >= 3 && klines[i - 1].close < klines[i - 2].close && klines[i - 2].close < klines[i - 3].close && shrink && k.low >= klines[i - 1].low) {
+      res.add.push({ name: '缩量止跌', detail: [`前3日连续收跌：${fmt(klines[i - 3].close)} → ${fmt(klines[i - 2].close)} → ${fmt(klines[i - 1].close)}`, `当日低 ${fmt(k.low)} 未破前日低 ${fmt(klines[i - 1].low)}（止跌）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，缩量）`, '缩量止跌 → 抛压枯竭，可低吸/加满'] });
+    }
+    if (c < ma5 && c >= ma10 && pct >= -3) {
+      res.add.push({ name: '主力不破位', detail: [`收 ${fmt(c)} 跌破 MA5 ${fmt(ma5)}，但守住 MA10 ${fmt(ma10)}`, `跌幅 ${pct.toFixed(2)}%（≤ 3%，未深砸）`, '主力洗盘不破位 → 反而可加仓'] });
+    }
+    // ── 减仓信号 ──
+    if (c > pk.close && pct >= 5 && shrink) {
+      res.reduce.push({ name: '无量/缩量急拉', detail: [`收 ${fmt(c)} 较昨收 ${fmt(pk.close)} 涨 ${pct.toFixed(2)}%（≥ 5%，急拉）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，无量）`, '无量急拉 → 诱多风险高，减仓'] });
+    }
+    if (c >= h20 * 0.98 && shrink) {
+      res.reduce.push({ name: '新高量能不足', detail: [`收 ${fmt(c)} ≥ 近20日最高 ${fmt(h20)}×0.98 = ${fmt(h20 * 0.98)}（创近20日新高）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，量能不足）`, '新高无量 → 价量背离，获利减仓'] });
+    }
+    if (c < ma20 && klines[i - 1].close >= ma20s[i - 1]! && pct <= -3) {
+      res.reduce.push({ name: '急跌破20日线止损', detail: [`收 ${fmt(c)} 当天下穿 MA20 ${fmt(ma20)}（前收 ${fmt(klines[i - 1].close)} ≥ MA20 ${fmt(ma20s[i - 1])}）`, `跌幅 ${Math.abs(pct).toFixed(2)}%（≥ 3%，急跌）收盘未拉回`, '急跌破20日线 → 中期趋势破坏，止损'] });
+    }
+    if (c < ma5 && c < ma10 && v >= volMa5 && i + 2 < n && klines[i + 1].close < ma10s[i + 1]! && klines[i + 2].close < ma10s[i + 2]!) {
+      res.reduce.push({ name: '放量破位+2日不收复', detail: [`收 ${fmt(c)} 放量跌破 MA5 ${fmt(ma5)}、MA10 ${fmt(ma10)}`, `今量 ${fmtV(v)} ≥ 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，放量）`, `此后2日收盘 ${fmt(klines[i + 1].close)} / ${fmt(klines[i + 2].close)}，仍低于 MA10 ${fmt(ma10s[i + 1])} / ${fmt(ma10s[i + 2])}（${klines[i + 1].date.slice(5)} / ${klines[i + 2].date.slice(5)}）`, '2日不收复 → 转震荡，减仓'] });
+    }
+    return res;
+  };
+  const days: FengDaySignal[] = [];
+  for (let i = Math.max(22, n - 10); i < n; i++) days.push(evalDay(i));
+  return { latest: evalDay(n - 1), days };
+}
+
 function analyzeEnvironment(klines: BollKline[], fmt: (v: number) => string, allowVolume = true): EnvResult | null {
   const n = klines.length;
   if (n < 130) return null; // 需 120 日均线 + 近20日高低点 + 近60日带宽分位
@@ -1927,7 +1995,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   type MktSel = { date: string; kind: 'event' | 'status' | 'repair' }
     | { date: string; kind: 'pattern'; ptype: KlinePattern['type'] }
     | { date: string; kind: 'env'; ekey: string }
-    | { date: string; kind: 'daily'; dkey: DailySignal['kind'] };
+    | { date: string; kind: 'daily'; dkey: DailySignal['kind'] }
+    | { date: string; kind: 'feng'; dir: 'add' | 'reduce' };
   const [mktSel, setMktSel] = useState<MktSel | null>(null);
   const [mktSelPinned, setMktSelPinned] = useState(false);
   const resetMktSel = () => { setMktSel(null); setMktSelPinned(false); };
@@ -2000,6 +2069,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (a.kind === 'pattern') return a.ptype === (b as { ptype: KlinePattern['type'] }).ptype;
     if (a.kind === 'env') return a.ekey === (b as { ekey: string }).ekey;
     if (a.kind === 'daily') return a.dkey === (b as { dkey: DailySignal['kind'] }).dkey;
+    if (a.kind === 'feng') return a.dir === (b as { dir: 'add' | 'reduce' }).dir;
     return true;
   };
   const handleMktTagEnter = (sel: MktSel) => {
@@ -2322,7 +2392,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [nameSubMode, setNameSubMode] = useState<'tags' | 'code'>('tags');
   // 最新收盘交易日状态标签（按 klines 引用缓存，数据未变时不重复计算）
   // 标签文本/逻辑变更时需 +1 版本号，避免 HMR 保留旧缓存导致缩写不生效
-  const LATEST_TAG_VERSION = 8;
+  const LATEST_TAG_VERSION = 10;
   const latestTagsCache = useRef(new Map<string, { v: number; key: unknown; tags: { key: string; text: string; cls: string }[] }>());
   const getLatestDayTags = (stock: StockEntry): { key: string; text: string; cls: string }[] => {
     const daily = stockBollMap.get(stock.id)?.daily;
@@ -2354,8 +2424,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       indigo: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30',
       slate: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
     };
-    // 依次拼装：K线形态 → 综合周期 → 量价 → 布林 → 破位
+    // 依次拼装：风系(加/减) → K线形态 → 综合周期 → 量价 → 布林 → 破位
     const tags: { key: string; text: string; cls: string }[] = [];
+    // 风系加/减复合标签：优先级最高（红加/绿减），置于所有现有标签之前
+    const feng = analyzeFengSignals(klines, v => formatPrice(v, stock.name), isTodayVolumeEligible(klines));
+    if (feng.latest.reduce.length > 0) tags.push({ key: `feng-reduce-${feng.latest.date}`, text: '减', cls: 'bg-green-500/10 text-green-500 border-green-500/20' });
+    if (feng.latest.add.length > 0) tags.push({ key: `feng-add-${feng.latest.date}`, text: '加', cls: 'bg-red-500/10 text-red-500 border-red-500/20' });
     const patterns = analyzeKlinePatterns(klines, v => formatPrice(v, stock.name));
     for (const p of patterns) {
       tags.push({
@@ -2366,8 +2440,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           : 'bg-slate-500/10 text-slate-400 border-slate-500/30',
       });
     }
-    const cycle = env ? env.tags.find(t => t.key === 'cycle') : null;
-    if (cycle) tags.push({ key: 'env-cycle', text: cycle.single, cls: envCls[cycle.color] });
+    // 综合周期（打分）标签：不做列表展示
     if (env) {
       for (const t of env.tags) {
         if (t.dim === 'volume' || t.dim === 'volatility') {
@@ -5972,6 +6045,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const dailySignals = klines && klines.length > 0 ? analyzeDailySignals(klines, allowVol) : [];
         const patterns = klines && klines.length > 0 ? analyzeKlinePatterns(klines, v => formatPrice(v, mktInfoStock.name)) : null;
         const env = klines && klines.length > 0 ? analyzeEnvironment(klines, v => formatPrice(v, mktInfoStock.name), allowVol) : null;
+        const feng = klines && klines.length > 0 ? analyzeFengSignals(klines, v => formatPrice(v, mktInfoStock.name), allowVol) : null;
         const fmtDay = (d: string) => {
           const p = d.split('-');
           return p.length === 3 ? `${parseInt(p[1], 10)}月${parseInt(p[2], 10)}日` : d;
@@ -6030,6 +6104,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           // 每日量价/MACD 显著信号：判定依据来自信号触发条件（区别于环境量价的"当前状态"描述）
           const sig = dailySignals.find(s => s.date === selKey.date && s.kind === selKey.dkey);
           if (sig) explainLines.push(`${fmtDay(sig.date)} ${SIG_LABEL[sig.kind]}`, ...sig.detail);
+        } else if (selKey && selKey.kind === 'feng') {
+          // 风系加/减信号：逐条列出命中的信号与各自的判定依据
+          const day = feng?.days.find(d => d.date === selKey.date);
+          const hits = day ? (selKey.dir === 'add' ? day.add : day.reduce) : [];
+          if (hits.length > 0) {
+            explainLines.push(`${fmtDay(selKey.date)} ${selKey.dir === 'add' ? '加仓' : '减仓'} x${hits.length}（${selKey.dir === 'add' ? '风系加仓信号' : '风系减仓信号'}）`);
+            for (const h of hits) explainLines.push(`· ${h.name}`, ...h.detail);
+          }
         } else if (selEv) {
           const maStr = selEv.brokenList.map(b => `MA${b.period} ${fp(b.value)}`).join(' · ');
           if (selKey!.kind === 'event') {
@@ -6063,6 +6145,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             ref={mktInfoRef}
             className="fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2.5 py-2 max-h-[80vh] overflow-y-auto custom-scrollbar"
             style={{ top: mktInfoPos.top, left: mktInfoPos.left, width: 260, scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+            onTouchStart={handleMktInfoTouchStart}
+            onMouseDown={(e) => e.stopPropagation()}
             onClick={() => setMktSelPinned(false)}
           >
             <div className="text-[11px] font-bold text-app-subtext mb-1 text-center">{mktInfoStock.name} <span className="font-mono text-[9px] font-normal text-app-rowtext">{getDisplayCode(mktInfoStock.code)}</span></div>
@@ -6084,7 +6168,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <div className="text-[9px] text-app-subtext border-t border-app-border pt-1 mb-1.5">近10交易日行情</div>
             {events === null ? (
               <div className="text-[10px] text-app-rowtext py-1">暂无K线数据</div>
-            ) : events.length === 0 && dailySignals.length === 0 ? (
+            ) : events.length === 0 && dailySignals.length === 0 && !(feng && feng.days.some(d => d.add.length > 0 || d.reduce.length > 0)) ? (
               <div className="text-[10px] text-app-rowtext py-1">近10日无异常</div>
             ) : (() => {
               // 破位事件 + 每日信号（MACD/量价）按日期聚合：一天一行，行内多个标签横向平铺、放不下自动换行，按日期正序（最新在下）
@@ -6119,6 +6203,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date: sig.date, kind: 'daily', dkey: sig.kind }); }}
                 >{sigLabel[sig.kind]}</span>
               );
+              // 风系加/减信号 chip（复合标签：加仓 xN / 减仓 xN）
+              const fengChip = (day: FengDaySignal, dir: 'add' | 'reduce') => {
+                const hits = dir === 'add' ? day.add : day.reduce;
+                const label = dir === 'add' ? `加仓 x${hits.length}` : `减仓 x${hits.length}`;
+                const isSelFeng = !!selKey && selKey.kind === 'feng' && selKey.date === day.date && selKey.dir === dir;
+                const cls = dir === 'add' ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-green-500/10 text-green-500 border-green-500/20';
+                const sel = dir === 'add' ? ' border-red-500/60' : ' border-green-500/60';
+                return (
+                  <span
+                    className={`${chipBase} ${cls}${isSelFeng ? sel : ''}`}
+                    onMouseEnter={() => handleMktTagEnter({ date: day.date, kind: 'feng', dir })}
+                    onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date: day.date, kind: 'feng', dir }); }}
+                  >{label}</span>
+                );
+              };
               // 破位事件
               for (const ev of events) {
                 addChip(ev.date, (
@@ -6149,6 +6248,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               }
               // 每日信号（MACD/量价）
               for (const sig of dailySignals) addChip(sig.date, sigChip(sig));
+              // 风系加/减信号（一天最多两个 chip：加仓 xN / 减仓 xN）
+              if (feng) for (const day of feng.days) {
+                if (day.add.length > 0) addChip(day.date, fengChip(day, 'add'));
+                if (day.reduce.length > 0) addChip(day.date, fengChip(day, 'reduce'));
+              }
               // 最新K线形态（十字星/金针等）并进最新日期那一行，不单独占一行
               if (patterns && patterns.length > 0) {
                 for (const p of patterns) addChip(p.date, (
