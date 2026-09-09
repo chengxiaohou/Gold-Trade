@@ -5836,7 +5836,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
               {/* 挂单价 + 数量（复用黄金项目 InputGroup 步进输入，支持鼠标滚轮与触屏手势调节） */}
               <div className="grid grid-cols-2 gap-3">
-                <InputGroup label="挂单价格" value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={0.01} min={0} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
+                <InputGroup label="挂单价格" value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 0.001 : 0.01} min={0} precision={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 3 : 2} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
                 {/* 数量：卖出时以当前持仓为上限（静默截断） */}
                 <InputGroup
                   label="数量(股)"

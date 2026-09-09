@@ -20,6 +20,7 @@ interface InputGroupProps {
   inputRef?: React.RefObject<HTMLInputElement>; // 新增：父组件传入的 ref 用于聚焦
   onTypeSwitch?: (key: string) => boolean; // 新增：处理特殊按键（如[、]），返回 true 表示已处理，阻止默认输入
   onTab?: () => boolean; // 新增：处理 Tab 键（用于在两个输入框间循环切换），返回 true 表示已处理
+  precision?: number; // 新增：数值保留小数位数（默认 2，ETF 价格传 3）
 }
 
 export const InputGroup: React.FC<InputGroupProps> = ({
@@ -40,7 +41,8 @@ export const InputGroup: React.FC<InputGroupProps> = ({
   onEnter,
   inputRef: externalInputRef,
   onTypeSwitch,
-  onTab
+  onTab,
+  precision = 2,
 }) => {
   const internalInputRef = useRef<HTMLInputElement>(null);
   const inputRef = externalInputRef || internalInputRef;
@@ -65,12 +67,13 @@ export const InputGroup: React.FC<InputGroupProps> = ({
   const updateValue = (delta: number) => {
     // 这里使用 props 传入的 value 或者 ref 都可以，但 touch 逻辑中需要用 ref
     const currentVal = parseFloat(valueRef.current.toString()) || 0;
-    let nextVal = Math.round((currentVal + delta) * 100) / 100;
+    const mult = Math.pow(10, precision);
+    let nextVal = Math.round((currentVal + delta) * mult) / mult;
     
     if (min !== undefined) nextVal = Math.max(min, nextVal);
     if (max !== undefined) nextVal = Math.min(max, nextVal);
     
-    const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(2);
+    const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(precision);
     onChange(nextStr);
   };
 
@@ -79,9 +82,10 @@ export const InputGroup: React.FC<InputGroupProps> = ({
     if (!isIOS || !isQuantity) return [];
     const current = parseFloat(value.toString()) || 0;
     const options = [];
+    const mult = Math.pow(10, precision);
     // 生成从 (current - 50*step) 到 (current + 50*step) 的选项
     for (let i = -50; i <= 50; i++) {
-      const val = Math.round((current + i * step) * 100) / 100;
+      const val = Math.round((current + i * step) * mult) / mult;
       if (val >= 0) {
         options.push(val);
       }
@@ -147,12 +151,13 @@ export const InputGroup: React.FC<InputGroupProps> = ({
          // 直接在 Effect 内部计算，不依赖外部不稳定的 updateValue/onChange
          const currentVal = parseFloat(valueRef.current.toString()) || 0;
          const changeAmount = direction * step * steps;
-         let nextVal = Math.round((currentVal + changeAmount) * 100) / 100;
+         const mult = Math.pow(10, precision);
+         let nextVal = Math.round((currentVal + changeAmount) * mult) / mult;
          
          if (min !== undefined) nextVal = Math.max(min, nextVal);
          if (max !== undefined) nextVal = Math.min(max, nextVal);
          
-         const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(2);
+         const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(precision);
          
          // 使用 ref 调用 onChange，不作为依赖项
          onChangeRef.current(nextStr);
