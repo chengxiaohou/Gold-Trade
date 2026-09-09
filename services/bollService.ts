@@ -549,11 +549,7 @@ export async function fetchBollData(
   
   // 旧版缓存可能没有 klines 字段（用于股息率曲线），缺少时视为过期重拉
   if (cached && cached.data?.ma?.ma30 && cached.data?.klines && Date.now() - cached.timestamp < dynamicTTL) {
-    // 缓存命中，记录日志
-    const url = apiSource === 'tencent'
-      ? logTencentUrl(`/appstock/app/fqkline/get?param=${fullCode},${period}`)
-      : logSinaUrl(`/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${fullCode}&scale=${period}`);
-    requestLogService.cacheHit(url, logCtx);
+    // 缓存命中：直接返回，不发网络请求，也不记录日志（只有真正发生的请求才记入日志）
     return { data: cached.data };
   }
 
