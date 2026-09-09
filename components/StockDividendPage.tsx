@@ -3290,6 +3290,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [addTradeShares, setAddTradeShares] = useState('');
   const [addTradeNote, setAddTradeNote] = useState('');
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
+  // 内容区高度上限（px）：空间不足时压缩+内部滚动，null 表示不限制（保持原生 max-h 由 CSS 决定）
+  const [tradeBodyMaxH, setTradeBodyMaxH] = useState<number | null>(null);
 
   const openTradeInfo = (btn: HTMLElement, stock: StockEntry) => {
     tradeInfoBtnRef.current = btn as unknown as HTMLTableCellElement;
@@ -3317,6 +3319,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setTradeInfoStock(null);
     setTradeInfoSettled(false);
     setEditingTradeId(null);
+    setTradeBodyMaxH(null);
   }, []);
 
   // 交易浮窗可拖拽（拖画画头部）——参考黄金项目 EditBubble，改用 window 级指针监听，
@@ -3358,32 +3361,42 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     window.addEventListener('pointercancel', tradeDragEnd);
   };
 
-  // 首次打开：隐藏态测量真实高度后一次性定位居中（避免弹跳）；之后仅做边界钳制，不影响拖拽自由定位
-  useEffect(() => {
+  // 首次打开：同步测量真实高度后一次性定位居中（避免弹跳、且不被异步 rAF 取消导致永不显示）。
+  // 用 useLayoutEffect（DOM 变更后、绘制前同步执行），取代原 useEffect+rAF：
+  // 原实现依赖一次 requestAnimationFrame，若在触发前因重渲染被 cleanup 取消，弹窗会永久停留在
+  // opacity:0 且仍可交互（z-60）的“隐形层”，吞掉后续点击/焦点，表现为移动端“有时只弹键盘、点不出弹窗”。
+  // 拖拽/后续仅做边界钳制，不影响拖拽自由定位。
+  useLayoutEffect(() => {
     if (!tradeInfoStock || !tradeInfoRef.current) return;
-    const raf = requestAnimationFrame(() => {
-      const el = tradeInfoRef.current;
-      if (!el) return;
-      const pad = 8;
-      const r = el.getBoundingClientRect();
-      if (!tradeSettledOnceRef.current) {
-        // 首次：垂直居中于浏览器中心，X 轴保持不动，然后一次性显示
-        tradeSettledOnceRef.current = true;
-        const top = Math.max(pad, (window.innerHeight - r.height - pad) / 2);
-        setTradeInfoPos({ left: r.left, top });
-        setTradeInfoSettled(true);
-        return;
-      }
-      // 拖拽/后续：仅防止超出视口
-      let top = r.top;
-      let left = r.left;
-      if (top < pad) top = pad;
-      if (top + r.height > window.innerHeight - pad) top = Math.max(pad, window.innerHeight - r.height - pad);
-      if (left < pad) left = pad;
-      if (left + r.width > window.innerWidth - pad) left = Math.max(pad, window.innerWidth - r.width - pad);
-      if (top !== r.top || left !== r.left) setTradeInfoPos({ left, top });
-    });
-    return () => cancelAnimationFrame(raf);
+    const el = tradeInfoRef.current;
+    const pad = 8;
+    const availableH = window.innerHeight - pad * 2;
+    const r = el.getBoundingClientRect();
+    // 若真实高度超出可用视口高度，压缩内容区并让其内部滚动（用户诉求：空间不足时压缩固定高度+滚动）
+    if (r.height > availableH) {
+      // 头部固定约 40px，内容区占满剩余高度
+      setTradeBodyMaxH(Math.max(120, availableH - 40));
+    } else {
+      setTradeBodyMaxH(null);
+    }
+    if (!tradeSettledOnceRef.current) {
+      // 首次：垂直居中于浏览器中心，X 轴保持不动，然后一次性显示（可见高度≤可用视口）
+      tradeSettledOnceRef.current = true;
+      const h = Math.min(r.height, availableH) + (r.height > availableH ? 40 : 0);
+      const top = Math.max(pad, (window.innerHeight - h - pad) / 2);
+      setTradeInfoPos({ left: r.left, top });
+      setTradeInfoSettled(true);
+      return;
+    }
+    // 拖拽/后续：仅防止超出视口
+    let top = r.top;
+    let left = r.left;
+    const h = r.height;
+    if (top < pad) top = pad;
+    if (top + h > window.innerHeight - pad) top = Math.max(pad, window.innerHeight - h - pad);
+    if (left < pad) left = pad;
+    if (left + r.width > window.innerWidth - pad) left = Math.max(pad, window.innerWidth - r.width - pad);
+    if (top !== r.top || left !== r.left) setTradeInfoPos({ left, top });
   }, [tradeInfoStock, tradeInfoPos]);
 
   // 点击交易列：切换固定/取消固定
@@ -5737,7 +5750,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         return (
           <div
             ref={tradeInfoRef}
-            className="fixed z-[60] bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl overflow-hidden text-app-text"
+            className={`fixed z-[60] bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl overflow-hidden text-app-text ${tradeInfoSettled ? '' : 'pointer-events-none'}`}
             style={{ top: tradeInfoPos.top, left: tradeInfoPos.left, width: 304, opacity: tradeInfoSettled ? 1 : 0, transform: tradeInfoSettled ? 'none' : 'translate(0,0)' }}
           >
             {/* 可拖拽头部 */}
@@ -5756,7 +5769,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               </div>
             </div>
 
-            <div className="px-3 py-3 space-y-3 bg-app-card max-h-[80vh] overflow-y-auto">
+            <div className="px-3 py-3 space-y-3 bg-app-card overflow-y-auto custom-scrollbar" style={{ maxHeight: tradeBodyMaxH ?? undefined }}>
               {/* 当前持仓概要 */}
               <div className="border border-app-border rounded-lg divide-y divide-app-border bg-app-input/50">
                 <div className="px-2.5 pt-2 pb-1.5 flex items-center justify-center">
