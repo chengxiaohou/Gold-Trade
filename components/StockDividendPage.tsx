@@ -962,8 +962,8 @@ function analyzeDailySignals(klines: BollKline[], allowTodayVolume = true): Dail
 }
 
 // 风系（风轻云淡）加/减仓复合信号：按日线可算数据判定，输出当日命中的加仓/减仓信号列表。
-// 列表单元格展示红色“加”/绿色“减”单字（优先级最高）；浮窗近10日按日展示“加仓 xN / 减仓 xN”明细，判定依据逐条列出。
-interface FengHit { name: string; detail: string[] }
+// 列表单元格展示红色“加”/绿色“减”单字（优先级最高）；浮窗近10日按日展示“加仓 总分 / 减仓 总分”明细，判定依据逐条列出。
+interface FengHit { name: string; score: number; detail: string[] }
 interface FengDaySignal { date: string; add: FengHit[]; reduce: FengHit[] }
 function analyzeFengSignals(klines: BollKline[], fmt: (v: number) => string, allowTodayVolume = true, cfg: TagParams = DEFAULT_TAG_PARAMS): { latest: FengDaySignal; days: FengDaySignal[] } {
   const feng = cfg.feng;
@@ -980,6 +980,22 @@ function analyzeFengSignals(klines: BollKline[], fmt: (v: number) => string, all
   }
   const high20 = (i: number) => { let h = -Infinity, d = ''; for (let j = Math.max(0, i - 19); j <= i - 1; j++) if (klines[j].close > h) { h = klines[j].close; d = klines[j].date; } return { v: h, d }; }; // 前高：不含当日近20日最高收盘价
   const low20 = (i: number) => { let l = Infinity; for (let j = Math.max(0, i - 19); j <= i; j++) l = Math.min(l, klines[j].low); return l; };
+
+  // ── 置信度打分（0~2 尺度，与 docs/风轻云淡选股择时方法论.md 4.1/4.2/4.4 一致）───────────
+  // 规则：标准(不含容差参数)达成 = 0.5 基础分；超额每优于标准 1% 加 0.15、超额窗口 W 内到满 2.0；
+  //      依赖容差(tol)才达成时按“用掉容差比例”0.5*(1-用掉比例) 线性扣到 0；离散验证条款加固定权重。
+  // ⚠️ 维护约定：今后改任何打分数值/窗口 W/离散权重，必须同步更新 docs/风轻云淡选股择时方法论.md 4.4《实现采纳的参数清单》。
+  const cl = (v: number) => Math.max(0, Math.min(1.5, v)); // 超额加成上限 +1.5（单条款封顶 2.0）
+  // 越大越好（比值型，无容差）：达成线 std，超额外窗口 W（默认超额10%到满）
+  const scUp = (x: number, std: number, W = 0.1) => (x < std ? 0 : 0.5 + cl(((x - std) / std) * (1.5 / W)));
+  // 越小越好（比值型）：标准 std，容差上限 tol（std<x<=tol 线性扣到 0）
+  const scLow = (x: number, std: number, tol: number, W = 0.1) => {
+    if (x > tol) return 0;
+    if (x <= std) return 0.5 + cl(((std - x) / std) * (1.5 / W));
+    return 0.5 * (1 - (x - std) / (tol - std));
+  };
+  const V = (v: number) => Math.round(v * 100) / 100; // 保留 2 位
+  const longWick = (k: BollKline) => k.high > 0 && k.high - k.close > 0.02 * k.high; // 收远离日高(长上影)≥2%
   const evalDay = (i: number): FengDaySignal => {
     const res = empty(klines[i].date);
     if (i < 6 || ma5s[i] == null || ma10s[i] == null || ma20s[i] == null || volMa5s[i] <= 0) return res;
@@ -990,39 +1006,85 @@ function analyzeFengSignals(klines: BollKline[], fmt: (v: number) => string, all
     const pct = pk.close ? ((c - pk.close) / pk.close) * 100 : 0;
     const vb = volMa5 > 0 ? v / volMa5 : 0; // 量比：今量/5日均量
     const shrink = v < volMa5;
-    // ── 加仓信号 ──
+    // ── 加仓信号（每信号：score = Σ 条款分；判定依据第一行列出得分公式）──
     if (lowBuy.enabled && c <= l20 * lowBuy.value && shrink) {
-      res.add.push({ name: '缩量入场（低位）', detail: [`现价 ${fmt(c)} ≤ 近20日低点 ${fmt(l20)}×${lowBuy.value} = ${fmt(l20 * lowBuy.value)}（低位）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，缩量）`, '低位+缩量 → 连续下跌抛压衰竭，可低吸/试探仓'] });
+      const sLow = scLow(c / l20, 1.0, lowBuy.value);       // ①低位：标准≤1.000，容差=tagParams.fengLowBuy
+      const sShrink = scLow(vb, 1.0, 1.0);                  // ②缩量：量比越小越典型
+      const sStop = c >= pk.close ? 0.2 : 0;                // ③今收不创新低(止跌验证)：0.2
+      const score = V(sLow + sShrink + sStop);
+      res.add.push({ name: '缩量入场（低位）', score, detail: [`得分 ${score.toFixed(2)} = 低位 ${V(sLow).toFixed(2)} + 缩量 ${V(sShrink).toFixed(2)} + 止跌 ${sStop.toFixed(2)}`, `现价 ${fmt(c)} ≤ 近20日低点 ${fmt(l20)}×${lowBuy.value} = ${fmt(l20 * lowBuy.value)}（低位，价/低点=${(c / l20).toFixed(3)}）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，缩量）`, '低位+缩量 → 连续下跌抛压衰竭，可低吸/试探仓'] });
     }
     if (i >= 2 && v < klines[i - 1].volume && klines[i - 1].volume < klines[i - 2].volume) {
-      res.add.push({ name: '缩量续加', detail: [`连续3日量能递减：${fmtV(klines[i - 2].volume)} → ${fmtV(klines[i - 1].volume)} → ${fmtV(v)}`, '缩量续跌 → 抛压逐步衰竭，按计划逐级加仓'] });
+      const sCont = 1.0;                                    // ①连缩：触发即严格3日逐日递减=1.0
+      const sDepth = scLow(v / klines[i - 2].volume, 0.7, 1.0); // ②萎缩：今量/首日量 标准≤0.7
+      const sFlat = c >= pk.close ? 0.2 : 0;                // ③今收平/阳：0.2
+      const score = V(sCont + sDepth + sFlat);
+      const firstVol = klines[i - 2].volume;
+      res.add.push({ name: '缩量续加', score, detail: [`得分 ${score.toFixed(2)} = 连缩 ${sCont.toFixed(2)} + 萎缩 ${V(sDepth).toFixed(2)} + 止跌 ${sFlat.toFixed(2)}`, `连续3日量能递减：${fmtV(firstVol)} → ${fmtV(klines[i - 1].volume)} → ${fmtV(v)}（今/首=${(v / firstVol).toFixed(2)}）`, '缩量续跌 → 抛压逐步衰竭，按计划逐级加仓'] });
     }
     const crossMA5 = c > ma5 && klines[i - 1].close <= ma5s[i - 1]!;
     const crossMA10 = c > ma10 && klines[i - 1].close <= ma10s[i - 1]!;
     if (volBreak.enabled && (crossMA5 || crossMA10) && v >= volMa5 * volBreak.value) {
-      res.add.push({ name: '放量突破均线', detail: [`收 ${fmt(c)} ${crossMA5 ? `上穿 MA5 ${fmt(ma5)}（前收 ${fmt(klines[i - 1].close)} ≤ MA5 ${fmt(ma5s[i - 1])}）` : ''}${crossMA10 ? `上穿 MA10 ${fmt(ma10)}（前收 ${fmt(klines[i - 1].close)} ≤ MA10 ${fmt(ma10s[i - 1])}）` : ''}`, `今量 ${fmtV(v)} ≥ 5日均量 ${fmtV(volMa5)}×${volBreak.value} = ${fmtV(volMa5 * volBreak.value)}（量比 ${vb.toFixed(2)}，放量）`, '放量突破 → 真突破概率大，加仓跟随'] });
+      const bundle = crossMA5 && crossMA10;
+      const sCross = bundle ? 0.8 : 0.5;                    // ①穿线：同破MA5+MA10=0.8，单破=0.5
+      const sVol = scUp(vb, volBreak.value);                // ②放量：量比 标准≥tagParams.fengVolBreak
+      const lowStart = i >= 5 && Math.max(...klines.slice(i - 5, i).map(x => x.close)) < ma20 ? 0.3 : 0; // ③低位启动：前5日收均<MA20
+      const score = V(sCross + sVol + lowStart);
+      res.add.push({ name: '放量突破均线', score, detail: [`得分 ${score.toFixed(2)} = 穿线 ${sCross.toFixed(2)} + 放量 ${V(sVol).toFixed(2)} + 低位 ${lowStart.toFixed(2)}`, `收 ${fmt(c)} ${crossMA5 ? `上穿 MA5 ${fmt(ma5)}（前收 ${fmt(klines[i - 1].close)} ≤ MA5 ${fmt(ma5s[i - 1])}）` : ''}${crossMA10 ? `上穿 MA10 ${fmt(ma10)}（前收 ${fmt(klines[i - 1].close)} ≤ MA10 ${fmt(ma10s[i - 1])}）` : ''}`, `今量 ${fmtV(v)} ≥ 5日均量 ${fmtV(volMa5)}×${volBreak.value} = ${fmtV(volMa5 * volBreak.value)}（量比 ${vb.toFixed(2)}，放量）`, '放量突破 → 真突破概率大，加仓跟随'] });
     }
     if (pullback.enabled && i >= 1 && klines[i - 1].close >= ma5s[i - 1]! && k.low <= ma5 * pullback.value && c > ma5 && v >= volMa5) {
-      res.add.push({ name: '回踩放量', detail: [`前日收 ${fmt(klines[i - 1].close)} 在 MA5 ${fmt(ma5s[i - 1])} 上方；盘中低 ${fmt(k.low)} 触及 MA5 ${fmt(ma5)} 后收回 ${fmt(c)}`, `今量 ${fmtV(v)} ≥ 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，放量）`, '放量回踩支撑 → 主力回补，加仓'] });
+      const sTouch = scLow(k.low / ma5, 1.0, pullback.value);  // ①触达：标准≤1.000，容差=tagParams.fengPullback
+      const sRec = c > ma5 ? scUp(c / ma5, 1.0) : 0;           // ②收回：收/MA5 越大越典型（c>ma5 已保证）
+      const sVol = scUp(vb, 1.0);                              // ③放量：量比
+      const sTrend = ma5s[i] > ma5s[i - 1] ? 0.3 : 0;          // ④MA5上行：0.3
+      const score = V(sTouch + sRec + sVol + sTrend);
+      res.add.push({ name: '回踩放量', score, detail: [`得分 ${score.toFixed(2)} = 触达 ${V(sTouch).toFixed(2)} + 收回 ${V(sRec).toFixed(2)} + 放量 ${V(sVol).toFixed(2)} + 上升 ${sTrend.toFixed(2)}`, `前日收 ${fmt(klines[i - 1].close)} 在 MA5 ${fmt(ma5s[i - 1])} 上方；盘中低 ${fmt(k.low)} 触及 MA5 ${fmt(ma5)} 后收回 ${fmt(c)}（低/MA5=${(k.low / ma5).toFixed(3)}，收/MA5=${(c / ma5).toFixed(3)}）`, `今量 ${fmtV(v)} ≥ 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，放量）`, '放量回踩支撑 → 主力回补，加仓'] });
     }
     if (i >= 3 && klines[i - 1].close < klines[i - 2].close && klines[i - 2].close < klines[i - 3].close && shrink && k.low >= klines[i - 1].low) {
-      res.add.push({ name: '缩量止跌', detail: [`前3日连续收跌：${fmt(klines[i - 3].close)} → ${fmt(klines[i - 2].close)} → ${fmt(klines[i - 1].close)}`, `当日低 ${fmt(k.low)} 未破前日低 ${fmt(klines[i - 1].low)}（止跌）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，缩量）`, '缩量止跌 → 抛压枯竭，可低吸/加满'] });
+      const sShrink = scLow(vb, 1.0, 1.0);                    // ①缩量：量比
+      const sUp2 = c >= pk.close ? 0.5 : 0;                   // ②今收≥前收：0.5
+      const sNoLow = k.low >= klines[i - 1].low ? 0.3 : 0;    // ③不创新低：0.3
+      const depth = (klines[i - 3].close - klines[i - 1].close) / klines[i - 3].close; // ④近3日累计跌幅
+      const sDeep = depth >= 0.08 ? 0.2 : depth >= 0.04 ? 0.1 : 0;
+      const score = V(sShrink + sUp2 + sNoLow + sDeep);
+      res.add.push({ name: '缩量止跌', score, detail: [`得分 ${score.toFixed(2)} = 缩量 ${V(sShrink).toFixed(2)} + 收升 ${sUp2.toFixed(2)} + 不创新低 ${sNoLow.toFixed(2)} + 超跌 ${sDeep.toFixed(2)}`, `前3日连续收跌：${fmt(klines[i - 3].close)} → ${fmt(klines[i - 2].close)} → ${fmt(klines[i - 1].close)}（累计跌 ${(depth * 100).toFixed(1)}%）`, `当日低 ${fmt(k.low)} 未破前日低 ${fmt(klines[i - 1].low)}（止跌）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，缩量）`, '缩量止跌 → 抛压枯竭，可低吸/加满'] });
     }
     if (c < ma5 && c >= ma10 && pct >= -3) {
-      res.add.push({ name: '主力不破位', detail: [`收 ${fmt(c)} 跌破 MA5 ${fmt(ma5)}，但守住 MA10 ${fmt(ma10)}`, `跌幅 ${pct.toFixed(2)}%（≤ 3%，未深砸）`, '主力洗盘不破位 → 反而可加仓'] });
+      const sMa10 = scUp(c / ma10, 1.0);                      // ①站稳MA10：收/MA10
+      const sDrop = scLow(Math.abs(pct) / 100, 0.01, 0.03, 0.5); // ②跌幅：标准≤1%，容差3%（W=0.5）
+      const sShrink = shrink ? 0.3 : 0;                       // ③缩量回踩(非放量出货)：0.3
+      const sBull = ma5 > ma10 ? 0.2 : 0;                     // ④MA5>MA10：0.2
+      const score = V(sMa10 + sDrop + sShrink + sBull);
+      res.add.push({ name: '主力不破位', score, detail: [`得分 ${score.toFixed(2)} = 站稳MA10 ${V(sMa10).toFixed(2)} + 跌幅 ${V(sDrop).toFixed(2)} + 缩量 ${sShrink.toFixed(2)} + 多头 ${sBull.toFixed(2)}`, `收 ${fmt(c)} 跌破 MA5 ${fmt(ma5)}，但守住 MA10 ${fmt(ma10)}（收/MA10=${(c / ma10).toFixed(3)}）`, `跌幅 ${pct.toFixed(2)}%（≤ 3%，未深砸）`, '主力洗盘不破位 → 反而可加仓'] });
     }
-    // ── 减仓信号 ──
+    // ── 减仓信号（越危险越典型）──
     if (c > pk.close && pct >= 5 && shrink) {
-      res.reduce.push({ name: '无量/缩量急拉', detail: [`收 ${fmt(c)} 较昨收 ${fmt(pk.close)} 涨 ${pct.toFixed(2)}%（≥ 5%，急拉）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，无量）`, '无量急拉 → 诱多风险高，减仓'] });
+      const sRise = scUp(pct / 100, 0.05, 0.5);               // ①涨幅：标准≥5%（W=0.5）
+      const sShrink = scLow(vb, 1.0, 1.0);                    // ②缩量：量比越小越诱多
+      const sWick = longWick(k) ? 0.3 : 0;                    // ③长上影/近涨停：0.3
+      const score = V(sRise + sShrink + sWick);
+      res.reduce.push({ name: '无量/缩量急拉', score, detail: [`得分 ${score.toFixed(2)} = 涨幅 ${V(sRise).toFixed(2)} + 缩量 ${V(sShrink).toFixed(2)} + 上影 ${sWick.toFixed(2)}`, `收 ${fmt(c)} 较昨收 ${fmt(pk.close)} 涨 ${pct.toFixed(2)}%（≥ 5%，急拉）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，无量）`, '无量急拉 → 诱多风险高，减仓'] });
     }
     if (c > h20.v && shrink) {
-      res.reduce.push({ name: '新高量能不足', detail: [`收 ${fmt(c)} 突破前高 ${fmt(h20.v)}（${h20.d.slice(5)}，近20日最高收盘），收盘创新高`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，量能不足）`, '新高无量 → 价量背离，获利减仓'] });
+      const sShrink = scLow(vb, 1.0, 1.0);                    // ①缩量：量比
+      const sWeak = scLow(c / h20.v, 1.005, 1.010);           // ②虚破：破前高越勉强越典型（标准<1.005，容差1.010）
+      const sWick = longWick(k) ? 0.3 : 0;                    // ③收远离日高(长上影)：0.3
+      const score = V(sShrink + sWeak + sWick);
+      res.reduce.push({ name: '新高量能不足', score, detail: [`得分 ${score.toFixed(2)} = 缩量 ${V(sShrink).toFixed(2)} + 虚破 ${V(sWeak).toFixed(2)} + 上影 ${sWick.toFixed(2)}`, `收 ${fmt(c)} 突破前高 ${fmt(h20.v)}（${h20.d.slice(5)}，近20日最高收盘），收盘创新高（收/前高=${(c / h20.v).toFixed(3)}）`, `今量 ${fmtV(v)} < 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，量能不足）`, '新高无量 → 价量背离，获利减仓'] });
     }
     if (c < ma20 && klines[i - 1].close >= ma20s[i - 1]! && pct <= -3) {
-      res.reduce.push({ name: '急跌破20日线止损', detail: [`收 ${fmt(c)} 当天下穿 MA20 ${fmt(ma20)}（前收 ${fmt(klines[i - 1].close)} ≥ MA20 ${fmt(ma20s[i - 1])}）`, `跌幅 ${Math.abs(pct).toFixed(2)}%（≥ 3%，急跌）收盘未拉回`, '急跌破20日线 → 中期趋势破坏，止损'] });
+      const sDeep = scLow(c / ma20, 0.970, 0.985);            // ①下穿深度：收/MA20 标准≤0.970，容差0.985
+      const sDrop = scUp(Math.abs(pct) / 100, 0.03, 0.5);     // ②跌幅：越大越危险（W=0.5）
+      const sVol = v >= volMa5 ? 0.3 : 0;                     // ③放量下杀确认：量≥5日均
+      const score = V(sDeep + sDrop + sVol);
+      res.reduce.push({ name: '急跌破20日线止损', score, detail: [`得分 ${score.toFixed(2)} = 下穿 ${V(sDeep).toFixed(2)} + 跌幅 ${V(sDrop).toFixed(2)} + 放量 ${sVol.toFixed(2)}`, `收 ${fmt(c)} 当天下穿 MA20 ${fmt(ma20)}（前收 ${fmt(klines[i - 1].close)} ≥ MA20 ${fmt(ma20s[i - 1])}；收/MA20=${(c / ma20).toFixed(3)}）`, `跌幅 ${Math.abs(pct).toFixed(2)}%（≥ 3%，急跌）收盘未拉回`, '急跌破20日线 → 中期趋势破坏，止损'] });
     }
     if (c < ma5 && c < ma10 && v >= volMa5 && i + 2 < n && klines[i + 1].close < ma10s[i + 1]! && klines[i + 2].close < ma10s[i + 2]!) {
-      res.reduce.push({ name: '放量破位+2日不收复', detail: [`收 ${fmt(c)} 放量跌破 MA5 ${fmt(ma5)}、MA10 ${fmt(ma10)}`, `今量 ${fmtV(v)} ≥ 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，放量）`, `此后2日收盘 ${fmt(klines[i + 1].close)} / ${fmt(klines[i + 2].close)}，仍低于 MA10 ${fmt(ma10s[i + 1])} / ${fmt(ma10s[i + 2])}（${klines[i + 1].date.slice(5)} / ${klines[i + 2].date.slice(5)}）`, '2日不收复 → 转震荡，减仓'] });
+      const sVol = scUp(vb, 1.0);                             // ①放量：量比
+      const sDeep = scLow(c / ma10, 0.970, 0.985);            // ②击穿MA10：标准≤0.970，容差0.985
+      const sNoRec = klines[i + 2].close < klines[i + 1].close ? 0.5 : 0.3; // ③不收复：后2日续跌=0.5/横盘=0.3
+      const score = V(sVol + sDeep + sNoRec);
+      res.reduce.push({ name: '放量破位+2日不收复', score, detail: [`得分 ${score.toFixed(2)} = 放量 ${V(sVol).toFixed(2)} + 击穿 ${V(sDeep).toFixed(2)} + 不收复 ${sNoRec.toFixed(2)}`, `收 ${fmt(c)} 放量跌破 MA5 ${fmt(ma5)}、MA10 ${fmt(ma10)}`, `今量 ${fmtV(v)} ≥ 5日均量 ${fmtV(volMa5)}（量比 ${vb.toFixed(2)}，放量）`, `此后2日收盘 ${fmt(klines[i + 1].close)} / ${fmt(klines[i + 2].close)}，仍低于 MA10 ${fmt(ma10s[i + 1])} / ${fmt(ma10s[i + 2])}（${klines[i + 1].date.slice(5)} / ${klines[i + 2].date.slice(5)}）`, '2日不收复 → 转震荡，减仓'] });
     }
     return res;
   };
@@ -2471,7 +2533,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [nameSubMode, setNameSubMode] = useState<'tags' | 'code'>('tags');
   // 最新收盘交易日状态标签（按 klines 引用缓存，数据未变时不重复计算）
   // 标签文本/逻辑变更时需 +1 版本号，避免 HMR 保留旧缓存导致缩写不生效
-  const LATEST_TAG_VERSION = 10;
+  const LATEST_TAG_VERSION = 11;
   const latestTagsCache = useRef(new Map<string, { v: number; key: unknown; tags: { key: string; text: string; cls: string }[] }>());
   const getLatestDayTags = (stock: StockEntry): { key: string; text: string; cls: string }[] => {
     const daily = stockBollMap.get(stock.id)?.daily;
@@ -6194,8 +6256,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           const day = feng?.days.find(d => d.date === selKey.date);
           const hits = day ? (selKey.dir === 'add' ? day.add : day.reduce) : [];
           if (hits.length > 0) {
-            explainLines.push(`${fmtDay(selKey.date)} ${selKey.dir === 'add' ? '加仓' : '减仓'} x${hits.length}（${selKey.dir === 'add' ? '风系加仓信号' : '风系减仓信号'}）`);
-            for (const h of hits) explainLines.push(`· ${h.name}`, ...h.detail);
+            const total = hits.reduce((a, h) => a + h.score, 0);
+            const dirLabel = selKey.dir === 'add' ? '加仓' : '减仓';
+            explainLines.push(`${fmtDay(selKey.date)} ${dirLabel} ${Number(total.toFixed(2))}（${selKey.dir === 'add' ? '风系加仓信号' : '风系减仓信号'}，${hits.length} 个信号合计）`);
+            for (const h of hits) explainLines.push(`· ${h.name} ${h.score.toFixed(2)}`, ...h.detail);
           }
         } else if (selEv) {
           const maStr = selEv.brokenList.map(b => `MA${b.period} ${fp(b.value)}`).join(' · ');
@@ -6305,10 +6369,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date: sig.date, kind: 'daily', dkey: sig.kind }); }}
                 >{sigLabel[sig.kind]}</span>
               );
-              // 风系加/减信号 chip（复合标签：加仓 xN / 减仓 xN）
+              // 风系加/减信号 chip（复合标签：加仓 总分 / 减仓 总分）
               const fengChip = (day: FengDaySignal, dir: 'add' | 'reduce') => {
                 const hits = dir === 'add' ? day.add : day.reduce;
-                const label = dir === 'add' ? `加仓 x${hits.length}` : `减仓 x${hits.length}`;
+                const total = hits.reduce((a, h) => a + h.score, 0);
+                const totalStr = Number(total.toFixed(2));
+                const label = dir === 'add' ? `加仓 ${totalStr}` : `减仓 ${totalStr}`;
                 const isSelFeng = !!selKey && selKey.kind === 'feng' && selKey.date === day.date && selKey.dir === dir;
                 const cls = dir === 'add' ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-green-500/10 text-green-500 border-green-500/20';
                 const sel = dir === 'add' ? ' border-red-500/60' : ' border-green-500/60';
@@ -6350,7 +6416,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               }
               // 每日信号（MACD/量价）
               for (const sig of dailySignals) addChip(sig.date, sigChip(sig));
-              // 风系加/减信号（一天最多两个 chip：加仓 xN / 减仓 xN）
+              // 风系加/减信号（一天最多两个 chip：加仓 总分 / 减仓 总分）
               if (feng) for (const day of feng.days) {
                 if (day.add.length > 0) addChip(day.date, fengChip(day, 'add'));
                 if (day.reduce.length > 0) addChip(day.date, fengChip(day, 'reduce'));
