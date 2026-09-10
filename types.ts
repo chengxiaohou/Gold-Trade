@@ -168,4 +168,6 @@ export interface StockSettings {
   memo?: string; // 股息率列表下方备忘录文字（随云端同步）
   memoUpdatedAt?: number; // 备忘录最后编辑时间戳（ms）
   tagParams?: TagParams; // 标签判定比例/容差参数（风系 + 原有），随云端同步
+  buyOrderPlaceholder?: string; // 买入挂单备注占位文字（随云端同步）
+  sellOrderPlaceholder?: string; // 卖出挂单备注占位文字（随云端同步）
 }

@@ -234,6 +234,8 @@ interface StockDividendPageProps {
   memoBaseline?: string;
   onMemoChange?: (memo: string) => void;
   onMemoUpload?: () => Promise<boolean>;
+  buyOrderPlaceholder?: string; // 买入挂单备注占位文字（随云端同步）
+  sellOrderPlaceholder?: string; // 卖出挂单备注占位文字（随云端同步）
   showRequestStats?: boolean;
 }
 
@@ -1630,7 +1632,7 @@ type SrRow =
   | { kind: 'plain'; text: string }
   | { kind: 'cell'; name: string; color?: string; rest: string };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 812, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, showRequestStats = true }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true }) => {
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
   const cols = visibleColumns || defaultVisibleColumns;
   // 分红年份列（dividendLeft / dividendRight）：表头合并为一格，年份各自成列
@@ -6093,7 +6095,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   onChange={(e) => setAddTradeNote(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending'); } }}
                   enterKeyHint="done"
-                  placeholder="记录本次挂单的思路策略"
+                  placeholder={addTradeSide === 'buy' ? buyOrderPlaceholder : sellOrderPlaceholder}
                   className={noteCls + ' flex-1'}
                 />
               </div>

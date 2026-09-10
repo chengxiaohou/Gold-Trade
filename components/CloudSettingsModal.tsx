@@ -7,6 +7,7 @@ import { validateConnection } from '../services/githubService';
 import { getCacheInfo, getMarketStatusText, formatDatePart, formatTimePart, formatRelativeTime, clearCacheRecord } from '../services/cacheService';
 import { getBollCacheSizeBytes, getStorageQuotaBytes } from '../services/bollCacheStore';
 import { clearAllCache, getTencentDomain, setTencentDomain, TENCENT_DOMAINS } from '../services/bollService';
+import { InputGroup } from './InputGroup';
 
 // All available columns in gold trade list
 const GOLD_COLUMNS = [
@@ -111,7 +112,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [newRange, setNewRange] = useState({ min: '', max: '', color: 'gray' });
   const [editingRangeIndex, setEditingRangeIndex] = useState<number | null>(null);
   const [maxRows, setMaxRows] = useState<number>(stockSettings?.maxRows || 15);
-  const [maxWidth, setMaxWidth] = useState<number>(stockSettings?.maxWidth || 812);
+  const [maxWidth, setMaxWidth] = useState<number>(stockSettings?.maxWidth || 942);
   const [apiSource, setApiSource] = useState<ApiSource>(appSettings.apiSource || 'tencent');
   const [tencentDomain, setTencentDomainState] = useState<string>(getTencentDomain());
   const [cacheTTLMinutes, setCacheTTLMinutes] = useState<number>(appSettings.cacheTTLMinutes || 10);
@@ -123,6 +124,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   });
   // 标签判定参数（风系 + 原有），需深合并默认值
   const [tagParams, setTagParams] = useState<TagParams>(() => mergeTagParams(stockSettings?.tagParams));
+  // 挂单备注占位文字，买入和卖出分开设置（随云端同步）
+  const [buyOrderPlaceholder, setBuyOrderPlaceholder] = useState<string>(stockSettings?.buyOrderPlaceholder || '');
+  const [sellOrderPlaceholder, setSellOrderPlaceholder] = useState<string>(stockSettings?.sellOrderPlaceholder || '');
 
   // 标签判定参数操作辅助
   const updateTagParam = (group: 'feng' | 'classic', key: string, patch: Partial<TagParamEntry>) => {
@@ -204,8 +208,10 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         setDividendRateColorRanges(stockSettings?.dividendRateColorRanges || [
           { min: 0, max: 4.5, color: 'red' },
           { min: 4.5, max: 5.5, color: 'yellow' },
-          { min: 5.5, max: 100, color: 'green' }
+          { min: 5.5, max: 100, color: 'green' },
         ]);
+        setBuyOrderPlaceholder(stockSettings?.buyOrderPlaceholder || '');
+        setSellOrderPlaceholder(stockSettings?.sellOrderPlaceholder || '');
       } else {
         setVisibleColumns(appSettings.visibleColumns || GOLD_COLUMNS.filter(c => c.key !== 'absChange' && c.key !== 'avgChange').map(c => c.key));
       }
@@ -285,10 +291,12 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         { min: 6, max: 7, color: 'green' }
       ],
       maxRows: maxRows ?? stockSettings?.maxRows ?? 15,
-      maxWidth: maxWidth ?? stockSettings?.maxWidth ?? 812,
+      maxWidth: maxWidth ?? stockSettings?.maxWidth ?? 942,
       sortMode: stockSettings?.sortMode ?? 'default',
       memo: stockSettings?.memo ?? '',
       memoUpdatedAt: stockSettings?.memoUpdatedAt ?? 0,
+      buyOrderPlaceholder: currentPage === 'stock' ? buyOrderPlaceholder : stockSettings?.buyOrderPlaceholder,
+      sellOrderPlaceholder: currentPage === 'stock' ? sellOrderPlaceholder : stockSettings?.sellOrderPlaceholder,
       tagParams,
     };
 
@@ -392,6 +400,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       sortMode: stockSettings?.sortMode ?? 'default',
       memo: stockSettings?.memo ?? '',
       memoUpdatedAt: stockSettings?.memoUpdatedAt ?? 0,
+      buyOrderPlaceholder: currentPage === 'stock' ? buyOrderPlaceholder : stockSettings?.buyOrderPlaceholder,
+      sellOrderPlaceholder: currentPage === 'stock' ? sellOrderPlaceholder : stockSettings?.sellOrderPlaceholder,
       tagParams,
     };
     
@@ -1071,47 +1081,33 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                            </div>
                         </div>
 
-                        {/* Max Rows */}
-                        <div className="space-y-2">
-                           <label className="text-sm font-medium text-app-text block">
-                              列表最大行数
-                           </label>
-                           <p className="text-xs text-app-subtext">
-                              设置表格内部滚动时显示的最大行数，设为0则不限制高度。
-                           </p>
-                           <input
-                             type="number"
+                        {/* Max Rows & Max Width：并列排列（复用交易窗口输入框，支持滚轮/手势调节） */}
+                        <div className="grid grid-cols-2 gap-3">
+                           <InputGroup
+                             label="列表最大行数"
                              value={maxRows}
-                             onChange={(e) => {
-                               const val = parseInt(e.target.value) || 0;
-                               if (val >= 0) {
-                                 setMaxRows(val);
-                               }
+                             onChange={(v) => {
+                               const val = parseInt(v) || 0;
+                               if (val >= 0) setMaxRows(val);
                              }}
-                             className="w-20 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
-                             min="0"
+                             step={1}
+                             precision={0}
+                             min={0}
+                             touchMode
+                             className="text-sm"
                            />
-                        </div>
-
-                        {/* Max Width */}
-                        <div className="space-y-2">
-                           <label className="text-sm font-medium text-app-text block">
-                              列表最大宽度
-                           </label>
-                           <p className="text-xs text-app-subtext">
-                              设置列表的最大宽度(px)，默认812。
-                           </p>
-                           <input
-                             type="number"
+                           <InputGroup
+                             label="列表最大宽度"
                              value={maxWidth}
-                             onChange={(e) => {
-                               const val = parseInt(e.target.value) || 0;
-                               if (val >= 0) {
-                                 setMaxWidth(val);
-                               }
+                             onChange={(v) => {
+                               const val = parseInt(v) || 0;
+                               if (val >= 0) setMaxWidth(val);
                              }}
-                             className="w-20 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
-                             min="0"
+                             step={5}
+                             precision={0}
+                             min={0}
+                             touchMode
+                             className="text-sm"
                            />
                         </div>
                      </div>
@@ -1310,6 +1306,29 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                         </div>
                       );
                     })}
+                 </div>
+
+                 {/* 挂单备注占位文字：买入/卖出分开设置，占位仅在交易窗口备注输入框为空时显示 */}
+                 <div className="space-y-3 pt-2 border-t border-app-border">
+                    <div>
+                       <span className="text-sm font-medium text-app-text">挂单备注占位文字</span>
+                       <p className="text-xs text-app-subtext mt-1">交易窗口备注输入框为空时展示的提示文字，买入和卖出分别设置，随设置持久化并上云同步。</p>
+                    </div>
+                    {[
+                       { label: '买入', value: buyOrderPlaceholder, setter: setBuyOrderPlaceholder },
+                       { label: '卖出', value: sellOrderPlaceholder, setter: setSellOrderPlaceholder },
+                    ].map(({ label, value, setter }) => (
+                       <label key={label} className="block">
+                          <span className="text-xs text-app-subtext mb-1 block">{label}</span>
+                          <input
+                             type="text"
+                             value={value}
+                             placeholder={label === '买入' ? '记录本次买入挂单的思路策略' : '记录本次卖出挂单的思路策略'}
+                             onChange={(e) => setter(e.target.value)}
+                             className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-sm text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                          />
+                       </label>
+                    ))}
                  </div>
               </div>
             )}

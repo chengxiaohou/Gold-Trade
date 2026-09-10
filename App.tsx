@@ -2044,6 +2044,8 @@ export default function App() {
             dividendYearRight={stockSettings.dividendYearRight}
             sortMode={stockSettings.sortMode}
             onSortModeChange={handleSortModeChange}
+            buyOrderPlaceholder={stockSettings.buyOrderPlaceholder}
+            sellOrderPlaceholder={stockSettings.sellOrderPlaceholder}
             showRequestStats={showRequestStats}
             />
           </PageErrorBoundary>
