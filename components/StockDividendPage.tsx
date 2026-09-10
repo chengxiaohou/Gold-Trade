@@ -6239,8 +6239,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         };
         const fp = (v: number) => formatPrice(v, mktInfoStock.name);
         const selEv = selKey && selKey.kind !== 'pattern' && selKey.kind !== 'env' && events ? events.find(e => e.date === selKey.date) : null;
-        // 判定依据文案
-        const explainLines: string[] = [];
+        // 判定依据文案：普通字符串行；或 {t,cls} 定制样式的行；或 {seg} 同一行内多个不同样式的片段
+        const explainLines: (string | { t: string; cls: string } | { seg: { t: string; cls: string }[] })[] = [];
         if (selKey && selKey.kind === 'pattern') {
           const p = patterns?.find(x => x.type === selKey.ptype);
           if (p) explainLines.push(...p.detail);
@@ -6258,8 +6258,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           if (hits.length > 0) {
             const total = hits.reduce((a, h) => a + h.score, 0);
             const dirLabel = selKey.dir === 'add' ? '加仓' : '减仓';
-            explainLines.push(`${fmtDay(selKey.date)} ${dirLabel} ${Number(total.toFixed(2))}（${selKey.dir === 'add' ? '风系加仓信号' : '风系减仓信号'}，${hits.length} 个信号合计）`);
-            for (const h of hits) explainLines.push(`· ${h.name} ${h.score.toFixed(2)}`, ...h.detail);
+            const dirColor = selKey.dir === 'add' ? 'text-red-500' : 'text-green-500';
+            // 汇总行着方向色，但括号内说明不着色
+            const headLabel = `${fmtDay(selKey.date)} ${dirLabel} ${Number(total.toFixed(2))}`;
+            const bracketLabel = `（${selKey.dir === 'add' ? '风系加仓信号' : '风系减仓信号'}，${hits.length} 个信号合计）`;
+            explainLines.push({ seg: [{ t: headLabel, cls: `${dirColor} font-semibold` }, { t: bracketLabel, cls: 'text-app-subtext' }] });
+            for (const h of hits) {
+              // ① 标签名着方向色，与正文同字号
+              explainLines.push({ t: `${h.name}  ${h.score.toFixed(2)}`, cls: `${dirColor} font-semibold` });
+              // ② 文字说明（"… → …"结论）放标签名下一行
+              const summary = h.detail.find(d => d.includes('→'));
+              if (summary) explainLines.push({ t: summary, cls: 'text-app-subtext' });
+              // ③ 计算公式（现价/量比等数据）；与得分行同字号弱色
+              for (const d of h.detail) if (!d.startsWith('得分 ') && !d.includes('→')) explainLines.push({ t: d, cls: 'text-[8px] text-app-rowtext' });
+              // ④ 得分计算放最后，小字号 + 弱色（暗于正文）
+              const scoreLine = h.detail.find(d => d.startsWith('得分 '));
+              if (scoreLine) explainLines.push({ t: scoreLine, cls: 'text-[8px] text-app-rowtext' });
+            }
           }
         } else if (selEv) {
           const maStr = selEv.brokenList.map(b => `MA${b.period} ${fp(b.value)}`).join(' · ');
@@ -6449,7 +6464,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <div className="border-t border-app-border mt-1 pt-1.5">
               <div className="text-[9px] text-app-subtext mb-1">判定依据</div>
               {explainLines.length > 0 ? (
-                <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{explainLines.map((l, i) => <div key={i}>{l}</div>)}</div>
+                <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{explainLines.map((l, i) => { const s = (l || '') as string | { t: string; cls: string } | { seg: { t: string; cls: string }[] }; if (typeof s === 'string') return <div key={i}>{s}</div>; if ('seg' in s) return <div key={i}>{s.seg.map((sg, j) => <span key={j} className={sg.cls}>{sg.t}</span>)}</div>; return <div key={i} className={s.cls}>{s.t}</div>; })}</div>
               ) : (
                 <div className="text-[9px] text-app-rowtext/70">悬停或点击上方标签查看判定依据</div>
               )}
