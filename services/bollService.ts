@@ -345,8 +345,7 @@ export function checkAllBollCache(
   adjust: BollAdjust,
   apiSource: ApiSource,
   dynamicTTL: number,
-  logCtx?: LogBatchContext,
-  touchTime?: number
+  logCtx?: LogBatchContext
 ): { allCached: boolean; cachedData: Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }> } {
   const cachedData = new Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>();
   let allCached = true;
@@ -373,11 +372,6 @@ export function checkAllBollCache(
         const cached = cache.get(cacheKey);
         if (cached) {
           data[period] = cached.data;
-          // 同批次共用触发时间：缓存命中的条目也把时间戳统一到本次触发时间
-          if (touchTime) {
-            cache.set(cacheKey, { ...cached, timestamp: touchTime });
-            saveCacheToStore();
-          }
         }
         // 记录缓存命中日志（配合 fetchAllBoll 开始时的 reset，只显示本次缓存命中）
         const url = apiSource === 'tencent'

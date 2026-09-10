@@ -2738,7 +2738,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         ? `${trigger}：${visibleTotal} 项缓存均未过期，无需请求${cacheInfoStr}`
         : `${trigger}：${staleCount}/${visibleTotal} 项已过期${oldCacheInfoStr}，重新请求 ${staleCount} 条请求${cacheInfoStr}`
     );
-    const { allCached, cachedData } = checkAllBollCache(stocks, bollAdjust, apiSource, dynamicTTL, logCtx, batchTimestamp);
+    const { allCached, cachedData } = checkAllBollCache(stocks, bollAdjust, apiSource, dynamicTTL, logCtx);
     
     if (fetchVersionRef.current !== currentVersion) {
       // 已被新请求取消，旧请求中止，新请求会负责最终的清理
@@ -3236,10 +3236,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const stock = updatedStocks[i];
         // 跳过仍新鲜的股价（主要用于打开页面时的自动刷新：休市时拿到收盘价后不再重复请求）
         if (effectiveSkip && isStockPriceFresh(stock.priceUpdatedAt)) {
+          // 缓存仍新鲜：保留原拉取时间，避免把"x分钟前"刷新成"刚刚"
           skippedCount++;
-          // 仍新鲜的股票也把时间统一到本次触发时间，保证同批次共用过期时间
-          updatedStocks[i] = { ...stock, priceUpdatedAt: batchTime };
-          changed = true;
           continue;
         }
         const result = await fetchStockPrice(stock.code, logCtx);
