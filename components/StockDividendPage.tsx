@@ -308,6 +308,38 @@ const TRADE_STATUS_LABEL: Record<string, string> = {
 };
 const tradeStatusColor = (t: StockTrade) => t.status === 'pending' ? 'text-orange-400' : (t.side === 'buy' ? 'text-brand-red' : 'text-brand-green');
 
+// ---- 挂单有效期判断：写死 5 个交易日（不含周末） ----
+const PENDING_TTL_DAYS = 5;
+const isWeekend = (d: Date) => d.getDay() === 0 || d.getDay() === 6;
+// 计算从创建日到今天经过了第几个交易日（首日计 1）。非交易时段/周末被视为"停牌日"，不计入。
+function tradingDayIndex(createTime: number, now: number): number {
+  const start = new Date(createTime); start.setHours(0, 0, 0, 0);
+  const end = new Date(now); end.setHours(0, 0, 0, 0);
+  if (end.getTime() <= start.getTime()) return 1;
+  let count = 1;
+  const cursor = new Date(start);
+  cursor.setDate(cursor.getDate() + 1);
+  while (cursor.getTime() <= end.getTime()) {
+    if (!isWeekend(cursor)) count++;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return count;
+}
+// 挂单是否处于最后一个交易日（返回 '!'）、已过期（返回 '?'）或正常（返回 ''）
+function pendingExpirySuffix(t: StockTrade, now: number): string {
+  if (t.status !== 'pending') return '';
+  const idx = tradingDayIndex(t.createdAt, now);
+  if (idx >= PENDING_TTL_DAYS + 1) return '?'; // 已过期（第 6 个交易日及以后）
+  if (idx === PENDING_TTL_DAYS) return '!';     // 最后一个有效交易日
+  return '';
+}
+// 生成挂单/成交的状态文字（含挂单过期标记）
+const tradeStatusLabel = (t: StockTrade): string =>
+  `${TRADE_STATUS_LABEL[`${t.side}-${t.status}`]}${pendingExpirySuffix(t, Date.now())}`;
+// 挂单剩余有效交易天数：创建/编辑当天为 PENDING_TTL_DAYS，每过一个交易日减 1，过期后为 0
+const pendingRemainingDays = (t: StockTrade, now: number): number =>
+  t.status === 'pending' ? Math.max(0, PENDING_TTL_DAYS - (tradingDayIndex(t.createdAt, now) - 1)) : 0;
+
 // 按成交顺序用移动加权成本重算每笔卖出的已实现盈亏（不依赖存储字段）
 const calcRealizedPnlMap = (trades: StockTrade[]) => {
   const filled = trades.filter(t => t.status === 'filled').sort((a, b) => a.createdAt - b.createdAt);
@@ -364,14 +396,21 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stockName, pnlMap, o
             {t.side === 'buy' ? '买入汇总' : '卖出汇总'}
           </span>
         ) : (
-          <button
-            type="button"
-            onClick={() => onToggle(t)}
-            title={t.status === 'filled' ? '取消成交（恢复挂单）' : '标记为成交（联动持仓）'}
-            className={`shrink-0 text-[8px] px-1 py-px rounded-full border font-bold ml-auto cursor-pointer ${t.status === 'pending' ? 'text-orange-400 border-orange-400/40 bg-orange-400/10' : t.side === 'buy' ? 'text-brand-red border-brand-red/40 bg-brand-red/10' : 'text-brand-green border-brand-green/40 bg-brand-green/10'}`}
-          >
-            {TRADE_STATUS_LABEL[`${t.side}-${t.status}`]}
-          </button>
+          <span className="ml-auto shrink-0 flex items-center gap-1.5">
+            {t.status === 'pending' && (
+              <span className="font-mono text-[8px] text-orange-400 whitespace-nowrap">
+                {pendingRemainingDays(t, Date.now())}天
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => onToggle(t)}
+              title={t.status === 'filled' ? '取消成交（恢复挂单）' : '标记为成交（联动持仓）'}
+              className={`shrink-0 text-[8px] px-1 py-px rounded-full border font-bold cursor-pointer ${t.status === 'pending' ? 'text-orange-400 border-orange-400/40 bg-orange-400/10' : t.side === 'buy' ? 'text-brand-red border-brand-red/40 bg-brand-red/10' : 'text-brand-green border-brand-green/40 bg-brand-green/10'}`}
+            >
+              {tradeStatusLabel(t)}
+            </button>
+          </span>
         )}
       </div>
       {/* 第二行：时间 + 撤单(确认) + 编辑 + 备注 */}
@@ -3856,6 +3895,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       let newTrade: StockTrade = {
         ...trade, side: addTradeSide, price, shares, note: addTradeNote.trim() || undefined,
         status, filledAt: undefined, realizedPnL: undefined,
+        // 编辑挂单：时间戳更新到修改时刻，剩余有效交易天数随之重置为 5 天
+        ...(status === 'pending' ? { createdAt: Date.now() } : {}),
       };
       if (status === 'filled') {
         if (addTradeSide === 'buy') {
@@ -4591,7 +4632,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             : 'text-app-rowtext';
                           return (
                             <div className="flex flex-col items-center leading-tight gap-px">
-                              <span className={`text-[9px] font-bold whitespace-nowrap ${tradeStatusColor(latest)}`}>{TRADE_STATUS_LABEL[`${latest.side}-${latest.status}`]}</span>
+                              <span className={`text-[9px] font-bold whitespace-nowrap ${tradeStatusColor(latest)}`}>{tradeStatusLabel(latest)}</span>
                               <span className="font-mono text-[10px] whitespace-nowrap text-app-rowtext">{formatPrice(latest.price, stock.name)}</span>
                               {priceDiffPct && <span className={`font-mono text-[8px] font-semibold whitespace-nowrap ${pctColor}`}>{priceDiffPct}</span>}
                             </div>
