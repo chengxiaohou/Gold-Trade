@@ -227,8 +227,8 @@ interface StockDividendPageProps {
   resetSignal?: number;
   dividendYearLeft?: number;
   dividendYearRight?: number;
-  sortMode?: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent';
-  onSortModeChange?: (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent') => void;
+  sortMode?: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent' | 'costPct' | 'tradePct';
+  onSortModeChange?: (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent' | 'costPct' | 'tradePct') => void;
   memo?: string;
   memoUpdatedAt?: number;
   memoBaseline?: string;
@@ -1790,7 +1790,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       setShowResetConfirm(true);
     }
   }, [resetSignal]);
-  const handleSortModeChange = (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent') => {
+  const handleSortModeChange = (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent' | 'costPct' | 'tradePct') => {
     if (onSortModeChange) onSortModeChange(mode);
   };
   // 布林线列排序方向：false=下→中→上，true=上→中→下
@@ -1823,6 +1823,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       setDivRateSortMode('rate');
     } else {
       setDivRateSortMode(prev => (prev === 'rate' ? 'ratio' : 'rate'));
+    }
+  };
+  // 成本列排序方向：false=成本下方盈亏%从高到低，true=从低到高，两档切换
+  const [costPctSortReverse, setCostPctSortReverse] = useState(false);
+  const handleCostPctSortClick = () => {
+    if (sortMode !== 'costPct') {
+      if (onSortModeChange) onSortModeChange('costPct');
+      setCostPctSortReverse(false);
+    } else {
+      setCostPctSortReverse(prev => !prev);
+    }
+  };
+  // 交易列排序方向：false=成交价相对现价涨跌%从高到低，true=从低到高，两档切换
+  const [tradePctSortReverse, setTradePctSortReverse] = useState(false);
+  const handleTradePctSortClick = () => {
+    if (sortMode !== 'tradePct') {
+      if (onSortModeChange) onSortModeChange('tradePct');
+      setTradePctSortReverse(false);
+    } else {
+      setTradePctSortReverse(prev => !prev);
     }
   };
 
@@ -2620,6 +2640,33 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       return [...stocks].sort((a, b) => changePctSortReverse
         ? (a.changePercent || 0) - (b.changePercent || 0)
         : (b.changePercent || 0) - (a.changePercent || 0));
+    } else if (sortMode === 'costPct') {
+      // 成本列排序：按成本下方盈亏%(现价相对成本的涨跌)高低，两档切换；空成本/无价格股票始终排在最后
+      const costPct = (s: StockEntry): number | null =>
+        s.positionCost > 0 && (s.price || 0) > 0 ? ((s.price - s.positionCost) / s.positionCost) * 100 : null;
+      return [...stocks].sort((a, b) => {
+        const pa = costPct(a), pb = costPct(b);
+        if (pa == null && pb == null) return 0;
+        if (pa == null) return 1; // 空数据排最后
+        if (pb == null) return -1;
+        return costPctSortReverse ? pa - pb : pb - pa;
+      });
+    } else if (sortMode === 'tradePct') {
+      // 交易列排序：按成交价相对现价涨跌%(最新成交价相对现价的涨跌)高低，两档切换；无交易/无价格股票始终排在最后
+      const tradePct = (s: StockEntry): number | null => {
+        const trades = s.stockTrades || [];
+        const ordinary = trades.filter(t => !t.isMerged);
+        const latest = ordinary.length ? [...ordinary].sort((a, b) => b.createdAt - a.createdAt)[0] : null;
+        if (!latest || latest.price <= 0 || (s.price || 0) <= 0) return null;
+        return ((s.price - latest.price) / latest.price) * 100;
+      };
+      return [...stocks].sort((a, b) => {
+        const pa = tradePct(a), pb = tradePct(b);
+        if (pa == null && pb == null) return 0;
+        if (pa == null) return 1; // 空数据排最后
+        if (pb == null) return -1;
+        return tradePctSortReverse ? pa - pb : pb - pa;
+      });
     } else if (sortMode === 'tag') {
       return [...stocks].sort((a, b) => {
         const aHasTag = a.tag && a.tag.trim() ? 0 : 1;
@@ -2647,7 +2694,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       });
     }
     return stocks;
-  }, [stocks, sortMode, stockBollMap, bollSortReverse, changePctSortReverse, divRateSortMode]);
+  }, [stocks, sortMode, stockBollMap, bollSortReverse, changePctSortReverse, divRateSortMode, costPctSortReverse, tradePctSortReverse]);
 
   // 请求日志状态
   const [requestLogs, setRequestLogs] = useState<RequestLogEntry[]>([]);
@@ -4187,11 +4234,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     {POSITION_MODE_LABEL[positionDisplayMode]}
                   </th>
                   <th
-                    className="w-[64px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border"
+                    className="w-[64px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
+                    onClick={handleCostPctSortClick}
+                    title="点击切换排序：成本下方盈亏%高→低 / 低→高"
                   >
                     成本
                   </th>
-                  <th className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">
+                  <th
+                    className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
+                    onClick={handleTradePctSortClick}
+                    title="点击切换排序：成交价涨跌%高→低 / 低→高"
+                  >
                     交易
                   </th>
                 </>}

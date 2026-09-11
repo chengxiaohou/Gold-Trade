@@ -415,7 +415,7 @@ export default function App() {
     clearCacheRecord('tencent');
   };
 
-  const handleSortModeChange = (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent') => {
+  const handleSortModeChange = (mode: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent' | 'costPct' | 'tradePct') => {
     setStockSettings(prev => ({ ...prev, sortMode: mode }));
   };
 
