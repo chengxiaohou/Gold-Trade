@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Trash2, Eye, EyeOff } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Trash2, Eye, EyeOff, Tags } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
@@ -62,6 +62,32 @@ class PageErrorBoundary extends React.Component<{ children: React.ReactNode }, {
     }
     return (this as any).props.children;
   }
+}
+
+// 标签调色板（与 TradeList 中保持一致），用于数据分析板块渲染标签彩块
+const ANALYSIS_TAG_PALETTE = [
+  { key: 'gray', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20' },
+  { key: 'indigo', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20' },
+  { key: 'red', bg: 'bg-red-500/10', text: 'text-red-500', border: 'border-red-500/20' },
+  { key: 'green', bg: 'bg-brand-green/10', text: 'text-brand-green', border: 'border-brand-green/20' },
+  { key: 'yellow', bg: 'bg-[var(--soft-yellow-bg)]', text: 'text-brand-softYellow', border: 'border-[var(--soft-yellow-border)]' },
+  { key: 'blue', bg: 'bg-blue-500/10', text: 'text-blue-500', border: 'border-blue-500/20' },
+  { key: 'orange', bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/20' },
+  { key: 'pink', bg: 'bg-pink-500/10', text: 'text-pink-500', border: 'border-pink-500/20' },
+];
+// 为给定标签推导其配色（与 TradeList 规则一致：预设标签有默认色，否则用 settings.tagColors 或灰色）
+function analysisTagColorKey(tag: string, tagColors?: Record<string, string>): string {
+  if (tagColors?.[tag]) return tagColors[tag];
+  if (['预案', '等额', '等差', '极限'].includes(tag)) return 'indigo';
+  if (tag === '分红') return 'red';
+  return 'gray';
+}
+function analysisTagStyle(key: string) {
+  return ANALYSIS_TAG_PALETTE.find(p => p.key === key) || ANALYSIS_TAG_PALETTE[0];
+}
+// 金额格式化：千分位，最多两位小数（整数时省略小数）
+function fmtAmount(n: number) {
+  return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
 }
 
 // 生成股息率对应股价的辅助函数
@@ -575,6 +601,49 @@ export default function App() {
       totalReturnRate
     };
   }, [floatingPnL, currentPosition.realizedPnL, appSettings.totalCapital]);
+
+  // ---------- 标签统计 ----------
+  // 已有标签列表（去重、排序）
+  const availableTagOptions = useMemo(() => {
+    const tags = new Set<string>();
+    trades.forEach(t => { if (t.tag && t.tag.trim()) tags.add(t.tag.trim()); });
+    return Array.from(tags).sort();
+  }, [trades]);
+
+  const [selectedAnalysisTags, setSelectedAnalysisTags] = useState<string[]>([]);
+
+  const toggleAnalysisTag = (tag: string) => {
+    setSelectedAnalysisTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+  };
+
+  // 选中标签范围内的成交收益统计：买入/卖出总额相减
+  const tagStats = useMemo(() => {
+    const agg = selectedAnalysisTags.reduce<Record<string, { buyAmount: number; buyCount: number; sellAmount: number; sellCount: number }>>((acc, tag) => {
+      acc[tag] = { buyAmount: 0, buyCount: 0, sellAmount: 0, sellCount: 0 };
+      return acc;
+    }, {});
+
+    let totalBuyAmount = 0;
+    let totalSellAmount = 0;
+
+    trades.forEach(t => {
+      if (t.isDisabled || !t.tag || !selectedAnalysisTags.includes(t.tag.trim())) return;
+      if (t.type === 'DIVIDEND') return; // 分红不计入买卖金额
+      const amount = t.price * t.grams;
+      const bucket = agg[t.tag.trim()];
+      if (t.type === 'BUY') {
+        bucket.buyAmount += amount;
+        bucket.buyCount++;
+        totalBuyAmount += amount;
+      } else if (t.type === 'SELL') {
+        bucket.sellAmount += amount;
+        bucket.sellCount++;
+        totalSellAmount += amount;
+      }
+    });
+
+    return { agg, totalBuyAmount, totalSellAmount, profit: totalSellAmount - totalBuyAmount };
+  }, [trades, selectedAnalysisTags]);
 
   // --- Handlers ---
   const handleInputChange = (field: keyof typeof inputs, value: string) => {
@@ -1814,7 +1883,7 @@ export default function App() {
                  </div>
                  
                  {/* 收益率统计 */}
-                 <div className="p-3 bg-app-input rounded-lg border border-app-border">
+                 <div className="mb-4 p-3 bg-app-input rounded-lg border border-app-border">
                    <div className="text-sm text-app-subtext font-bold mb-2">收益率统计</div>
                    {returnRateStats.floatingReturnRate === null ? (
                      <div className="text-xs text-app-subtext italic text-center py-2">
@@ -1841,6 +1910,59 @@ export default function App() {
                          </span>
                        </div>
                      </div>
+                   )}
+                 </div>
+
+                 {/* 标签统计 */}
+                 <div className="p-3 bg-app-input rounded-lg border border-app-border">
+                   <div className="text-sm text-app-subtext font-bold mb-2 flex items-center gap-1.5"><Tags size={14} />标签统计<span className="text-xs opacity-70">（按标签统计买卖金额与成交收益）</span></div>
+                   {availableTagOptions.length === 0 ? (
+                     <div className="text-xs text-app-subtext italic text-center py-2">暂无标签，请在成交记录中先为记录添加标签</div>
+                   ) : (
+                     <>
+                       <div className="flex items-center gap-2 mb-2">
+                         <span className="text-app-subtext text-xs whitespace-nowrap">选择标签：</span>
+                         <div className="flex flex-wrap gap-1.5">
+                           {availableTagOptions.map(tag => {
+                             const key = analysisTagColorKey(tag, appSettings.tagColors);
+                             const style = analysisTagStyle(key);
+                             const selected = selectedAnalysisTags.includes(tag);
+                             return (
+                               <button
+                                 key={tag}
+                                 onClick={() => toggleAnalysisTag(tag)}
+                                 className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[22px] border transition-all ${style.bg} ${style.text} ${style.border} ${selected ? 'opacity-100 ring-2 ring-offset-1 ring-offset-app-input ring-current' : 'opacity-60 hover:opacity-100'}`}
+                                 title={selected ? `点击取消「${tag}」` : `点击选择「${tag}」`}
+                               >
+                                 {tag}
+                               </button>
+                             );
+                           })}
+                         </div>
+                       </div>
+                       {selectedAnalysisTags.length === 0 ? (
+                         <div className="text-xs text-app-subtext italic text-center py-1.5">请至少选择一个标签查看统计</div>
+                       ) : (
+                         <div className="flex flex-col gap-1.5 text-xs pt-1 border-t border-app-border">
+                           <div className="flex items-center gap-2">
+                             <span className="text-app-subtext whitespace-nowrap">买入金额合计：</span>
+                             <span className="font-mono font-medium text-app-text">¥ {fmtAmount(tagStats.totalBuyAmount)}</span>
+                             <span className="text-app-subtext/70">（{selectedAnalysisTags.map(t => tagStats.agg[t].buyCount).reduce((a, b) => a + b, 0)} 笔）</span>
+                           </div>
+                           <div className="flex items-center gap-2">
+                             <span className="text-app-subtext whitespace-nowrap">卖出金额合计：</span>
+                             <span className="font-mono font-medium text-app-text">¥ {fmtAmount(tagStats.totalSellAmount)}</span>
+                             <span className="text-app-subtext/70">（{selectedAnalysisTags.map(t => tagStats.agg[t].sellCount).reduce((a, b) => a + b, 0)} 笔）</span>
+                           </div>
+                           <div className="flex items-center gap-2 pt-1 border-t border-app-border">
+                             <span className="text-app-subtext whitespace-nowrap font-medium">成交收益：</span>
+                             <span className={`font-mono font-bold text-sm ${tagStats.profit >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                               {tagStats.profit >= 0 ? '+' : ''}{fmtAmount(tagStats.profit)}
+                             </span>
+                           </div>
+                         </div>
+                       )}
+                     </>
                    )}
                  </div>
                </div>

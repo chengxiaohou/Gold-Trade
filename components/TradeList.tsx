@@ -55,10 +55,11 @@ interface EditBubbleProps {
   settings: AppSettings;
   mode: 'full' | 'tag' | 'dividend';
   onTagColorChange: (tag: string, colorKey: string) => void;
+  onManualTagChange: (tag: string) => void;
 }
 
 const EditBubble: React.FC<EditBubbleProps> = ({ 
-  trade, availableTags, onUpdate, onClose, initialPosition, settings, mode, onTagColorChange 
+  trade, availableTags, onUpdate, onClose, initialPosition, settings, mode, onTagColorChange, onManualTagChange 
 }) => {
   const initialSnapshot = useRef({
     price: trade.price,
@@ -142,6 +143,10 @@ const EditBubble: React.FC<EditBubbleProps> = ({
   const handleTagChange = (val: string) => {
     setTagStr(val);
     onUpdate(trade.id, { tag: val });
+    const trimmed = val.trim();
+    if (trimmed) {
+      onManualTagChange(trimmed);
+    }
   };
 
   const handleColorSelect = (key: string) => {
@@ -342,6 +347,52 @@ const EditBubble: React.FC<EditBubbleProps> = ({
 };
 
 export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate, onReorder, settings, onSettingsChange }) => {
+  // 快捷标签：记忆上一个手动设置的标签，长按某行标签即可快速设置为该标签
+  const QUICK_TAG_KEY = 'gold_trade_quick_tag';
+  const [quickTag, setQuickTag] = useState<string>(() => localStorage.getItem(QUICK_TAG_KEY) || '');
+  const tagLongPressTimer = useRef<number | null>(null);
+  const tagPressStart = useRef({ x: 0, y: 0 });
+  const tagPressMoved = useRef(false);
+  const tagLongPressFired = useRef(false);
+
+  const clearTagTimer = () => {
+    if (tagLongPressTimer.current) {
+      window.clearTimeout(tagLongPressTimer.current);
+      tagLongPressTimer.current = null;
+    }
+  };
+
+  const handleManualTagChange = (tag: string) => {
+    setQuickTag(tag);
+    localStorage.setItem(QUICK_TAG_KEY, tag);
+  };
+
+  const handleTagPointerDown = (e: React.PointerEvent, tradeId: string, currentTag: string) => {
+    e.stopPropagation();
+    tagPressStart.current = { x: e.clientX, y: e.clientY };
+    tagPressMoved.current = false;
+    tagLongPressFired.current = false;
+    clearTagTimer();
+    tagLongPressTimer.current = window.setTimeout(() => {
+      if (!tagPressMoved.current && quickTag) {
+        tagLongPressFired.current = true;
+        // 已是快捷标签则长按移除，否则设为快捷标签
+        onUpdate(tradeId, { tag: currentTag === quickTag ? '' : quickTag });
+      }
+    }, 600);
+  };
+
+  const handleTagPointerMove = (e: React.PointerEvent) => {
+    if (Math.abs(e.clientX - tagPressStart.current.x) > 8 || Math.abs(e.clientY - tagPressStart.current.y) > 8) {
+      tagPressMoved.current = true;
+      clearTagTimer();
+    }
+  };
+
+  const handleTagPointerUp = () => {
+    clearTagTimer();
+  };
+
   // sortDesc: true = Latest -> Earliest (Reversed), false = Earliest -> Latest (Original)
   const [sortDesc, setSortDesc] = useState(() => {
     const saved = localStorage.getItem('gold_trade_sort_desc');
@@ -484,9 +535,20 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
        }
        return (
          <div 
-           onClick={(e) => handleEditClick(e, t.id, 'tag')}
-           className="cursor-pointer group/tag w-full h-full min-h-[24px] flex items-center"
-           title="点击编辑标签"
+           onClick={(e) => {
+             if (tagLongPressFired.current) {
+               tagLongPressFired.current = false;
+               return;
+             }
+             handleEditClick(e, t.id, 'tag');
+           }}
+           onPointerDown={(e) => handleTagPointerDown(e, t.id, t.tag || '')}
+           onPointerMove={handleTagPointerMove}
+           onPointerUp={handleTagPointerUp}
+           onPointerCancel={handleTagPointerUp}
+           onPointerLeave={handleTagPointerUp}
+           className="cursor-pointer group/tag w-full h-full min-h-[24px] flex items-center select-none"
+           title={quickTag ? `点击编辑标签，长按设为「${quickTag}」` : '点击编辑标签'}
          >
            <span className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[22px] transition-colors border ${style.bg} ${style.text} ${style.border} ${style.hover || ''}`}>
              {displayTag}
@@ -916,6 +978,7 @@ export const TradeList: React.FC<TradeListProps> = ({ trades, onDelete, onUpdate
           settings={settings}
           mode={editState.mode}
           onTagColorChange={handleTagColorChange}
+          onManualTagChange={handleManualTagChange}
         />
       )}
     </>
