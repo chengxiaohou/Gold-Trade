@@ -89,6 +89,10 @@ function analysisTagStyle(key: string) {
 function fmtAmount(n: number) {
   return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
 }
+// 克数格式化：最多两位小数，去除多余尾零
+function fmtGrams(n: number) {
+  return parseFloat(n.toFixed(2)).toString();
+}
 
 // 生成股息率对应股价的辅助函数
 function calcDividendRates(dividend2025: number): Record<string, number> {
@@ -618,13 +622,15 @@ export default function App() {
 
   // 选中标签范围内的成交收益统计：买入/卖出总额相减
   const tagStats = useMemo(() => {
-    const agg = selectedAnalysisTags.reduce<Record<string, { buyAmount: number; buyCount: number; sellAmount: number; sellCount: number }>>((acc, tag) => {
-      acc[tag] = { buyAmount: 0, buyCount: 0, sellAmount: 0, sellCount: 0 };
+    const agg = selectedAnalysisTags.reduce<Record<string, { buyAmount: number; buyCount: number; buyGrams: number; sellAmount: number; sellCount: number; sellGrams: number }>>((acc, tag) => {
+      acc[tag] = { buyAmount: 0, buyCount: 0, buyGrams: 0, sellAmount: 0, sellCount: 0, sellGrams: 0 };
       return acc;
     }, {});
 
     let totalBuyAmount = 0;
     let totalSellAmount = 0;
+    let totalBuyGrams = 0;
+    let totalSellGrams = 0;
 
     trades.forEach(t => {
       if (t.isDisabled || !t.tag || !selectedAnalysisTags.includes(t.tag.trim())) return;
@@ -634,15 +640,19 @@ export default function App() {
       if (t.type === 'BUY') {
         bucket.buyAmount += amount;
         bucket.buyCount++;
+        bucket.buyGrams += t.grams;
         totalBuyAmount += amount;
+        totalBuyGrams += t.grams;
       } else if (t.type === 'SELL') {
         bucket.sellAmount += amount;
         bucket.sellCount++;
+        bucket.sellGrams += t.grams;
         totalSellAmount += amount;
+        totalSellGrams += t.grams;
       }
     });
 
-    return { agg, totalBuyAmount, totalSellAmount, profit: totalSellAmount - totalBuyAmount };
+    return { agg, totalBuyAmount, totalSellAmount, totalBuyGrams, totalSellGrams, profit: totalSellAmount - totalBuyAmount };
   }, [trades, selectedAnalysisTags]);
 
   // --- Handlers ---
@@ -1944,16 +1954,17 @@ export default function App() {
                          <div className="text-xs text-app-subtext italic text-center py-1.5">请至少选择一个标签查看统计</div>
                        ) : (
                          <div className="flex flex-col gap-1.5 text-xs pt-1 border-t border-app-border">
-                           <div className="flex items-center gap-2">
-                             <span className="text-app-subtext whitespace-nowrap">买入金额合计：</span>
-                             <span className="font-mono font-medium text-app-text">¥ {fmtAmount(tagStats.totalBuyAmount)}</span>
-                             <span className="text-app-subtext/70">（{selectedAnalysisTags.map(t => tagStats.agg[t].buyCount).reduce((a, b) => a + b, 0)} 笔）</span>
-                           </div>
-                           <div className="flex items-center gap-2">
-                             <span className="text-app-subtext whitespace-nowrap">卖出金额合计：</span>
-                             <span className="font-mono font-medium text-app-text">¥ {fmtAmount(tagStats.totalSellAmount)}</span>
-                             <span className="text-app-subtext/70">（{selectedAnalysisTags.map(t => tagStats.agg[t].sellCount).reduce((a, b) => a + b, 0)} 笔）</span>
-                           </div>
+                           {[
+                             { label: '买入', amount: tagStats.totalBuyAmount, grams: tagStats.totalBuyGrams, count: selectedAnalysisTags.map(t => tagStats.agg[t].buyCount).reduce((a, b) => a + b, 0) },
+                             { label: '卖出', amount: tagStats.totalSellAmount, grams: tagStats.totalSellGrams, count: selectedAnalysisTags.map(t => tagStats.agg[t].sellCount).reduce((a, b) => a + b, 0) },
+                           ].map(row => (
+                             <div key={row.label} className="flex items-baseline gap-2 flex-wrap">
+                               <span className="text-app-subtext whitespace-nowrap">{row.label}：</span>
+                               <span className="font-mono text-app-text whitespace-nowrap">{row.count}<span className="text-app-subtext/70 ml-0.5">笔</span></span>
+                               <span className="font-mono text-app-text whitespace-nowrap">{fmtGrams(row.grams)}<span className="text-app-subtext/70 ml-0.5">克</span></span>
+                               <span className="font-mono font-medium text-app-text whitespace-nowrap">¥{fmtAmount(row.amount)}</span>
+                             </div>
+                           ))}
                            <div className="flex items-center gap-2 pt-1 border-t border-app-border">
                              <span className="text-app-subtext whitespace-nowrap font-medium">成交收益：</span>
                              <span className={`font-mono font-bold text-sm ${tagStats.profit >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
