@@ -652,7 +652,7 @@ export default function App() {
       }
     });
 
-    return { agg, totalBuyAmount, totalSellAmount, totalBuyGrams, totalSellGrams, profit: totalSellAmount - totalBuyAmount };
+    return { agg, totalBuyAmount, totalSellAmount, totalBuyGrams, totalSellGrams, profit: totalSellAmount - totalBuyAmount, perGramProfit: totalSellGrams > 0 ? (totalSellAmount - totalBuyAmount) / totalSellGrams : null };
   }, [trades, selectedAnalysisTags]);
 
   // --- Handlers ---
@@ -1962,14 +1962,26 @@ export default function App() {
                                <span className="text-app-subtext whitespace-nowrap">{row.label}：</span>
                                <span className="font-mono text-app-text whitespace-nowrap">{row.count}<span className="text-app-subtext/70 ml-0.5">笔</span></span>
                                <span className="font-mono text-app-text whitespace-nowrap">{fmtGrams(row.grams)}<span className="text-app-subtext/70 ml-0.5">克</span></span>
-                               <span className="font-mono font-medium text-app-text whitespace-nowrap">¥{fmtAmount(row.amount)}</span>
+                               <span className="font-mono font-medium text-app-text whitespace-nowrap">{fmtAmount(row.amount)}<span className="text-app-subtext/70 ml-0.5">元</span></span>
                              </div>
                            ))}
-                           <div className="flex items-center gap-2 pt-1 border-t border-app-border">
-                             <span className="text-app-subtext whitespace-nowrap font-medium">成交收益：</span>
-                             <span className={`font-mono font-bold text-sm ${tagStats.profit >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                               {tagStats.profit >= 0 ? '+' : ''}{fmtAmount(tagStats.profit)}
-                             </span>
+                           <div className="flex items-center gap-4 pt-1 border-t border-app-border">
+                             <div className="flex items-center gap-2">
+                               <span className="text-app-subtext whitespace-nowrap font-medium">成交收益：</span>
+                               <span className={`font-mono font-bold text-sm ${tagStats.profit >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                                 {tagStats.profit >= 0 ? '+' : ''}{fmtAmount(tagStats.profit)}
+                               </span>
+                             </div>
+                             <div className="flex items-center gap-2">
+                               <span className="text-app-subtext whitespace-nowrap font-medium">每克收益：</span>
+                               {tagStats.perGramProfit === null ? (
+                                 <span className="font-mono font-bold text-sm text-app-subtext">-</span>
+                               ) : (
+                                 <span className={`font-mono font-bold text-sm ${tagStats.perGramProfit >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                                   {tagStats.perGramProfit >= 0 ? '+' : ''}{fmtAmount(tagStats.perGramProfit)}
+                                 </span>
+                               )}
+                             </div>
                            </div>
                          </div>
                        )}
