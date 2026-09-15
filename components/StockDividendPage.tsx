@@ -2818,6 +2818,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     [effectiveLedger, profitStockNames, profitRange]
   );
   const fmtSignedAmount = (v: number) => `${v >= 0 ? '+' : ''}${v.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`;
+  const fmtShortDate = (ts: number) => {
+    const d = new Date(ts);
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${m}-${day}`;
+  };
+  const profitRangeLabel = `${fmtShortDate(profitRange.startTs)} ~ ${fmtShortDate(profitRange.endTs)}`;
 
   const toggleProfitDay = (date: string) => {
     setExpandedProfitDays(prev => {
@@ -6782,40 +6789,48 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <span className="text-yellow-400">进行中: <span className="font-medium">{requestStats.pending}</span></span>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5 text-xs overflow-x-auto">
-                {PROFIT_RANGE_SEGS.map(seg => (
-                  <button
-                    key={seg.key}
-                    type="button"
-                    onClick={() => {
-                      setProfitRangeMode(seg.key);
-                      if (seg.key !== 'custom') setShowProfitPanel(true);
-                    }}
-                    className={`px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap shrink-0 transition-colors ${
-                      profitRangeMode === seg.key ? 'bg-app-input text-app-text font-semibold' : 'text-app-subtext hover:text-app-text'
-                    }`}
-                  >
-                    {seg.label}
-                  </button>
-                ))}
-                <input
-                  type="date"
-                  value={profitCustomStart}
-                  onChange={e => { setProfitCustomStart(e.target.value); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
-                  className="w-[104px] shrink-0 bg-app-input border border-app-border rounded text-[10px] text-app-text px-1 py-0.5 appearance-none"
-                />
-                <span className="text-app-subtext shrink-0">至</span>
-                <input
-                  type="date"
-                  value={profitCustomEnd}
-                  onChange={e => { setProfitCustomEnd(e.target.value); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
-                  className="w-[104px] shrink-0 bg-app-input border border-app-border rounded text-[10px] text-app-text px-1 py-0.5 appearance-none"
-                />
-                <span className="shrink-0 font-mono text-[11px] font-semibold pl-1">
-                  <span className={profitResult.total >= 0 ? 'text-brand-red' : 'text-brand-green'}>
-                    {fmtSignedAmount(profitResult.total)}
-                  </span>
-                </span>
+              <div className="flex items-center gap-1.5 text-xs overflow-x-auto py-0.5">
+                {/* 周期快捷选择 */}
+                <div className="flex items-center rounded-md border border-app-border/50 bg-app-input/40 p-0.5 shrink-0">
+                  {PROFIT_RANGE_SEGS.map(seg => (
+                    <button
+                      key={seg.key}
+                      type="button"
+                      onClick={() => {
+                        setProfitRangeMode(seg.key);
+                        if (seg.key !== 'custom') setShowProfitPanel(true);
+                      }}
+                      className={`px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap transition-colors ${
+                        profitRangeMode === seg.key ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'
+                      }`}
+                    >
+                      {seg.label}
+                    </button>
+                  ))}
+                </div>
+                {/* 自定义起止 */}
+                <div className="flex items-center gap-1 rounded-md border border-app-border/50 bg-app-input/40 px-1.5 py-[3px] shrink-0">
+                  <input
+                    type="date"
+                    value={profitCustomStart}
+                    onChange={e => { setProfitCustomStart(e.target.value); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
+                    className="w-[100px] shrink-0 bg-transparent text-[10px] text-app-text outline-none appearance-none"
+                  />
+                  <span className="text-app-subtext shrink-0">至</span>
+                  <input
+                    type="date"
+                    value={profitCustomEnd}
+                    onChange={e => { setProfitCustomEnd(e.target.value); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
+                    className="w-[100px] shrink-0 bg-transparent text-[10px] text-app-text outline-none appearance-none"
+                  />
+                </div>
+                {/* 周期已实现盈亏 */}
+                <div
+                  className={`shrink-0 flex items-center rounded-full border px-2 py-0.5 ${profitResult.total >= 0 ? 'border-red-500/30 bg-red-500/10' : 'border-green-500/30 bg-green-500/10'}`}
+                  title="周期已实现盈亏"
+                >
+                  <span className={`font-mono text-[11px] font-bold leading-none ${profitResult.total >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(profitResult.total)}</span>
+                </div>
               </div>
             )}
           </div>
@@ -6964,10 +6979,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
         {/* 盈利明细面板（仅盈利视图） */}
         {bottomBarView === 'profit' && showProfitPanel && (
-          <div className="mt-2 pt-2 border-t border-app-border max-h-80 overflow-y-auto">
-            {/* 全量备份导入导出（stocks + 流水账 ledger + 墓碑 + 设置） */}
-            <div className="flex items-center gap-2 px-1 pb-1.5">
-              <span className="text-app-subtext text-[11px]">交易历史全量备份</span>
+          <div className="mt-2 pt-2 border-t border-app-border max-h-80 overflow-y-auto space-y-2">
+            {/* 全量备份导入导出 */}
+            <div className="flex items-center gap-2 px-1">
+              <span className="text-[11px] text-app-subtext shrink-0">交易历史全量备份</span>
               <button
                 type="button"
                 onClick={() => onExportFullBackup?.()}
@@ -6999,30 +7014,46 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   e.target.value = '';
                 }}
               />
+              <span className="ml-auto shrink-0 font-mono text-[10px] text-app-subtext">{profitRangeLabel}</span>
             </div>
-            {/* 全部股票合计 */}
-            <div className="flex items-center gap-2 text-xs px-1">
-              <span className="text-app-subtext">全部合计</span>
-              <span className={`font-mono font-bold ${profitResult.total >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(profitResult.total)}</span>
+
+            {/* 汇总卡片 */}
+            <div className="bg-app-card/70 rounded-lg px-3 py-2 flex items-end justify-between border border-app-border/50">
+              <div>
+                <div className="text-[10px] text-app-subtext mb-1">周期已实现盈亏</div>
+                <div className={`font-mono text-xl font-bold leading-none ${profitResult.total >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                  {fmtSignedAmount(profitResult.total)}
+                </div>
+              </div>
+              <div className="text-right text-[10px] text-app-subtext leading-relaxed">
+                <div className="mb-0.5">{profitResult.byDay.length} 天有买入/卖出</div>
+                <div>个股 {Object.keys(profitResult.byStock).length} 只</div>
+              </div>
             </div>
-            {/* 逐只股票合计 */}
+
+            {/* 个股小计 */}
             {Object.keys(profitResult.byStock).length > 0 && (
-              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 px-1 text-[11px]">
+              <div className="flex flex-wrap gap-1.5 px-1">
                 {Object.keys(profitResult.byStock).map(sid => {
                   const v = profitResult.byStock[sid];
                   return (
-                    <span key={sid} className="flex items-center gap-1 whitespace-nowrap">
+                    <span key={sid} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-app-border/50 bg-app-input/50 text-[10px]">
                       <span className="text-app-subtext">{profitStockNames[sid] || sid}</span>
-                      <span className={`font-mono ${v >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(v)}</span>
+                      <span className={`font-mono font-medium ${v >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(v)}</span>
                     </span>
                   );
                 })}
               </div>
             )}
+
             {/* 逐日明细 */}
-            <div className="mt-2 space-y-1">
+            <div className="flex items-center gap-2 px-1 pt-1">
+              <span className="text-[10px] text-app-subtext">逐日明细</span>
+              <div className="flex-1 h-px bg-app-border/50"></div>
+            </div>
+            <div className="space-y-1">
               {profitResult.byDay.length === 0 ? (
-                <div className="text-xs text-app-subtext text-center py-2">所选周期内无买入/卖出记录</div>
+                <div className="text-xs text-app-subtext text-center py-3">所选周期内无买入/卖出记录</div>
               ) : profitResult.byDay.map(day => {
                 const expanded = expandedProfitDays.has(day.date);
                 return (
@@ -7035,34 +7066,36 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     >
                       <ChevronDown size={12} className={`shrink-0 text-app-subtext transition-transform ${expanded ? '' : '-rotate-90'}`} />
                       <span className="text-app-subtext shrink-0 font-mono text-[10px]">{day.date}</span>
-                      <span className="text-app-subtext shrink-0">买 {day.buys.length} · 卖 {day.sells.length}</span>
+                      <span className="text-app-subtext shrink-0 whitespace-nowrap">买 {day.buys.length} · 卖 {day.sells.length}</span>
                       <span className={`ml-auto shrink-0 font-mono text-[11px] font-bold ${day.dayRealized >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(day.dayRealized)}</span>
                     </button>
                     {expanded && (
-                      <div className="space-y-0.5 px-2 pb-1.5">
+                      <div className="space-y-1 px-2 pb-2">
                         {day.buys.map((tx, i) => (
-                          <div key={`b${i}`} className="flex items-center gap-2 text-[11px]">
-                            <span className="w-6 shrink-0 font-mono text-brand-red">买</span>
+                          <div key={`b${i}`} className="flex items-center gap-2 text-xs px-2 py-1 bg-app-card/70 rounded">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-500/20 text-brand-red">买入</span>
                             <span className="text-app-subtext shrink-0">{tx.stockName}</span>
+                            <span className="text-app-subtext shrink-0">@</span>
                             <span className="font-mono shrink-0">{tx.price}</span>
                             <span className="text-app-subtext shrink-0">×</span>
                             <span className="font-mono shrink-0">{Number.isInteger(tx.shares) ? tx.shares : tx.shares.toFixed(2)}</span>
                             <span className="text-app-subtext shrink-0">=</span>
                             <span className="font-mono shrink-0 text-brand-red">{tx.amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}</span>
-                            <span className="text-app-subtext ml-auto truncate">{new Date(tx.time).toLocaleTimeString('zh-CN', { hour12: false })}</span>
+                            <span className="text-app-subtext ml-auto shrink-0 font-mono text-[10px]">{new Date(tx.time).toLocaleTimeString('zh-CN', { hour12: false })}</span>
                           </div>
                         ))}
                         {day.sells.map((tx, i) => (
-                          <div key={`s${i}`} className="flex items-center gap-2 text-[11px]">
-                            <span className="w-6 shrink-0 font-mono text-brand-green">卖</span>
+                          <div key={`s${i}`} className="flex items-center gap-2 text-xs px-2 py-1 bg-app-card/70 rounded">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-500/20 text-brand-green">卖出</span>
                             <span className="text-app-subtext shrink-0">{tx.stockName}</span>
+                            <span className="text-app-subtext shrink-0">@</span>
                             <span className="font-mono shrink-0">{tx.price}</span>
                             <span className="text-app-subtext shrink-0">×</span>
                             <span className="font-mono shrink-0">{Number.isInteger(tx.shares) ? tx.shares : tx.shares.toFixed(2)}</span>
                             <span className="text-app-subtext shrink-0">=</span>
                             <span className="font-mono shrink-0 text-brand-green">{tx.amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}</span>
-                            <span className={`shrink-0 font-mono ${(tx.pnl ?? 0) >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(tx.pnl)}</span>
-                            <span className="text-app-subtext ml-auto truncate">{new Date(tx.time).toLocaleTimeString('zh-CN', { hour12: false })}</span>
+                            <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${(tx.pnl ?? 0) >= 0 ? 'bg-red-500/20 text-brand-red' : 'bg-green-500/20 text-brand-green'}`}>{fmtSignedAmount(tx.pnl)}</span>
+                            <span className="text-app-subtext ml-auto shrink-0 font-mono text-[10px]">{new Date(tx.time).toLocaleTimeString('zh-CN', { hour12: false })}</span>
                           </div>
                         ))}
                       </div>
