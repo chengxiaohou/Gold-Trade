@@ -898,19 +898,24 @@ export default function App() {
         sortMode: undefined,
       } : undefined;
 
+      // 股票实时行情快照（现价/涨跌/今开高低量/更新时刻/价格派生的股息率）属设备本地缓存，
+      // 上传前剔除，避免下载侧被另一设备的旧价格覆盖，或因时间戳误判为"新鲜"而跳过刷新。
+      const stripStockPriceCache = (list: StockEntry[]) =>
+        list.map(({ price, changePercent, high, low, open, volume, priceUpdatedAt, dividendRate2025, ...rest }) => rest) as unknown as StockEntry[];
+
       let dataToUpload;
       if (currentPage === 'gold') {
         dataToUpload = {
           trades,
           settings: appSettings,
-          stocks: existingStocks,
+          stocks: stripStockPriceCache(existingStocks),
           stockSettings: cloudExistingStockSettings
         };
       } else {
         dataToUpload = {
           trades: existingTrades,
           settings: appSettings,
-          stocks,
+          stocks: stripStockPriceCache(stocks),
           stockSettings: cloudStockSettings
         };
       }
