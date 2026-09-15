@@ -8,10 +8,12 @@ import { TradingPlanPanel } from './components/TradingPlanPanel';
 import { CloudSettingsModal } from './components/CloudSettingsModal';
 import { StockDividendPage } from './components/StockDividendPage';
 import { analyzeTrade } from './services/geminiService';
-import { saveToGist, loadFromGist } from './services/githubService';
+import { saveToGist, loadFromGist, clipToLatest20 } from './services/githubService';
+import { getLedgerFromStore, saveLedgerToStore } from './services/stockLedgerStore';
+import type { StockLedgerMap } from './services/stockLedgerStore';
 import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
-import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, DEFAULT_TAG_PARAMS } from './types';
+import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, StockTrade, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
 const APP_VERSION = 'v2.17.1';
@@ -202,6 +204,33 @@ export default function App() {
     }
     return createDefaultStocks();
   });
+
+  // 本地全量流水账（IndexedDB）：每只股票的完整逐笔 + 墓碑（被软删记录的 id）。
+  // 云端只同步每只票最新 20 条活记录；全量以本状态为准，供盈利统计与下载合并使用。
+  const ledgerRef = useRef<StockLedgerMap>({});
+  const [ledgerMap, setLedgerMap] = useState<StockLedgerMap>({});
+  // 启动时从 IndexedDB 回填流水账，并把更全的记录合并回 stocks.stockTrades
+  useEffect(() => {
+    getLedgerFromStore().then(full => {
+      ledgerRef.current = full;
+      setLedgerMap(full);
+      if (Object.keys(full).length === 0) return;
+      setStocks(prev => prev.map(s => {
+        const ent = full[s.id];
+        if (!ent || !ent.trades || ent.trades.length === 0) return s;
+        return { ...s, stockTrades: ent.trades };
+      }));
+    });
+  }, []);
+
+  // 更新某只股票的流水账（含墓碑），同步写 IndexedDB
+  const updateLedgerMap = useCallback((updater: (prev: StockLedgerMap) => StockLedgerMap) => {
+    const prev = ledgerRef.current;
+    const next = updater(prev);
+    ledgerRef.current = next;
+    setLedgerMap(next);
+    saveLedgerToStore(next);
+  }, []);
 
   const [isAddingStock, setIsAddingStock] = useState(false);
   const [isRefreshingStockPrices, setIsRefreshingStockPrices] = useState(false);
@@ -912,10 +941,16 @@ export default function App() {
           stockSettings: cloudExistingStockSettings
         };
       } else {
+        // 全量存在于本地流水账，云端只上传每只票最新的活记录（裁剪到 20 条）+ 墓碑(删除 id)
+        const trimmedCloudStocks = stocks.map(s => ({
+          ...s,
+          stockTrades: clipToLatest20(s.stockTrades),
+          deletedIds: ledgerRef.current[s.id]?.deletedIds,
+        }));
         dataToUpload = {
           trades: existingTrades,
           settings: appSettings,
-          stocks: stripStockPriceCache(stocks),
+          stocks: stripStockPriceCache(trimmedCloudStocks),
           stockSettings: cloudStockSettings
         };
       }
@@ -979,7 +1014,36 @@ export default function App() {
           }
         } else {
           if (result.stocks) {
-            setStocks(result.stocks);
+            // 信任云端合并：以本地全量流水账为基底，用云端最新活记录（20 条）按 id 覆盖档改回传、
+            // 新增则加入；墓碑命中的 id 软删。合并后重排并按时间升序回写 stocks 与流水账。
+            const oldLedger = ledgerRef.current;
+            const newLedger: StockLedgerMap = { ...oldLedger };
+            const mergedStocks = (result.stocks as (StockEntry & { deletedIds?: string[] })[]).map(c => {
+              const cloudTrades = (c.stockTrades || []).filter(ct => !ct.isDeleted);
+              const cloudById = new Map<string, StockTrade>(cloudTrades.map(ct => [ct.id, ct] as [string, StockTrade]));
+              const tombstones = c.deletedIds && c.deletedIds.length > 0 ? c.deletedIds : [];
+              const oldEntry = oldLedger[c.id];
+              const baseById = new Map<string, StockTrade>((oldEntry?.trades || []).map(t => [t.id, t] as [string, StockTrade]));
+              // 1) 云端活记录：命中的 id 用云端版本覆盖（修改回传），未命中的新增（空记录也补）
+              for (const ct of cloudTrades) baseById.set(ct.id, ct);
+              // 2) 墓碑命中、且不在云端活记录内 → 软删
+              for (const id of tombstones) {
+                if (cloudById.has(id)) continue;
+                const rec = baseById.get(id);
+                if (rec) baseById.set(id, { ...rec, isDeleted: true });
+              }
+              const finalTrades = Array.from(baseById.values())
+                .sort((a, b) => (a.filledAt ?? a.createdAt) - (b.filledAt ?? b.createdAt));
+              newLedger[c.id] = {
+                trades: finalTrades,
+                deletedIds: Array.from(new Set([...(oldEntry?.deletedIds || []), ...tombstones])),
+              };
+              return { ...c, stockTrades: finalTrades };
+            });
+            setStocks(mergedStocks);
+            ledgerRef.current = newLedger;
+            setLedgerMap(newLedger);
+            saveLedgerToStore(newLedger);
           }
 
           if (result.settings) {
@@ -1091,6 +1155,70 @@ export default function App() {
         }
       } catch (error) {
         alert('文件解析失败');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // 股息页交易历史全量备份导出（stocks + 流水账 ledger + 墓碑 + 设置）
+  const handleStockFullExport = () => {
+    if (stocks.length === 0 && Object.keys(ledgerRef.current).length === 0) {
+      alert('暂无股息页数据可导出');
+      return;
+    }
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+    const exportData = {
+      version: 2,
+      kind: 'stock-full',
+      timestamp: Date.now(),
+      stocks,                       // 含软删标记 isDeleted
+      ledger: ledgerRef.current,    // 每只股票：{ trades 全量逐笔, deletedIds 墓碑 }
+      stockSettings,
+    };
+    const dataStr = JSON.stringify(exportData, null, 2);
+    const blob = new Blob([dataStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `stock-full-backup-${ts}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // 股息页交易历史全量备份恢复
+  const handleStockFullImport = (file: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const result = e.target?.result;
+        if (typeof result !== 'string') return;
+        const parsed = JSON.parse(result);
+        if (!parsed || parsed.kind !== 'stock-full' || !Array.isArray(parsed.stocks)) {
+          alert('不是有效的股息页全量备份文件（kind 应为 stock-full）');
+          return;
+        }
+        const newStocks: StockEntry[] = parsed.stocks;
+        const ledger: StockLedgerMap = parsed.ledger && typeof parsed.ledger === 'object' ? parsed.ledger : {};
+        // 回写全量流水账（IndexedDB，含墓碑）
+        ledgerRef.current = ledger;
+        setLedgerMap(ledger);
+        saveLedgerToStore(ledger);
+        // 恢复股票列表（含软删标记），并覆盖本地快照
+        setStocks(newStocks);
+        safeSetItem('stock_dividend_stocks', JSON.stringify(newStocks));
+        // 恢复股息项设置
+        if (parsed.stockSettings && typeof parsed.stockSettings === 'object') {
+          setStockSettings(parsed.stockSettings);
+          safeSetItem('stock_dividend_settings', JSON.stringify(parsed.stockSettings));
+        }
+        alert(`全量备份恢复成功：${newStocks.length} 只股票`);
+      } catch (error) {
+        alert('全量备份文件解析失败');
       }
     };
     reader.readAsText(file);
@@ -2197,6 +2325,10 @@ export default function App() {
             buyOrderPlaceholder={stockSettings.buyOrderPlaceholder}
             sellOrderPlaceholder={stockSettings.sellOrderPlaceholder}
             showRequestStats={showRequestStats}
+            ledgerMap={ledgerMap}
+            onLedgerMapChange={updateLedgerMap}
+            onExportFullBackup={handleStockFullExport}
+            onImportFullBackup={handleStockFullImport}
             />
           </PageErrorBoundary>
         )}

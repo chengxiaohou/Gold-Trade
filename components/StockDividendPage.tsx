@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, BarChart3, List, ChevronDown, Copy } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, List, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS } from '../types';
 import { fetchBollData, checkAllBollCache, countStaleBollCache, countVisibleBollItems, getBollCacheTimestamps, ensureBollCacheRestored, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
@@ -9,6 +9,8 @@ import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchConte
 import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
 import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
+import type { StockLedgerMap } from '../services/stockLedgerStore';
+import { calcRealizedPnlForRange } from '../services/realizedPnl';
 import { InputGroup } from './InputGroup';
 
 const TAG_PALETTE = [
@@ -32,6 +34,18 @@ const EMPTY_STYLE = {
 const getTagStyle = (colorKey?: string) => {
   return TAG_PALETTE.find(p => p.key === colorKey) || TAG_PALETTE[0];
 };
+
+// 盈利统计：快捷周期选择项
+const PROFIT_RANGE_SEGS = [
+  { key: 'w1', label: '近一周' },
+  { key: 'w2', label: '两周' },
+  { key: 'm1', label: '近一月' },
+  { key: 'm3', label: '近三月' },
+  { key: 'm6', label: '近半年' },
+  { key: 'y1', label: '近一年' },
+  { key: 'custom', label: '自定义' },
+] as const;
+type ProfitRangeMode = typeof PROFIT_RANGE_SEGS[number]['key'];
 
 interface EditTagBubbleProps {
   stock: StockEntry;
@@ -237,6 +251,10 @@ interface StockDividendPageProps {
   buyOrderPlaceholder?: string; // 买入挂单备注占位文字（随云端同步）
   sellOrderPlaceholder?: string; // 卖出挂单备注占位文字（随云端同步）
   showRequestStats?: boolean;
+  ledgerMap?: StockLedgerMap;
+  onLedgerMapChange?: (updater: (prev: StockLedgerMap) => StockLedgerMap) => void;
+  onExportFullBackup?: () => void;           // 全量备份导出（stocks + ledger + stockSettings）
+  onImportFullBackup?: (file: File) => void; // 全量备份导入恢复
 }
 
 // 分红核对弹窗里的单只股票差异条目
@@ -1671,8 +1689,17 @@ type SrRow =
   | { kind: 'plain'; text: string }
   | { kind: 'cell'; name: string; color?: string; rest: string };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup }) => {
+  // 全量备份导入用的隐藏文件选择（放入盈利统计面板）
+  const fullBackupInputRef = useRef<HTMLInputElement>(null);
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
+  // 把某股票的全量逐笔 + 墓碑写入本地流水账（IndexedDB 由 App 层持久化）
+  const pushLedger = useCallback((stockId: string, trades: StockTrade[], deletedIds?: string[]) => {
+    onLedgerMapChange?.(prev => ({
+      ...prev,
+      [stockId]: { trades, deletedIds: deletedIds ?? prev[stockId]?.deletedIds ?? [] },
+    }));
+  }, [onLedgerMapChange]);
   const cols = visibleColumns || defaultVisibleColumns;
   // 分红年份列（dividendLeft / dividendRight）：表头合并为一格，年份各自成列
   const dividendYearCols = cols.filter(c => c === 'dividendLeft' || c === 'dividendRight');
@@ -2749,6 +2776,56 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
   // 日志面板中已展开的触发原因分组
   const [expandedLogReasons, setExpandedLogReasons] = useState<Set<string>>(new Set());
+
+  // 底部栏视图：请求统计 / 盈利统计
+  const [bottomBarView, setBottomBarView] = useState<'request' | 'profit'>('request');
+  // 盈利统计：周期选择 + 面板展开 + 逐日明细展开
+  const [profitRangeMode, setProfitRangeMode] = useState<ProfitRangeMode>('m1');
+  const [profitCustomStart, setProfitCustomStart] = useState('');
+  const [profitCustomEnd, setProfitCustomEnd] = useState('');
+  const [showProfitPanel, setShowProfitPanel] = useState(false);
+  const [expandedProfitDays, setExpandedProfitDays] = useState<Set<string>>(new Set());
+
+  // 盈利统计数据源：优先全量流水账；无流水账时回退到页面主 state 的 stockTrades（兼容首次使用未建 IndexedDB）
+  const effectiveLedger = useMemo<StockLedgerMap>(() => {
+    if (ledgerMap && Object.keys(ledgerMap).length > 0) return ledgerMap;
+    const m: StockLedgerMap = {};
+    stocks.forEach(s => { m[s.id] = { trades: s.stockTrades || [], deletedIds: [] }; });
+    return m;
+  }, [ledgerMap, stocks]);
+  const profitStockNames = useMemo(() => Object.fromEntries(stocks.map(s => [s.id, s.name])), [stocks]);
+  // 计算所选时间窗口 [startTs, endTs)
+  const profitRange = useMemo(() => {
+    const now = new Date();
+    let end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    let start: Date;
+    switch (profitRangeMode) {
+      case 'w1': start = new Date(now.getTime() - 7 * 86400000); break;
+      case 'w2': start = new Date(now.getTime() - 14 * 86400000); break;
+      case 'm1': start = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate()); break;
+      case 'm3': start = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()); break;
+      case 'm6': start = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate()); break;
+      case 'y1': start = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()); break;
+      case 'custom':
+        start = profitCustomStart ? new Date(`${profitCustomStart}T00:00:00`) : new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+        if (profitCustomEnd) end = new Date(`${profitCustomEnd}T23:59:59.999`);
+        break;
+    }
+    return { startTs: start.getTime(), endTs: end.getTime() };
+  }, [profitRangeMode, profitCustomStart, profitCustomEnd]);
+  const profitResult = useMemo(
+    () => calcRealizedPnlForRange(effectiveLedger, profitStockNames, profitRange.startTs, profitRange.endTs),
+    [effectiveLedger, profitStockNames, profitRange]
+  );
+  const fmtSignedAmount = (v: number) => `${v >= 0 ? '+' : ''}${v.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`;
+
+  const toggleProfitDay = (date: string) => {
+    setExpandedProfitDays(prev => {
+      const next = new Set(prev);
+      if (next.has(date)) next.delete(date); else next.add(date);
+      return next;
+    });
+  };
 
   const toggleLogReason = (reason: string) => {
     setExpandedLogReasons(prev => {
@@ -3856,14 +3933,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         newTrade = { ...baseTrade, filledAt: Date.now(), realizedPnL };
       }
       let newTrades = [...(s.stockTrades || []), newTrade];
-      // 已成交记录超限：把最旧的折叠为两条合并汇总（只读，不计入上限），避免 Gist 负载膨胀且成本链可精确追溯
-      if (status === 'filled') newTrades = compactFilledTrades(newTrades);
+      pushLedger(s.id, newTrades);
       return { ...s, stockTrades: newTrades, positionShares: shares2, positionCost: cost };
     }));
     // 挂单/成交后仅清空数量与备注，保留价格（常为现价，方便连续操作）
     setAddTradeShares('');
     setAddTradeNote('');
-  }, [stocks, onStocksChange, addTradeSide, addTradePrice, addTradeShares, addTradeNote]);
+  }, [stocks, onStocksChange, addTradeSide, addTradePrice, addTradeShares, addTradeNote, pushLedger]);
 
   // 保存编辑一条交易记录：先从原记录回退持仓影响，再按新字段与目标状态重算
   const handleSaveEditTrade = useCallback((stockId: string, tradeId: string, status: 'pending' | 'filled') => {
@@ -3910,15 +3986,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         }
       }
       let newTrades = [...baseTrades, newTrade];
-      // 已成交记录超限：折叠最旧成交为合并汇总（只读，不计入上限）
-      if (status === 'filled') newTrades = compactFilledTrades(newTrades);
+      pushLedger(s.id, newTrades);
       return { ...s, stockTrades: newTrades, positionShares: shares2, positionCost: cost };
     }));
     // 保存编辑后仅清空数量与备注，保留价格
     setAddTradeShares('');
     setAddTradeNote('');
     setEditingTradeId(null);
-  }, [stocks, onStocksChange, addTradeSide, addTradePrice, addTradeShares, addTradeNote]);
+  }, [stocks, onStocksChange, addTradeSide, addTradePrice, addTradeShares, addTradeNote, pushLedger]);
 
   // 撤单/删除一条交易记录：挂单直接删除；已成交记录删除时同步回退持仓（买入回减股数与成本加权、卖出回增股数与已实现盈亏）
   const handleRemoveTrade = useCallback((stockId: string, tradeId: string) => {
@@ -6688,24 +6763,64 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {/* 页面底部请求计数器 */}
       {showRequestStats && (
       <div className="fixed bottom-0 left-0 right-0 z-30 bg-app-card border-t border-app-border px-4 py-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3 min-w-0">
             <button
-              onClick={() => setShowLogPanel(!showLogPanel)}
-              className="flex items-center gap-2 text-xs text-app-subtext hover:text-app-text transition-colors"
+              onClick={() => setBottomBarView(v => (v === 'request' ? 'profit' : 'request'))}
+              className="flex items-center gap-2 text-xs text-app-subtext hover:text-app-text transition-colors shrink-0"
+              title={bottomBarView === 'request' ? '切换到盈利统计' : '切换到请求统计'}
             >
               <BarChart3 size={14} />
-              <span>请求统计</span>
+              <span>{bottomBarView === 'request' ? '请求统计' : '盈利统计'}</span>
             </button>
-            <div className="flex items-center gap-3 text-xs">
-              <span className="text-app-subtext">总计: <span className="text-app-text font-medium">{requestStats.total}</span></span>
-              <span className="text-green-400">成功: <span className="font-medium">{requestStats.success}</span></span>
-              <span className="text-red-400">失败: <span className="font-medium">{requestStats.failed}</span></span>
-              <span className="text-blue-400">缓存: <span className="font-medium">{requestStats.cached}</span></span>
-              <span className="text-yellow-400">进行中: <span className="font-medium">{requestStats.pending}</span></span>
-            </div>
+            {bottomBarView === 'request' ? (
+              <div className="flex items-center gap-3 text-xs whitespace-nowrap">
+                <span className="text-app-subtext">总计: <span className="text-app-text font-medium">{requestStats.total}</span></span>
+                <span className="text-green-400">成功: <span className="font-medium">{requestStats.success}</span></span>
+                <span className="text-red-400">失败: <span className="font-medium">{requestStats.failed}</span></span>
+                <span className="text-blue-400">缓存: <span className="font-medium">{requestStats.cached}</span></span>
+                <span className="text-yellow-400">进行中: <span className="font-medium">{requestStats.pending}</span></span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 text-xs overflow-x-auto">
+                {PROFIT_RANGE_SEGS.map(seg => (
+                  <button
+                    key={seg.key}
+                    type="button"
+                    onClick={() => {
+                      setProfitRangeMode(seg.key);
+                      if (seg.key !== 'custom') setShowProfitPanel(true);
+                    }}
+                    className={`px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap shrink-0 transition-colors ${
+                      profitRangeMode === seg.key ? 'bg-app-input text-app-text font-semibold' : 'text-app-subtext hover:text-app-text'
+                    }`}
+                  >
+                    {seg.label}
+                  </button>
+                ))}
+                <input
+                  type="date"
+                  value={profitCustomStart}
+                  onChange={e => { setProfitCustomStart(e.target.value); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
+                  className="w-[104px] shrink-0 bg-app-input border border-app-border rounded text-[10px] text-app-text px-1 py-0.5 appearance-none"
+                />
+                <span className="text-app-subtext shrink-0">至</span>
+                <input
+                  type="date"
+                  value={profitCustomEnd}
+                  onChange={e => { setProfitCustomEnd(e.target.value); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
+                  className="w-[104px] shrink-0 bg-app-input border border-app-border rounded text-[10px] text-app-text px-1 py-0.5 appearance-none"
+                />
+                <span className="shrink-0 font-mono text-[11px] font-semibold pl-1">
+                  <span className={profitResult.total >= 0 ? 'text-brand-red' : 'text-brand-green'}>
+                    {fmtSignedAmount(profitResult.total)}
+                  </span>
+                </span>
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
+            {bottomBarView === 'request' ? (<>
             <button
               onClick={() => setShowLogPanel(prev => !prev)}
               disabled={requestLogs.length === 0}
@@ -6751,11 +6866,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <Download size={12} />
               <span className="hidden sm:inline">导出内置</span>
             </button>
+            </>) : (
+            <button
+              onClick={() => setShowProfitPanel(p => !p)}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-app-subtext hover:text-app-text border border-app-border rounded hover:border-app-text/50 transition-colors"
+              title="展开/收起盈利明细"
+            >
+              <List size={12} />
+              <span className="hidden sm:inline">{showProfitPanel ? '收起明细' : '展开明细'}</span>
+            </button>
+            )}
           </div>
         </div>
 
-        {/* 日志面板 */}
-        {showLogPanel && (
+        {/* 日志面板（仅请求视图） */}
+        {bottomBarView === 'request' && showLogPanel && (
           <div className="mt-2 pt-2 border-t border-app-border max-h-48 overflow-y-auto">
             <div className="space-y-1">
               {requestLogs.length === 0 ? (
@@ -6833,6 +6958,118 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   );
                 });
               })()}
+            </div>
+          </div>
+        )}
+
+        {/* 盈利明细面板（仅盈利视图） */}
+        {bottomBarView === 'profit' && showProfitPanel && (
+          <div className="mt-2 pt-2 border-t border-app-border max-h-80 overflow-y-auto">
+            {/* 全量备份导入导出（stocks + 流水账 ledger + 墓碑 + 设置） */}
+            <div className="flex items-center gap-2 px-1 pb-1.5">
+              <span className="text-app-subtext text-[11px]">交易历史全量备份</span>
+              <button
+                type="button"
+                onClick={() => onExportFullBackup?.()}
+                disabled={!onExportFullBackup}
+                className="flex items-center gap-1 px-2 py-0.5 text-[10px] text-app-subtext hover:text-app-text border border-app-border rounded hover:border-app-text/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="导出全部股票的交易历史 + 流水账 + 设置到 JSON"
+              >
+                <Download size={10} />
+                导出
+              </button>
+              <button
+                type="button"
+                onClick={() => fullBackupInputRef.current?.click()}
+                disabled={!onImportFullBackup}
+                className="flex items-center gap-1 px-2 py-0.5 text-[10px] text-app-subtext hover:text-app-text border border-app-border rounded hover:border-app-text/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="从 JSON 恢复全部交易历史 + 流水账 + 设置"
+              >
+                <Upload size={10} />
+                恢复
+              </button>
+              <input
+                ref={fullBackupInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={e => {
+                  const f = e.target.files?.[0];
+                  if (f) onImportFullBackup?.(f);
+                  e.target.value = '';
+                }}
+              />
+            </div>
+            {/* 全部股票合计 */}
+            <div className="flex items-center gap-2 text-xs px-1">
+              <span className="text-app-subtext">全部合计</span>
+              <span className={`font-mono font-bold ${profitResult.total >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(profitResult.total)}</span>
+            </div>
+            {/* 逐只股票合计 */}
+            {Object.keys(profitResult.byStock).length > 0 && (
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 px-1 text-[11px]">
+                {Object.keys(profitResult.byStock).map(sid => {
+                  const v = profitResult.byStock[sid];
+                  return (
+                    <span key={sid} className="flex items-center gap-1 whitespace-nowrap">
+                      <span className="text-app-subtext">{profitStockNames[sid] || sid}</span>
+                      <span className={`font-mono ${v >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(v)}</span>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            {/* 逐日明细 */}
+            <div className="mt-2 space-y-1">
+              {profitResult.byDay.length === 0 ? (
+                <div className="text-xs text-app-subtext text-center py-2">所选周期内无买入/卖出记录</div>
+              ) : profitResult.byDay.map(day => {
+                const expanded = expandedProfitDays.has(day.date);
+                return (
+                  <div key={day.date} className="bg-app-input/50 rounded overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => toggleProfitDay(day.date)}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-app-input transition-colors"
+                      title={expanded ? '收起当日明细' : '展开当日明细'}
+                    >
+                      <ChevronDown size={12} className={`shrink-0 text-app-subtext transition-transform ${expanded ? '' : '-rotate-90'}`} />
+                      <span className="text-app-subtext shrink-0 font-mono text-[10px]">{day.date}</span>
+                      <span className="text-app-subtext shrink-0">买 {day.buys.length} · 卖 {day.sells.length}</span>
+                      <span className={`ml-auto shrink-0 font-mono text-[11px] font-bold ${day.dayRealized >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(day.dayRealized)}</span>
+                    </button>
+                    {expanded && (
+                      <div className="space-y-0.5 px-2 pb-1.5">
+                        {day.buys.map((tx, i) => (
+                          <div key={`b${i}`} className="flex items-center gap-2 text-[11px]">
+                            <span className="w-6 shrink-0 font-mono text-brand-red">买</span>
+                            <span className="text-app-subtext shrink-0">{tx.stockName}</span>
+                            <span className="font-mono shrink-0">{tx.price}</span>
+                            <span className="text-app-subtext shrink-0">×</span>
+                            <span className="font-mono shrink-0">{Number.isInteger(tx.shares) ? tx.shares : tx.shares.toFixed(2)}</span>
+                            <span className="text-app-subtext shrink-0">=</span>
+                            <span className="font-mono shrink-0 text-brand-red">{tx.amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}</span>
+                            <span className="text-app-subtext ml-auto truncate">{new Date(tx.time).toLocaleTimeString('zh-CN', { hour12: false })}</span>
+                          </div>
+                        ))}
+                        {day.sells.map((tx, i) => (
+                          <div key={`s${i}`} className="flex items-center gap-2 text-[11px]">
+                            <span className="w-6 shrink-0 font-mono text-brand-green">卖</span>
+                            <span className="text-app-subtext shrink-0">{tx.stockName}</span>
+                            <span className="font-mono shrink-0">{tx.price}</span>
+                            <span className="text-app-subtext shrink-0">×</span>
+                            <span className="font-mono shrink-0">{Number.isInteger(tx.shares) ? tx.shares : tx.shares.toFixed(2)}</span>
+                            <span className="text-app-subtext shrink-0">=</span>
+                            <span className="font-mono shrink-0 text-brand-green">{tx.amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}</span>
+                            <span className={`shrink-0 font-mono ${(tx.pnl ?? 0) >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(tx.pnl)}</span>
+                            <span className="text-app-subtext ml-auto truncate">{new Date(tx.time).toLocaleTimeString('zh-CN', { hour12: false })}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
