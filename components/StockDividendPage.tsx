@@ -12,6 +12,7 @@ import { safeSetItem } from '../services/storageSafe';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
 import { calcRealizedPnlForRange } from '../services/realizedPnl';
 import { InputGroup } from './InputGroup';
+import { BacktestModal } from './BacktestModal';
 
 const TAG_PALETTE = [
   { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20', hover: 'hover:border-gray-500/50' },
@@ -2141,6 +2142,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 行情状态浮窗（近5交易日“破位”事件分析，数据复用 stockBollMap 日线，无需额外请求）
   const [mktInfoStock, setMktInfoStock] = useState<StockEntry | null>(null);
+  const [backtestStock, setBacktestStock] = useState<StockEntry | null>(null);
   const [mktInfoPos, setMktInfoPos] = useState({ left: 0, top: 0 });
   const [mktInfoPinned, setMktInfoPinned] = useState(false);
   const mktInfoBtnRef = useRef<HTMLTableCellElement | null>(null);
@@ -6553,6 +6555,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <h4 className="text-[12px] font-bold tracking-wider text-app-text">{mktInfoStock.name} <span className="font-mono text-[9px] font-normal text-app-rowtext">{getDisplayCode(mktInfoStock.code)}</span></h4>
               </div>
               <div className="flex items-center gap-1">
+                <button type="button" onClick={(e) => { e.stopPropagation(); if (mktInfoStock) setBacktestStock(mktInfoStock); setMktInfoPinned(true); }} onPointerDown={(e) => e.stopPropagation()} className="text-app-subtext hover:text-brand-red transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1" title="回测">
+                  <BarChart3 size={15} />
+                </button>
                 <button type="button" onClick={closeMktInfo} onPointerDown={(e) => e.stopPropagation()} className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1" title="关闭">
                   <X size={15} />
                 </button>
@@ -7146,6 +7151,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           </div>
         )}
       </div>
+      )}
+      {backtestStock && (
+        <BacktestModal stock={backtestStock} onClose={() => setBacktestStock(null)} />
       )}
     </div>
   );

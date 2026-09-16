@@ -159,6 +159,47 @@ export const DEFAULT_TAG_PARAMS: TagParams = {
   },
 };
 
+// ===== 回测弹窗 =====
+// 回测策略规则：把"标签信号"映射为买卖动作
+export interface BacktestRule {
+  id: string;
+  tagKey: string;          // 对应标签目录 BACKTEST_TAG_CATALOG 的稳定 key
+  label: string;           // 规则展示名（标签名）
+  action: 'buy' | 'sell';
+  pct: number;             // 仓位百分比 1-100
+  enabled: boolean;
+}
+export interface BacktestStrategy {
+  rules: BacktestRule[];
+  initialCapital: number;  // 初始现金（默认 100000）
+}
+// 回测操作记录（与 K线图买卖点一一对应）
+export interface BacktestTrade {
+  id: string;
+  date: string;
+  barIndex: number;
+  tagKey: string;
+  tagName: string;
+  action: 'buy' | 'sell';
+  price: number;
+  shares: number;
+  amount: number;
+  cashAfter: number;
+  sharesAfter: number;
+  avgCostAfter: number;
+  realizedPnl?: number;
+}
+export interface BacktestResult {
+  trades: BacktestTrade[];
+  finalValue: number;
+  totalReturnPct: number;
+  winRate: number;
+  maxDrawdownPct: number;
+  tradeCount: number;
+}
+// 标签目录分组（策略编辑器的下拉选项结构）
+export type BacktestTagGroup = 'feng-add' | 'feng-reduce' | 'pattern' | 'env' | 'break' | 'daily';
+
 export interface StockSettings {
   visibleColumns?: string[];
   dividendRateColumns?: string[];
