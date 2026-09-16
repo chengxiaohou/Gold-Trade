@@ -2186,6 +2186,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 悬停名称显示行情状态（临时，不固定）
   const handleMktInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
+    // 编辑该行或处于拖拽中：不触发浮窗（热区已改为整格，需避免误触）
+    if (editingId === stock.id || draggedId) return;
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
     if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned || mktInfoPinned) return;
     mktInfoHoveredRef.current = true;
@@ -2214,6 +2216,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 点击名称：切换固定/取消固定
   const handleMktInfoClick = (e: React.MouseEvent, stock: StockEntry) => {
+    // 编辑该行时点击（输入框）不触发浮窗，保持编辑交互
+    if (editingId === stock.id) return;
     e.stopPropagation();
     if (mktInfoPinned && mktInfoStock?.id === stock.id) {
       mktInfoHoveredRef.current = false;
@@ -3248,6 +3252,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setDraggedId(id);
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', id);
+    // 排序模式下拖拽无意义：切回手动顺序，保证拖拽对可见列表立即生效
+    if (sortMode !== 'default' && onSortModeChange) onSortModeChange('default');
+  };
+
+  // 拖拽结束（成功放置或中途放弃）统一清理，确保没有任何行残留高亮
+  const handleDragEnd = () => {
+    setDraggedId(null);
+    setDragOverId(null);
   };
 
   const handleDragOver = (e: React.DragEvent, id: string) => {
@@ -3269,17 +3281,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       setDragOverId(null);
       return;
     }
-
-    const draggedIndex = stocks.findIndex(s => s.id === draggedId);
-    const targetIndex = stocks.findIndex(s => s.id === targetId);
-
-    if (draggedIndex !== -1 && targetIndex !== -1) {
-      const newStocks = [...stocks];
-      const [draggedItem] = newStocks.splice(draggedIndex, 1);
-      newStocks.splice(targetIndex, 0, draggedItem);
-      onStocksChange(newStocks);
+    // 基于当前可见顺序（sortedStocks）移动，再把 stocks 底层顺序对齐成新顺序，
+    // 保证拖拽在任意排序方式下都按用户"所见"的顺序生效
+    const order = sortedStocks.map(s => s.id);
+    const fromIdx = order.indexOf(draggedId);
+    const toIdx = order.indexOf(targetId);
+    if (fromIdx === -1 || toIdx === -1) {
+      setDraggedId(null);
+      setDragOverId(null);
+      return;
     }
-
+    const newOrder = [...order];
+    const [movedId] = newOrder.splice(fromIdx, 1);
+    newOrder.splice(toIdx, 0, movedId);
+    const byId = new Map(stocks.map(s => [s.id, s]));
+    const newStocks = newOrder.map(id => byId.get(id)).filter((s): s is StockEntry => !!s);
+    if (newStocks.length === stocks.length) onStocksChange(newStocks);
     setDraggedId(null);
     setDragOverId(null);
   };
@@ -4436,11 +4453,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <tbody>
               {sortedStocks.map(stock => (
                 <tr 
-                  key={stock.id} 
-                  className={`group border-t border-app-border hover:bg-app-hover transition-colors ${dragOverId === stock.id ? 'bg-brand-yellow/10' : ''}`}
-                >
+                    key={stock.id} 
+                    onDragOver={(e) => handleDragOver(e, stock.id)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, stock.id)}
+                    className={`group border-t border-app-border ${draggedId ? '' : 'hover:bg-app-hover'} transition-colors ${dragOverId === stock.id ? 'bg-brand-yellow/10' : ''}`}
+                  >
                   <td 
-                    className={`px-1 py-1.5 align-middle sticky left-0 z-20 bg-app-card group-hover:bg-app-hover border-r border-app-border transition-colors ${draggedId === stock.id ? 'opacity-50' : ''}`}
+                    className={`px-1 py-1.5 align-middle sticky left-0 z-20 bg-app-card ${draggedId ? '' : 'group-hover:bg-app-hover'} cursor-move touch-none border-r border-app-border transition-colors ${draggedId === stock.id ? 'opacity-50' : ''}`}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, stock.id)}
+                    onDragEnd={handleDragEnd}
                   >
                     <div 
                       onClick={(e) => handleEditTagClick(e, stock.id)}
@@ -4463,12 +4486,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </div>
                   </td>
                   {(cols.includes('code') || cols.includes('name')) && <td 
-                    className={`px-1 py-1.5 align-middle sticky left-[36px] z-10 bg-app-card group-hover:bg-app-hover cursor-move touch-none border-r border-app-border transition-colors ${draggedId === stock.id ? 'opacity-50' : ''}`}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, stock.id)}
-                    onDragOver={(e) => handleDragOver(e, stock.id)}
-                    onDragLeave={handleDragLeave}
-                    onDrop={(e) => handleDrop(e, stock.id)}
+                    className={`px-1 py-1.5 align-middle sticky left-[36px] z-10 bg-app-card ${draggedId ? '' : 'group-hover:bg-app-hover'} cursor-pointer border-r border-app-border transition-colors ${draggedId ? '' : 'hover:bg-app-input/50'} ${draggedId === stock.id ? 'opacity-50' : ''}`}
+                    onMouseEnter={(e) => handleMktInfoEnter(e, stock)}
+                    onMouseLeave={handleMktInfoLeave}
+                    onTouchStart={handleMktInfoTouchStart}
+                    onClick={(e) => handleMktInfoClick(e, stock)}
                   >
                     <div className="flex items-center justify-center gap-1 w-full">
                       {editingId === stock.id ? (
@@ -4502,11 +4524,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           />}
                         </div>
                       ) : nameSubMode === 'tags' ? (
-                        <div className="relative flex flex-col items-center justify-center cursor-pointer"
-                          onMouseEnter={(e) => handleMktInfoEnter(e, stock)}
-                            onMouseLeave={handleMktInfoLeave}
-                            onTouchStart={handleMktInfoTouchStart}
-                            onClick={(e) => handleMktInfoClick(e, stock)}>
+                        <div className="relative flex flex-col items-center justify-center">
                           <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
                             const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
                             const n = raw.replace(/\s/g, '');
@@ -4525,11 +4543,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           })()}
                         </div>
                       ) : (
-                        <div className="relative flex items-center justify-center h-8 whitespace-nowrap cursor-pointer"
-                          onMouseEnter={(e) => handleMktInfoEnter(e, stock)}
-                            onMouseLeave={handleMktInfoLeave}
-                            onTouchStart={handleMktInfoTouchStart}
-                            onClick={(e) => handleMktInfoClick(e, stock)}>
+                        <div className="relative flex items-center justify-center h-8 whitespace-nowrap">
                           <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
                             const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
                             const n = raw.replace(/\s/g, '');
@@ -4545,7 +4559,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onMouseLeave={handleDivRateInfoLeave}
                     onTouchStart={handleDivRateInfoTouchStart}
                     onClick={(e) => handleDivRateInfoClick(e, stock)}
-                    className="px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
+                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
                     <div className="flex flex-col items-center leading-none gap-0.5">
@@ -4573,7 +4587,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onMouseLeave={handlePriceInfoLeave}
                     onTouchStart={handlePriceInfoTouchStart}
                     onClick={(e) => handlePriceInfoClick(e, stock)}
-                    className="px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
+                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
                     <div className="flex items-center justify-center gap-0.5">
@@ -4590,7 +4604,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onMouseLeave={() => handleListSrHoverLeave()}
                     onTouchStart={handleListSrTouchStart}
                     onClick={(e) => handleListSrClick(e, stock, true)}
-                    className="px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
+                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
                     <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
@@ -4615,7 +4629,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       // 上轨+下箭头 或 下轨+上箭头 → 箭头放左边避免反直觉
                       const isCounterArrow = pos && ((pos.band === 'upper' && pos.percent < 0) || (pos.band === 'lower' && pos.percent >= 0));
                       return (
-                        <td key={key} className={`px-1 py-1.5 text-center cursor-pointer hover:bg-app-input/50 ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
+                        <td key={key} className={`px-1 py-1.5 text-center cursor-pointer ${draggedId ? '' : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             const rect = e.currentTarget.getBoundingClientRect();

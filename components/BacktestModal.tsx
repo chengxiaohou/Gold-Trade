@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Plus, Trash2, GripHorizontal, Play } from 'lucide-react';
-import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts';
-import type { IChartApi } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, LineData, Time } from 'lightweight-charts';
 import type { StockEntry } from '../types';
 import { fetchBollData } from '../services/bollService';
 
@@ -26,6 +26,44 @@ interface StatProps {
 
 const INPUT_CLS = 'bg-app-input border border-app-border rounded-lg px-2 py-1 text-[13px] leading-tight font-mono text-app-text outline-none';
 
+// 均线规格（按参考配色）→ K线图上叠加的均线批次
+const MA_SPECS: Array<{ period: number; color: string; label: string }> = [
+  { period: 5, color: '#FFFFFF', label: 'MA5' },
+  { period: 10, color: '#FF33AA', label: 'MA10' },
+  { period: 20, color: '#FFB340', label: 'MA20' },
+  { period: 30, color: '#33AAFF', label: 'MA30' },
+  { period: 60, color: '#A05030', label: 'MA60' },
+  { period: 120, color: '#30BB88', label: 'MA120' },
+  { period: 250, color: '#FF8899', label: 'MA250' },
+];
+
+// 布林线规格（BOLL 20,2）：上轨/中轨/下轨
+const BOLL_SPECS: Array<{ key: 'upper' | 'mid' | 'lower'; color: string; label: string }> = [
+  { key: 'upper', color: '#ef4444', label: '上轨' },
+  { key: 'mid', color: '#3b82f6', label: 'MID' },
+  { key: 'lower', color: '#10b981', label: '下轨' },
+];
+// 布林计算参数
+const BOLL_PERIOD = 20;
+const BOLL_MULT = 2;
+
+// 把 lightweight Time（字符串YYYY-MM-DD / BusinessDay / 时间戳）格式化为 YYYY-MM-DD
+function formatChartTime(time: Time): string {
+  let y: number, m: number, d: number;
+  if (typeof time === 'number') {
+    const dt = new Date(time * 1000);
+    y = dt.getUTCFullYear(); m = dt.getUTCMonth() + 1; d = dt.getUTCDate();
+  } else if (typeof time === 'object') {
+    y = time.year; m = time.month; d = time.day;
+  } else {
+    const parts = time.split('-').map(Number);
+    // 字符串可能是 YYYY-MM-DD 或 YYYY-MM-DD HH:mm
+    y = parts[0]; m = parts[1]; d = parts[2];
+  }
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${y}-${pad(m)}-${pad(d)}`;
+}
+
 export function BacktestModal({ stock, onClose }: BacktestModalProps) {
   const [initialCapital, setInitialCapital] = useState(100000);
   const [rules, setRules] = useState<string[]>(['r1', 'r2']);
@@ -33,9 +71,15 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ReturnType<IChartApi['addSeries']> | null>(null);
+  const maSeriesRef = useRef<ISeriesApi<'Line'>[] | null>(null);
+  const bollSeriesRef = useRef<ISeriesApi<'Line'>[] | null>(null);
   const [klines, setKlines] = useState<ChartCandle[] | null>(null);
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState<string | null>(null);
+  // 图表指标模式：均线(默认) / 布林线
+  const [indicatorMode, setIndicatorMode] = useState<'ma' | 'boll'>('ma');
+  // 各指标体系当前最新值：ma={5:x,...} boll={upper,mid,lower}
+  const [latestInd, setLatestInd] = useState<{ ma: number[]; boll: { upper: number; mid: number; lower: number } | null }>({ ma: [], boll: null });
 
   // K线图初始化（占位数据，纯UI骨架；resize 后自动按容器实际尺寸重绘）
   useEffect(() => {
@@ -49,6 +93,10 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
         textColor: '#94a3b8',
         fontFamily: 'monospace',
       },
+      localization: {
+        // 十字光标悬浮时的时间标签 → 年-月-日
+        timeFormatter: (time: Time) => formatChartTime(time),
+      },
       grid: {
         vertLines: { color: 'rgba(148,163,184,0.15)' },
         horzLines: { color: 'rgba(148,163,184,0.15)' },
@@ -59,6 +107,12 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
         barSpacing: 6,
         fixLeftEdge: true,   // 滑到最左时固定边缘，不露出空白
         fixRightEdge: true,  // 滑到最右时固定边缘，不露出空白
+        // x轴刻度标签：按刻度类型分级显示（年/年-月/月-日），避免拥挤
+        tickMarkFormatter: (time: Time, type: TickMarkType) => {
+          if (type === TickMarkType.Year) return formatChartTime(time).slice(0, 4);
+          if (type === TickMarkType.Month) return formatChartTime(time).slice(0, 7);
+          return formatChartTime(time).slice(5);
+        },
       },
       rightPriceScale: { borderColor: 'rgba(148,163,184,0.2)' },
       crosshair: {
@@ -76,6 +130,31 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
       borderDownColor: '#10b981',
     });
     seriesRef.current = series;
+    // 叠加均线（MA5/10/20/30/60/120/250），按 MA_SPECS 配色
+    const maSeries = MA_SPECS.map(spec => chart.addSeries(LineSeries, {
+      color: spec.color,
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+      // 指标线不参与Y轴自动缩放，Y轴标尺只由K线的最高/最低价决定，
+      // 避免切换均线/布林线时整图上下位移
+      autoscaleInfoProvider: () => null,
+    }));
+    maSeriesRef.current = maSeries;
+    maSeries.forEach(s => s.setData([]));
+    // 布林线三条带（上/中/下），默认隐藏，切到布林模式时显示
+    const bollSeries = BOLL_SPECS.map(spec => chart.addSeries(LineSeries, {
+      color: spec.color,
+      lineWidth: spec.key === 'mid' ? 1 : 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+      visible: false,
+      autoscaleInfoProvider: () => null,
+    }));
+    bollSeriesRef.current = bollSeries;
+    bollSeries.forEach(s => s.setData([]));
     // 初始不 set(占位) 数据也不 fitContent，避免"先整段再缩回120日"的跳变；
     // 真实数据到达后由下方 effect 直接定位为 120 日。
     series.setData([]);
@@ -101,7 +180,7 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
       const r = ts.getVisibleLogicalRange();
       if (!r) return;
       const width = r.to - r.from;
-      const newWidth = clampBars(width * Math.pow(1.2, deltaY));
+      const newWidth = clampBars(width * Math.pow(1.1, deltaY));
       ts.setVisibleLogicalRange({ from: Math.max(0, r.to - newWidth), to: r.to });
     };
 
@@ -199,6 +278,51 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
     const chart = chartInstance.current;
     if (!chart) return;
     seriesRef.current.setData(klines);
+    const closes = klines.map(k => k.close);
+    // 依据收盘价计算各周期均线并填充（MA5/10/20/30/60/120/250）
+    const latestMA: number[] = [];
+    if (maSeriesRef.current) {
+      MA_SPECS.forEach((spec, idx) => {
+        const line: LineData<Time>[] = [];
+        const p = spec.period;
+        for (let i = p - 1; i < closes.length; i++) {
+          let sum = 0;
+          for (let j = i - p + 1; j <= i; j++) sum += closes[j];
+          const v = sum / p;
+          line.push({ time: klines[i].time, value: v });
+        }
+        maSeriesRef.current![idx].setData(line);
+        if (line.length) latestMA.push(line[line.length - 1].value);
+      });
+    }
+    // 依据收盘价计算布林线（BOLL 20,2）：中轨=MA20，上下轨=中轨±2*std20
+    let latestBoll: { upper: number; mid: number; lower: number } | null = null;
+    if (bollSeriesRef.current) {
+      const upper: LineData<Time>[] = [];
+      const mid: LineData<Time>[] = [];
+      const lower: LineData<Time>[] = [];
+      const p = BOLL_PERIOD;
+      for (let i = p - 1; i < closes.length; i++) {
+        let sum = 0;
+        for (let j = i - p + 1; j <= i; j++) sum += closes[j];
+        const m = sum / p;
+        let dev = 0;
+        for (let j = i - p + 1; j <= i; j++) { const d = closes[j] - m; dev += d * d; }
+        const sd = Math.sqrt(dev / p);
+        const t = klines[i].time;
+        mid.push({ time: t, value: m });
+        upper.push({ time: t, value: m + BOLL_MULT * sd });
+        lower.push({ time: t, value: m - BOLL_MULT * sd });
+      }
+      const mids = bollSeriesRef.current;
+      mids[0].setData(upper);
+      mids[1].setData(mid);
+      mids[2].setData(lower);
+      if (upper.length && mid.length && lower.length) {
+        latestBoll = { upper: upper[upper.length - 1].value, mid: mid[mid.length - 1].value, lower: lower[lower.length - 1].value };
+      }
+    }
+    setLatestInd({ ma: latestMA, boll: latestBoll });
     // 布局稳定后再设置可视范围，确保默认精准显示最后 60 根（最新一根贴右缘）
     const raf = requestAnimationFrame(() => {
       const ts = chart.timeScale();
@@ -210,6 +334,14 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
     });
     return () => cancelAnimationFrame(raf);
   }, [klines]);
+
+  // 按模式切换均线/布林线 series 的可见性
+  useEffect(() => {
+    if (!maSeriesRef.current || !bollSeriesRef.current) return;
+    const showMA = indicatorMode === 'ma';
+    maSeriesRef.current.forEach(s => s.applyOptions({ visible: showMA }));
+    bollSeriesRef.current.forEach(s => s.applyOptions({ visible: !showMA }));
+  }, [indicatorMode]);
 
   const addRule = () => setRules(prev => [...prev, `r${Date.now()}`]);
   const removeRule = (id: string) => setRules(prev => prev.filter(x => x !== id));
@@ -276,6 +408,43 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
               <Stat label="胜率" value="—" />
               <Stat label="最大回撤" value="—" />
               <Stat label="交易次数" value="0" />
+            </div>
+
+            {/* 指标控件条：切换均线/布林线 + 当前各指标值 */}
+            <div className="px-3 py-1.5 border-b border-app-border flex items-center gap-2 text-xs shrink-0 overflow-x-auto custom-scrollbar">
+              <div className="flex items-center rounded-md border border-app-border overflow-hidden shrink-0 bg-app-input/40">
+                <button
+                  type="button"
+                  onClick={() => setIndicatorMode('ma')}
+                  className={`px-2.5 py-1 font-medium transition-colors ${indicatorMode === 'ma' ? 'bg-app-text/10 text-app-text' : 'text-app-subtext hover:text-app-text'}`}
+                >均线</button>
+                <span className="w-px h-4 bg-app-border self-center" />
+                <button
+                  type="button"
+                  onClick={() => setIndicatorMode('boll')}
+                  className={`px-2.5 py-1 font-medium transition-colors ${indicatorMode === 'boll' ? 'bg-app-text/10 text-app-text' : 'text-app-subtext hover:text-app-text'}`}
+                >布林线</button>
+              </div>
+              <span className="shrink-0 bg-app-text/5 rounded-md px-2 py-1 text-app-text font-mono">{indicatorMode === 'ma' ? '日线' : 'BOLL (20, 2)'}</span>
+              {indicatorMode === 'ma' ? (
+                <div className="flex items-center gap-3 overflow-x-auto custom-scrollbar">
+                  {MA_SPECS.map((spec, i) => (
+                    <span key={spec.label} className="shrink-0 font-mono whitespace-nowrap">
+                      <span style={{ color: spec.color }}>{spec.label}</span>
+                      <span style={{ color: spec.color }}>:{latestInd.ma[i] != null ? latestInd.ma[i].toFixed(2) : '—'}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 overflow-x-auto custom-scrollbar">
+                  {BOLL_SPECS.map(spec => (
+                    <span key={spec.key} className="shrink-0 font-mono whitespace-nowrap">
+                      <span style={{ color: spec.color }}>{spec.label}</span>
+                      <span style={{ color: spec.color }}>:{latestInd.boll ? (spec.key === 'upper' ? latestInd.boll.upper : spec.key === 'mid' ? latestInd.boll.mid : latestInd.boll.lower).toFixed(2) : '—'}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* K线图：flex-grow 抢剩余大部分空间，表格靠 min-h + 自身滚动兜底，任何屏幕都可用 */}
