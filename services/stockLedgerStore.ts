@@ -10,10 +10,9 @@ const DB_VERSION = 1;
 const STORE = 'ledger';
 const ENTRY_KEY = 'ledger_v1';
 
-// 每只股票的流水账：全量逐笔记录 + 墓碑（被软删记录的 id，仅增量）
+// 每只股票的流水账：全量逐笔记录（含软删 isDeleted）
 export interface StockLedgerEntry {
   trades: StockTrade[];
-  deletedIds: string[];
 }
 export type StockLedgerMap = Record<string, StockLedgerEntry>;
 

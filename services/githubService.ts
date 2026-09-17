@@ -1,21 +1,8 @@
 
-import { TradeRecord, AppSettings, StockEntry, StockSettings, StockTrade } from "../types";
+import { TradeRecord, AppSettings, StockEntry, StockSettings } from "../types";
 
 const GIST_FILENAME = "gold-trades.json";
 const GIST_DESCRIPTION = "GoldCost Pro 交易记录备份";
-
-// 云端同步的上限：每只股票只上传最新 20 条「活记录」（排除软删），本地全量存 IndexedDB 流水账。
-export const CLOUD_MAX_TRADES_PER_STOCK = 20;
-
-// 把某股票的记录裁剪为「最新 CLOUD_MAX_TRADES_PER_STOCK 条活记录」，按时间降序取最新，再升序返回。
-// 非破坏性：仅返回裁剪后的副本，不影响原始全量。
-export function clipToLatest20(trades?: StockTrade[]): StockTrade[] {
-  if (!trades) return [];
-  const live = trades.filter(t => !t.isDeleted);
-  const sortedDesc = [...live].sort((a, b) => (b.filledAt ?? b.createdAt) - (a.filledAt ?? a.createdAt));
-  const clipped = sortedDesc.slice(0, CLOUD_MAX_TRADES_PER_STOCK);
-  return clipped.sort((a, b) => (a.filledAt ?? a.createdAt) - (b.filledAt ?? b.createdAt));
-}
 
 // Helper to construct headers with robust token handling
 const getHeaders = (token: string) => {

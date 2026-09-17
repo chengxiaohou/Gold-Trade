@@ -1,6 +1,36 @@
 import type { StockTrade } from '../types';
 import type { StockLedgerMap } from './stockLedgerStore';
 
+// 统一的持仓计算结果：剩余持股数 + 移动加权成本
+export interface PositionFromTrades {
+  shares: number;
+  avgCost: number;
+}
+
+// 从一组交易记录按「移动加权平均」重算持仓（忽略软删与挂单）。
+// 任何时候本地/云端/持久化恢复后需要对齐 positionShares / positionCost，都应调用此函数，
+// 避免交易记录已更新但字段未同步导致的"账面持仓与记录对不上"。
+export function calcPositionFromTrades(trades?: StockTrade[]): PositionFromTrades {
+  if (!trades || trades.length === 0) return { shares: 0, avgCost: 0 };
+  const filled = trades
+    .filter(t => t.status === 'filled' && !t.isDeleted)
+    .sort((a, b) => (a.filledAt ?? a.createdAt) - (b.filledAt ?? b.createdAt));
+  let rs = 0; // 剩余持股
+  let rc = 0; // 移动加权成本
+  for (const t of filled) {
+    const amt = (t.amount ?? (t.price ?? 0) * (t.shares ?? 0)) || 0;
+    if (t.side === 'buy') {
+      const prevRs = rs;
+      rs += t.shares ?? 0;
+      rc = rs > 0 ? (rc * prevRs + amt) / rs : 0;
+    } else {
+      rs = Math.max(0, rs - (t.shares ?? 0));
+      if (rs === 0) rc = 0;
+    }
+  }
+  return { shares: rs, avgCost: rc };
+}
+
 // 一笔窗口内的买/卖操作（供逐日明细展示）
 export interface PnlTx {
   stockId: string;

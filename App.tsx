@@ -8,12 +8,14 @@ import { TradingPlanPanel } from './components/TradingPlanPanel';
 import { CloudSettingsModal } from './components/CloudSettingsModal';
 import { StockDividendPage } from './components/StockDividendPage';
 import { analyzeTrade } from './services/geminiService';
-import { saveToGist, loadFromGist, clipToLatest20 } from './services/githubService';
+import { saveToGist, loadFromGist } from './services/githubService';
 import { getLedgerFromStore, saveLedgerToStore } from './services/stockLedgerStore';
 import type { StockLedgerMap } from './services/stockLedgerStore';
 import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
-import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, StockTrade, DEFAULT_TAG_PARAMS } from './types';
+import { calcPositionFromTrades } from './services/realizedPnl';
+import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache } from './services/stockSync';
+import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
 const APP_VERSION = 'v2.17.1';
@@ -187,16 +189,22 @@ export default function App() {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((s: StockEntry) => ({
-            ...s,
-            dividendByYear: s.dividendByYear && Object.keys(s.dividendByYear).length > 0
-              ? s.dividendByYear
-              : {
-                  ...(s.dividend2024 ? { 2024: s.dividend2024 } : {}),
-                  ...(s.dividend2025 ? { 2025: s.dividend2025 } : {}),
-                },
-            selectedDividendYear: s.selectedDividendYear ?? 2025,
-          }));
+          return parsed.map((s: StockEntry) => {
+            // 持仓只从交易记录重算，不再保留旧的手动填写成本
+            const { shares, avgCost } = calcPositionFromTrades(s.stockTrades);
+            return {
+              ...s,
+              dividendByYear: s.dividendByYear && Object.keys(s.dividendByYear).length > 0
+                ? s.dividendByYear
+                : {
+                    ...(s.dividend2024 ? { 2024: s.dividend2024 } : {}),
+                    ...(s.dividend2025 ? { 2025: s.dividend2025 } : {}),
+                  },
+              selectedDividendYear: s.selectedDividendYear ?? 2025,
+              positionShares: shares,
+              positionCost: avgCost,
+            };
+          });
         }
       } catch {
         // fall through to default
@@ -209,7 +217,7 @@ export default function App() {
   // 云端只同步每只票最新 20 条活记录；全量以本状态为准，供盈利统计与下载合并使用。
   const ledgerRef = useRef<StockLedgerMap>({});
   const [ledgerMap, setLedgerMap] = useState<StockLedgerMap>({});
-  // 启动时从 IndexedDB 回填流水账，并把更全的记录合并回 stocks.stockTrades
+  // 启动时从 IndexedDB 回填流水账，并把更全的记录合并回 stocks.stockTrades，同时重算持仓字段
   useEffect(() => {
     getLedgerFromStore().then(full => {
       ledgerRef.current = full;
@@ -218,7 +226,14 @@ export default function App() {
       setStocks(prev => prev.map(s => {
         const ent = full[s.id];
         if (!ent || !ent.trades || ent.trades.length === 0) return s;
-        return { ...s, stockTrades: ent.trades };
+        // 用更全的 IndexedDB 交易记录覆盖 stockTrades，并重算持仓（只看交易记录）
+        const { shares, avgCost } = calcPositionFromTrades(ent.trades);
+        return {
+          ...s,
+          stockTrades: ent.trades,
+          positionShares: shares,
+          positionCost: avgCost,
+        };
       }));
     });
   }, []);
@@ -927,11 +942,6 @@ export default function App() {
         sortMode: undefined,
       } : undefined;
 
-      // 股票实时行情快照（现价/涨跌/今开高低量/更新时刻/价格派生的股息率）属设备本地缓存，
-      // 上传前剔除，避免下载侧被另一设备的旧价格覆盖，或因时间戳误判为"新鲜"而跳过刷新。
-      const stripStockPriceCache = (list: StockEntry[]) =>
-        list.map(({ price, changePercent, high, low, open, volume, priceUpdatedAt, dividendRate2025, ...rest }) => rest) as unknown as StockEntry[];
-
       let dataToUpload;
       if (currentPage === 'gold') {
         dataToUpload = {
@@ -941,16 +951,12 @@ export default function App() {
           stockSettings: cloudExistingStockSettings
         };
       } else {
-        // 全量存在于本地流水账，云端只上传每只票最新的活记录（裁剪到 20 条）+ 墓碑(删除 id)
-        const trimmedCloudStocks = stocks.map(s => ({
-          ...s,
-          stockTrades: clipToLatest20(s.stockTrades),
-          deletedIds: ledgerRef.current[s.id]?.deletedIds,
-        }));
+        // 全量上传：每只票的 stockTrades 携带完整记录（含软删 isDeleted 标记）。
+        // 软删随记录一起传播，不需要墓碑 deletedIds 旁路。
         dataToUpload = {
           trades: existingTrades,
           settings: appSettings,
-          stocks: stripStockPriceCache(trimmedCloudStocks),
+          stocks: stripStockPriceCache(buildUploadStocks(stocks)),
           stockSettings: cloudStockSettings
         };
       }
@@ -1014,36 +1020,15 @@ export default function App() {
           }
         } else {
           if (result.stocks) {
-            // 信任云端合并：以本地全量流水账为基底，用云端最新活记录（20 条）按 id 覆盖档改回传、
-            // 新增则加入；墓碑命中的 id 软删。合并后重排并按时间升序回写 stocks 与流水账。
-            const oldLedger = ledgerRef.current;
-            const newLedger: StockLedgerMap = { ...oldLedger };
-            const mergedStocks = (result.stocks as (StockEntry & { deletedIds?: string[] })[]).map(c => {
-              const cloudTrades = (c.stockTrades || []).filter(ct => !ct.isDeleted);
-              const cloudById = new Map<string, StockTrade>(cloudTrades.map(ct => [ct.id, ct] as [string, StockTrade]));
-              const tombstones = c.deletedIds && c.deletedIds.length > 0 ? c.deletedIds : [];
-              const oldEntry = oldLedger[c.id];
-              const baseById = new Map<string, StockTrade>((oldEntry?.trades || []).map(t => [t.id, t] as [string, StockTrade]));
-              // 1) 云端活记录：命中的 id 用云端版本覆盖（修改回传），未命中的新增（空记录也补）
-              for (const ct of cloudTrades) baseById.set(ct.id, ct);
-              // 2) 墓碑命中、且不在云端活记录内 → 软删
-              for (const id of tombstones) {
-                if (cloudById.has(id)) continue;
-                const rec = baseById.get(id);
-                if (rec) baseById.set(id, { ...rec, isDeleted: true });
-              }
-              const finalTrades = Array.from(baseById.values())
-                .sort((a, b) => (a.filledAt ?? a.createdAt) - (b.filledAt ?? b.createdAt));
-              newLedger[c.id] = {
-                trades: finalTrades,
-                deletedIds: Array.from(new Set([...(oldEntry?.deletedIds || []), ...tombstones])),
-              };
-              return { ...c, stockTrades: finalTrades };
-            });
-            setStocks(mergedStocks);
-            ledgerRef.current = newLedger;
-            setLedgerMap(newLedger);
-            saveLedgerToStore(newLedger);
+            // 信任云端合并：以本地全量流水账为基底，用云端全量记录按 id 覆盖（本地命中的用云端版本
+            // 档改回传，云端新增的加入；本地独有的保留）。软删 isDeleted 直接随记录携带、无需墓碑。
+            // 合并后重排并按时间升序回写 stocks 与流水账。
+            const newLedger: StockLedgerMap = { ...ledgerRef.current };
+            const merged = mergeCloudStocks(result.stocks as StockEntry[], newLedger);
+            setStocks(merged.mergedStocks);
+            ledgerRef.current = merged.newLedger;
+            setLedgerMap(merged.newLedger);
+            saveLedgerToStore(merged.newLedger);
           }
 
           if (result.settings) {

@@ -315,7 +315,8 @@ const formatDividendCell = (current: number, fetched: number | null, hasData: bo
 };
 
 // 根据名称判断：ETF 显示 3 位小数，普通股票显示 2 位小数
-const formatPrice = (price: number, name?: string): string => {
+const formatPrice = (price: number | undefined | null, name?: string): string => {
+  if (price == null || !Number.isFinite(price)) return '-';
   const isETF = name?.includes('ETF') || name?.includes('etf');
   return isETF ? price.toFixed(3) : price.toFixed(2);
 };
@@ -361,19 +362,20 @@ const pendingRemainingDays = (t: StockTrade, now: number): number =>
 
 // 按成交顺序用移动加权成本重算每笔卖出的已实现盈亏（不依赖存储字段）
 const calcRealizedPnlMap = (trades: StockTrade[]) => {
-  const filled = trades.filter(t => t.status === 'filled').sort((a, b) => a.createdAt - b.createdAt);
+  const filled = trades.filter(t => t.status === 'filled' && !t.isDeleted).sort((a, b) => a.createdAt - b.createdAt);
   let rs = 0, rc = 0, total = 0;
   const map: Record<string, number> = {};
   for (const t of filled) {
-    const amt = t.amount ?? t.price * t.shares;
+    const amt = (t.amount ?? ((t.price ?? 0) * (t.shares ?? 0))) || 0;
     if (t.side === 'buy') {
       const prevRs = rs;
-      rs += t.shares;
+      rs += t.shares ?? 0;
       rc = rs > 0 ? (rc * prevRs + amt) / rs : 0;
     } else {
-      map[t.id] = rs > 0 ? amt - rc * t.shares : 0;
+      const shares = t.shares ?? 0;
+      map[t.id] = rs > 0 ? amt - rc * shares : 0;
       total += map[t.id];
-      rs = Math.max(0, rs - t.shares);
+      rs = Math.max(0, rs - shares);
       if (rs === 0) rc = 0;
     }
   }
@@ -388,6 +390,8 @@ interface TradeRecordRowProps {
 const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stockName, pnlMap, onToggle, onEdit, onDelete }) => {
   const [confirming, setConfirming] = useState(false);
   const fmtP = (v: number) => formatPrice(v, stockName);
+  const shares = t.shares ?? 0;
+  const price = t.price ?? 0;
   const timeStr = (ts: number) => {
     const d = new Date(ts);
     return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -397,12 +401,12 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stockName, pnlMap, o
       {/* 第一行：公式 + 已实现盈亏 + 状态徽标 */}
       <div className="flex items-center gap-1.5 text-[11px] leading-tight">
         <span className="font-mono font-bold text-app-text whitespace-nowrap">
-          {fmtP(t.price)}
+          {fmtP(price)}
           <span className="font-normal text-app-subtext"> × </span>
-          {Number.isInteger(t.shares) ? t.shares : t.shares.toFixed(2)}
+          {Number.isInteger(shares) ? shares : shares.toFixed(2)}
           <span className="font-normal text-app-subtext"> = </span>
           <span className={`font-bold ${t.side === 'buy' ? 'text-brand-red' : 'text-brand-green'}`}>
-            {(t.price * t.shares).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
+            {(price * shares).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
           </span>
         </span>
         {t.side === 'sell' && t.status === 'filled' && pnlMap[t.id] !== undefined && (
@@ -1694,11 +1698,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 全量备份导入用的隐藏文件选择（放入盈利统计面板）
   const fullBackupInputRef = useRef<HTMLInputElement>(null);
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
-  // 把某股票的全量逐笔 + 墓碑写入本地流水账（IndexedDB 由 App 层持久化）
-  const pushLedger = useCallback((stockId: string, trades: StockTrade[], deletedIds?: string[]) => {
+  // 把某股票的全量逐笔写入本地流水账（IndexedDB 由 App 层持久化）
+  const pushLedger = useCallback((stockId: string, trades: StockTrade[]) => {
     onLedgerMapChange?.(prev => ({
       ...prev,
-      [stockId]: { trades, deletedIds: deletedIds ?? prev[stockId]?.deletedIds ?? [] },
+      [stockId]: { trades },
     }));
   }, [onLedgerMapChange]);
   const cols = visibleColumns || defaultVisibleColumns;
@@ -2848,7 +2852,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const effectiveLedger = useMemo<StockLedgerMap>(() => {
     if (ledgerMap && Object.keys(ledgerMap).length > 0) return ledgerMap;
     const m: StockLedgerMap = {};
-    stocks.forEach(s => { m[s.id] = { trades: s.stockTrades || [], deletedIds: [] }; });
+    stocks.forEach(s => { m[s.id] = { trades: s.stockTrades || [] }; });
     return m;
   }, [ledgerMap, stocks]);
   const profitStockNames = useMemo(() => Object.fromEntries(stocks.map(s => [s.id, s.name])), [stocks]);
@@ -6175,19 +6179,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const orderAmount = (parseFloat(addTradePrice) || 0) * (parseFloat(addTradeShares) || 0);
         const fmtP = (v: number) => formatPrice(v, s.name);
         const noteCls = "no-spinners w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-[11px] text-app-text outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all placeholder:text-app-subtext/40";
-        // 当前持仓概要（口径与黄金项目一致：均价=总成本/持仓量，回本价考虑已落袋盈亏）
+        // 当前持仓概要：持仓只从交易记录重算，不再兜底旧的手动成本
         const posShares = s.positionShares || 0;
-        let avgCost = s.positionCost || 0;
+        const avgCost = s.positionCost || 0;
         const marketPrice = s.price || 0;
         // 按成交顺序用移动加权成本重算每笔卖出的已实现盈亏（不依赖可能为 0 的存储 positionCost/realizedPnL）
         const recalcPnL = calcRealizedPnlMap(getTrades(s));
         const realizedPnl = recalcPnL.total;
-        // 兜底：无显式成本但有已成交买入记录时，用成交加权均价代替（避免建仓后显示 0）
-        if (avgCost <= 0 && posShares > 0) {
-          const buys = getTrades(s).filter(t => t.status === 'filled' && t.side === 'buy');
-          const totSharesB = buys.reduce((a, t) => a + t.shares, 0);
-          if (totSharesB > 0) avgCost = buys.reduce((a, t) => a + (t.amount ?? t.price * t.shares), 0) / totSharesB;
-        }
         const totalCost = posShares * avgCost;
         const breakEven = posShares > 0 ? Math.max(0, (totalCost - realizedPnl) / posShares) : 0;
         const floatingPnl = marketPrice > 0 && posShares > 0 ? (marketPrice - avgCost) * posShares : 0;

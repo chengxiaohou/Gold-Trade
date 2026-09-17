@@ -104,8 +104,7 @@ export interface StockEntry {
   selectedDividendYear?: number; // Which dividend year this stock uses for rate calc, default = right year
   bollHidden?: boolean; // Whether BOLL data is hidden for this stock
   registerDate?: string; // 最近一次股权登记日（同步分红数据时获取）
-  stockTrades?: StockTrade[]; // 该股的买卖/挂单记录，随股票整体同步到 Gist
-  deletedIds?: string[];      // 墓碑：被软删记录的 id，云端同步专用；本地全量以 IndexedDB 流水账为准
+  stockTrades?: StockTrade[]; // 该股的买卖/挂单记录，随股票整体同步到 Gist（软删 isDeleted 随记录携带）
 }
 
 export type StockTradeSide = 'buy' | 'sell';
