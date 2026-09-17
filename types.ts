@@ -171,6 +171,9 @@ export interface BacktestRule {
 export interface BacktestStrategy {
   rules: BacktestRule[];
   initialCapital: number;  // 初始现金（默认 100000）
+  rangePreset?: 'w1' | 'w2' | 'm1' | 'm3' | 'h1' | 'y1' | 'y2' | 'y3' | 'y5' | 'custom'; // 回测周期预设
+  rangeStart?: string;     // 自定义开始日期 YYYY-MM-DD（仅 rangePreset='custom' 生效）
+  rangeEnd?: string;       // 自定义结束日期 YYYY-MM-DD（仅 rangePreset='custom' 生效）
 }
 // 回测操作记录（与 K线图买卖点一一对应）
 export interface BacktestTrade {

@@ -3,8 +3,10 @@ import { createPortal } from 'react-dom';
 import { X, Plus, Trash2, GripHorizontal, Play } from 'lucide-react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, Time } from 'lightweight-charts';
-import type { StockEntry } from '../types';
+import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade } from '../types';
 import { fetchBollData } from '../services/bollService';
+import type { BollKline } from '../services/bollService';
+import { runBacktest, BACKTEST_TAG_CATALOG } from '../services/backtestEngine';
 
 type ChartCandle = { time: string; open: number; high: number; low: number; close: number };
 
@@ -20,6 +22,8 @@ export interface BacktestModalProps {
 
 interface RuleEditorProps {
   index: number;
+  value: BacktestRule;
+  onChange: (patch: Partial<BacktestRule>) => void;
   onRemove: () => void;
 }
 
@@ -30,6 +34,20 @@ interface StatProps {
 }
 
 const INPUT_CLS = 'bg-app-input border border-app-border rounded-lg px-2 py-1 text-[13px] leading-tight font-mono text-app-text outline-none';
+
+// 回测周期预设 → 自然日天数（从最后一个交易日起往前推 N 天，取该日历窗口内的交易日 K 线）
+const RANGE_PRESETS: Array<{ key: BacktestStrategy['rangePreset']; label: string; days: number }> = [
+  { key: 'w1', label: '近一周', days: 7 },
+  { key: 'w2', label: '两周', days: 14 },
+  { key: 'm1', label: '近一月', days: 30 },
+  { key: 'm3', label: '近三月', days: 90 },
+  { key: 'h1', label: '近半年', days: 180 },
+  { key: 'y1', label: '近一年', days: 365 },
+  { key: 'y2', label: '近两年', days: 730 },
+  { key: 'y3', label: '近3年', days: 1095 },
+  { key: 'y5', label: '近5年', days: 1825 },
+  { key: 'custom', label: '自定义', days: 0 },
+];
 
 // 均线规格（按参考配色）→ K线图上叠加的均线批次
 const MA_SPECS: Array<{ period: number; color: string; label: string }> = [
@@ -82,8 +100,27 @@ function formatChartTime(time: Time): string {
 }
 
 export function BacktestModal({ stock, onClose }: BacktestModalProps) {
-  const [initialCapital, setInitialCapital] = useState(100000);
-  const [rules, setRules] = useState<string[]>(['r1', 'r2']);
+  // 策略按股票持久化到 localStorage：刷新/重开页面后自动恢复上次设置
+  const strategyStorageKey = `bt_strategy_${stock.code}`;
+  const loadStrategy = (): BacktestStrategy => {
+    try {
+      const raw = localStorage.getItem(strategyStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as BacktestStrategy;
+        if (parsed && Array.isArray(parsed.rules)) return parsed;
+      }
+    } catch { /* 忽略损坏缓存，回退默认 */ }
+    return { rules: [], initialCapital: 100000 };
+  };
+  const [strategy, setStrategy] = useState<BacktestStrategy>(loadStrategy);
+  const initialCapital = strategy.initialCapital;
+  const rules = strategy.rules; // 供渲染遍历（受控）
+  // 策略或初始资金变化时自动保存
+  useEffect(() => {
+    try { localStorage.setItem(strategyStorageKey, JSON.stringify(strategy)); } catch { /* 忽略写入失败 */ }
+  }, [strategy, strategyStorageKey]);
+  const [rawKlines, setRawKlines] = useState<BollKline[] | null>(null); // 回测信号需含 volume 的全量 K 线
+  const [result, setResult] = useState<BacktestResult | null>(null);    // 回测结果（买卖点+成交+统计）
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
   // 覆盖层买卖点标签的像素坐标（随缩放/平移重算）
   const [overlayTicks, setOverlayTicks] = useState<OverlayTick[]>([]);
@@ -99,6 +136,28 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
   const [chartError, setChartError] = useState<string | null>(null);
   // 图表指标模式：均线(默认) / 布林线
   const [indicatorMode, setIndicatorMode] = useState<'ma' | 'boll'>('ma');
+  // 缩放模式：latest=锁定最新价(右缘锚定) / cursor=鼠标指向的日期为中心
+  const [zoomMode, setZoomMode] = useState<'latest' | 'cursor'>(() => {
+    // 从本地记忆初始缩放模式（指向锚 / 右缘锚），无记录默认右缘锚
+    try { return localStorage.getItem('bt_zoom_mode') === 'cursor' ? 'cursor' : 'latest'; }
+    catch { return 'latest'; }
+  });
+  const zoomModeRef = useRef<'latest' | 'cursor'>('latest');
+  useEffect(() => { zoomModeRef.current = zoomMode; }, [zoomMode]);
+  // 缩放模式选择本地持久化，刷新/重开弹窗后保留
+  useEffect(() => {
+    try { localStorage.setItem('bt_zoom_mode', zoomMode); } catch { /* 忽略存储异常 */ }
+  }, [zoomMode]);
+  // cursor 模式：触屏 pinch 放行框架原生（中心锚定）；wheel 由上面 onWheel 统一接管（灵敏度可调）。
+  // latest 模式：触屏 pinch 走自接管右缘锚（关闭原生 pinch）。
+  // mouseWheel 全程置 false：捏合(ctrlKey)缩放已由 onWheel 按模式接管，非捏合平移走 handleScroll。
+  useEffect(() => {
+    const chart = chartInstance.current;
+    if (!chart) return;
+    const isCursor = zoomMode === 'cursor';
+    chart.applyOptions({ handleScale: { mouseWheel: false, pinch: isCursor } });
+    if (chartRef.current) chartRef.current.style.touchAction = isCursor ? 'none' : 'pan-y';
+  }, [zoomMode]);
   // 各指标体系当前最新值：ma={5:x,...} boll={upper,mid,lower}
   const [latestInd, setLatestInd] = useState<{ ma: number[]; boll: { upper: number; mid: number; lower: number } | null }>({ ma: [], boll: null });
 
@@ -198,30 +257,54 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
     // —— 桌面/触控板手势（wheel 事件统一承载）——
     // 双指捏合缩放（浏览器以 ctrlKey 标记）→ 右缘锚定缩放；其余交给 lightweight 原生 mouseWheel 平移
 
-    const zoomAnchorRight = (deltaY: number) => {
-      const ts = chart.timeScale();
-      const r = ts.getVisibleLogicalRange();
-      if (!r) return;
-      const width = r.to - r.from;
-      const newWidth = clampBars(width * Math.pow(1.1, deltaY));
-      ts.setVisibleLogicalRange({ from: Math.max(0, r.to - newWidth), to: r.to });
-    };
+    const tsSet = () => chart.timeScale();
 
     // 双指捏合(wheel 以 ctrlKey 标记)：捕获阶段拦截，阻断事件到达 lightweight 的原生 mouseWheel
     // 以免两套逻辑同时作用导致缩放几乎无效。灵敏度系数 1.004，比 1.0015 灵敏约 2.7 倍。
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return; // 非捏合：放行，交给 lightweight 原生 mouseWheel 平移
+      // 非捏合：放行，交给 lightweight 原生 mouseWheel 平移
+      if (!e.ctrlKey) return;
       if (e.defaultPrevented) return;
       e.preventDefault();
       e.stopPropagation();
-      zoomAnchorRight(e.deltaY);
+      const ts = tsSet();
+      const r = ts.getVisibleLogicalRange();
+      if (!r) return;
+      const span = r.to - r.from;
+      if (span <= 0) return;
+      const factor = Math.pow(1.1, e.deltaY); // 灵敏度对齐右缘锚（1.1^deltaY）
+      const newSpan = span * factor;
+      const newWidth = clampBars(newSpan);
+      let from: number;
+      if (zoomModeRef.current === 'cursor') {
+        // 指向锚：指针锚定缩放。与原生一致——按像素把"指针下方那一根 K 线"保持在原位、向两边缩放。
+        // 关键：全程浮点不取整，锚点按指针像素逐级重锚 → 指针不动则该 K 线分毫不动（无取整漂移）。
+        const rect = el.getBoundingClientRect();
+        const px = e.clientX - rect.left;
+        const L = ts.coordinateToLogical(px);
+        if (L == null) {
+          // 指针落在图表区外（如右侧标尺）：退化为右缘锚
+          from = Math.max(0, r.to - newWidth);
+        } else {
+          const spacing = (ts.width() / span) || 1; // 每逻辑单位像素
+          // 目标 barSpacing' 与当前比：newWidth / span 倍；为让 L 像素不变：from = L - (L - r.from) * (spacing/spacing')
+          from = L - (L - r.from) * (newSpan / span);
+          // 左缘越界保护：整体右移，尽量保留锚定（右移量越小锚定损失越小）
+          if (from < 0) { const shift = -from; from = 0; }
+        }
+        ts.setVisibleLogicalRange({ from, to: from + newWidth });
+      } else {
+        // 右缘锚：最新价锚定
+        ts.setVisibleLogicalRange({ from: Math.max(0, r.to - newWidth), to: r.to });
+      }
     };
 
-    // 触屏 pinch：手势起始右缘为锚，随双指距离等比缩放左缘
+    // 触屏 pinch：latest 模式右缘锚定；cursor 模式放行给原生 pinch
     let pinchStart: { dist: number; range: { from: number; to: number } } | null = null;
     let pinchDist = 1;
     const distOf = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
     const onTouchStart = (e: TouchEvent) => {
+      if (zoomModeRef.current === 'cursor') return; // 原生 pinch 接管
       if (e.touches.length === 2) {
         const ts = chart.timeScale();
         const r = ts.getVisibleLogicalRange();
@@ -239,10 +322,9 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
         const d = distOf(e.touches);
         if (d <= 0 || pinchStart.dist <= 0) return;
         const width = (pinchStart.range.to - pinchStart.range.from) * (pinchDist / d);
-        ts.setVisibleLogicalRange({
-          from: Math.max(0, pinchStart.range.to - clampBars(width)),
-          to: pinchStart.range.to,
-        });
+        const newWidth = clampBars(width);
+        // latest 模式：右缘（最新价）锚定（cursor 模式走原生 pinch，不进入此处）
+        ts.setVisibleLogicalRange({ from: Math.max(0, pinchStart.range.to - newWidth), to: pinchStart.range.to });
       }
     };
     const onTouchEnd = () => { pinchStart = null; };
@@ -293,6 +375,7 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
           .map(k => ({ time: k.date, open: k.open, high: k.high, low: k.low, close: k.close }))
           .sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
         setKlines(candles);
+        setRawKlines([...res.data.klines].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)));
       } else {
         setChartError(res.error || '无K线数据');
       }
@@ -301,8 +384,20 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
     return () => { cancelled = true; };
   }, [stock.code]);
 
-  // 回测买卖点数据源：暂为空；待接入真实回测引擎后，由引擎产出与成交记录一一对应的买入/卖出点
-  const demoMarkers = useMemo<TickSpec[]>(() => [], []);
+  // 回测买卖点：由真实回测结果的成交记录映射为覆盖层标签（图⇄表一一对应）
+  const demoMarkers = useMemo<TickSpec[]>(() => {
+    if (!result || !result.trades) return [];
+    const priceOf = new Map<string, ChartCandle>(klines?.map(k => [k.time, k]) ?? []);
+    return result.trades.map(t => {
+      const candle = priceOf.get(t.date);
+      return {
+        id: t.id, time: t.date,
+        // 锚定价：买=B(下方)锚 low、卖=S(上方)锚 high，圆点贴实体边缘外侧固定间距
+        anchorPrice: t.action === 'buy' ? (candle?.low ?? t.price) : (candle?.high ?? t.price),
+        action: t.action as 'buy' | 'sell',
+      };
+    });
+  }, [result, klines]);
 
   // 覆盖层定位：把对每个标签的 time→x、anchorPrice→y 换算成像素坐标；time/price 坐标不可得（K线滚出可视区）则隐藏
   const computeTickPositions = useCallback(() => {
@@ -332,19 +427,19 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
     setOverlayTicks(ticks);
   }, [demoMarkers]);
 
-  // 成交记录：由回测买卖点 demoMarkers 导出（暂无数据时为空表）
-  // 触发标签、价格、股数等将由真实回测引擎填充；此处先承接买卖点骨架
+  // 成交记录：直接取真实回测结果，图的标签与表的行共用同一批 id，实现双向往返定位
   const tradeRows = useMemo(() => {
-    if (!klines) return [] as { id: string; time: string; action: 'buy' | 'sell'; price: number; shares: number; amount: number; triggerLabel: string }[];
-    return demoMarkers.map(m => {
-      const candle = klines.find(k => k.time === m.time);
-      const price = candle?.close ?? m.anchorPrice;
-      return {
-        id: m.id, time: m.time, action: m.action, price,
-        shares: 0, amount: 0, triggerLabel: '',
-      };
-    });
-  }, [demoMarkers, klines]);
+    if (!result) return [] as { id: string; time: string; action: 'buy' | 'sell'; price: number; shares: number; amount: number; triggerLabel: string }[];
+    return result.trades.map(t => ({
+      id: t.id,
+      time: t.date,
+      action: t.action,
+      price: t.price,
+      shares: t.shares,
+      amount: t.amount,
+      triggerLabel: t.tagName,
+    }));
+  }, [result]);
 
   // 双向定位：点击成交记录行时滚动图表 + 高亮；点击图表标签时仅定位表格（不移动图表可视区）
   const goToTrade = useCallback((id: string, alsoScrollChart = false) => {
@@ -445,8 +540,32 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
     bollSeriesRef.current.forEach(s => s.applyOptions({ visible: !showMA }));
   }, [indicatorMode]);
 
-  const addRule = () => setRules(prev => [...prev, `r${Date.now()}`]);
-  const removeRule = (id: string) => setRules(prev => prev.filter(x => x !== id));
+  const addRule = () => setStrategy(prev => ({ ...prev, rules: [...prev.rules, { id: `r${Date.now()}`, tagKey: BACKTEST_TAG_CATALOG[0]!.key, label: BACKTEST_TAG_CATALOG[0]!.label, action: 'buy', pct: 50, enabled: true }] }));
+  const removeRule = (id: string) => setStrategy(prev => ({ ...prev, rules: prev.rules.filter(x => x.id !== id) }));
+  const updateRule = (id: string, patch: Partial<BacktestRule>) => setStrategy(prev => ({ ...prev, rules: prev.rules.map(r => (r.id === id ? { ...r, ...patch } : r)) }));
+
+  // 运行回测：按所选周期截取历史K线，用当前规则+初始资金调引擎，写入 result 驱动图表买卖点/成交/统计
+  const runTest = () => {
+    if (!rawKlines) return;
+    const preset = RANGE_PRESETS.find(r => r.key === strategy.rangePreset) ?? RANGE_PRESETS.find(r => r.key === 'y1')!; // 默认近一年
+    let src = rawKlines;
+    if (preset.key === 'custom') {
+      // 自定义：用起止日期过滤闭区间
+      const { rangeStart, rangeEnd } = strategy;
+      src = rawKlines.filter(k => (!rangeStart || k.date >= rangeStart) && (!rangeEnd || k.date <= rangeEnd));
+    } else if (preset.days > 0) {
+      // 自然日窗口：从最后一个交易日起往前推 N 个自然日，取落在该窗口内的交易日 K 线
+      const last = rawKlines[rawKlines.length - 1];
+      if (last) {
+        const [y, m, d] = last.date.split('-').map(Number);
+        const end = new Date(Date.UTC(y, m - 1, d));
+        end.setUTCDate(end.getUTCDate() - preset.days);
+        const cutoff = end.toISOString().slice(0, 10);
+        src = rawKlines.filter(k => k.date >= cutoff);
+      }
+    }
+    setResult(runBacktest(src, { rules: strategy.rules, initialCapital: strategy.initialCapital, rangePreset: strategy.rangePreset, rangeStart: strategy.rangeStart, rangeEnd: strategy.rangeEnd }));
+  };
 
   const rulesForRender = useMemo(() => rules.filter(() => true), [rules]);
 
@@ -460,9 +579,6 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
             <h4 className="text-[13px] font-bold text-app-text">回测 · {stock.name}</h4>
           </div>
           <div className="flex items-center gap-1.5">
-            <button type="button" className="flex items-center gap-1 rounded-lg bg-brand-red/90 hover:bg-brand-red px-2.5 py-1.5 text-xs font-semibold text-white transition-colors" title="运行回测">
-              <Play size={13} />运行
-            </button>
             <button type="button" onClick={onClose} className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1.5" title="关闭">
               <X size={16} />
             </button>
@@ -476,8 +592,8 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
             <div className="px-2.5 py-2 border-b border-app-border space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-app-subtext">策略编辑</span>
-                <button type="button" onClick={addRule} className="flex items-center gap-0.5 rounded-lg hover:bg-app-text/5 px-2 py-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors" title="新增规则">
-                  <Plus size={14} />规则
+                <button type="button" onClick={runTest} className="flex items-center gap-1 rounded-lg bg-brand-red/90 hover:bg-brand-red px-2 py-1 text-xs font-semibold text-white transition-colors" title="运行回测">
+                  <Play size={13} />运行
                 </button>
               </div>
               <label className="flex items-center gap-1.5 text-xs text-app-subtext">
@@ -485,31 +601,65 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
                 <input
                   type="number"
                   value={initialCapital}
-                  onChange={e => setInitialCapital(Math.max(0, Number(e.target.value)))}
+                  onChange={e => setStrategy(prev => ({ ...prev, initialCapital: Math.max(0, Number(e.target.value)) }))}
                   className={`${INPUT_CLS} flex-1 min-w-0`}
                 />
                 <span className="shrink-0">元</span>
               </label>
+              <label className="flex items-center gap-1.5 text-xs text-app-subtext">
+                <span className="shrink-0">周期:</span>
+                <select
+                  className="flex-1 min-w-0 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight text-app-text outline-none"
+                  value={strategy.rangePreset ?? 'y1'}
+                  onChange={e => setStrategy(prev => ({ ...prev, rangePreset: e.target.value as BacktestStrategy['rangePreset'] }))}
+                >
+                  {RANGE_PRESETS.map(rp => (
+                    <option key={rp.key} value={rp.key!}>{rp.label}</option>
+                  ))}
+                </select>
+              </label>
+              {strategy.rangePreset === 'custom' && (
+                <div className="flex flex-col gap-1">
+                  <label className="flex items-center gap-1.5 text-xs text-app-subtext">
+                    <span className="shrink-0">起始:</span>
+                    <input
+                      type="date"
+                      value={strategy.rangeStart ?? ''}
+                      onChange={e => setStrategy(prev => ({ ...prev, rangeStart: e.target.value }))}
+                      className={`${INPUT_CLS} flex-1 min-w-0`}
+                    />
+                  </label>
+                  <label className="flex items-center gap-1.5 text-xs text-app-subtext">
+                    <span className="shrink-0">结束:</span>
+                    <input
+                      type="date"
+                      value={strategy.rangeEnd ?? ''}
+                      onChange={e => setStrategy(prev => ({ ...prev, rangeEnd: e.target.value }))}
+                      className={`${INPUT_CLS} flex-1 min-w-0`}
+                    />
+                  </label>
+                </div>
+              )}
             </div>
             <div className="flex-1 overflow-y-auto custom-scrollbar px-2 py-1.5 space-y-1.5">
-              {rulesForRender.length === 0 && (
-                <p className="text-xs text-app-subtext text-center py-4">点击「+规则」添加策略</p>
-              )}
-              {rulesForRender.map(id => (
-                <RuleEditor key={id} index={rules.indexOf(id)} onRemove={() => removeRule(id)} />
-              ))}
+              {rulesForRender.map((r, idx) => (
+                  <RuleEditor key={r.id} index={idx} value={r} onChange={patch => updateRule(r.id, patch)} onRemove={() => removeRule(r.id)} />
+                ))}
+              <button type="button" onClick={addRule} className="w-full flex items-center justify-center gap-1 rounded-lg border border-dashed border-app-border hover:bg-app-text/5 py-2 text-xs text-app-subtext hover:text-indigo-300 transition-colors" title="新增策略">
+                <Plus size={14} />添加策略
+              </button>
             </div>
           </div>
 
           {/* 右：K线图 + 统计 + 记录表 */}
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="px-3 py-1.5 border-b border-app-border flex items-center gap-4 text-xs flex-wrap shrink-0">
-              <Stat label="初始资金" value="100,000" />
-              <Stat label="期末市值" value="—" />
-              <Stat label="总收益" value="—" />
-              <Stat label="胜率" value="—" />
-              <Stat label="最大回撤" value="—" />
-              <Stat label="交易次数" value="0" />
+              <Stat label="初始资金" value={initialCapital.toLocaleString()} />
+              <Stat label="期末市值" value={result ? Math.round(result.finalValue).toLocaleString() : '—'} />
+              <Stat label="总收益" value={result ? `${result.totalReturnPct >= 0 ? '+' : ''}${result.totalReturnPct.toFixed(2)}%` : '—'} className={result && result.totalReturnPct >= 0 ? 'text-brand-red' : 'text-green-500'} />
+              <Stat label="胜率" value={result ? `${(result.winRate * 100).toFixed(1)}%` : '—'} />
+              <Stat label="最大回撤" value={result ? `-${result.maxDrawdownPct.toFixed(2)}%` : '—'} />
+              <Stat label="交易次数" value={result ? String(result.tradeCount) : '0'} />
             </div>
 
             {/* 指标控件条：切换均线/布林线 + 当前各指标值 */}
@@ -527,6 +677,7 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
                   className={`px-2.5 py-1 font-medium transition-colors ${indicatorMode === 'boll' ? 'bg-app-text/10 text-app-text' : 'text-app-subtext hover:text-app-text'}`}
                 >布林线</button>
               </div>
+              {/* 缩放模式切换按钮：已移至图表右下角标尺位 */}
               <span className="shrink-0 bg-app-text/5 rounded-md px-2 py-1 text-app-text font-mono">{indicatorMode === 'ma' ? '日线' : 'BOLL (20, 2)'}</span>
               {indicatorMode === 'ma' ? (
                 <div className="flex items-center gap-3 overflow-x-auto custom-scrollbar">
@@ -638,6 +789,15 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
                   );
                 })}
               </svg>
+              {/* 缩放模式切换（单个按钮，点击在两种形态间切换）：置于左下角标尺空位 */}
+              <button
+                type="button"
+                onClick={() => setZoomMode(prev => (prev === 'latest' ? 'cursor' : 'latest'))}
+                className="absolute right-1 bottom-1 z-20 flex items-center gap-1 rounded-md border border-app-border bg-app-bg/80 px-1.5 py-0.5 text-[11px] font-medium text-app-subtext hover:text-app-text transition-colors"
+                title={`缩放模式：${zoomMode === 'latest' ? '右缘锚（锚定最新价，缩放时最新K线不动）' : '指向锚（以指针指向的日期为中心）'}（点击切换）`}
+              >
+                {zoomMode === 'latest' ? '右缘锚' : '指向锚'}
+              </button>
               {chartLoading && (
                 <div className="absolute inset-0 flex items-center justify-center text-xs text-app-subtext pointer-events-none">正在加载K线…</div>
               )}
@@ -707,35 +867,73 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
   );
 }
 
-// 策略规则编辑行（纯UI）
-const RuleEditor: React.FC<RuleEditorProps> = ({ index, onRemove }) => (
-  <div className="rounded-lg border border-app-border bg-app-input/30 p-2 space-y-2">
-    <div className="flex items-center justify-between">
-      <label className="flex items-center gap-1.5 text-xs text-app-subtext cursor-pointer" onClick={e => e.preventDefault()}>
-        <input type="checkbox" defaultChecked className="w-3.5 h-3.5 accent-indigo-500" />
-        启用
-      </label>
-      <span className="text-xs text-app-rowtext">规则 {index + 1}</span>
-      <button type="button" onClick={onRemove} className="text-app-subtext hover:text-brand-red transition-colors p-0.5" title="删除规则">
-        <Trash2 size={13} />
-      </button>
-    </div>
-    <select className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight text-app-text outline-none">
-      <option value="">选择标签…</option>
-      <optgroup label="风系加仓"><option>缩量入场（低位）</option><option>放量突破均线</option></optgroup>
-      <optgroup label="风系减仓"><option>缩量急拉</option><option>放量破位不收复</option></optgroup>
-      <optgroup label="K线形态"><option>十字星</option><option>金针探底</option></optgroup>
-    </select>
-    <div className="flex items-center gap-1.5">
-      <select className="flex-1 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight font-semibold text-brand-red outline-none">
-        <option>买入</option>
-        <option>卖出</option>
+// 策略规则编辑行（受控：value + onChange 由父级 strategy 状态驱动）
+const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemove }) => {
+  // 按 stable key 从目录取当前标签定义（用于分组显示）
+  const current = BACKTEST_TAG_CATALOG.find(t => t.key === value.tagKey);
+  // 目录按 group 聚合，用于 <optgroup> 分组
+  const groups = useMemo(() => {
+    const m = new Map<string, typeof BACKTEST_TAG_CATALOG>();
+    for (const t of BACKTEST_TAG_CATALOG) {
+      const arr = m.get(t.group) || [];
+      arr.push(t);
+      m.set(t.group, arr);
+    }
+    return Array.from(m.entries());
+  }, []);
+
+  return (
+    <div className="rounded-lg border border-app-border bg-app-input/30 p-2 space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="flex items-center gap-1.5 text-xs text-app-subtext cursor-pointer" onClick={e => e.preventDefault()}>
+          <input type="checkbox" checked={value.enabled} onChange={e => onChange({ enabled: e.target.checked })} className="w-3.5 h-3.5 accent-indigo-500" />
+          启用
+        </label>
+        <span className="text-xs text-app-rowtext">策略 {index + 1}</span>
+        <button type="button" onClick={onRemove} className="text-app-subtext hover:text-brand-red transition-colors p-0.5" title="删除策略">
+          <Trash2 size={13} />
+        </button>
+      </div>
+      <select
+        className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight text-app-text outline-none"
+        value={value.tagKey}
+        onChange={e => {
+          const t = BACKTEST_TAG_CATALOG.find(x => x.key === e.target.value);
+          onChange(t ? { tagKey: t.key, label: t.label, action: t.action as BacktestRule['action'] } : { tagKey: e.target.value });
+        }}
+      >
+        <option value="" disabled>选择标签…</option>
+        {groups.map(([g, list]) => (
+          <optgroup key={g} label={g}>
+            {list.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+          </optgroup>
+        ))}
       </select>
-      <input type="number" min={1} max={100} defaultValue={50} className="w-14 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight font-mono text-app-text text-right outline-none" />
-      <span className="text-xs text-app-subtext">%</span>
+      {current && (
+        <p className="text-[11px] text-app-subtext leading-tight">将触发至 {current.action === 'buy' ? '买入' : '卖出'}</p>
+      )}
+      <div className="flex items-center gap-1.5">
+        <select
+          className="flex-1 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight font-semibold outline-none"
+          value={value.action}
+          onChange={e => onChange({ action: e.target.value as BacktestRule['action'] })}
+        >
+          <option value="buy" className="text-brand-red">买入</option>
+          <option value="sell" className="text-blue-500">卖出</option>
+        </select>
+        <input
+          type="number"
+          min={1}
+          max={100}
+          value={value.pct}
+          onChange={e => onChange({ pct: Math.max(1, Math.min(100, Number(e.target.value) || 0)) })}
+          className="w-14 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight font-mono text-app-text text-right outline-none"
+        />
+        <span className="text-xs text-app-subtext">%</span>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // 统计概览条目
 const Stat: React.FC<StatProps> = ({ label, value, className }) => (
