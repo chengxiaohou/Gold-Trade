@@ -3903,10 +3903,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   return (
     <div className="flex flex-col gap-3 w-full">
-      <div className="flex justify-center">
-        <div className="w-full flex items-center gap-3" style={{ maxWidth }}>
-          <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-bold text-app-subtext tracking-wide">股息率一览</h1>
+      <div className="flex justify-center -mb-2.5">
+        <div className="w-full flex items-end gap-3" style={{ maxWidth }}>
+          <div className="flex items-center gap-3 pb-2">
+            <h1 className="text-3xl font-bold text-app-subtext tracking-wide">股息率</h1>
             {appVersion && <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1">{appVersion}</span>}
             {onTogglePage && (
               <button
@@ -3919,7 +3919,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             )}
           </div>
           {actionButtons && (
-            <div className="ml-auto">
+            <div className="ml-auto pb-1.5">
               {actionButtons}
             </div>
           )}

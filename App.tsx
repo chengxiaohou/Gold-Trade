@@ -18,7 +18,7 @@ import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache } from './ser
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.17.1';
+const APP_VERSION = 'v2.18.0';
 
 // 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
 const ERRLOG_KEY = 'gold_trade_error_log';
@@ -1664,73 +1664,73 @@ export default function App() {
         </div>
       )}
 
-      <div className="flex gap-1 lg:gap-2">
+      <div className="flex gap-1 lg:gap-1.5">
           <button 
               onClick={() => openSettings('general')}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors w-10"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-text transition-colors w-6 h-6"
               title="设置"
             >
-              <Settings size={16} />
+              <Settings size={14} />
           </button>
           <button 
               onClick={() => requestCloudAction('download')}
               disabled={isDownloading || downloadSuccess || !!cloudConfirm}
-              className={`flex items-center justify-center bg-app-card border border-app-border py-2.5 rounded-md transition-all w-10 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-indigo-400 hover:text-indigo-300 hover:border-indigo-500'} disabled:opacity-30`}
+              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-6 h-6 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-indigo-400 hover:text-indigo-300 hover:border-indigo-500'} disabled:opacity-30`}
               title="从云端下载"
             >
               {isDownloading ? (
-                <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
               ) : downloadSuccess ? (
-                <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
+                <CheckCircle2 size={14} className="animate-in zoom-in duration-300" />
               ) : (
-                <CloudDownload size={16} />
+                <CloudDownload size={14} />
               )}
           </button>
           <button 
               onClick={() => requestCloudAction('upload')}
               disabled={isSyncing || uploadSuccess || !!cloudConfirm}
-              className={`flex items-center justify-center bg-app-card border border-app-border py-2.5 rounded-md transition-all w-10 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-brand-yellow hover:bg-brand-yellow/10 hover:border-brand-yellow'} disabled:opacity-30`}
+              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-6 h-6 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-brand-yellow hover:bg-brand-yellow/10 hover:border-brand-yellow'} disabled:opacity-30`}
               title="上传到云端"
             >
               {isSyncing ? (
-                <div className="w-4 h-4 border-2 border-brand-yellow border-t-transparent rounded-full animate-spin"></div>
+                <div className="w-3 h-3 border-2 border-brand-yellow border-t-transparent rounded-full animate-spin"></div>
               ) : uploadSuccess ? (
-                <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
+                <CheckCircle2 size={14} className="animate-in zoom-in duration-300" />
               ) : (
-                <CloudUpload size={16} />
+                <CloudUpload size={14} />
               )}
           </button>
           <button 
               onClick={() => setIsAddingStock(true)}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors w-10"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-text transition-colors w-6 h-6"
               title="添加股票"
             >
-              <Plus size={16} />
+              <Plus size={14} />
           </button>
           <button 
               onClick={() => setStockResetSignal(s => s + 1)}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-red-400 hover:border-red-400 transition-colors w-10"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-red-400 hover:border-red-400 transition-colors w-6 h-6"
               title="重置数据"
             >
-              <Trash2 size={16} />
+              <Trash2 size={14} />
           </button>
           <button
               onClick={toggleTheme}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-brand-yellow hover:border-brand-yellow transition-colors w-10"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-brand-yellow hover:border-brand-yellow transition-colors w-6 h-6"
               title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
           >
-            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
           </button>
           <button 
               onClick={() => setShowRequestStats(prev => !prev)}
-              className={`flex items-center justify-center bg-app-card border py-2.5 rounded-md transition-all w-10 ${
+              className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-6 h-6 ${
                 showRequestStats 
                   ? 'border-indigo-500 text-indigo-400' 
                   : 'border-app-border text-app-subtext hover:text-app-text hover:border-app-text'
               }`}
               title={showRequestStats ? '隐藏请求统计' : '显示请求统计'}
             >
-              <BarChart3 size={16} />
+              <BarChart3 size={14} />
           </button>
       </div>
     </div>
@@ -1738,7 +1738,7 @@ export default function App() {
 
   return (
     <div 
-      className="min-h-screen bg-app-bg text-app-text font-sans p-4 md:p-8 flex justify-center relative transition-colors duration-300"
+      className="min-h-screen bg-app-bg text-app-text font-sans pt-1 md:pt-2 px-4 md:px-8 pb-4 md:pb-8 flex justify-center relative transition-colors duration-300"
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
