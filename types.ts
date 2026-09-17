@@ -179,6 +179,16 @@ export interface BacktestStrategy {
   rangeStart?: string;     // 自定义开始日期 YYYY-MM-DD（仅 rangePreset='custom' 生效）
   rangeEnd?: string;       // 自定义结束日期 YYYY-MM-DD（仅 rangePreset='custom' 生效）
 }
+
+// ===== 命名的策略组合模板（回测）=====
+// 仅规则列表，全局模板，可应用到任意股票；随云端以独立一级字段 backtestStrategyPresets 同步
+export interface BacktestStrategyPreset {
+  id: string;
+  name: string;            // 组合名（用户可命名）
+  rules: BacktestRule[];   // 仅规则列表，不含资金/周期/费用
+  createdAt: number;       // 创建时间戳
+  updatedAt: number;       // 最后更新时间戳
+}
 // 回测操作记录（与 K线图买卖点一一对应）
 export interface BacktestTrade {
   id: string;

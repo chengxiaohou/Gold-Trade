@@ -3905,16 +3905,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     <div className="flex flex-col gap-3 w-full">
       <div className="flex justify-center">
         <div className="w-full flex items-center gap-3" style={{ maxWidth }}>
-          <h1 className="text-3xl font-bold text-app-subtext tracking-wide">股息率一览</h1>
-          {appVersion && <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1">{appVersion}</span>}
-          {onTogglePage && (
-            <button
-              onClick={onTogglePage}
-              className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1 transition-colors"
-              title="切换到黄金交易模拟"
-            >
-              [黄金]
-            </button>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold text-app-subtext tracking-wide">股息率一览</h1>
+            {appVersion && <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1">{appVersion}</span>}
+            {onTogglePage && (
+              <button
+                onClick={onTogglePage}
+                className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1 transition-colors"
+                title="切换到黄金交易模拟"
+              >
+                [黄金]
+              </button>
+            )}
+          </div>
+          {actionButtons && (
+            <div className="ml-auto">
+              {actionButtons}
+            </div>
           )}
         </div>
       </div>
@@ -4536,11 +4543,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             </tbody>
           </table>
         </div>
-        {actionButtons && (
-          <div className="flex justify-end p-3 border-t border-app-border bg-app-card">
-            {actionButtons}
-          </div>
-        )}
         </div>
       </div>
 

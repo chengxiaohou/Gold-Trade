@@ -1,5 +1,5 @@
 
-import { TradeRecord, AppSettings, StockEntry, StockSettings } from "../types";
+import { TradeRecord, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset } from "../types";
 
 const GIST_FILENAME = "gold-trades.json";
 const GIST_DESCRIPTION = "GoldCost Pro 交易记录备份";
@@ -127,10 +127,19 @@ interface GistPayload {
   settings?: AppSettings;
   stocks?: StockEntry[];
   stockSettings?: StockSettings;
+  backtestStrategyPresets?: BacktestStrategyPreset[]; // 回测策略组合模板（全局模板，独立一级字段）
   version?: number;
 }
 
-export const loadFromGist = async (token: string, gistId: string): Promise<{ trades: TradeRecord[], settings?: AppSettings, stocks?: StockEntry[], stockSettings?: StockSettings } | null> => {
+export interface GistData {
+  trades: TradeRecord[];
+  settings?: AppSettings;
+  stocks?: StockEntry[];
+  stockSettings?: StockSettings;
+  backtestStrategyPresets?: BacktestStrategyPreset[];
+}
+
+export const loadFromGist = async (token: string, gistId: string): Promise<GistData | null> => {
   try {
     const response = await fetch(`https://api.github.com/gists/${gistId}`, {
       headers: getHeaders(token),
@@ -160,7 +169,8 @@ export const loadFromGist = async (token: string, gistId: string): Promise<{ tra
       trades: parsed.trades || [],
       settings: parsed.settings,
       stocks: parsed.stocks,
-      stockSettings: parsed.stockSettings
+      stockSettings: parsed.stockSettings,
+      backtestStrategyPresets: parsed.backtestStrategyPresets
     };
 
   } catch (error) {
@@ -174,15 +184,16 @@ export const loadFromGist = async (token: string, gistId: string): Promise<{ tra
 
 export const saveToGist = async (
   token: string,
-  data: { trades?: TradeRecord[], settings?: AppSettings, stocks?: StockEntry[], stockSettings?: StockSettings },
+  data: GistData & { trades?: TradeRecord[] },
   gistId?: string
 ): Promise<string> => {
-  
+
   const payload: GistPayload = {
     trades: data.trades,
     settings: data.settings,
     stocks: data.stocks,
     stockSettings: data.stockSettings,
+    backtestStrategyPresets: data.backtestStrategyPresets,
     version: 1
   };
 

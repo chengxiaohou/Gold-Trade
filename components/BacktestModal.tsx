@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, Plus, Trash2, GripHorizontal, Play } from 'lucide-react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, Time } from 'lightweight-charts';
-import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade } from '../types';
+import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset } from '../types';
 import { fetchBollData } from '../services/bollService';
 import type { BollKline } from '../services/bollService';
 import { runBacktest, BACKTEST_TAG_CATALOG } from '../services/backtestEngine';
@@ -123,6 +123,99 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
   const [rawKlines, setRawKlines] = useState<BollKline[] | null>(null); // 回测信号需含 volume 的全量 K 线
   const [result, setResult] = useState<BacktestResult | null>(null);    // 回测结果（买卖点+成交+统计）
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
+  // —— 策略组合模板（全局，仅规则列表，localStorage 持久化 + 云端独立字段同步）——
+  const PRESET_STORAGE_KEY = 'bt_strategy_presets';
+  const loadPresets = (): BacktestStrategyPreset[] => {
+    try {
+      const raw = localStorage.getItem(PRESET_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as BacktestStrategyPreset[];
+        if (Array.isArray(parsed)) return parsed.filter(p => p && p.id && p.name);
+      }
+    } catch { /* 忽略损坏缓存 */ }
+    return [];
+  };
+  const [presets, setPresets] = useState<BacktestStrategyPreset[]>(loadPresets);
+  // 当前选中的策略组：null=未选中（编辑空白/新建组）
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  // 命名气泡：'new'=新建组，某 preset.id=更新该组；null=关闭
+  const [namingTarget, setNamingTarget] = useState<string | null>(null);
+  const [namingText, setNamingText] = useState('');
+  // 命名气泡来源：true=重命名（只改名，不刷新规则），false=保存（刷新规则快照）
+  const renamingRef = useRef(false);
+  // 保存/删除/加载组合时同步 localStorage
+  const persistPresets = (list: BacktestStrategyPreset[]) => {
+    setPresets(list);
+    try { localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(list)); } catch { /* 忽略 */ }
+  };
+  const selectedPreset = presets.find(p => p.id === selectedPresetId) ?? null;
+  // 规则深比较：判断当前 rules 与选中组是否一致（未选中时仅当存在规则才可保存）
+  const rulesEqual = (a: BacktestRule[], b: BacktestRule[]) =>
+    a.length === b.length && a.every((r, i) =>
+      b[i] && r.id === b[i].id && r.tagKey === b[i].tagKey && r.action === b[i].action && r.pct === b[i].pct && r.enabled === b[i].enabled);
+  const presetDirty = selectedPreset ? !rulesEqual(selectedPreset.rules, strategy.rules) : strategy.rules.length > 0;
+  // 点击保存：打开命名气泡（新建组预填空名，更新组预填原名）
+  const openNaming = () => {
+    if (strategy.rules.length === 0) return;
+    renamingRef.current = false;
+    setNamingText(selectedPreset ? selectedPreset.name : '');
+    setNamingTarget(selectedPreset ? selectedPreset.id : 'new');
+  };
+  const confirmSave = () => {
+    const name = namingText.trim();
+    if (!name || !namingTarget) return;
+    const now = Date.now();
+    const renaming = renamingRef.current;
+    let list: BacktestStrategyPreset[];
+    if (namingTarget === 'new') {
+      if (strategy.rules.length === 0) return;
+      // 新建：名字重复时阻止（避免误覆盖）
+      if (presets.some(p => p.name === name)) { alert(`已存在同名组合「${name}」，请换个名字或先选中它修改`); return; }
+      const snap = strategy.rules.map(r => ({ ...r }));
+      const np: BacktestStrategyPreset = { id: `btp${now}${Math.floor(Math.random() * 1000)}`, name, rules: snap, createdAt: now, updatedAt: now };
+      list = [...presets, np];
+      setSelectedPresetId(np.id);
+    } else {
+      if (renaming) {
+        // 仅重命名：改名并更新时间，不刷新规则
+        list = presets.map(p => p.id === namingTarget ? { ...p, name, updatedAt: now } : p);
+      } else {
+        if (strategy.rules.length === 0) return;
+        // 更新选中组：改名 + 刷新规则快照
+        const snap = strategy.rules.map(r => ({ ...r }));
+        list = presets.map(p => p.id === namingTarget ? { ...p, name, rules: snap, updatedAt: now } : p);
+      }
+      setSelectedPresetId(namingTarget);
+    }
+    persistPresets(list);
+    renamingRef.current = false;
+    setNamingTarget(null);
+    setNamingText('');
+  };
+  const cancelNaming = () => { renamingRef.current = false; setNamingTarget(null); setNamingText(''); };
+  // 重命名选中组合：打开命名气泡并预填原名
+  const startRename = () => {
+    if (!selectedPreset) return;
+    renamingRef.current = true;
+    setNamingText(selectedPreset.name);
+    setNamingTarget(selectedPreset.id);
+  };
+  const deletePreset = (id: string) => {
+    if (!confirm('确定删除该策略组？')) return;
+    if (selectedPresetId === id) setSelectedPresetId(null);
+    persistPresets(presets.filter(p => p.id !== id));
+  };
+  // 点击标签：选中该组，把其规则应用到当前编辑
+  const applyPreset = (p: BacktestStrategyPreset) => {
+    setSelectedPresetId(p.id);
+    setStrategy(prev => ({ ...prev, rules: p.rules.map(r => ({ ...r })) }));
+  };
+  // 新建空白：取消选中并清空当前编辑（仅当存在未保存的修改时才提示）
+  const startBlankPreset = () => {
+    if (presetDirty && !confirm('当前编辑有未保存的规则，开始新建会清空，继续？')) return;
+    setSelectedPresetId(null);
+    setStrategy(prev => ({ ...prev, rules: [] }));
+  };
   // 覆盖层买卖点标签的像素坐标（随缩放/平移重算）
   const [overlayTicks, setOverlayTicks] = useState<OverlayTick[]>([]);
   const chartRef = useRef<HTMLDivElement>(null);
@@ -607,18 +700,18 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
                 />
                 <span className="shrink-0">元</span>
               </label>
-              {/* A股费用（复用 InputGroup 手势步进输入）：佣金费率 / 最低佣金 / 印花税率 */}
-              <div className="flex items-end gap-1.5">
-                <div className="flex-1 min-w-0">
-                  <InputGroup label="佣金费率" value={strategy.commissionRate ?? ''} onChange={v => setStrategy(prev => ({ ...prev, commissionRate: v === '' ? undefined : Math.max(0, Number(v)) }))} placeholder="万2.5" step={0.0001} min={0} precision={4} hideControls touchMode className="!py-1 !pl-2 !text-xs" />
-                </div>
-                <div className="w-12 shrink-0">
-                  <InputGroup label="最低佣金" value={strategy.commissionMin ?? ''} onChange={v => setStrategy(prev => ({ ...prev, commissionMin: v === '' ? undefined : Math.max(0, Number(v)) }))} placeholder="5元" step={0.5} min={0} precision={0} hideControls touchMode className="!py-1 !pl-2 !text-xs" />
-                </div>
-              </div>
-              <div className="flex-1 min-w-0">
-                <InputGroup label="印花税率(卖出)" value={strategy.stampTaxRate ?? ''} onChange={v => setStrategy(prev => ({ ...prev, stampTaxRate: v === '' ? undefined : Math.max(0, Number(v)) }))} placeholder="万5" step={0.0001} min={0} precision={4} hideControls touchMode className="!py-1 !pl-2 !text-xs" />
-              </div>
+              {/* A股费用（简化版：仅保留最低佣金，固定每笔费用，单行） */}
+              <label className="flex items-center gap-1.5 text-xs text-app-subtext">
+                <span className="shrink-0">最低佣金:</span>
+                <input
+                  type="number"
+                  value={strategy.commissionMin ?? ''}
+                  onChange={e => setStrategy(prev => ({ ...prev, commissionMin: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)) }))}
+                  placeholder="5"
+                  className={`${INPUT_CLS} flex-1 min-w-0`}
+                />
+                <span className="shrink-0">元/笔</span>
+              </label>
               <label className="flex items-center gap-1.5 text-xs text-app-subtext">
                 <span className="shrink-0">周期:</span>
                 <select
@@ -658,9 +751,89 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
               {rulesForRender.map((r, idx) => (
                   <RuleEditor key={r.id} index={idx} value={r} onChange={patch => updateRule(r.id, patch)} onRemove={() => removeRule(r.id)} />
                 ))}
-              <button type="button" onClick={addRule} className="w-full flex items-center justify-center gap-1 rounded-lg border border-dashed border-app-border hover:bg-app-text/5 py-2 text-xs text-app-subtext hover:text-indigo-300 transition-colors" title="新增策略">
-                <Plus size={14} />添加策略
-              </button>
+              {selectedPreset ? (
+                <span className="block text-[11px] text-app-subtext/70 px-1">{selectedPreset.name}</span>
+              ) : (
+                <button type="button" onClick={addRule} className="w-full flex items-center justify-center gap-1 rounded-lg border border-dashed border-app-border hover:bg-app-text/5 py-2 text-xs text-app-subtext hover:text-indigo-300 transition-colors" title="新增策略">
+                  <Plus size={14} />添加策略
+                </button>
+              )}
+            </div>
+            {/* 底部常驻：策略组合标签 + 保存操作（复用股息率颜色区间的标签排版与主题紫配色） */}
+            <div className="px-2.5 py-2 border-t border-app-border shrink-0 bg-app-input/20 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-app-subtext">策略组</span>
+                <button type="button" onClick={startBlankPreset} className="text-app-subtext hover:text-indigo-300 transition-colors" title="新建空白策略组">
+                  <Plus size={13} />
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {presets.length === 0 && (
+                  <span className="text-[10px] text-app-subtext/60 px-0.5">暂无组合，编辑规则后点保存</span>
+                )}
+                {presets.map(p => {
+                  const active = selectedPresetId === p.id;
+                  return (
+                    <button
+                      type="button"
+                      key={p.id}
+                      onClick={() => applyPreset(p)}
+                      className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium border transition-all bg-indigo-500/10 text-indigo-500 border-indigo-500/20 hover:opacity-80 ${active ? 'ring-1 ring-indigo-500/50' : ''}`}
+                      title={`应用「${p.name}」（${p.rules.length} 条规则）`}
+                    >
+                      {p.name}
+                    </button>
+                  );
+                })}
+              </div>
+              {namingTarget ? (
+                <div className="flex items-center gap-1">
+                  <input
+                    autoFocus
+                    type="text"
+                    value={namingText}
+                    onChange={e => setNamingText(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') confirmSave(); if (e.key === 'Escape') cancelNaming(); }}
+                    placeholder={namingTarget === 'new' ? '输入策略组名称…' : '修改策略组名称…'}
+                    className="flex-1 min-w-0 bg-app-input border border-indigo-500/50 rounded-lg px-2 py-1 text-xs text-app-text outline-none focus:border-indigo-500 transition-all"
+                  />
+                  <button type="button" onClick={confirmSave} className="shrink-0 px-2 py-1.5 bg-app-input text-app-subtext border border-white/5 rounded-lg text-xs font-semibold transition-colors hover:text-indigo-300 hover:border-indigo-500/40">确定</button>
+                  <button type="button" onClick={cancelNaming} className="shrink-0 px-2 py-1.5 bg-app-input text-app-subtext border border-white/5 rounded-lg text-xs font-semibold transition-colors hover:text-indigo-300 hover:border-indigo-500/40">取消</button>
+                </div>
+              ) : selectedPreset ? (
+                // 已选中组合：保存 / 重命名 / 删除 三按钮（统一默认样式，仅 hover 变色）
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={openNaming}
+                    disabled={!presetDirty}
+                    className="flex-1 min-w-0 px-2 py-1.5 bg-app-input text-app-subtext border border-white/5 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-semibold transition-colors hover:text-indigo-300 hover:border-indigo-500/40"
+                    title={presetDirty ? `保存对「${selectedPreset.name}」的修改` : '当前没有可保存的修改'}
+                  >
+                    保存
+                  </button>
+                  <button
+                    type="button"
+                    onClick={startRename}
+                    className="flex-1 min-w-0 px-2 py-1.5 bg-app-input text-app-subtext border border-white/5 rounded-lg text-xs font-semibold transition-colors hover:text-indigo-300 hover:border-indigo-500/40"
+                    title="重命名该策略组"
+                  >
+                    重命名
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deletePreset(selectedPreset.id)}
+                    className="flex-1 min-w-0 px-2 py-1.5 bg-app-input text-app-subtext border border-white/5 rounded-lg text-xs font-semibold transition-colors hover:text-brand-red hover:border-red-500/40"
+                    title="删除该策略组"
+                  >
+                    删除
+                  </button>
+                </div>
+              ) : (
+                <button type="button" onClick={openNaming} disabled={!presetDirty} className="w-full px-2 py-1.5 bg-app-input text-app-text border border-white/5 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-semibold hover:bg-app-card hover:border-indigo-500/40 hover:text-indigo-300 transition-colors" title={presetDirty ? '将当前规则保存为新的策略组' : '当前没有可保存的修改'}>
+                  保存
+                </button>
+              )}
             </div>
           </div>
 

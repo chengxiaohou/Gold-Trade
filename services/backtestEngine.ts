@@ -76,13 +76,11 @@ function isBreakConfirmed(klines: BollKline[], t: number, ma5s: (number | null)[
 // 引擎主函数：支持加仓/减仓、初始资金基准仓位、先卖后买、每日收盘后结算
 export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestParams = {}): BacktestResult {
   // A股费用模型：
-  // - 佣金：买卖双向，佣金 = max(金额×费率, 最低佣金)
-  // - 印花税：仅卖出单边，印花税 = 金额×税率
-  const commissionRate = s.commissionRate ?? 0.00025; // 万2.5
-  const commissionMin = s.commissionMin ?? 5;         // 单笔最低 5 元
-  const stampTaxRate = s.stampTaxRate ?? 0.0005;      // 卖出万分之5
-  const buyFee = (amt: number) => Math.max(amt * commissionRate, commissionMin);
-  const sellFee = (amt: number) => Math.max(amt * commissionRate, commissionMin) + amt * stampTaxRate;
+  // - 简化版费用：仅保留"最低佣金"（固定每笔费用）。
+  //   佣金费率 / 印花税率已从 UI 隐藏，不参与计算。
+  const commissionMin = s.commissionMin ?? 5; // 单笔固定佣金（默认 5 元）
+  const buyFee = (amt: number) => commissionMin;
+  const sellFee = (amt: number) => commissionMin;
   const lotSize = p.lotSize ?? 100;
   const cfg = DEFAULT_TAG_PARAMS;
   const klines = [...k].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));

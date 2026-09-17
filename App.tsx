@@ -15,7 +15,7 @@ import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { calcPositionFromTrades } from './services/realizedPnl';
 import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache } from './services/stockSync';
-import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, DEFAULT_TAG_PARAMS } from './types';
+import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
 const APP_VERSION = 'v2.17.1';
@@ -915,6 +915,7 @@ export default function App() {
       let existingTrades: TradeRecord[] = [];
       let existingStocks: StockEntry[] = [];
       let existingStockSettings: StockSettings | undefined;
+      let existingPresets: BacktestStrategyPreset[] | undefined;
       
       if (githubConfig.gistId) {
         try {
@@ -923,6 +924,7 @@ export default function App() {
             existingTrades = existing.trades || [];
             existingStocks = existing.stocks || [];
             existingStockSettings = existing.stockSettings;
+            existingPresets = existing.backtestStrategyPresets;
           }
         } catch {
         }
@@ -942,13 +944,25 @@ export default function App() {
         sortMode: undefined,
       } : undefined;
 
+      // 读取本地策略组合模板（BacktestModal 写入），上传时与云端按 id 合并（保留本地版本，云端独有的保留）
+      let localPresets: BacktestStrategyPreset[] = [];
+      try {
+        const raw = localStorage.getItem('bt_strategy_presets');
+        if (raw) localPresets = JSON.parse(raw);
+      } catch { /* 忽略解析异常 */ }
+      const presetsById = new Map<string, BacktestStrategyPreset>();
+      for (const p of existingPresets || []) if (p?.id && !presetsById.has(p.id)) presetsById.set(p.id, p);
+      for (const p of localPresets || []) if (p?.id) presetsById.set(p.id, p); // 本地覆盖云端同 id
+      const uploadPresets = Array.from(presetsById.values());
+
       let dataToUpload;
       if (currentPage === 'gold') {
         dataToUpload = {
           trades,
           settings: appSettings,
           stocks: stripStockPriceCache(existingStocks),
-          stockSettings: cloudExistingStockSettings
+          stockSettings: cloudExistingStockSettings,
+          backtestStrategyPresets: uploadPresets
         };
       } else {
         // 全量上传：每只票的 stockTrades 携带完整记录（含软删 isDeleted 标记）。
@@ -957,7 +971,8 @@ export default function App() {
           trades: existingTrades,
           settings: appSettings,
           stocks: stripStockPriceCache(buildUploadStocks(stocks)),
-          stockSettings: cloudStockSettings
+          stockSettings: cloudStockSettings,
+          backtestStrategyPresets: uploadPresets
         };
       }
       
@@ -1051,6 +1066,19 @@ export default function App() {
             localStorage.setItem('stock_dividend_settings', JSON.stringify(restoredStockSettings));
             // 下载成功后重置备忘录基线，与云端文字对齐
             setMemoBaseline(result.stockSettings.memo || '');
+          }
+
+          // 策略组合模板合并：云端覆盖本地同 id、云端独有的新增、本地独有的保留
+          if (result.backtestStrategyPresets?.length) {
+            let localPresets: BacktestStrategyPreset[] = [];
+            try {
+              const raw = localStorage.getItem('bt_strategy_presets');
+              if (raw) localPresets = JSON.parse(raw);
+            } catch { /* 忽略解析异常 */ }
+            const mergedMap = new Map<string, BacktestStrategyPreset>();
+            for (const p of localPresets || []) if (p?.id) mergedMap.set(p.id, p);
+            for (const p of result.backtestStrategyPresets || []) if (p?.id) mergedMap.set(p.id, p); // 云端覆盖
+            localStorage.setItem('bt_strategy_presets', JSON.stringify(Array.from(mergedMap.values())));
           }
         }
         
@@ -1597,11 +1625,9 @@ export default function App() {
     <div className="relative">
       {cloudConfirm && (
         <div 
-          className="absolute bottom-full mb-3 z-[100] animate-in fade-in zoom-in slide-in-from-bottom-2 duration-200 pointer-events-none"
+          className="absolute top-full mt-3 z-[100] animate-in fade-in zoom-in slide-in-from-top-2 duration-200 pointer-events-none"
           style={{ 
-            left: cloudConfirm === 'download' 
-              ? 'calc((100% / 6) * 1 + (100% / 12))' 
-              : 'calc((100% / 6) * 2 + (100% / 12))',
+            left: '50%',
             transform: 'translateX(-50%)'
           }}
         >
@@ -1632,7 +1658,7 @@ export default function App() {
                  </button>
               </div>
               <div 
-                className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-app-card border-r border-b border-app-border rotate-45"
+                className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-app-card border-l border-t border-app-border rotate-45"
               ></div>
            </div>
         </div>
