@@ -7,6 +7,7 @@ import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, Backte
 import { fetchBollData } from '../services/bollService';
 import type { BollKline } from '../services/bollService';
 import { runBacktest, BACKTEST_TAG_CATALOG } from '../services/backtestEngine';
+import { InputGroup } from './InputGroup';
 
 type ChartCandle = { time: string; open: number; high: number; low: number; close: number };
 
@@ -564,7 +565,7 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
         src = rawKlines.filter(k => k.date >= cutoff);
       }
     }
-    setResult(runBacktest(src, { rules: strategy.rules, initialCapital: strategy.initialCapital, rangePreset: strategy.rangePreset, rangeStart: strategy.rangeStart, rangeEnd: strategy.rangeEnd }));
+    setResult(runBacktest(src, { ...strategy }));
   };
 
   const rulesForRender = useMemo(() => rules.filter(() => true), [rules]);
@@ -606,6 +607,18 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
                 />
                 <span className="shrink-0">元</span>
               </label>
+              {/* A股费用（复用 InputGroup 手势步进输入）：佣金费率 / 最低佣金 / 印花税率 */}
+              <div className="flex items-end gap-1.5">
+                <div className="flex-1 min-w-0">
+                  <InputGroup label="佣金费率" value={strategy.commissionRate ?? ''} onChange={v => setStrategy(prev => ({ ...prev, commissionRate: v === '' ? undefined : Math.max(0, Number(v)) }))} placeholder="万2.5" step={0.0001} min={0} precision={4} hideControls touchMode className="!py-1 !pl-2 !text-xs" />
+                </div>
+                <div className="w-12 shrink-0">
+                  <InputGroup label="最低佣金" value={strategy.commissionMin ?? ''} onChange={v => setStrategy(prev => ({ ...prev, commissionMin: v === '' ? undefined : Math.max(0, Number(v)) }))} placeholder="5元" step={0.5} min={0} precision={0} hideControls touchMode className="!py-1 !pl-2 !text-xs" />
+                </div>
+              </div>
+              <div className="flex-1 min-w-0">
+                <InputGroup label="印花税率(卖出)" value={strategy.stampTaxRate ?? ''} onChange={v => setStrategy(prev => ({ ...prev, stampTaxRate: v === '' ? undefined : Math.max(0, Number(v)) }))} placeholder="万5" step={0.0001} min={0} precision={4} hideControls touchMode className="!py-1 !pl-2 !text-xs" />
+              </div>
               <label className="flex items-center gap-1.5 text-xs text-app-subtext">
                 <span className="shrink-0">周期:</span>
                 <select
@@ -921,14 +934,19 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
           <option value="buy" className="text-brand-red">买入</option>
           <option value="sell" className="text-blue-500">卖出</option>
         </select>
-        <input
-          type="number"
-          min={1}
-          max={100}
-          value={value.pct}
-          onChange={e => onChange({ pct: Math.max(1, Math.min(100, Number(e.target.value) || 0)) })}
-          className="w-14 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight font-mono text-app-text text-right outline-none"
-        />
+        <div className="w-14 shrink-0">
+          <InputGroup
+            value={value.pct}
+            onChange={v => onChange({ pct: Math.max(1, Math.min(100, Number(v) || 0)) })}
+            min={1}
+            max={100}
+            step={5}
+            precision={0}
+            touchMode
+            hideControls
+            className="!py-1 !pl-2 !pr-2 !text-xs !text-right"
+          />
+        </div>
         <span className="text-xs text-app-subtext">%</span>
       </div>
     </div>

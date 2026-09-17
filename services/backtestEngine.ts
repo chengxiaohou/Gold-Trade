@@ -73,9 +73,16 @@ function isBreakConfirmed(klines: BollKline[], t: number, ma5s: (number | null)[
   return noRecover;
 }
 
-// 引擎主函数：单持仓、整百股、先卖后买、每日收盘后结算
+// 引擎主函数：支持加仓/减仓、初始资金基准仓位、先卖后买、每日收盘后结算
 export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestParams = {}): BacktestResult {
-  const feeRate = p.feeRate ?? 0;
+  // A股费用模型：
+  // - 佣金：买卖双向，佣金 = max(金额×费率, 最低佣金)
+  // - 印花税：仅卖出单边，印花税 = 金额×税率
+  const commissionRate = s.commissionRate ?? 0.00025; // 万2.5
+  const commissionMin = s.commissionMin ?? 5;         // 单笔最低 5 元
+  const stampTaxRate = s.stampTaxRate ?? 0.0005;      // 卖出万分之5
+  const buyFee = (amt: number) => Math.max(amt * commissionRate, commissionMin);
+  const sellFee = (amt: number) => Math.max(amt * commissionRate, commissionMin) + amt * stampTaxRate;
   const lotSize = p.lotSize ?? 100;
   const cfg = DEFAULT_TAG_PARAMS;
   const klines = [...k].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
@@ -83,13 +90,14 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
   const ma5s = calcMaSeries(klines, 5);
   const ma10s = calcMaSeries(klines, 10);
   const enabledRules = (s.rules || []).filter(r => r.enabled);
+  const initCap = s.initialCapital;
 
-  let cash = s.initialCapital;
+  let cash = initCap;
   let shares = 0;
   let avgCost = 0;
   const trades: BacktestTrade[] = [];
   // 回撤：逐日记录收盘权益
-  let peak = s.initialCapital;
+  let peak = initCap;
   let maxDD = 0;
 
   for (let i = 30; i < n; i++) {
@@ -107,41 +115,54 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
       if (matched && (!chosen || r.pct > chosen.pct)) chosen = r;
     }
 
-    // 先结算持仓再判定执行，保证"收盘后信号 → 用收盘价成交"、"先卖后买、空仓才买、持仓才卖"
     if (chosen) {
       const def = BACKTEST_TAG_CATALOG.find(d => d.key === chosen!.tagKey && d.label === chosen!.label);
       if (def) {
         const price = klines[i].close;
         const date = klines[i].date;
-        if (chosen.action === 'buy' && shares === 0) {
-          const qty = Math.floor((cash * (chosen.pct / 100)) / price / lotSize) * lotSize;
-          if (qty > 0) {
-            const amount = qty * price;
-            const fee = amount * feeRate;
-            if (amount + fee <= cash) {
-              cash -= amount + fee;
-              shares = qty;
-              avgCost = price;
-              trades.push({
-                id: `${date}-B-${i}`, date, barIndex: i, tagKey: def.key, tagName: def.label,
-                action: 'buy', price, shares: qty, amount,
-                cashAfter: cash, sharesAfter: shares, avgCostAfter: avgCost, realizedPnl: undefined,
-              });
-            }
+        // 仓位基准：固定按初始资金 × pct% 计算目标交易金额
+        // 优点：加仓不会因剩余现金变少而被挤没；卖出也对称，语义清晰
+        const targetAmount = initCap * (chosen.pct / 100);
+
+        if (chosen.action === 'buy') {
+          // 买入：佣金 = max(金额×费率, 最低5元)，可用现金须覆盖成交金额+佣金
+          const maxAmount = cash; // 佣金最低5元，先按全额现金算本金再校验收支
+          const amount = Math.min(targetAmount, maxAmount);
+          let qty = Math.floor(amount / price / lotSize) * lotSize;
+          // 校验：成交金额+买入佣金 ≤ 现金
+          if (qty >= lotSize && qty * price + buyFee(qty * price) <= cash) {
+            const tradeAmount = qty * price;
+            const fee = buyFee(tradeAmount);
+            cash -= tradeAmount + fee;
+            // 加权均价：加仓时更新
+            avgCost = shares > 0
+              ? (avgCost * shares + tradeAmount) / (shares + qty)
+              : price;
+            shares += qty;
+            trades.push({
+              id: `${date}-B-${i}`, date, barIndex: i, tagKey: def.key, tagName: def.label,
+              action: 'buy', price, shares: qty, amount: tradeAmount,
+              cashAfter: cash, sharesAfter: shares, avgCostAfter: avgCost, realizedPnl: undefined,
+            });
           }
         } else if (chosen.action === 'sell' && shares > 0) {
-          const qty = Math.min(shares, Math.max(lotSize, Math.floor((shares * (chosen.pct / 100)) / lotSize) * lotSize));
-          const amount = qty * price;
-          const fee = amount * feeRate;
-          const realized = amount - fee - qty * avgCost;
-          cash += amount - fee;
-          shares -= qty;
-          if (shares === 0) avgCost = 0;
-          trades.push({
-            id: `${date}-S-${i}`, date, barIndex: i, tagKey: def.key, tagName: def.label,
-            action: 'sell', price, shares: qty, amount,
-            cashAfter: cash, sharesAfter: shares, avgCostAfter: avgCost, realizedPnl: realized,
-          });
+          // 卖出：目标金额对应股数；若不够 lotSize 且有持仓，允许清仓零股
+          let qty = Math.floor(targetAmount / price / lotSize) * lotSize;
+          if (qty === 0 && shares > 0) qty = shares;  // 目标太小：全卖
+          else if (qty > shares) qty = shares;        // 超过持仓：全卖
+          if (qty > 0) {
+            const tradeAmount = qty * price;
+            const fee = sellFee(tradeAmount); // 佣金(含最低5元) + 印花税
+            const realized = tradeAmount - fee - qty * avgCost;
+            cash += tradeAmount - fee;
+            shares -= qty;
+            if (shares === 0) avgCost = 0;
+            trades.push({
+              id: `${date}-S-${i}`, date, barIndex: i, tagKey: def.key, tagName: def.label,
+              action: 'sell', price, shares: qty, amount: tradeAmount,
+              cashAfter: cash, sharesAfter: shares, avgCostAfter: avgCost, realizedPnl: realized,
+            });
+          }
         }
       }
     }
@@ -155,7 +176,7 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
   const finalValue = cash + shares * (n > 0 ? klines[n - 1].close : 0);
   const closed = trades.filter(t => t.action === 'sell' && t.realizedPnl != null);
   const wins = closed.filter(t => (t.realizedPnl ?? 0) > 0).length;
-  const totalReturnPct = s.initialCapital > 0 ? ((finalValue - s.initialCapital) / s.initialCapital) * 100 : 0;
+  const totalReturnPct = initCap > 0 ? ((finalValue - initCap) / initCap) * 100 : 0;
 
   return {
     trades, finalValue, totalReturnPct,

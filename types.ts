@@ -171,6 +171,10 @@ export interface BacktestRule {
 export interface BacktestStrategy {
   rules: BacktestRule[];
   initialCapital: number;  // 初始现金（默认 100000）
+  feeRate?: number;        // 单边手续费比例（默认 0，如 0.00025 = 万2.5）【已废弃，改用下面三字段】
+  commissionRate?: number; // 佣金费率（单边比例，买卖双向收取，默认 0.00025=万2.5）
+  commissionMin?: number;  // 单笔最低佣金（元），默认 5
+  stampTaxRate?: number;   // 印花税率（仅卖出单边收取，默认 0.0005=万分之5）
   rangePreset?: 'w1' | 'w2' | 'm1' | 'm3' | 'h1' | 'y1' | 'y2' | 'y3' | 'y5' | 'custom'; // 回测周期预设
   rangeStart?: string;     // 自定义开始日期 YYYY-MM-DD（仅 rangePreset='custom' 生效）
   rangeEnd?: string;       // 自定义结束日期 YYYY-MM-DD（仅 rangePreset='custom' 生效）

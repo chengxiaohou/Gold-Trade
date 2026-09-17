@@ -101,14 +101,24 @@ export const InputGroup: React.FC<InputGroupProps> = ({
     const el = inputRef.current;
     if (!el) return;
 
+    // 滚轮/触控板累加器：累积 deltaY，达到阈值才步进，避免触控板连续 tick 使数值跳太快
+    let accumulator = 0;
+    const WHEEL_THRESHOLD = 40; // 像素阈值，数值每累积这个量才调整一次（步长）
+
     const handleWheel = (e: WheelEvent) => {
       // 如果是 iOS 且没开 TouchMode，使用原生滚轮或者 picker，不拦截
       // 如果开了 TouchMode，或者是在桌面端，拦截滚轮
       if (isIOS && !touchMode) return;
       
       e.preventDefault();
-      const direction = e.deltaY > 0 ? -1 : 1;
-      updateValue(direction * step);
+      // 全局反转：deltaY>0 视为"上推/双指下滚" → 数值增大；deltaY<0 → 数值减小
+      accumulator += e.deltaY;
+      const direction = accumulator > 0 ? 1 : -1; // 正值(下滚)→增大；负值(上滚)→减小
+      const steps = Math.floor(Math.abs(accumulator) / WHEEL_THRESHOLD);
+      if (steps > 0) {
+        updateValue(direction * step * steps);
+        accumulator -= direction * steps * WHEEL_THRESHOLD;
+      }
     };
 
     el.addEventListener('wheel', handleWheel, { passive: false });
