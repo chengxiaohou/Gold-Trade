@@ -19,19 +19,21 @@ export interface BacktestParams {
 export interface BacktestTagDef {
   key: string;
   label: string;            // UI 展示名 / 成交记录触发标签名
+  abbr: string;             // 预览/单元格单字缩写（缩/放/拉/破/十/针/金）
   group: BacktestTagGroup;
   source: 'feng' | 'pattern' | 'daily' | 'break';
   signalName?: string;      // analyzer 返回的 name / label / kind 匹配值
   action: 'buy' | 'sell';   // 语义方向提示（执行仍以规则 action 为准）
+  color: string;            // 标签主题色：买=砖红、卖=蓝（与 B/S 买卖标签同一套）
 }
 export const BACKTEST_TAG_CATALOG: BacktestTagDef[] = [
-  { key: 'feng-low-buy', label: '缩量入场（低位）', group: 'feng-add', source: 'feng', signalName: '缩量入场（低位）', action: 'buy' },
-  { key: 'feng-vol-break', label: '放量突破均线', group: 'feng-add', source: 'feng', signalName: '放量突破均线', action: 'buy' },
-  { key: 'feng-shrink-rally', label: '缩量急拉', group: 'feng-reduce', source: 'feng', signalName: '无量/缩量急拉', action: 'sell' },
-  { key: 'break-fail-recover', label: '放量破位不收复', group: 'break', source: 'break', signalName: '放量破位+2日不收复', action: 'sell' },
-  { key: 'pattern-doji', label: '十字星', group: 'pattern', source: 'pattern', signalName: '十字星', action: 'sell' },
-  { key: 'pattern-hammer', label: '金针探底', group: 'pattern', source: 'pattern', signalName: '金针探底', action: 'buy' },
-  { key: 'macro-macd-gold', label: 'MACD 金叉', group: 'daily', source: 'daily', signalName: 'macd-gold', action: 'buy' },
+  { key: 'feng-low-buy', label: '缩量入场（低位）', abbr: '缩', group: 'feng-add', source: 'feng', signalName: '缩量入场（低位）', action: 'buy', color: '#C44A3D' },
+  { key: 'feng-vol-break', label: '放量突破均线', abbr: '放', group: 'feng-add', source: 'feng', signalName: '放量突破均线', action: 'buy', color: '#C44A3D' },
+  { key: 'feng-shrink-rally', label: '缩量急拉', abbr: '拉', group: 'feng-reduce', source: 'feng', signalName: '无量/缩量急拉', action: 'sell', color: '#4A90D9' },
+  { key: 'break-fail-recover', label: '放量破位不收复', abbr: '破', group: 'break', source: 'break', signalName: '放量破位+2日不收复', action: 'sell', color: '#4A90D9' },
+  { key: 'pattern-doji', label: '十字星', abbr: '十', group: 'pattern', source: 'pattern', signalName: '十字星', action: 'sell', color: '#4A90D9' },
+  { key: 'pattern-hammer', label: '金针探底', abbr: '针', group: 'pattern', source: 'pattern', signalName: '金针探底', action: 'buy', color: '#C44A3D' },
+  { key: 'macro-macd-gold', label: 'MACD 金叉', abbr: '金', group: 'daily', source: 'daily', signalName: 'macd-gold', action: 'buy', color: '#C44A3D' },
 ];
 
 const fmtP = (v: number) => v.toFixed(2);
@@ -182,4 +184,45 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
     maxDrawdownPct: maxDD * 100,
     tradeCount: trades.length,
   };
+}
+
+// 预览：扫描某标签在完整历史 K 线中命中的所有位置（不模拟交易，纯信号检测）
+// 用于 K 线图上快速预览"该策略标签在哪些 K 线情形下出现"。
+export function scanTagOccurrences(k: BollKline[], tagKey: string): { date: string; barIndex: number; detail: string[] }[] {
+  const def = BACKTEST_TAG_CATALOG.find(d => d.key === tagKey);
+  if (!def) return [];
+  const cfg = DEFAULT_TAG_PARAMS;
+  const klines = [...k].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const n = klines.length;
+  const ma5s = calcMaSeries(klines, 5);
+  const ma10s = calcMaSeries(klines, 10);
+  const out: { date: string; barIndex: number; detail: string[] }[] = [];
+  for (let i = 30; i < n; i++) {
+    const win = klines.slice(0, i + 1);
+    const last = win[win.length - 1];
+    let detail: string[] | null = null;
+    if (def.source === 'break') {
+      if (isBreakConfirmed(klines, i, ma5s, ma10s)) {
+        const kd = klines[i - 2];
+        detail = [
+          `放量破位：${fmtP(kd.close)} 跌破 MA5(${fmtP(ma5s[i - 2] ?? 0)}) 与 MA10(${fmtP(ma10s[i - 2] ?? 0)})，且量 ≥ 前5日均量`,
+          '连续 2 日未收复 MA10，破位确认',
+        ];
+      }
+    } else if (def.source === 'pattern') {
+      const p = analyzeKlinePatterns(win, fmtP, cfg).find(x => x.date === last.date && x.label === def.signalName);
+      if (p) detail = p.detail;
+    } else if (def.source === 'daily') {
+      const sd = analyzeDailySignals(win, true).find(x => x.date === last.date && x.kind === def.signalName);
+      if (sd) detail = sd.detail;
+    } else if (def.source === 'feng') {
+      const f = analyzeFengSignals(win, fmtP, true, cfg).latest;
+      if (f.date === last.date) {
+        const fh = [...f.add, ...f.reduce].find(x => x.name === def.signalName);
+        if (fh) detail = fh.detail;
+      }
+    }
+    if (detail) out.push({ date: klines[i].date, barIndex: i, detail });
+  }
+  return out;
 }

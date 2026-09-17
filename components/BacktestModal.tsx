@@ -1,12 +1,12 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, Trash2, GripHorizontal, Play } from 'lucide-react';
+import { X, Plus, Trash2, GripHorizontal, Play, Eye } from 'lucide-react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset } from '../types';
 import { fetchBollData } from '../services/bollService';
 import type { BollKline } from '../services/bollService';
-import { runBacktest, BACKTEST_TAG_CATALOG } from '../services/backtestEngine';
+import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG } from '../services/backtestEngine';
 import { InputGroup } from './InputGroup';
 
 type ChartCandle = { time: string; open: number; high: number; low: number; close: number };
@@ -15,6 +15,8 @@ type ChartCandle = { time: string; open: number; high: number; low: number; clos
 type TickSpec = { id: string; time: string; anchorPrice: number; action: 'buy' | 'sell' };
 // 覆盖层标签计算后的像素坐标（已在可视区内的标签）
 type OverlayTick = { id: string; x: number; y: number; action: 'buy' | 'sell' };
+// 预览标签：某策略标签命中的 K 线像素坐标（缩写块，置于 K 线上下；color 用标签本身主题色）
+type PreviewTick = { keyOf: string; date: string; x: number; y: number; abbr: string; color: string; side: 'top' | 'bottom'; detail: string[] };
 
 export interface BacktestModalProps {
   stock: StockEntry;
@@ -26,6 +28,8 @@ interface RuleEditorProps {
   value: BacktestRule;
   onChange: (patch: Partial<BacktestRule>) => void;
   onRemove: () => void;
+  previewing: boolean;
+  onTogglePreview: () => void;
 }
 
 interface StatProps {
@@ -218,6 +222,12 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
   };
   // 覆盖层买卖点标签的像素坐标（随缩放/平移重算）
   const [overlayTicks, setOverlayTicks] = useState<OverlayTick[]>([]);
+  // 预览：当前预览的策略标签 key 数组（最多 2 个）；预览态隐藏 B/S 买卖标签，只显缩写块
+  const [previewKeys, setPreviewKeys] = useState<string[]>([]);
+  // 预览标签的像素坐标
+  const [previewTicks, setPreviewTicks] = useState<PreviewTick[]>([]);
+  // 预览标签判定依据浮窗（hover/点击预览标签时显示）
+  const [previewPopup, setPreviewPopup] = useState<{ keyOf: string; date: string; x: number; y: number; detail: string[] } | null>(null);
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ReturnType<IChartApi['addSeries']> | null>(null);
@@ -493,6 +503,16 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
     });
   }, [result, klines]);
 
+  // 预览：扫描所选（最多 2 个）标签在完整历史 K 线中的命中位置（含判定依据），预览态在图上画缩写块
+  const previewOccurrences = useMemo(() => {
+    if (previewKeys.length === 0 || !rawKlines) return [] as { key: string; date: string; barIndex: number; detail: string[] }[];
+    const out: { key: string; date: string; barIndex: number; detail: string[] }[] = [];
+    for (const key of previewKeys) {
+      for (const o of scanTagOccurrences(rawKlines, key)) out.push({ key, ...o });
+    }
+    return out;
+  }, [previewKeys, rawKlines]);
+
   // 覆盖层定位：把对每个标签的 time→x、anchorPrice→y 换算成像素坐标；time/price 坐标不可得（K线滚出可视区）则隐藏
   const computeTickPositions = useCallback(() => {
     const chart = chartInstance.current;
@@ -506,6 +526,31 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
     const priceScaleW = chart.priceScale('right').width();
     const half = TICK_SIZE / 2;
     const rightLimit = cw - priceScaleW; // 绘图区右边界
+    // 预览态：只计算预览标签（最多 2 个），B/S 买卖标签清空
+    if (previewKeys.length > 0) {
+      const prev: PreviewTick[] = [];
+      const defOf = new Map(BACKTEST_TAG_CATALOG.map(d => [d.key, d]));
+      const highOf = new Map<string, number>(rawKlines?.map(k => [k.date, k.high]) ?? []);
+      const lowOf = new Map<string, number>(rawKlines?.map(k => [k.date, k.low]) ?? []);
+      const sideOf = new Map(previewKeys.map((k, i) => [k, i === 0 ? 'top' : 'bottom']));
+      for (const o of previewOccurrences) {
+        const def = defOf.get(o.key);
+        if (!def) continue;
+        const side: 'top' | 'bottom' = (sideOf.get(o.key) as 'top' | 'bottom') ?? 'top';
+        // 上方锚 K 线 high、下方锚 K 线 low；y 存"方块中心"，渲染时按 side 定偏移
+        const anchor = side === 'top' ? highOf.get(o.date) : lowOf.get(o.date);
+        const x = ts.timeToCoordinate(o.date);
+        const y = anchor != null ? series.priceToCoordinate(anchor) : null;
+        if (x == null || y == null) continue;
+        if (x + half > rightLimit) continue;
+        if (x < -24) continue;
+        if (y < -40 || y > ch + 40) continue;
+        prev.push({ keyOf: o.key, date: o.date, x, y, abbr: def.abbr, color: def.color, side, detail: o.detail });
+      }
+      setOverlayTicks([]);
+      setPreviewTicks(prev);
+      return;
+    }
     const ticks: OverlayTick[] = [];
     for (const m of demoMarkers) {
       const x = ts.timeToCoordinate(m.time);
@@ -519,7 +564,8 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
       ticks.push({ id: m.id, x, y, action: m.action });
     }
     setOverlayTicks(ticks);
-  }, [demoMarkers]);
+    setPreviewTicks([]);
+  }, [demoMarkers, previewKeys, previewOccurrences]);
 
   // 成交记录：直接取真实回测结果，图的标签与表的行共用同一批 id，实现双向往返定位
   const tradeRows = useMemo(() => {
@@ -621,10 +667,20 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
       ts.setVisibleLogicalRange({ from, to: count });
       // 使最新一根锚定在右侧边缘：把可视范围右端对齐数据末尾
       ts.scrollToPosition(0, false);
-      computeTickPositions();
+      // 通过 ref 取最新 computeTickPositions，避免本 effect 因闭包/身份变化而重跑导致跳动
+      computeTicksRef.current?.();
     });
     return () => cancelAnimationFrame(raf);
-  }, [klines, demoMarkers, computeTickPositions]);
+    // 仅当数据/买卖点真正变化时重置可视范围；computeTickPositions 经 ref 读取，不入依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [klines, demoMarkers]);
+
+  // 预览态变化：仅重算预览标签坐标，不重置可视范围（避免 K 线图跳动）
+  useEffect(() => {
+    if (previewKeys.length === 0 && previewTicks.length === 0) return;
+    const raf = requestAnimationFrame(() => computeTickPositions());
+    return () => cancelAnimationFrame(raf);
+  }, [previewKeys, previewOccurrences, computeTickPositions]);
 
   // 按模式切换均线/布林线 series 的可见性
   useEffect(() => {
@@ -659,6 +715,18 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
       }
     }
     setResult(runBacktest(src, { ...strategy }));
+    setPreviewKeys([]); // 执行回测时取消预览态
+    setPreviewPopup(null);
+  };
+
+  // 切换某策略标签的预览：已预览则移除，未预览且未满 2 个则加入（第 3 个不生效）
+  const togglePreview = (tagKey: string) => {
+    setPreviewPopup(null);
+    setPreviewKeys(prev =>
+      prev.includes(tagKey) ? prev.filter(k => k !== tagKey)
+      : prev.length >= 2 ? prev
+      : [...prev, tagKey]
+    );
   };
 
   const rulesForRender = useMemo(() => rules.filter(() => true), [rules]);
@@ -749,7 +817,7 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
             </div>
             <div className="flex-1 overflow-y-auto custom-scrollbar px-2 py-1.5 space-y-1.5">
               {rulesForRender.map((r, idx) => (
-                  <RuleEditor key={r.id} index={idx} value={r} onChange={patch => updateRule(r.id, patch)} onRemove={() => removeRule(r.id)} />
+                  <RuleEditor key={r.id} index={idx} value={r} onChange={patch => updateRule(r.id, patch)} onRemove={() => removeRule(r.id)} previewing={previewKeys.includes(r.tagKey)} onTogglePreview={() => togglePreview(r.tagKey)} />
                 ))}
               {selectedPreset ? (
                 <span className="block text-[11px] text-app-subtext/70 px-1">{selectedPreset.name}</span>
@@ -974,7 +1042,51 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
                     </g>
                   );
                 })}
+                {/* 预览标签：缩写块，用标签本身主题色；key[0] 在 K 线上方、key[1] 下方；透明热区承载 hover/点击弹判定依据浮窗 */}
+                {previewTicks.map(t => {
+                  const half = TICK_SIZE / 2;
+                  const offset = SPACING + LINE_LEN + half;
+                  // top：方块中心在 high 之上 offset；bottom：在 low 之下 offset
+                  const dir: 1 | -1 = t.side === 'top' ? -1 : 1;
+                  const centerY = t.y + dir * offset;
+                  const popup = previewPopup?.date === t.date && previewPopup?.keyOf === t.keyOf;
+                  return (
+                    <g key={`${t.keyOf}-${t.date}`} transform={`translate(${t.x} ${centerY})`}>
+                      {/* 点状虚线：方块边缘 → 末端圆点 */}
+                      <line x1={0} y1={-dir * half} x2={0} y2={-dir * (LINE_LEN + half)} stroke={t.color} strokeWidth={1.2} strokeDasharray={DOT_DA} pointerEvents="none" />
+                      {/* 末端圆点 */}
+                      <circle cx={0} cy={-dir * (LINE_LEN + half)} r={DOT_R} fill={t.color} pointerEvents="none" />
+                      {/* 缩写方块：标签主题色 */}
+                      <rect x={-half} y={-half} width={TICK_SIZE} height={TICK_SIZE} rx={TICK_RADIUS} fill={t.color} pointerEvents="none" />
+                      <text x={0} y={0} textAnchor="middle" dominantBaseline="central" fontSize={9} fontWeight={400} fill="#ffffff" pointerEvents="none">
+                        {t.abbr}
+                      </text>
+                      {/* 透明热区：覆盖方块，承载 hover/点击（容器 pointer-events:none，热区单独恢复） */}
+                      <rect
+                        x={-half} y={-half} width={TICK_SIZE} height={TICK_SIZE} rx={TICK_RADIUS}
+                        fill="transparent" style={{ pointerEvents: 'all', cursor: 'pointer' }}
+                        onMouseEnter={() => setPreviewPopup({ keyOf: t.keyOf, date: t.date, x: t.x, y: centerY, detail: t.detail })}
+                        onMouseLeave={() => setPreviewPopup(p => (p?.keyOf === t.keyOf && p?.date === t.date ? null : p))}
+                        onClick={() => setPreviewPopup(popup ? null : { keyOf: t.keyOf, date: t.date, x: t.x, y: centerY, detail: t.detail })}
+                      />
+                    </g>
+                  );
+                })}
               </svg>
+              {/* 预览标签判定依据浮窗 */}
+              {previewPopup && (
+                <div
+                  className="absolute z-30 max-w-[260px] rounded-lg border border-app-border bg-app-card px-2.5 py-2 shadow-[0_8px_30px_rgba(0,0,0,0.5)]"
+                  style={{ left: Math.min(previewPopup.x + 12, (chartRef.current?.clientWidth ?? 300) - 260), top: previewPopup.y, pointerEvents: 'none' }}
+                >
+                  <div className="mb-1 text-[11px] font-semibold text-app-text">{previewPopup.date}</div>
+                  <div className="space-y-0.5">
+                    {previewPopup.detail.map((d, i) => (
+                      <div key={i} className="text-[11px] leading-snug text-app-subtext">{d}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {/* 缩放模式切换（单个按钮，点击在两种形态间切换）：置于左下角标尺空位 */}
               <button
                 type="button"
@@ -1054,7 +1166,7 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
 }
 
 // 策略规则编辑行（受控：value + onChange 由父级 strategy 状态驱动）
-const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemove }) => {
+const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemove, previewing, onTogglePreview }) => {
   // 按 stable key 从目录取当前标签定义（用于分组显示）
   const current = BACKTEST_TAG_CATALOG.find(t => t.key === value.tagKey);
   // 目录按 group 聚合，用于 <optgroup> 分组
@@ -1076,9 +1188,19 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
           启用
         </label>
         <span className="text-xs text-app-rowtext">策略 {index + 1}</span>
-        <button type="button" onClick={onRemove} className="text-app-subtext hover:text-brand-red transition-colors p-0.5" title="删除策略">
-          <Trash2 size={13} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onTogglePreview}
+            className={`p-0.5 transition-colors ${previewing ? 'text-indigo-300' : 'text-app-subtext hover:text-indigo-300'}`}
+            title={previewing ? '取消预览该标签在 K 线上的命中位置' : '预览该标签在 K 线上的命中位置'}
+          >
+            <Eye size={13} />
+          </button>
+          <button type="button" onClick={onRemove} className="text-app-subtext hover:text-brand-red transition-colors p-0.5" title="删除策略">
+            <Trash2 size={13} />
+          </button>
+        </div>
       </div>
       <select
         className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight text-app-text outline-none"
