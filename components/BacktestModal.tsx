@@ -128,6 +128,7 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
       wickDownColor: '#10b981',
       borderUpColor: '#ef4444',
       borderDownColor: '#10b981',
+      priceLineVisible: false,  // 不需要实时当前价虚线
     });
     seriesRef.current = series;
     // 叠加均线（MA5/10/20/30/60/120/250），按 MA_SPECS 配色

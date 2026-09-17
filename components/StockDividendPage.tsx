@@ -2269,6 +2269,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     resetMktSel();
   };
 
+  // 精确单击股票名称文字 → 直接打开回测页面（不触发标签弹窗）
+  const handleStockNameClick = (e: React.MouseEvent, stock: StockEntry) => {
+    if (editingId === stock.id || draggedId) return;
+    e.stopPropagation();
+    e.preventDefault();
+    // 关闭当前 hover 暂留的行情浮窗，避免与回测整页叠加
+    mktInfoHoveredRef.current = false;
+    mktInfoActiveIdRef.current = undefined;
+    setMktInfoPinned(false);
+    setMktInfoStock(null);
+    resetMktSel();
+    setBacktestStock(stock);
+  };
+
   // 行情状态浮窗可拖拽（拖拽头部）——与交易弹窗一致的 window 级指针实现
   const mktDragOffset = useRef({ x: 0, y: 0 });
   const isMktDragging = useRef(false);
@@ -4529,7 +4543,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         </div>
                       ) : nameSubMode === 'tags' ? (
                         <div className="relative flex flex-col items-center justify-center">
-                          <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
+                          <span onClick={(e) => handleStockNameClick(e, stock)} className={`text-[11px] font-bold leading-none cursor-pointer ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
                             const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
                             const n = raw.replace(/\s/g, '');
                             return n.length > 5 ? n.slice(0, 5) + '…' : n;
@@ -4548,7 +4562,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         </div>
                       ) : (
                         <div className="relative flex items-center justify-center h-8 whitespace-nowrap">
-                          <span className={`text-[11px] font-bold leading-none ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
+                          <span onClick={(e) => handleStockNameClick(e, stock)} className={`text-[11px] font-bold leading-none cursor-pointer ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
                             const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
                             const n = raw.replace(/\s/g, '');
                             return n.length > 5 ? n.slice(0, 5) + '…' : n;
