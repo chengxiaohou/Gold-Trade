@@ -8,6 +8,11 @@ import { fetchBollData } from '../services/bollService';
 
 type ChartCandle = { time: string; open: number; high: number; low: number; close: number };
 
+// 覆盖层买卖点标签规格：锚定 K 线的 time 与锚定价（卖=high/买=low），使圆点贴 K 线实体边缘外侧
+type TickSpec = { id: string; time: string; anchorPrice: number; action: 'buy' | 'sell' };
+// 覆盖层标签计算后的像素坐标（已在可视区内的标签）
+type OverlayTick = { id: string; x: number; y: number; action: 'buy' | 'sell' };
+
 export interface BacktestModalProps {
   stock: StockEntry;
   onClose: () => void;
@@ -47,6 +52,18 @@ const BOLL_SPECS: Array<{ key: 'upper' | 'mid' | 'lower'; color: string; label: 
 const BOLL_PERIOD = 20;
 const BOLL_MULT = 2;
 
+// 覆盖层买卖点标签几何：圆角方块 + 白色字母 + 点划线 + 末端圆点（与参考图一致）
+const TICK_SIZE = 12;        // 方块宽高（较上一版 9 略微增大）
+const TICK_RADIUS = 2.5;     // 方块圆角
+const LINE_LEN = 15;         // 点状虚线（方块边缘→圆点）长度，约3-4个点
+const DOT_R = TICK_SIZE / 6; // 末端圆点半径 = 标签宽度 1/3 直径 / 2
+const DOT_DA = '2 3';        // 点状虚线 pattern（短点+较大间隔，形成独立小点）
+const SPACING = 6;           // 圆点距 K 线实体边缘（high/low）的固定间距，上下一致
+const SELL_BG = '#4A90D9';   // 卖出标签底色（蓝，对齐参考图）
+const BUY_BG = '#C44A3D';    // 买入标签底色（砖红，对齐参考图）
+const TICK_FG = '#ffffff';   // 字母色（白）
+const TICK_ACTIVE = '#94a3b8'; // 选中态描边色（浅灰，暗底醒目）
+
 // 把 lightweight Time（字符串YYYY-MM-DD / BusinessDay / 时间戳）格式化为 YYYY-MM-DD
 function formatChartTime(time: Time): string {
   let y: number, m: number, d: number;
@@ -68,9 +85,13 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
   const [initialCapital, setInitialCapital] = useState(100000);
   const [rules, setRules] = useState<string[]>(['r1', 'r2']);
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
+  // 覆盖层买卖点标签的像素坐标（随缩放/平移重算）
+  const [overlayTicks, setOverlayTicks] = useState<OverlayTick[]>([]);
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ReturnType<IChartApi['addSeries']> | null>(null);
+  // 缓存最新 computeTickPositions，供图表内部事件/ResizeObserver 回调调用，避免闭包陈旧
+  const computeTicksRef = useRef<(() => void) | null>(null);
   const maSeriesRef = useRef<ISeriesApi<'Line'>[] | null>(null);
   const bollSeriesRef = useRef<ISeriesApi<'Line'>[] | null>(null);
   const [klines, setKlines] = useState<ChartCandle[] | null>(null);
@@ -129,6 +150,7 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
       borderUpColor: '#ef4444',
       borderDownColor: '#10b981',
       priceLineVisible: false,  // 不需要实时当前价虚线
+      lastValueVisible: false,  // 关闭右侧标尺的最新收盘价标签（铺满标尺，观感不佳）
     });
     seriesRef.current = series;
     // 叠加均线（MA5/10/20/30/60/120/250），按 MA_SPECS 配色
@@ -231,16 +253,21 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
     el.addEventListener('touchmove', onTouchMove, { passive: false });
     el.addEventListener('touchend', onTouchEnd);
 
-    // 兜底：容器尺寸变化（flex 拉伸/弹窗缩放）时强制重绘一次
+    // 兜底：容器尺寸变化（flex 拉伸/弹窗缩放）时强制重绘一次，并重算覆盖层标签
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined' && el) {
       ro = new ResizeObserver(() => {
         const w = el.clientWidth, h = el.clientHeight;
         if (w > 0 && h > 50) { try { chart.resize(w, h); } catch { /* ignore */ } }
+        computeTicksRef.current?.();
       });
       ro.observe(el);
     }
+    // 缩放/平移导致可视区变化时，重算覆盖层标签位置，保证跟随 K 线
+    const onTimeScaleChange = () => computeTicksRef.current?.();
+    chart.timeScale().subscribeVisibleLogicalRangeChange(onTimeScaleChange);
     return () => {
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(onTimeScaleChange);
       ro?.disconnect();
       el.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
       el.removeEventListener('touchstart', onTouchStart);
@@ -249,6 +276,7 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
       el.style.touchAction = '';
       if (chartInstance.current) { chartInstance.current.remove(); chartInstance.current = null; }
       seriesRef.current = null;
+      computeTicksRef.current = null;
     };
   }, []);
 
@@ -272,6 +300,78 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
     })();
     return () => { cancelled = true; };
   }, [stock.code]);
+
+  // 回测买卖点数据源：暂为空；待接入真实回测引擎后，由引擎产出与成交记录一一对应的买入/卖出点
+  const demoMarkers = useMemo<TickSpec[]>(() => [], []);
+
+  // 覆盖层定位：把对每个标签的 time→x、anchorPrice→y 换算成像素坐标；time/price 坐标不可得（K线滚出可视区）则隐藏
+  const computeTickPositions = useCallback(() => {
+    const chart = chartInstance.current;
+    const series = seriesRef.current;
+    if (!chart || !series) return;
+    const ts = chart.timeScale();
+    const container = chartRef.current;
+    const cw = container?.clientWidth ?? 0;
+    const ch = container?.clientHeight ?? 0;
+    // 右侧标尺宽度：方块右缘若越过绘图区右边界（会被标尺遮住）则直接隐藏该标签
+    const priceScaleW = chart.priceScale('right').width();
+    const half = TICK_SIZE / 2;
+    const rightLimit = cw - priceScaleW; // 绘图区右边界
+    const ticks: OverlayTick[] = [];
+    for (const m of demoMarkers) {
+      const x = ts.timeToCoordinate(m.time);
+      const y = series.priceToCoordinate(m.anchorPrice);
+      if (x == null || y == null) continue;
+      // 贴右缘/越界：方块右缘越过绘图区右边界即隐藏（K线回到展示区时坐标回落后自现）
+      if (x + half > rightLimit) continue;
+      // x 已在可视区但很贴边时也保留（方块相对较小），仅过滤出左缘/右缘完全在外的情况
+      if (x < -24) continue;
+      if (y < -40 || y > ch + 40) continue;
+      ticks.push({ id: m.id, x, y, action: m.action });
+    }
+    setOverlayTicks(ticks);
+  }, [demoMarkers]);
+
+  // 成交记录：由回测买卖点 demoMarkers 导出（暂无数据时为空表）
+  // 触发标签、价格、股数等将由真实回测引擎填充；此处先承接买卖点骨架
+  const tradeRows = useMemo(() => {
+    if (!klines) return [] as { id: string; time: string; action: 'buy' | 'sell'; price: number; shares: number; amount: number; triggerLabel: string }[];
+    return demoMarkers.map(m => {
+      const candle = klines.find(k => k.time === m.time);
+      const price = candle?.close ?? m.anchorPrice;
+      return {
+        id: m.id, time: m.time, action: m.action, price,
+        shares: 0, amount: 0, triggerLabel: '',
+      };
+    });
+  }, [demoMarkers, klines]);
+
+  // 双向定位：点击成交记录行时滚动图表 + 高亮；点击图表标签时仅定位表格（不移动图表可视区）
+  const goToTrade = useCallback((id: string, alsoScrollChart = false) => {
+    setSelectedTradeId(id);
+    // 表格滚动到对应行
+    document.getElementById(`bt-row-${id}`)?.scrollIntoView({ block: 'center' });
+    // 仅当需要（点击表格行）时才滚动图表到对应 K 线；点击图表标签时保持当前可视区间不变
+    if (alsoScrollChart) {
+      const chart = chartInstance.current;
+      if (!chart) return;
+      const ts = chart.timeScale();
+      // 由 id 定位到对应成交记录，取其 time 换算 K 线逻辑位置并滚动到可视区
+      const row = tradeRows.find(r => r.id === id);
+      if (row) {
+        const idx = klines.findIndex(k => k.time === row.time);
+        if (idx >= 0) {
+          const n = klines.length;
+          ts.setVisibleLogicalRange({ from: Math.max(0, idx - 40), to: Math.min(n, idx + 20) });
+        }
+      }
+    }
+  }, [klines, tradeRows]);
+
+  // 让图表内部事件回调始终拿到最新版 computeTickPositions
+  useEffect(() => {
+    computeTicksRef.current = computeTickPositions;
+  }, [computeTickPositions]);
 
   // 真实数据到达后更新图表
   useEffect(() => {
@@ -324,7 +424,7 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
       }
     }
     setLatestInd({ ma: latestMA, boll: latestBoll });
-    // 布局稳定后再设置可视范围，确保默认精准显示最后 60 根（最新一根贴右缘）
+    // 数据到达且布局稳定后，重算覆盖层标签位置（需在设好可视范围之后）
     const raf = requestAnimationFrame(() => {
       const ts = chart.timeScale();
       const count = klines.length;
@@ -332,9 +432,10 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
       ts.setVisibleLogicalRange({ from, to: count });
       // 使最新一根锚定在右侧边缘：把可视范围右端对齐数据末尾
       ts.scrollToPosition(0, false);
+      computeTickPositions();
     });
     return () => cancelAnimationFrame(raf);
-  }, [klines]);
+  }, [klines, demoMarkers, computeTickPositions]);
 
   // 按模式切换均线/布林线 series 的可见性
   useEffect(() => {
@@ -454,6 +555,89 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
                 ref={chartRef}
                 className="absolute inset-0"
               />
+              {/* 覆盖层：B/S 买卖点标签（蓝框=卖/砖红框=买 + 点划线 + 圆点），锚定并跟随 K 线
+                  svg 容器 inline pointer-events:none 不拦截图表滑/捏手势；热区自身 inline all 恢复点击 */}
+              <svg
+                className="absolute inset-0 z-10"
+                width="100%"
+                height="100%"
+                style={{ pointerEvents: 'none' }}
+              >
+                {overlayTicks.map(t => {
+                  // 布局（从 K 线往外）：K线 →[SPACING]→ 圆点 →[LINE_LEN点划线]→ 方块
+                  // 默认 buy 在 K 线下方、sell 在上方；dir=1下 / -1上
+                  const half = TICK_SIZE / 2;
+                  const dir: 1 | -1 = t.action === 'buy' ? 1 : -1;
+                  const color = t.action === 'buy' ? BUY_BG : SELL_BG;
+                  // 方块中心相对 K 线的总偏移
+                  const offset = SPACING + LINE_LEN + half;
+                  const ch = chartRef.current?.clientHeight ?? 300;
+                  let centerY = t.y + dir * offset;
+                  // 边界翻转：方块即将超出顶部/底部时翻转到 K 线另一侧
+                  if (centerY - half < 2) centerY = t.y - dir * offset;
+                  else if (centerY + half > ch - 2) centerY = t.y - dir * offset;
+                  // 局部坐标（以方块中心为原点）：圆点在方块靠 K 线一侧
+                  const dotLocal = -dir * (LINE_LEN + half);
+                  const edgeY = -dir * half; // 方块朝向圆点的边缘
+                  const selected = selectedTradeId === t.id;
+                  return (
+                    <g
+                      key={t.id}
+                      transform={`translate(${t.x} ${centerY})`}
+                      className="cursor-pointer"
+                      onClick={() => goToTrade(t.id)}
+                    >
+                      {/* 透明热区：扩展点击/手型命中面积（该批次图形在小方块外的点划线、圆点范围） */}
+                      <rect
+                        x={-12} y={dir * Math.min(edgeY, dotLocal) - 6}
+                        width={24}
+                        height={Math.abs(edgeY - dotLocal) + 12}
+                        fill="transparent"
+                        style={{ pointerEvents: 'all', cursor: 'pointer' }}
+                      />
+                      {/* 点状虚线：方块边缘 → 末端圆点 */}
+                      <line
+                        x1={0} y1={edgeY}
+                        x2={0} y2={dotLocal}
+                        stroke={color}
+                        strokeWidth={1.2}
+                        strokeDasharray={DOT_DA}
+                        pointerEvents="none"
+                      />
+                      {/* 末端圆点：停在 K 线外侧 SPACING 间距处，不插入 K 线内部 */}
+                      <circle
+                        cx={0}
+                        cy={dotLocal}
+                        r={DOT_R}
+                        fill={color}
+                        pointerEvents="none"
+                      />
+                      {/* 圆角方块：底色随买卖（蓝=卖/砖红=买），选中态用描边高亮 */}
+                      <rect
+                        x={-half} y={-half}
+                        width={TICK_SIZE} height={TICK_SIZE}
+                        rx={TICK_RADIUS}
+                        fill={color}
+                        stroke={selected ? TICK_ACTIVE : 'none'}
+                        strokeWidth={selected ? 1.5 : 0}
+                        pointerEvents="all"
+                      />
+                      {/* 白色字母 */}
+                      <text
+                        x={0} y={0}
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        fontSize={8}
+                        fontWeight={700}
+                        fill={TICK_FG}
+                        pointerEvents="none"
+                      >
+                        {t.action === 'buy' ? 'B' : 'S'}
+                      </text>
+                    </g>
+                  );
+                })}
+              </svg>
               {chartLoading && (
                 <div className="absolute inset-0 flex items-center justify-center text-xs text-app-subtext pointer-events-none">正在加载K线…</div>
               )}
@@ -467,23 +651,51 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
 
             {/* 操作记录表：与上方图表各占一半高度（flex-1 均分），超高滚动 */}
             <div className="border-t border-app-border overflow-y-auto custom-scrollbar flex-1 min-h-0">
-              <table className="w-full text-xs font-mono">
+              <table className="w-full table-fixed text-xs font-mono text-app-subtext">
+                <colgroup>
+                  <col />
+                  <col />
+                  <col />
+                  <col />
+                  <col />
+                  <col />
+                  <col />
+                  <col style={{ width: '150px' }} />
+                </colgroup>
                 <thead className="sticky top-0 bg-app-bg border-b border-app-border z-10">
                   <tr className="text-app-subtext text-[11px]">
                     <th className="px-2 py-1.5 text-left">日期</th>
-                    <th className="px-2 py-1.5 text-left">标签</th>
-                    <th className="px-2 py-1.5 text-center">操作</th>
+                    <th className="px-2 py-1.5 text-right">操作</th>
                     <th className="px-2 py-1.5 text-right">价格</th>
                     <th className="px-2 py-1.5 text-right">股数</th>
                     <th className="px-2 py-1.5 text-right">金额</th>
                     <th className="px-2 py-1.5 text-right">持仓</th>
                     <th className="px-2 py-1.5 text-right">盈亏</th>
+                    <th className="px-2 py-1.5 text-right">标签</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr>
-                    <td colSpan={8} className="text-center py-4 text-app-subtext text-[12px]">{selectedTradeId ? '已选中一条记录（占位）' : '暂无交易记录'}</td>
-                  </tr>
+                  {tradeRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="text-center py-4 text-app-subtext text-[12px]">暂无交易记录</td>
+                    </tr>
+                  ) : tradeRows.map(r => (
+                    <tr
+                      key={r.id}
+                      id={`bt-row-${r.id}`}
+                      onClick={() => goToTrade(r.id, true)}
+                      className={`cursor-pointer transition-colors ${selectedTradeId === r.id ? 'bg-indigo-500/15' : 'hover:bg-app-input/40'}`}
+                    >
+                      <td className="px-2 py-1.5 whitespace-nowrap">{r.time}</td>
+                      <td className="px-2 py-1.5 text-right" style={{ color: r.action === 'buy' ? BUY_BG : SELL_BG }}>{r.action === 'buy' ? '买入' : '卖出'}</td>
+                      <td className="px-2 py-1.5 text-right">{r.price.toFixed(2)}</td>
+                      <td className="px-2 py-1.5 text-right">{r.shares}</td>
+                      <td className="px-2 py-1.5 text-right">{r.amount}</td>
+                      <td className="px-2 py-1.5 text-right">—</td>
+                      <td className="px-2 py-1.5 text-right">—</td>
+                      <td className="px-2 py-1.5 whitespace-nowrap text-right">{r.triggerLabel}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
