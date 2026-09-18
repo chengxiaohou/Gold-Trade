@@ -59,6 +59,7 @@ export interface AppSettings {
   touchMode: boolean; // New: Enable touch drag to adjust values
   priceDisplayMode: 'breakEven' | 'avgCost' | 'both';
   totalCapital?: number; // New: Total planned investment capital
+  dividendTotalCapital?: number; // 分红页账户总资金（独立于黄金页 totalCapital，随云端同步）
   visibleColumns?: string[]; // New: Which columns to show in trade list
   buyTaxFee?: number; // New: Tax fee per buy transaction
   sellTaxFee?: number; // New: Tax fee per sell transaction

@@ -282,6 +282,7 @@ export default function App() {
       touchMode: parsed.touchMode ?? true,
       priceDisplayMode: parsed.priceDisplayMode || 'both',
       totalCapital: parsed.totalCapital || 0,
+      dividendTotalCapital: parsed.dividendTotalCapital || 0,
       visibleColumns: parsed.visibleColumns,
       buyTaxFee: parsed.buyTaxFee ?? 5,
       sellTaxFee: parsed.sellTaxFee ?? 5,
@@ -2385,6 +2386,8 @@ export default function App() {
             onExportFullBackup={handleStockFullExport}
             onImportFullBackup={handleStockFullImport}
             onBacktestPresetsDirty={bumpBacktestPresets}
+            dividendTotalCapital={appSettings.dividendTotalCapital || 0}
+            onDividendTotalCapitalChange={(v) => handleSettingsUpdate({ dividendTotalCapital: v })}
             />
           </PageErrorBoundary>
         )}

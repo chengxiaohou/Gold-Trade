@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, List, ChevronDown, Copy } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS } from '../types';
 import { fetchBollData, checkAllBollCache, countStaleBollCache, countVisibleBollItems, getBollCacheTimestamps, ensureBollCacheRestored, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
@@ -11,7 +11,7 @@ import { fetchYearlyDividends, DividendRecord } from '../services/dividendServic
 import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
-import { calcRealizedPnlForRange } from '../services/realizedPnl';
+import { calcRealizedPnlForRange, calcPositionFromTrades } from '../services/realizedPnl';
 import { analyzeKlinePatterns, analyzeDailySignals, analyzeFengSignals, calcMaSeries, calcBollSeries, isTodayVolumeEligible } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal } from '../services/tagAnalyzers';
 import { InputGroup } from './InputGroup';
@@ -256,6 +256,8 @@ interface StockDividendPageProps {
   buyOrderPlaceholder?: string; // 买入挂单备注占位文字（随云端同步）
   sellOrderPlaceholder?: string; // 卖出挂单备注占位文字（随云端同步）
   showRequestStats?: boolean;
+  dividendTotalCapital?: number;          // 分红页账户总资金（随云端同步）
+  onDividendTotalCapitalChange?: (v: number) => void;
   ledgerMap?: StockLedgerMap;
   onLedgerMapChange?: (updater: (prev: StockLedgerMap) => StockLedgerMap) => void;
   onExportFullBackup?: () => void;           // 全量备份导出（stocks + ledger + stockSettings）
@@ -1313,7 +1315,7 @@ type SrRow =
   | { kind: 'plain'; text: string }
   | { kind: 'cell'; name: string; color?: string; rest: string };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, autoRefreshInterval = 60, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, autoRefreshInterval = 60, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
   // 全量备份导入用的隐藏文件选择（放入盈利统计面板）
   const fullBackupInputRef = useRef<HTMLInputElement>(null);
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
@@ -2481,6 +2483,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     try { localStorage.setItem('stock_request_log_panel_open', showLogPanel ? '1' : '0'); } catch {}
   }, [showLogPanel]);
 
+  // 底部栏点击空白区域切换展开/收起（交互控件点击不触发）
+  const toggleBottomBar = useCallback((e: React.MouseEvent) => {
+    const t = e.target as HTMLElement;
+    if (t.closest('button, input, select, a, label')) return;
+    if (bottomBarView === 'request') setShowLogPanel(v => !v);
+    else setShowProfitPanel(v => !v);
+  }, [bottomBarView]);
+
   // 盈利统计数据源：优先全量流水账；无流水账时回退到页面主 state 的 stockTrades（兼容首次使用未建 IndexedDB）
   const effectiveLedger = useMemo<StockLedgerMap>(() => {
     if (ledgerMap && Object.keys(ledgerMap).length > 0) return ledgerMap;
@@ -2520,6 +2530,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return `${d.getFullYear()}-${m}-${day}`;
   };
   const profitRangeLabel = `${fmtShortDate(profitRange.startTs)} ~ ${fmtShortDate(profitRange.endTs)}`;
+
+  // 账户汇总：已投入（持仓成本） / 总资金 / 剩余 / 仓位占比（不关联现价）
+  const [editingCapital, setEditingCapital] = useState(false);
+  const accountSummary = useMemo(() => {
+    let invested = 0;
+    for (const key of Object.keys(effectiveLedger)) {
+      const entry = effectiveLedger[key];
+      if (!entry || !entry.trades) continue;
+      const { shares, avgCost } = calcPositionFromTrades(entry.trades);
+      invested += shares * avgCost;
+    }
+    const total = dividendTotalCapital || 0;
+    const remaining = Math.max(0, total - invested);
+    const ratio = total > 0 ? (invested / total) * 100 : 0;
+    return { invested, total, remaining, ratio };
+  }, [effectiveLedger, dividendTotalCapital]);
+  const fmtCapital = (v: number) => v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const toggleProfitDay = (date: string) => {
     setExpandedProfitDays(prev => {
@@ -6563,10 +6590,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {/* 页面底部请求计数器 */}
       {showRequestStats && (
       <div className="fixed bottom-0 left-0 right-0 z-30 bg-app-card border-t border-app-border px-4 py-2">
-        <div className="flex items-center justify-between gap-2">
+        <div onClick={toggleBottomBar} className="flex items-center justify-between gap-2 h-[29px] cursor-pointer">
           <div className="flex items-center gap-3 min-w-0">
             <button
-              onClick={() => setBottomBarView(v => (v === 'request' ? 'profit' : 'request'))}
+              onClick={(e) => { e.stopPropagation(); setBottomBarView(v => (v === 'request' ? 'profit' : 'request')); }}
               className="flex items-center gap-2 text-xs text-app-subtext hover:text-app-text transition-colors shrink-0"
               title={bottomBarView === 'request' ? '切换到盈利统计' : '切换到请求统计'}
             >
@@ -6574,63 +6601,45 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <span>{bottomBarView === 'request' ? '请求统计' : '盈利统计'}</span>
             </button>
             {bottomBarView === 'request' ? (
-              <div className="flex items-center gap-3 text-xs whitespace-nowrap">
-                <span className="text-app-subtext">总计: <span className="text-app-text font-medium">{requestStats.total}</span></span>
+              <div className="flex items-center gap-3 text-[10px] whitespace-nowrap">
+                <span className="text-app-subtext">总计: <span className="text-app-subtext font-medium">{requestStats.total}</span></span>
                 <span className="text-green-400">成功: <span className="font-medium">{requestStats.success}</span></span>
                 <span className="text-red-400">失败: <span className="font-medium">{requestStats.failed}</span></span>
                 <span className="text-blue-400">缓存: <span className="font-medium">{requestStats.cached}</span></span>
                 <span className="text-yellow-400">进行中: <span className="font-medium">{requestStats.pending}</span></span>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5 flex-wrap text-xs py-0.5">
-                {/* 周期快捷选择 */}
-                <div className="flex items-center rounded-md border border-app-border bg-app-input/40 p-0.5 shrink-0">
-                  {PROFIT_RANGE_SEGS.map(seg => (
-                    <button
-                      key={seg.key}
-                      type="button"
-                      onClick={() => {
-                        setProfitRangeMode(seg.key);
-                        if (seg.key !== 'custom') setShowProfitPanel(true);
-                      }}
-                      className={`px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap transition-colors ${
-                        profitRangeMode === seg.key ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'
-                      }`}
+              <div className="flex items-center gap-3 text-[10px] whitespace-nowrap">
+                <span className="text-app-subtext">总资金:
+                  {editingCapital ? (
+                    <input
+                      autoFocus
+                      type="number"
+                      value={dividendTotalCapital || ''}
+                      onChange={(e) => onDividendTotalCapitalChange?.(parseFloat(e.target.value) || 0)}
+                      onBlur={() => setEditingCapital(false)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                      placeholder="0.00"
+                      className="no-spinners font-mono font-medium bg-transparent border-b border-app-border outline-none w-20 text-right mx-1"
+                    />
+                  ) : (
+                    <span
+                      onClick={(e) => { e.stopPropagation(); setEditingCapital(true); }}
+                      className="font-mono font-medium text-app-text cursor-pointer hover:text-indigo-400 transition-colors"
+                      title="点击修改总资金"
                     >
-                      {seg.label}
-                    </button>
-                  ))}
-                </div>
-                {/* 自定义起止 */}
-                <div className="flex items-center gap-1 rounded-md border border-app-border bg-app-input/40 px-1.5 py-[3px] shrink-0">
-                  <input
-                    type="date"
-                    value={profitCustomStart}
-                    onChange={e => { setProfitCustomStart(e.target.value); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
-                    className="w-[100px] shrink-0 bg-transparent text-[10px] text-app-text outline-none appearance-none"
-                  />
-                  <span className="text-app-subtext shrink-0">至</span>
-                  <input
-                    type="date"
-                    value={profitCustomEnd}
-                    onChange={e => { setProfitCustomEnd(e.target.value); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
-                    className="w-[100px] shrink-0 bg-transparent text-[10px] text-app-text outline-none appearance-none"
-                  />
-                </div>
+                      {fmtCapital(accountSummary.total)}
+                    </span>
+                  )}
+                </span>
+                <span className="text-app-subtext">已投入: <span className="font-mono font-medium text-app-text">{fmtCapital(accountSummary.invested)}</span></span>
+                <span className="text-app-subtext">剩余: <span className="font-mono font-medium text-app-text">{fmtCapital(accountSummary.remaining)}</span></span>
+                <span className="text-app-subtext">仓位: <span className="font-mono font-medium text-app-text">{accountSummary.ratio.toFixed(1)}%</span></span>
               </div>
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {bottomBarView === 'request' ? (<>
-            <button
-              onClick={() => setShowLogPanel(prev => !prev)}
-              disabled={requestLogs.length === 0}
-              className="flex items-center gap-1 px-2 py-1 text-xs text-app-subtext hover:text-app-text border border-app-border rounded hover:border-app-text/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="展开/收起当前请求日志"
-            >
-              <List size={12} />
-              <span className="hidden sm:inline">{showLogPanel ? '收起日志' : '查看日志'}</span>
-            </button>
             <button
               onClick={() => {
                 const csvContent = requestLogService.exportLogs();
@@ -6667,16 +6676,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <Download size={12} />
               <span className="hidden sm:inline">导出内置</span>
             </button>
-            </>) : (
-            <button
-              onClick={() => setShowProfitPanel(p => !p)}
-              className="flex items-center gap-1 px-2 py-1 text-xs text-app-subtext hover:text-app-text border border-app-border rounded hover:border-app-text/50 transition-colors"
-              title="展开/收起盈利明细"
-            >
-              <List size={12} />
-              <span className="hidden sm:inline">{showProfitPanel ? '收起明细' : '展开明细'}</span>
-            </button>
-            )}
+            </>) : null}
           </div>
         </div>
 
@@ -6766,8 +6766,46 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         {/* 盈利明细面板（仅盈利视图） */}
         {bottomBarView === 'profit' && showProfitPanel && (
           <div className="mt-2 pt-2 border-t border-app-border max-h-[66vh] flex flex-col">
-            {/* 汇总区（非滚动）：汇总卡片 + 个股小计 + 逐日明细标题 */}
+            {/* 汇总区（非滚动）：周期选择 + 汇总卡片 + 个股小计 + 逐日明细标题 */}
             <div className="shrink-0 space-y-2">
+            {/* 周期快捷选择 */}
+            <div className="flex items-center gap-1.5 flex-wrap text-xs py-0.5">
+              <div className="flex items-center rounded-md border border-app-border bg-app-input/40 p-0.5 shrink-0">
+                {PROFIT_RANGE_SEGS.map(seg => (
+                  <button
+                    key={seg.key}
+                    type="button"
+                    onClick={() => {
+                      setProfitRangeMode(seg.key);
+                      if (seg.key !== 'custom') setShowProfitPanel(true);
+                    }}
+                    className={`px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap transition-colors ${
+                      profitRangeMode === seg.key ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'
+                    }`}
+                  >
+                    {seg.label}
+                  </button>
+                ))}
+              </div>
+              {/* 自定义起止（仅在选中“自定义”时显示） */}
+              {profitRangeMode === 'custom' && (
+              <div className="flex items-center gap-1 rounded-md border border-app-border bg-app-input/40 px-1.5 py-[3px] shrink-0">
+                <input
+                  type="date"
+                  value={profitCustomStart}
+                  onChange={e => { setProfitCustomStart(e.target.value); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
+                  className="w-[100px] shrink-0 bg-transparent text-[10px] text-app-text outline-none appearance-none"
+                />
+                <span className="text-app-subtext shrink-0">至</span>
+                <input
+                  type="date"
+                  value={profitCustomEnd}
+                  onChange={e => { setProfitCustomEnd(e.target.value); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
+                  className="w-[100px] shrink-0 bg-transparent text-[10px] text-app-text outline-none appearance-none"
+                />
+              </div>
+              )}
+            </div>
             {/* 汇总卡片 + 个股小计（中间） */}
             <div className="bg-app-card/70 rounded-lg px-3 py-2 flex items-center gap-x-3 gap-y-1 border border-app-border">
               <div className="shrink-0">

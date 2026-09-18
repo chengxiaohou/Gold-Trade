@@ -273,6 +273,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         touchMode: touchMode,
         priceDisplayMode: priceDisplayMode,
         totalCapital: appSettings.totalCapital, // Preserve existing total capital
+        dividendTotalCapital: appSettings.dividendTotalCapital,
         visibleColumns: currentPage === 'gold' ? visibleColumns : appSettings.visibleColumns,
         buyTaxFee: parseFloat(buyTaxFee) || 5,
         sellTaxFee: parseFloat(sellTaxFee) || 5,
@@ -382,6 +383,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       touchMode: touchMode,
       priceDisplayMode: priceDisplayMode,
       totalCapital: appSettings.totalCapital,
+      dividendTotalCapital: appSettings.dividendTotalCapital,
       visibleColumns: currentPage === 'gold' ? visibleColumns : appSettings.visibleColumns,
       buyTaxFee: parseFloat(buyTaxFee) || 5,
       sellTaxFee: parseFloat(sellTaxFee) || 5,
