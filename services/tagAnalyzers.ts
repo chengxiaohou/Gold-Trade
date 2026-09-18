@@ -744,6 +744,88 @@ export function latestBarFingerprint(klines: BollKline[]): string {
   return `${k.date}|${k.open}|${k.high}|${k.low}|${k.close}|${k.volume}`;
 }
 
+// ── 底部企稳：缩量回踩 / 缩量企稳 / 有效企稳（作用于最新收盘交易日当日，互斥，最多命中其一）──
+// 语义来自"合适买入时机"的缩量企稳分级：
+//   回踩   = 量缩 ∧ 收<MA5 ∧ 低点未抬高(L≤L₋₁)               → 非买点（参考价值低）
+//   企稳   = 量缩 ∧ 低点不创新低 ∧ (价止跌∨放量) ∧ MA5走平/上翘 → 初步可关注
+//   有效企稳 = 连续3日(量缩前段∧低点连抬) ∧ 放量收复MA10     → 可交易买点
+export interface StabilizeTag {
+  date: string;
+  kind: 'retrace' | 'stable' | 'confirm'; // 缩量回踩 / 缩量企稳 / 有效企稳
+  label: string;
+  single: string;   // 回 / 稳 / 效
+  color: 'green' | 'red'; // 回踩=绿(非买点) 企稳/有效=红(买/关注)
+  detail: string[]; // 判定依据，含对话的参考价值说明
+}
+
+export function analyzeStabilize(klines: BollKline[], fmt: (v: number) => string, allowVol: boolean, cfg: TagParams = DEFAULT_TAG_PARAMS): StabilizeTag | null {
+  const n = klines.length;
+  // 需至少6根（MA5 与 5日均量）；未收盘的今日量能未定型时不判定（与量价类一致，由 allowVol 控制）
+  if (n < 6 || !allowVol) return null;
+  const t = n - 1, p = t - 1;
+  const k = klines[t], pk = klines[p];
+  const V = k.volume, C = k.close, L = k.low;
+  const fmtV = (v: number) => v >= 1e8 ? `${(v / 1e8).toFixed(2)}亿` : v >= 1e4 ? `${(v / 1e4).toFixed(1)}万` : `${v.toFixed(0)}`;
+  // 近 cnt 根（含第 i 根）均量
+  const volMa = (i: number, cnt: number) => {
+    const nn = Math.min(cnt, i + 1);
+    let s = 0;
+    for (let j = i - nn + 1; j <= i; j++) s += klines[j].volume;
+    return s / nn;
+  };
+  const MAV5 = volMa(t, 5);
+  const ma5 = calcMaSeries(klines, 5);
+  const ma10 = calcMaSeries(klines, 10);
+  const MA5 = ma5[t]!, MA5p = ma5[p]!, MA10 = ma10[t];
+  const shrink = V < MAV5;                  // 量缩：当日量 < 5日均量
+  const R = V > 1.3 * MAV5 && C > pk.close && MA10 != null && C > MA10; // 放量确认：>1.3×5日均量、上涨、收复MA10
+  const notNewLow = L >= pk.low;            // 价格端：低点不再创新低
+  // 连续低点不创新低 + 放量日前一段持续量缩（k=3）
+  const DAYS = 3;
+  let contOk = !!(n >= DAYS + 1);
+  if (contOk) {
+    for (let i = t - DAYS + 1; i <= t; i++) {
+      if (i < 1 || klines[i].low < klines[i - 1].low) { contOk = false; break; } // 低点连抬
+      if (i < t && klines[i].volume >= volMa(i, 5)) { contOk = false; break; }   // 放量日前段连续量缩（今日放量不入列）
+    }
+  }
+  const ds = k.date.slice(5).replace('-', '/');
+  // 有效企稳（可交易买点）
+  if (R && notNewLow && contOk) {
+    return {
+      date: k.date, kind: 'confirm', label: '有效企稳', single: '效', color: 'red',
+      detail: [
+        `${ds} 有效企稳：连续 ${DAYS} 日低点不创新低，今日放量 ${fmtV(V)} > 1.3×5日均量 ${fmtV(MAV5)}，收 ${fmt(C)} 站上 MA10 ${fmt(MA10 == null ? C : MA10)}`,
+        `量能（放量确认）→ 价格（低点连抬）→ 均线（收复MA10）三重验证`,
+        `参考价值：较高 —— 连续缩量后放量收复关键位，通常是可交易买点`,
+      ],
+    };
+  }
+  // 缩量企稳（初步可关注）
+  if (shrink && notNewLow && (C >= pk.close || R) && MA5 >= MA5p) {
+    return {
+      date: k.date, kind: 'stable', label: '缩量企稳', single: '稳', color: 'red',
+      detail: [
+        `${ds} 缩量企稳：量 ${fmtV(V)} < 5日均量 ${fmtV(MAV5)}，低点 ${fmt(L)} 不再创新低（≥ 昨低 ${fmt(pk.low)}），${C >= pk.close ? '收盘止跌' : '出现放量'}，MA5 ${fmt(MA5)} ${MA5 >= MA5p ? '走平/上翘' : '仍向下'}`,
+        `量缩 + 价格止跌 + 短均线走平上翘 → 缩量企稳（初步信号）`,
+        `参考价值：中等 —— 短线可关注，需等放量确认或站稳 MA10 再行动`,
+      ],
+    };
+  }
+  // 缩量回踩（非买点）
+  if (shrink && C < MA5 && L <= pk.low) {
+    return {
+      date: k.date, kind: 'retrace', label: '缩量回踩', single: '回', color: 'green',
+      detail: [
+        `${ds} 缩量回踩：量 ${fmtV(V)} < 5日均量 ${fmtV(MAV5)}，收 ${fmt(C)} < MA5 ${fmt(MA5)}，低点 ${fmt(L)} 未抬高（≤ 昨低 ${fmt(pk.low)}）`,
+        `量缩但价格仍弱、低点未抬高 → 更可能是下跌中继，不是企稳`,
+        `参考价值：低 —— 不宜急于抄底，应等待企稳信号`,
+      ],
+    };
+  }
+  return null;
+}
+
 // 列表页缩略展示：封装原 getLatestDayTags 的拼装体——破位单字(破/真/假) → K线形态单字 → 环境(trend/volatility)单字
 // 从"已判定的结果"生成列表页缩略单字标签（纯映射，不再重复判定）。
 // events / patterns / env 由调用方对"同一组（含实时价覆盖后的）K 线"只计算一遍，
@@ -753,6 +835,7 @@ export function buildLatestShrinkTags(
   patterns: KlinePattern[] | null,
   env: EnvResult | null,
   lastDate: string,
+  stabilize: StabilizeTag | null,
 ): MktTag[] {
   // 破位类事件标签（不含“修复观察”）
   const breakTags: MktTag[] = [];
@@ -784,6 +867,10 @@ export function buildLatestShrinkTags(
       tags.push({ key: `env-${t.key}`, text: t.single, cls: ENV_SINGLE_CLS[t.color] });
     }
   }
+  // 底部企稳：缩量回踩 / 缩量企稳 / 有效企稳（当日互斥，最多一个）
+  if (stabilize) {
+    tags.push({ key: `stz-${stabilize.kind}`, text: stabilize.single, cls: ENV_SINGLE_CLS[stabilize.color] });
+  }
   tags.push(...breakTags);
   return tags;
 }
@@ -795,8 +882,10 @@ export function buildLatestDayTags(klines: BollKline[], fmt: (v: number) => stri
   const events = analyzeMarketConditions(klines);
   const lastDate = klines[klines.length - 1].date;
   const patterns = analyzeKlinePatterns(klines, fmt, cfg);
-  const env = analyzeEnvironment(klines, fmt, isTodayVolumeEligible(klines), cfg);
-  return buildLatestShrinkTags(events, patterns, env, lastDate);
+  const allowVol = isTodayVolumeEligible(klines);
+  const env = analyzeEnvironment(klines, fmt, allowVol, cfg);
+  const stabilize = analyzeStabilize(klines, fmt, allowVol, cfg);
+  return buildLatestShrinkTags(events, patterns, env, lastDate, stabilize);
 }
 
 // 弹窗破位事件“判断依据”文案拼接（封装原 explainLines 中 selEv 分支）

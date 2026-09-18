@@ -12,8 +12,8 @@ import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
 import { calcRealizedPnlForRange, calcPositionFromTrades } from '../services/realizedPnl';
-import { analyzeKlinePatterns, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, buildLatestShrinkTags, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint } from '../services/tagAnalyzers';
-import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult } from '../services/tagAnalyzers';
+import { analyzeKlinePatterns, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, analyzeStabilize, buildLatestShrinkTags, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint } from '../services/tagAnalyzers';
+import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, StabilizeTag } from '../services/tagAnalyzers';
 import { InputGroup } from './InputGroup';
 import { BacktestModal } from './BacktestModal';
 
@@ -1495,6 +1495,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   type MktSel = { date: string; kind: 'event' | 'status' | 'repair' }
     | { date: string; kind: 'pattern'; ptype: KlinePattern['type'] }
     | { date: string; kind: 'env'; ekey: string }
+    | { date: string; kind: 'stabilize' }
     | { date: string; kind: 'daily'; dkey: DailySignal['kind'] }
     | { date: string; kind: 'feng'; dir: 'add' | 'reduce' };
   const [mktSel, setMktSel] = useState<MktSel | null>(null);
@@ -1980,11 +1981,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 首次判定的统一数据源：对"同一组（实时价覆盖后的）K 线"只计算一遍 破位/形态/环境，
   // 列表缩略标签（buildLatestShrinkTags）与行情浮窗详细展示共用这份结果，杜绝两套判定喂不同数据。
   const LATEST_TAG_VERSION = 13; // 判定/展示逻辑变更时 +1，避免 HMR 保留旧缓存导致缩略与弹窗不一致
-  const analyzedCache = useRef(new Map<string, { v: number; key: string; data: { klines: BollKline[] | null; events: MarketEvent[] | null; allowVol: boolean; patterns: KlinePattern[] | null; env: EnvResult | null } }>());
-  const computeAnalyzed = (stock: StockEntry): { klines: BollKline[] | null; events: MarketEvent[] | null; allowVol: boolean; patterns: KlinePattern[] | null; env: EnvResult | null } => {
+  const analyzedCache = useRef(new Map<string, { v: number; key: string; data: { klines: BollKline[] | null; events: MarketEvent[] | null; allowVol: boolean; patterns: KlinePattern[] | null; env: EnvResult | null; stabilize: StabilizeTag | null } }>());
+  const computeAnalyzed = (stock: StockEntry): { klines: BollKline[] | null; events: MarketEvent[] | null; allowVol: boolean; patterns: KlinePattern[] | null; env: EnvResult | null; stabilize: StabilizeTag | null } => {
     const daily = stockBollMap.get(stock.id)?.daily;
     const raw = daily?.klines;
-    if (!raw || raw.length === 0) return { klines: null, events: null, allowVol: false, patterns: null, env: null };
+    if (!raw || raw.length === 0) return { klines: null, events: null, allowVol: false, patterns: null, env: null, stabilize: null };
     const price = stock.price;
     // 缓存键必须包含实时价与"今日/live bar 的内容指纹"——盘中价格原地更新时数组引用不变，
     // 仅用数组引用会导致判定结果（如来去匆匆的十字星）缓存过期、与实时价不一致。
@@ -2003,6 +2004,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       allowVol,
       patterns: analyzeKlinePatterns(klines, v => formatPrice(v, stock.name), tagParams),
       env: analyzeEnvironment(klines, v => formatPrice(v, stock.name), allowVol, tagParams),
+      stabilize: analyzeStabilize(klines, v => formatPrice(v, stock.name), allowVol, tagParams),
     };
     analyzedCache.current.set(stock.id, { v: LATEST_TAG_VERSION, key, data });
     return data;
@@ -2012,7 +2014,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const getLatestDayTags = (stock: StockEntry): { key: string; text: string; cls: string }[] => {
     const a = computeAnalyzed(stock);
     if (!a.klines) return [];
-    return buildLatestShrinkTags(a.events, a.patterns, a.env, a.klines[a.klines.length - 1].date);
+    return buildLatestShrinkTags(a.events, a.patterns, a.env, a.klines[a.klines.length - 1].date, a.stabilize);
   };
 
   // 列表当前显示顺序（按排序规则重排；默认顺序即 stocks 原序）
@@ -5868,6 +5870,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         // const dailySignals = klines && klines.length > 0 ? analyzeDailySignals(klines, allowVol) : []; // 暂时注释，后续可能重新启用
         const patterns = analyzed.patterns;
         const env = analyzed.env;
+        const stabilize = analyzed.stabilize;
         // const feng = klines && klines.length > 0 ? analyzeFengSignals(klines, v => formatPrice(v, mktInfoStock.name), allowVol, tagParams) : null; // 暂时注释，后续可能重新启用
         const fmtDay = (d: string) => {
           const p = d.split('-');
@@ -5923,6 +5926,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         } else if (selKey && selKey.kind === 'env') {
           const t = env?.tags.find(x => x.key === selKey.ekey);
           if (t) explainLines.push(...t.detail);
+        } else if (selKey && selKey.kind === 'stabilize') {
+          // 底部企稳：判定依据 + 参考价值见 detail
+          if (stabilize) explainLines.push(...stabilize.detail);
         /* 每日信号判定依据暂时注释
         } else if (selKey && selKey.kind === 'daily') {
           // 每日量价/MACD 显著信号：判定依据来自信号触发条件（区别于环境量价的"当前状态"描述）
@@ -6111,6 +6117,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   >{p.label}</span>
                 ));
               }
+              // 底部企稳（缩量回踩/缩量企稳/有效企稳）：最新日期那一行追加一个 chip
+              if (stabilize) {
+                const isStabSel = !!selKey && selKey.kind === 'stabilize' && selKey.date === stabilize.date;
+                addChip(stabilize.date, (
+                  <span
+                    className={`${chipBase} ${patChipCls[stabilize.color].cls}${isStabSel ? patChipCls[stabilize.color].sel : ''}`}
+                    onMouseEnter={() => handleMktTagEnter({ date: stabilize.date, kind: 'stabilize' })}
+                    onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date: stabilize.date, kind: 'stabilize' }); }}
+                  >{stabilize.label}</span>
+                ));
+              }
               // 最新收盘日：价格列显示缓存现价（红涨绿跌），其余日期显示当日收盘
               const latestDate = klines && klines.length ? klines[klines.length - 1].date : '';
               const dates = [...byDate.keys()].sort();
@@ -6144,7 +6161,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 ) : (
                   <div className="text-[9px] text-app-rowtext">-</div>
                 );
-              })() : /* daily 参考价值暂时注释
+              })() : selKey && selKey.kind === 'stabilize' ? (
+                <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{(stabilize?.detail.find(d => d.includes('参考价值')) ?? '-')}</div>
+              ) : /* daily 参考价值暂时注释
               selKey && selKey.kind === 'daily' ? (
                 <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{DAILY_REFERENCE[selKey.dkey] ?? '-'}</div>
               ) : */ (

@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import type { BollKline } from '../bollService';
-import type { EnvTag, MarketEvent } from '../tagAnalyzers';
+import type { EnvTag, MarketEvent, StabilizeTag } from '../tagAnalyzers';
 import {
   analyzeKlinePatterns,
   analyzeMarketConditions,
   analyzeEnvironment,
+  analyzeStabilize,
   buildLatestDayTags,
   buildLatestShrinkTags,
   selectEnvDisplayTags,
@@ -85,6 +86,51 @@ describe('analyzeKlinePatterns（K线形态）', () => {
     expect(joined).toContain('十字星');
     expect(joined).toContain('实体占比');
   });
+
+  it('下影长/上影短/实体小 + 贴近近20日低点 → 金针探底（单字"针"，红/看多）', () => {
+    const k = mkKlines(140, { overrides: { 139: { open: 98.8, close: 99, high: 99.0, low: 96 } } });
+    const ps = analyzeKlinePatterns(k, fmt);
+    expect(ps).toHaveLength(1);
+    expect(ps[0].type).toBe('hammer');
+    expect(ps[0].single).toBe('针');
+    expect(ps[0].color).toBe('red');
+  });
+
+  it('下影长/上影短/实体小 + MA20向上贴近近20日高点 → 吊颈线（单字"吊"，绿/看空）', () => {
+    const k = mkKlines(140, {
+      close: i => 10 + i * 0.2,
+      overrides: { 139: { open: 37.8, close: 37.7, high: 37.81, low: 36.5 } },
+    });
+    const ps = analyzeKlinePatterns(k, fmt);
+    expect(ps).toHaveLength(1);
+    expect(ps[0].type).toBe('hangingMan');
+    expect(ps[0].single).toBe('吊');
+    expect(ps[0].color).toBe('green');
+  });
+
+  it('上影长/下影短/实体小 + MA20向上贴近高点 → 射击之星（单字"射"，绿/看空）', () => {
+    const k = mkKlines(140, {
+      close: i => 10 + i * 0.2,
+      overrides: { 139: { open: 37.4, close: 37.5, high: 38.5, low: 37.38 } },
+    });
+    const ps = analyzeKlinePatterns(k, fmt);
+    expect(ps).toHaveLength(1);
+    expect(ps[0].type).toBe('shootingStar');
+    expect(ps[0].single).toBe('射');
+    expect(ps[0].color).toBe('green');
+  });
+
+  it('上影长/下影短/实体小 + 下跌末端贴近低点 → 倒锤子线（单字"倒"，红/看多）', () => {
+    const k = mkKlines(140, {
+      close: i => 100 - i * 0.5,
+      overrides: { 139: { open: 30.5, close: 30.6, high: 31.6, low: 30.48 } },
+    });
+    const ps = analyzeKlinePatterns(k, fmt);
+    expect(ps).toHaveLength(1);
+    expect(ps[0].type).toBe('invertedHammer');
+    expect(ps[0].single).toBe('倒');
+    expect(ps[0].color).toBe('red');
+  });
 });
 
 describe('analyzeMarketConditions（破位与观察）', () => {
@@ -141,6 +187,21 @@ describe('analyzeEnvironment（趋势结构 / 布林波动）', () => {
     const trend = sel.find(t => t.dim === 'trend');
     expect(trend).toBeDefined();
     expect(trend!.detail.length).toBeGreaterThan(0);
+  });
+
+  it('横盘后连续跳水贴下轨 → 布林"下轨扩张"（单字"扩"，绿/看空，dim=volatility）', () => {
+    // 前段横盘(flat100)压低布林带宽，末尾 25 根跳水加大波动并使收盘贴上轨下方的下轨
+    const k = mkKlines(140, { close: i => (i <= 114 ? 100 : 100 - (i - 114) * 2.9) });
+    const env = analyzeEnvironment(k, fmt);
+    expect(env).not.toBeNull();
+    const vol = env!.tags.find(t => t.dim === 'volatility');
+    expect(vol).toBeDefined();
+    expect(vol!.key).toBe('vol-down');
+    expect(vol!.single).toBe('扩');
+    expect(vol!.color).toBe('green');
+    // 展示维度必须保留它（selectEnvDisplayTags 不过滤 volatility）
+    const sel = selectEnvDisplayTags(env!.tags);
+    expect(sel.some(t => t.dim === 'volatility' && t.key === 'vol-down')).toBe(true);
   });
 });
 
@@ -200,19 +261,25 @@ describe('buildLatestShrinkTags（判定结果 → 缩略单字，纯映射不�
   const lastDate = k[k.length - 1].date;
 
   it('喂入的判定结果直接决定缩略单字（十字星"十" + 环境单字）', () => {
-    const texts = buildLatestShrinkTags(events, patterns, env, lastDate).map(t => t.text);
+    const texts = buildLatestShrinkTags(events, patterns, env, lastDate, null).map(t => t.text);
     expect(texts).toContain('十');
   });
 
   it('不会在内部重新判定：篡改传入的 events 即反映为对应单字', () => {
     // 传 null → 破位/形态/环境单字全部消失，绝不可能因"内部重新判定"又变出来
-    const texts = buildLatestShrinkTags(null, null, null, lastDate).map(t => t.text);
+    const texts = buildLatestShrinkTags(null, null, null, lastDate, null).map(t => t.text);
     expect(texts).toHaveLength(0);
   });
 
   it('综合周期单字绝不进入缩略（依赖 selectEnvDisplayTags 已在其套餐过滤）', () => {
-    const texts = buildLatestShrinkTags(events, patterns, env, lastDate).map(t => t.text);
+    const texts = buildLatestShrinkTags(events, patterns, env, lastDate, null).map(t => t.text);
     for (const s of CYCLE_SINGLES) expect(texts).not.toContain(s);
+  });
+
+  it('传入 stabilize → 缩略单字含"稳"', () => {
+    const stab: StabilizeTag = { date: lastDate, kind: 'stable', label: '缩量企稳', single: '稳', color: 'red', detail: ['x'] };
+    const texts = buildLatestShrinkTags(events, patterns, env, lastDate, stab).map(t => t.text);
+    expect(texts).toContain('稳');
   });
 });
 
@@ -268,5 +335,59 @@ describe('buildBreakExplainLines（破位判断依据）', () => {
     const ev = analyzeMarketConditions(kConfirming)[0];
     const lines = buildBreakExplainLines(ev, 'repair', fmt, fmtDay, fmtShort);
     expect(lines.join('\n')).toContain('修复观察');
+  });
+});
+
+describe('analyzeStabilize（底部企稳：缩量回踩/缩量企稳/有效企稳，当日互斥）', () => {
+  it('量缩+收弱+低点下移 → 缩量回踩（单字"回"，绿/非买点）', () => {
+    const k = mkKlines(19, {
+      overrides: {
+        17: { open: 92, close: 90, high: 93, low: 89, volume: 500_000 },
+        18: { open: 89, close: 88, high: 90, low: 87, volume: 400_000 },
+      },
+    });
+    const tag = analyzeStabilize(k, fmt, true);
+    expect(tag?.kind).toBe('retrace');
+    expect(tag?.single).toBe('回');
+    expect(tag?.color).toBe('green');
+    expect(tag!.detail.join('')).toContain('参考价值');
+    expect(tag!.detail.join('')).toContain('不宜急于抄底');
+  });
+
+  it('量缩+低点不创新低+价止跌+MA5走平 → 缩量企稳（单字"稳"，红）', () => {
+    const k = mkKlines(19, {
+      overrides: {
+        17: { open: 100.2, close: 99.5, high: 100.5, low: 98, volume: 600_000 },
+        18: { open: 100.5, close: 100.1, high: 100.8, low: 98.5, volume: 500_000 },
+      },
+    });
+    const tag = analyzeStabilize(k, fmt, true);
+    expect(tag?.kind).toBe('stable');
+    expect(tag?.single).toBe('稳');
+    expect(tag?.color).toBe('red');
+  });
+
+  it('连续3日低点抬高 + 放量收复MA10 → 有效企稳（单字"效"，可交易买点）', () => {
+    const k = mkKlines(19, {
+      close: (i) => (i <= 12 ? 100 : [99.5, 99, 98.7, 98.6, 98.7, 100][i - 13] ?? 100),
+      overrides: {
+        15: { low: 98.5, volume: 300_000 },
+        16: { low: 98.6, volume: 300_000 },
+        17: { low: 98.7, volume: 300_000 },
+        18: { open: 100.2, close: 100, high: 100.6, low: 99.0, volume: 2_000_000 },
+      },
+    });
+    const tag = analyzeStabilize(k, fmt, true);
+    expect(tag?.kind).toBe('confirm');
+    expect(tag?.single).toBe('效');
+    expect(tag?.color).toBe('red');
+    expect(tag!.detail.join('')).toContain('买点');
+  });
+
+  it('allowVol=false（今日量能未定型）→ null，不误判', () => {
+    const k = mkKlines(20, {
+      overrides: { 18: { open: 89, close: 88, high: 90, low: 87, volume: 400_000 } },
+    });
+    expect(analyzeStabilize(k, fmt, false)).toBeNull();
   });
 });
