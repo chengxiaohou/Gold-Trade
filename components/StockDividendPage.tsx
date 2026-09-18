@@ -2649,7 +2649,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       return;
     }
     
-    // 部分或全部数据不在缓存中，逐个获取
+    // 部分缓存命中：先把所有已命中项一次性批量应用，避免"既用缓存又一格一格
+    // 拉出来像发请求一样"的观感；仅对真正缺失/过期的项随后逐个请求。
+    setStockBollMap(prev => {
+      const newMap = new Map(prev);
+      for (const [id, data] of cachedData) {
+        if (data?.daily && data?.weekly && data?.monthly) newMap.set(id, data);
+      }
+      return newMap;
+    });
+    
+    // 部分或全部数据不在缓存中，逐个获取缺失项
     // 请求顺序遵循列表当前的排列顺序（sortedStocks），而非固定固有顺序
     const order = sortedStocks;
     for (let i = 0; i < order.length; i++) {
@@ -2667,13 +2677,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       // 先检查这只股票是否已缓存
       const cachedStockData = cachedData.get(stock.id);
       if (cachedStockData?.daily && cachedStockData?.weekly && cachedStockData?.monthly) {
-        // 已缓存，直接更新UI
-        setStockBollMap(prev => {
-          const newMap = new Map(prev);
-          newMap.set(stock.id, cachedStockData);
-          return newMap;
-        });
-        continue; // 跳过网络请求
+        continue; // 已在循环前一次性批量应用，跳过网络请求
       }
       
       // 未缓存，发起网络请求
