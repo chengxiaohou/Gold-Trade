@@ -3171,10 +3171,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const autoIntervalRef = useRef(autoRefreshInterval); // 始终持有最新的间隔值
   autoIntervalRef.current = autoRefreshInterval;
 
-  // 自动刷新主循环：autoRefreshOn 时启动，非盘中停止
+  // 自动刷新主循环：autoRefreshOn 时启动，非盘中停止；
+  // 页面不在前台（后台标签页/浏览器切走）时跳过刷新，切回前台立即补一次
   useEffect(() => {
     if (!autoRefreshOn) return;
     const tick = () => {
+      // 页面不处于前台则不自动刷新（浏览器后台的 setInterval 仅被限流、不会停）
+      if (document.visibilityState !== 'visible') return;
       if (!isTradingHours()) {
         setAutoRefreshOn(false); // 收盘 / 未开盘 / 午休 → 自动刷新直接停止
         return;
@@ -3186,8 +3189,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     tick(); // 进入自动模式立即刷新一次
     const intervalMs = Math.max(autoIntervalRef.current, 5) * 1000;
     autoTimer.current = window.setInterval(tick, intervalMs);
+    // 从后台切回前台时，立即刷新一次（追平后台欠下的刷新）
+    const onVisibility = () => { if (document.visibilityState === 'visible') tick(); };
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       if (autoTimer.current) { clearInterval(autoTimer.current); autoTimer.current = null; }
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [autoRefreshOn]);
 
