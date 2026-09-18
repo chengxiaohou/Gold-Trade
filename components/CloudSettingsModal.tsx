@@ -405,6 +405,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       memoUpdatedAt: stockSettings?.memoUpdatedAt ?? 0,
       buyOrderPlaceholder: currentPage === 'stock' ? buyOrderPlaceholder : stockSettings?.buyOrderPlaceholder,
       sellOrderPlaceholder: currentPage === 'stock' ? sellOrderPlaceholder : stockSettings?.sellOrderPlaceholder,
+      autoRefreshInterval: currentPage === 'stock' ? autoRefreshInterval : stockSettings?.autoRefreshInterval,
       tagParams,
     };
     
