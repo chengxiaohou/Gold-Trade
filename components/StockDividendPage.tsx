@@ -258,6 +258,7 @@ interface StockDividendPageProps {
   onLedgerMapChange?: (updater: (prev: StockLedgerMap) => StockLedgerMap) => void;
   onExportFullBackup?: () => void;           // 全量备份导出（stocks + ledger + stockSettings）
   onImportFullBackup?: (file: File) => void; // 全量备份导入恢复
+  onBacktestPresetsDirty?: () => void;       // 策略组有增删改时调用，用于触发云端"有改动需上传"
 }
 
 // 分红核对弹窗里的单只股票差异条目
@@ -1310,7 +1311,7 @@ type SrRow =
   | { kind: 'plain'; text: string }
   | { kind: 'cell'; name: string; color?: string; rest: string };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty }) => {
   // 全量备份导入用的隐藏文件选择（放入盈利统计面板）
   const fullBackupInputRef = useRef<HTMLInputElement>(null);
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
@@ -3907,16 +3908,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         <div className="w-full flex items-end gap-3" style={{ maxWidth }}>
           <div className="flex items-center gap-3 pb-2">
             <h1 className="text-3xl font-bold text-app-subtext tracking-wide">股息率</h1>
-            {appVersion && <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1">{appVersion}</span>}
-            {onTogglePage && (
-              <button
-                onClick={onTogglePage}
-                className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1 transition-colors"
-                title="切换到黄金交易模拟"
-              >
-                [黄金]
-              </button>
-            )}
           </div>
           {actionButtons && (
             <div className="ml-auto pb-1.5">
@@ -4576,6 +4567,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             rows={4}
             className="w-full bg-app-card text-app-subtext text-[11px] leading-relaxed tracking-wider p-3 outline-none resize-y focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all"
           />
+        </div>
+      </div>
+
+      {/* 页面底部：版本号与黄金交易切换 */}
+      <div className="flex justify-center">
+        <div className="w-full flex justify-end items-center gap-3" style={{ maxWidth }}>
+          {appVersion && <span className="select-all hover:text-app-text text-white/[0.01] text-[10px] font-mono">{appVersion}</span>}
+          {onTogglePage && (
+            <button
+              onClick={onTogglePage}
+              className="select-all hover:text-app-text transition-colors text-white/[0.01] text-[10px] font-mono"
+              title="切换到黄金交易模拟"
+            >
+              [黄金]
+            </button>
+          )}
         </div>
       </div>
 
@@ -6797,7 +6804,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       </div>
       )}
       {backtestStock && (
-        <BacktestModal stock={backtestStock} onClose={() => setBacktestStock(null)} />
+        <BacktestModal stock={backtestStock} onClose={() => setBacktestStock(null)} onPresetsDirty={onBacktestPresetsDirty} />
       )}
     </div>
   );

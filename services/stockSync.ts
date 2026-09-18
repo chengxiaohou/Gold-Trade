@@ -1,6 +1,6 @@
 // 股票交易记录的云端同步纯函数（无副作用，便于单元测试）
 // 机制：全量上传 + union-by-id 下载合并（软删 isDeleted 直接随记录携带，无墓碑）。
-import type { StockEntry, StockTrade } from '../types';
+import type { StockEntry, StockTrade, StockSettings, BacktestStrategyPreset } from '../types';
 import type { StockLedgerMap } from './stockLedgerStore';
 import { calcPositionFromTrades } from './realizedPnl';
 
@@ -66,4 +66,35 @@ export function stripStockPriceCache(list: StockEntry[]): StockEntry[] {
     ({ price, changePercent, high, low, open, volume, priceUpdatedAt, dividendRate2025, ...rest }) =>
       rest as StockEntry
   );
+}
+
+// ===== 云端"差异对比"指纹（纯函数，无副作用）=====
+// 用于判断股息页本地是否有需要上传到云端的改动：把会上传到云端的字段
+// （stocks / stockSettings / backtestStrategyPresets）序列化成稳定指纹，
+// 与"最近一次成功上传/下载时的基线"比较，即可得到"是否有未同步改动"。
+// 与 performStockCloudUpload 的上传规则保持一致：
+//   - stocks 剔除价格缓存字段（现价/涨跌/高低量/更新时刻/价格派生股息率），避免价格刷新误报
+//   - stockSettings 剔除设备特定字段（maxRows/maxWidth/sortMode），避免设备差异误报
+//   - backtestStrategyPresets（策略组模板）整体纳入
+export interface StockCloudFingerprintInput {
+  stocks: StockEntry[];
+  stockSettings?: StockSettings;
+  backtestStrategyPresets?: BacktestStrategyPreset[];
+}
+
+export function buildStockCloudFingerprint(input: StockCloudFingerprintInput): string {
+  const { stocks, stockSettings, backtestStrategyPresets = [] } = input;
+  const cloudStockSettings = stockSettings
+    ? { ...stockSettings, maxRows: undefined, maxWidth: undefined, sortMode: undefined }
+    : undefined;
+  return JSON.stringify({
+    stocks: stripStockPriceCache(buildUploadStocks(stocks)),
+    stockSettings: cloudStockSettings,
+    backtestStrategyPresets,
+  });
+}
+
+// 是否有未同步改动：基线为 null（尚未同步/首次使用）一律视为有改动，便于首次上传建备份
+export function isStockCloudDirty(baseline: string | null, current: string): boolean {
+  return baseline === null || baseline !== current;
 }

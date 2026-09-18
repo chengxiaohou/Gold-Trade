@@ -1,6 +1,6 @@
 // 共享测试工具：所有单元测试文件的假数据构造器统一放这里，
 // 避免各测试文件各自复制 mkTrade / mkStock 造成维护漂移。
-import type { StockTrade, StockEntry } from '../../types';
+import type { StockTrade, StockEntry, BacktestStrategyPreset } from '../../types';
 
 let _seq = 0;
 function nextId(): string {
@@ -39,6 +39,18 @@ export function mkStock(code: string, name: string, over: Partial<StockEntry> = 
     positionCost: 0,
     priceUpdatedAt: null,
     dividendRates: {},
+  };
+  return { ...base, ...over };
+}
+
+// 生成一个策略组模板（BacktestStrategyPreset）。
+export function mkPreset(id: string, over: Partial<BacktestStrategyPreset> = {}): BacktestStrategyPreset {
+  const base: BacktestStrategyPreset = {
+    id,
+    name: id,
+    rules: [],
+    createdAt: 1000 + _seq,
+    updatedAt: 1000 + _seq,
   };
   return { ...base, ...over };
 }

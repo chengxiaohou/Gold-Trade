@@ -14,7 +14,7 @@ import type { StockLedgerMap } from './services/stockLedgerStore';
 import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { calcPositionFromTrades } from './services/realizedPnl';
-import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache } from './services/stockSync';
+import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, buildStockCloudFingerprint, isStockCloudDirty } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
@@ -470,6 +470,45 @@ export default function App() {
 
   // 备忘录最近一次成功上传/下载的文字基线，用于判断是否有未同步的改动
   const [memoBaseline, setMemoBaseline] = useState<string>(() => stockSettings.memo || '');
+
+  // 策略组模板（backtestStrategyPresets）存于 localStorage，每次增删改由 BacktestModal 回调令版本号自增，
+  // 从而让下面的指纹随策略组变化而重算
+  const [backtestPresetsVersion, setBacktestPresetsVersion] = useState(0);
+  const bumpBacktestPresets = useCallback(() => setBacktestPresetsVersion(v => v + 1), []);
+
+  // 读取策略组模板（存于 localStorage，非 React state），参与云端指纹计算
+  const presetsFromStorage = useCallback((): BacktestStrategyPreset[] => {
+    try {
+      const raw = localStorage.getItem('bt_strategy_presets');
+      if (raw) return JSON.parse(raw);
+    } catch { /* 忽略解析异常 */ }
+    return [];
+  }, []);
+
+  // 股息页云端上传字段的当前指纹，随股息数据变化自动重算
+  const cloudFingerprint = useMemo(
+    () => buildStockCloudFingerprint({
+      stocks,
+      stockSettings,
+      backtestStrategyPresets: presetsFromStorage(),
+    }),
+    [stocks, stockSettings, backtestPresetsVersion, presetsFromStorage],
+  );
+  // 最近一次成功上传/下载时云端字段的指纹基线；null 表示尚未同步（首次使用需先上传建备份）
+  const [stockCloudBaseline, setStockCloudBaseline] = useState<string | null>(
+    () => localStorage.getItem('stock_cloud_baseline'),
+  );
+  // 是否有改动需要上传（股息页上传按钮仅在为 true 时显示）
+  const stockCloudDirty = isStockCloudDirty(stockCloudBaseline, cloudFingerprint);
+
+  // 持久化基线：跨刷新保持"无改动则隐藏上传按钮"
+  useEffect(() => {
+    if (stockCloudBaseline === null) {
+      localStorage.removeItem('stock_cloud_baseline');
+    } else {
+      localStorage.setItem('stock_cloud_baseline', stockCloudBaseline);
+    }
+  }, [stockCloudBaseline]);
 
   const resetStockData = () => {
     setStocks(createDefaultStocks());
@@ -1001,6 +1040,29 @@ export default function App() {
     if (ok) {
       setUploadSuccess(true);
       setMemoBaseline(stockSettings?.memo || '');
+      if (currentPage === 'stocks') setStockCloudBaseline(buildStockCloudFingerprint({
+        stocks, stockSettings, backtestStrategyPresets: presetsFromStorage(),
+      }));
+      setTimeout(() => setUploadSuccess(false), 2000);
+    } else {
+      alert('云端上传失败，请检查网络或 Token 设置');
+    }
+    setIsSyncing(false);
+  };
+
+  // 股息页"上传到云端"直接上传：仅在有改动需要上传时按钮才存在，因此无需二次确认
+  const handleStockCloudUpload = async () => {
+    if (isSyncing) return;
+    setCloudConfirm(null);
+    setIsSyncing(true);
+    setUploadSuccess(false);
+    const ok = await performStockCloudUpload();
+    if (ok) {
+      setUploadSuccess(true);
+      setMemoBaseline(stockSettings?.memo || '');
+      setStockCloudBaseline(buildStockCloudFingerprint({
+        stocks, stockSettings, backtestStrategyPresets: presetsFromStorage(),
+      }));
       setTimeout(() => setUploadSuccess(false), 2000);
     } else {
       alert('云端上传失败，请检查网络或 Token 设置');
@@ -1034,6 +1096,10 @@ export default function App() {
             }));
           }
         } else {
+          // 记录本次下载后本地生效的股息页数据，用于重置云端上传基线（避免异步 setState 读到旧值）
+          let syncStocksForBaseline: StockEntry[] = stocks;
+          let syncStockSettingsForBaseline: StockSettings | undefined = stockSettings;
+
           if (result.stocks) {
             // 信任云端合并：以本地全量流水账为基底，用云端全量记录按 id 覆盖（本地命中的用云端版本
             // 档改回传，云端新增的加入；本地独有的保留）。软删 isDeleted 直接随记录携带、无需墓碑。
@@ -1044,6 +1110,7 @@ export default function App() {
             ledgerRef.current = merged.newLedger;
             setLedgerMap(merged.newLedger);
             saveLedgerToStore(merged.newLedger);
+            syncStocksForBaseline = merged.mergedStocks;
           }
 
           if (result.settings) {
@@ -1066,6 +1133,7 @@ export default function App() {
             localStorage.setItem('stock_dividend_settings', JSON.stringify(restoredStockSettings));
             // 下载成功后重置备忘录基线，与云端文字对齐
             setMemoBaseline(result.stockSettings.memo || '');
+            syncStockSettingsForBaseline = restoredStockSettings;
           }
 
           // 策略组合模板合并：云端覆盖本地同 id、云端独有的新增、本地独有的保留
@@ -1080,6 +1148,13 @@ export default function App() {
             for (const p of result.backtestStrategyPresets || []) if (p?.id) mergedMap.set(p.id, p); // 云端覆盖
             localStorage.setItem('bt_strategy_presets', JSON.stringify(Array.from(mergedMap.values())));
           }
+
+          // 下载成功后重置云端指纹基线：本地已与云端对齐，无改动则不再显示上传按钮
+          setStockCloudBaseline(buildStockCloudFingerprint({
+            stocks: syncStocksForBaseline,
+            stockSettings: syncStockSettingsForBaseline,
+            backtestStrategyPresets: presetsFromStorage(),
+          }));
         }
         
         setDownloadSuccess(true);
@@ -1664,73 +1739,75 @@ export default function App() {
         </div>
       )}
 
-      <div className="flex gap-1 lg:gap-1.5">
+      <div className="flex gap-1.5 lg:gap-2">
           <button 
               onClick={() => openSettings('general')}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-text transition-colors w-6 h-6"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-text transition-colors w-7 h-7"
               title="设置"
             >
-              <Settings size={14} />
+              <Settings size={16} />
           </button>
           <button 
               onClick={() => requestCloudAction('download')}
               disabled={isDownloading || downloadSuccess || !!cloudConfirm}
-              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-6 h-6 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-indigo-400 hover:text-indigo-300 hover:border-indigo-500'} disabled:opacity-30`}
+              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-indigo-400 hover:text-indigo-300 hover:border-indigo-500'} disabled:opacity-30`}
               title="从云端下载"
             >
               {isDownloading ? (
-                <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
               ) : downloadSuccess ? (
-                <CheckCircle2 size={14} className="animate-in zoom-in duration-300" />
+                <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
               ) : (
-                <CloudDownload size={14} />
+                <CloudDownload size={16} />
               )}
           </button>
-          <button 
-              onClick={() => requestCloudAction('upload')}
-              disabled={isSyncing || uploadSuccess || !!cloudConfirm}
-              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-6 h-6 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-brand-yellow hover:bg-brand-yellow/10 hover:border-brand-yellow'} disabled:opacity-30`}
+          {stockCloudDirty && (
+            <button 
+              onClick={handleStockCloudUpload}
+              disabled={isSyncing || uploadSuccess}
+              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-brand-yellow hover:bg-brand-yellow/10 hover:border-brand-yellow'} disabled:opacity-30`}
               title="上传到云端"
             >
               {isSyncing ? (
-                <div className="w-3 h-3 border-2 border-brand-yellow border-t-transparent rounded-full animate-spin"></div>
+                <div className="w-3.5 h-3.5 border-2 border-brand-yellow border-t-transparent rounded-full animate-spin"></div>
               ) : uploadSuccess ? (
-                <CheckCircle2 size={14} className="animate-in zoom-in duration-300" />
+                <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
               ) : (
-                <CloudUpload size={14} />
+                <CloudUpload size={16} />
               )}
-          </button>
+            </button>
+          )}
           <button 
               onClick={() => setIsAddingStock(true)}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-text transition-colors w-6 h-6"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-text transition-colors w-7 h-7"
               title="添加股票"
             >
-              <Plus size={14} />
+              <Plus size={16} />
           </button>
           <button 
               onClick={() => setStockResetSignal(s => s + 1)}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-red-400 hover:border-red-400 transition-colors w-6 h-6"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-red-400 hover:border-red-400 transition-colors w-7 h-7"
               title="重置数据"
             >
-              <Trash2 size={14} />
+              <Trash2 size={16} />
           </button>
           <button
               onClick={toggleTheme}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-brand-yellow hover:border-brand-yellow transition-colors w-6 h-6"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-brand-yellow hover:border-brand-yellow transition-colors w-7 h-7"
               title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
           >
-            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
           </button>
           <button 
               onClick={() => setShowRequestStats(prev => !prev)}
-              className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-6 h-6 ${
+              className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-7 h-7 ${
                 showRequestStats 
                   ? 'border-indigo-500 text-indigo-400' 
                   : 'border-app-border text-app-subtext hover:text-app-text hover:border-app-text'
               }`}
               title={showRequestStats ? '隐藏请求统计' : '显示请求统计'}
             >
-              <BarChart3 size={14} />
+              <BarChart3 size={16} />
           </button>
       </div>
     </div>
@@ -2340,6 +2417,7 @@ export default function App() {
             onLedgerMapChange={updateLedgerMap}
             onExportFullBackup={handleStockFullExport}
             onImportFullBackup={handleStockFullImport}
+            onBacktestPresetsDirty={bumpBacktestPresets}
             />
           </PageErrorBoundary>
         )}

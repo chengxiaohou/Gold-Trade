@@ -21,6 +21,7 @@ type PreviewTick = { keyOf: string; date: string; x: number; y: number; abbr: st
 export interface BacktestModalProps {
   stock: StockEntry;
   onClose: () => void;
+  onPresetsDirty?: () => void; // 策略组有增删改时调用，用于告知上层"有改动需上传"
 }
 
 interface RuleEditorProps {
@@ -104,7 +105,7 @@ function formatChartTime(time: Time): string {
   return `${y}-${pad(m)}-${pad(d)}`;
 }
 
-export function BacktestModal({ stock, onClose }: BacktestModalProps) {
+export function BacktestModal({ stock, onClose, onPresetsDirty }: BacktestModalProps) {
   // 策略按股票持久化到 localStorage：刷新/重开页面后自动恢复上次设置
   const strategyStorageKey = `bt_strategy_${stock.code}`;
   const loadStrategy = (): BacktestStrategy => {
@@ -151,6 +152,7 @@ export function BacktestModal({ stock, onClose }: BacktestModalProps) {
   const persistPresets = (list: BacktestStrategyPreset[]) => {
     setPresets(list);
     try { localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(list)); } catch { /* 忽略 */ }
+    onPresetsDirty?.();
   };
   const selectedPreset = presets.find(p => p.id === selectedPresetId) ?? null;
   // 规则深比较：判断当前 rules 与选中组是否一致（未选中时仅当存在规则才可保存）
