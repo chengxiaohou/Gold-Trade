@@ -187,10 +187,45 @@ describe('mergeStockFromCloud / mergeCloudStocks', () => {
     const c1 = mkStock('600000', 'A');
     c1.stockTrades = [t({ id: 'a1', side: 'buy', price: 10, shares: 100, createdAt: 1 })];
     const localLedger: StockLedgerMap = {};
-    const { mergedStocks, newLedger } = mergeCloudStocks([c1], localLedger);
+    const { mergedStocks, newLedger } = mergeCloudStocks([c1], localLedger, []);
     expect(mergedStocks).toHaveLength(1);
     expect(mergedStocks[0].positionShares).toBe(100);
     expect(newLedger['600000'].trades).toHaveLength(1);
+  });
+
+  it('下载合并保留本地价格缓存字段（本地价格不被云端覆盖或清空）', () => {
+    const cloud = mkStock('600000', 'A');
+    cloud.stockTrades = [t({ side: 'buy', price: 10, shares: 100 })];
+    const local = mkStock('600000', 'A', {
+      price: 55.5, changePercent: 2.3, high: 60, low: 50, open: 52,
+      volume: 999, priceUpdatedAt: 111, dividendRate2025: 7.7,
+    });
+    const { stock } = mergeStockFromCloud(cloud, [], local);
+    expect(stock.price).toBe(55.5);
+    expect(stock.changePercent).toBe(2.3);
+    expect(stock.high).toBe(60);
+    expect(stock.low).toBe(50);
+    expect(stock.open).toBe(52);
+    expect(stock.volume).toBe(999);
+    expect(stock.priceUpdatedAt).toBe(111);
+    expect(stock.dividendRate2025).toBe(7.7);
+    // 业务字段仍以云端为准，持仓由交易重算
+    expect(stock.name).toBe('A');
+    expect(stock.positionShares).toBe(100);
+  });
+
+  it('mergeCloudStocks 保留本地独有股票（云端没有的不丢失）', () => {
+    const c1 = mkStock('600000', 'A');
+    c1.stockTrades = [t({ side: 'buy', price: 10, shares: 100 })];
+    const localOnly = mkStock('300001', '本地独有', { price: 12.3, priceUpdatedAt: 9 });
+    const localLedger: StockLedgerMap = {};
+    const { mergedStocks } = mergeCloudStocks([c1], localLedger, [c1, localOnly]);
+    expect(mergedStocks.map(s => s.id)).toContain('600000');
+    expect(mergedStocks.map(s => s.id)).toContain('300001');
+    // 本地独有股票原样保留（含价格缓存）
+    const kept = mergedStocks.find(s => s.id === '300001')!;
+    expect(kept.price).toBe(12.3);
+    expect(kept.name).toBe('本地独有');
   });
 });
 

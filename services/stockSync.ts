@@ -10,15 +10,37 @@ export interface MergeStockResult {
   ledgerEntry: { trades: StockTrade[] };
 }
 
+// 价格类是设备本地缓存：上传不上、下载不覆盖。合并下载时用本地股票保留其价格字段，
+// 云端记录（即使残留了价格）不参与覆盖本地现价。
+function pickLocalPrice(localStock: StockEntry | undefined): Pick<
+  StockEntry,
+  'price' | 'changePercent' | 'high' | 'low' | 'open' | 'volume' | 'priceUpdatedAt' | 'dividendRate2025'
+> {
+  if (!localStock) return {} as never;
+  return {
+    price: localStock.price,
+    changePercent: localStock.changePercent,
+    high: localStock.high,
+    low: localStock.low,
+    open: localStock.open,
+    volume: localStock.volume,
+    priceUpdatedAt: localStock.priceUpdatedAt,
+    dividendRate2025: localStock.dividendRate2025,
+  };
+}
+
 // 把云端某只股票的全量记录合并到本地流水账，并重算持仓。
 // 规则：
 //   - 以本地流水账 trades 为基底（union by id）
 //   - 云端同 id 覆盖本地（编辑回传 + 软删 isDeleted 同步）
 //   - 云端新增 id 并入；本地独有（云端没有）保留
 //   - 软删 isDeleted 随记录一起被携带，不需要墓碑
+//   - 价格类字段（现价/涨跌/高低量/更新时刻/价格派生股息率）是设备本地缓存：
+//     下载时一律保留本地值，不用云端残留覆盖
 export function mergeStockFromCloud(
   cloudStock: StockEntry,
   localTrades: StockTrade[] | undefined,
+  localStock?: StockEntry | undefined,
 ): MergeStockResult {
   const cloudTrades = cloudStock.stockTrades || [];
   const baseById = new Map<string, StockTrade>((localTrades || []).map(t => [t.id, t]));
@@ -27,9 +49,7 @@ export function mergeStockFromCloud(
     (a, b) => (a.filledAt ?? a.createdAt) - (b.filledAt ?? b.createdAt)
   );
   const { shares, avgCost } = calcPositionFromTrades(finalTrades);
-  // 云端记录可能残留本设备的价格缓存字段（旧数据 / 其它设备的旧版本）。
-  // 这些字段本就不该通过上传同步，因此下载合并时统一剔除：
-  // 既避免旧残留再次进入本地，也避免用云端的过期价覆盖本设备的现价。
+  // 忽略云端的价格类字段（价格不同步；即便有残留也不进本地）
   const {
     price, changePercent, high, low, open, volume, priceUpdatedAt, dividendRate2025,
     ...restCloud
@@ -40,22 +60,33 @@ export function mergeStockFromCloud(
       stockTrades: finalTrades,
       positionShares: shares,
       positionCost: avgCost,
+      // 本地价格缓存优先保留（云端不含价）
+      ...pickLocalPrice(localStock),
     },
     ledgerEntry: { trades: finalTrades },
   };
 }
 
 // 把整批云端股票合并到本地流水账（批量版），返回合并后的股票列表 + 新流水账。
+// cloudStocks 仅云端已有的股票；本地独有（云端没有）的股票原样保留，避免下载丢数据。
+// localStocks 用于在下载时保留本地价格缓存字段。
 export function mergeCloudStocks(
   cloudStocks: StockEntry[],
   localLedger: StockLedgerMap,
+  localStocks: StockEntry[],
 ): { mergedStocks: StockEntry[]; newLedger: StockLedgerMap } {
   const newLedger: StockLedgerMap = { ...localLedger };
   const mergedStocks = cloudStocks.map(c => {
-    const { stock, ledgerEntry } = mergeStockFromCloud(c, localLedger[c.id]?.trades);
+    const localStock = localStocks.find(s => s.id === c.id);
+    const { stock, ledgerEntry } = mergeStockFromCloud(c, localLedger[c.id]?.trades, localStock);
     newLedger[c.id] = ledgerEntry;
     return stock;
   });
+  // 本地独有股票（云端没有）保留原样，价格缓存同样保留
+  const cloudIds = new Set(cloudStocks.map(c => c.id));
+  for (const local of localStocks) {
+    if (!cloudIds.has(local.id)) mergedStocks.push(local);
+  }
   return { mergedStocks, newLedger };
 }
 

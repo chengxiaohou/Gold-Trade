@@ -18,7 +18,7 @@ import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, buildStockCl
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.10';
+const APP_VERSION = 'v2.18.11';
 
 // 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
 const ERRLOG_KEY = 'gold_trade_error_log';
@@ -1067,7 +1067,7 @@ export default function App() {
             // 档改回传，云端新增的加入；本地独有的保留）。软删 isDeleted 直接随记录携带、无需墓碑。
             // 合并后重排并按时间升序回写 stocks 与流水账。
             const newLedger: StockLedgerMap = { ...ledgerRef.current };
-            const merged = mergeCloudStocks(result.stocks as StockEntry[], newLedger);
+            const merged = mergeCloudStocks(result.stocks as StockEntry[], newLedger, stocks);
             setStocks(merged.mergedStocks);
             ledgerRef.current = merged.newLedger;
             setLedgerMap(merged.newLedger);
