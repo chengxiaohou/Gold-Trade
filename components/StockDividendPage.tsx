@@ -6,6 +6,7 @@ import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, 
 import { fetchBollData, checkAllBollCache, countStaleBollCache, countVisibleBollItems, getBollCacheTimestamps, ensureBollCacheRestored, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getMarketStatus, getDynamicBollCacheTTL, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
+import { toTencentCode, parseTencentQuoteText, type TencentQuote } from '../services/tencentQuote';
 import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
 import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
@@ -2966,54 +2967,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     volume: number;
   } | null> => {
     try {
-      let market = 'sh';
-      let code = stockCode;
-      
-      if (code.endsWith('.SZ')) {
-        market = 'sz';
-        code = code.replace('.SZ', '');
-      } else if (code.endsWith('.SH')) {
-        code = code.replace('.SH', '');
-      } else if (parseInt(code) >= 300000 || parseInt(code) >= 2000) {
-        market = 'sz';
-      }
-      
-      const url = `https://qt.gtimg.cn/q=${market}${code}`;
+      const tencentCode = toTencentCode(stockCode);
+      const url = `https://qt.gtimg.cn/q=${tencentCode}`;
       const logId = requestLogService.startRequest(url, 'GET', logCtx);
       try {
         const response = await fetch(url);
-        const buffer = await response.arrayBuffer();
         const decoder = new TextDecoder('gb18030');
-        const text = decoder.decode(buffer);
-        
-        const match = text.match(/v_\w+="([^"]+)"/);
-        if (match && match[1]) {
-          const data = match[1].split('~');
-          if (data.length >= 11) {
-            const price = parseFloat(data[3]);
-            const prevClose = parseFloat(data[4]);
-            const open = parseFloat(data[5]);
-            const volume = parseFloat(data[6]);
-            // 腾讯实时行情：data[33]最高、data[34]最低
-            const high = parseFloat(data[33]);
-            const low = parseFloat(data[34]);
-            let changePercent = 0;
-            
-            if (prevClose > 0) {
-              changePercent = ((price - prevClose) / prevClose) * 100;
-            }
-            
-            requestLogService.success(logId);
-            return {
-              name: data[1].replace(/\s/g, ''),
-              price: price,
-              changePercent: changePercent,
-              high: high || price,
-              low: low || price,
-              open: open || price,
-              volume: volume || 0,
-            };
-          }
+        const text = decoder.decode(await response.arrayBuffer());
+        const quote = parseTencentQuoteText(text).get(tencentCode);
+        if (quote) {
+          requestLogService.success(logId);
+          return {
+            name: quote.name,
+            price: quote.price,
+            changePercent: quote.changePercent,
+            high: quote.high,
+            low: quote.low,
+            open: quote.open,
+            volume: quote.volume,
+          };
         }
         requestLogService.failed(logId, '股价解析失败');
         return null;
@@ -3025,6 +2997,30 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       console.error('获取股价失败:', error);
       return null;
     }
+  }, []);
+
+  // 批量拉取多只股价：一次请求逗号拼接多个代码，返回按腾讯代码(如 sz000001)映射的结果。
+  // 单个代码解析失败仅导致该 code 缺失，不影响其它（调用方对缺失项做单只兜底重试）。
+  const fetchStockPricesBatch = useCallback(async (stockCodes: string[], logCtx: LogBatchContext): Promise<Map<string, TencentQuote>> => {
+    const tencentCodes = stockCodes.map(toTencentCode);
+    const url = `https://qt.gtimg.cn/q=${tencentCodes.join(',')}`;
+    const logId = requestLogService.startRequest(url, 'GET', logCtx);
+    const quotes = new Map<string, TencentQuote>();
+    try {
+      const response = await fetch(url);
+      const decoder = new TextDecoder('gb18030');
+      const text = decoder.decode(await response.arrayBuffer());
+      const parsed = parseTencentQuoteText(text);
+      // 仅保留本次请求的代码，避免误带响应中的其它字段
+      for (const tc of tencentCodes) {
+        const q = parsed.get(tc);
+        if (q) quotes.set(tc, q);
+      }
+      requestLogService.success(logId);
+    } catch (error) {
+      requestLogService.failed(logId, error instanceof Error ? error.message : '批量拉取股价失败');
+    }
+    return quotes;
   }, []);
 
   const handleRefreshPrice = useCallback(async (id: string) => {
@@ -3092,13 +3088,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (skipFresh) {
       refreshReason = staleCount === 0
         ? `打开股息页自动刷新股价：${stocks.length} 只股票缓存均未过期，无需请求${cacheInfoStr}`
-        : `打开股息页自动刷新股价：${staleCount}/${stocks.length} 只已过期，重新请求 ${staleCount} 条请求${cacheInfoStr}`;
+        : `打开股息页自动刷新股价：${staleCount}/${stocks.length} 只已过期，1 条批量请求（${staleCount} 只）${cacheInfoStr}`;
     } else if (marketClosed) {
       refreshReason = staleCount === 0
         ? `点击「价格」列头刷新（休市）：${stocks.length} 只股票缓存均未过期，无需请求${cacheInfoStr}`
-        : `点击「价格」列头刷新（休市）：${staleCount}/${stocks.length} 只已过期，重新请求 ${staleCount} 条请求${cacheInfoStr}`;
+        : `点击「价格」列头刷新（休市）：${staleCount}/${stocks.length} 只已过期，1 条批量请求（${staleCount} 只）${cacheInfoStr}`;
     } else {
-      refreshReason = `点击「价格」列头刷新：${stocks.length} 只股票 · ${stocks.length} 条请求`;
+      refreshReason = `点击「价格」列头刷新：${stocks.length} 只股票 · 1 条批量请求`;
     }
     const logCtx = requestLogService.beginBatch(refreshReason);
     const batchTime = Date.now(); // 同批次共用的触发时间，作为本批所有股票的过期起点
@@ -3109,33 +3105,54 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       const failedIds = new Set<string>();
       let changed = false;
       let skippedCount = 0;
+      // 第一遍：过滤出确实需要刷新的股票（其余命中新鲜缓存，保留原拉取时间）
+      const toRefresh: { idx: number; stock: StockEntry }[] = [];
       for (let i = 0; i < updatedStocks.length; i++) {
         const stock = updatedStocks[i];
-        // 跳过仍新鲜的股价（主要用于打开页面时的自动刷新：休市时拿到收盘价后不再重复请求）
         if (effectiveSkip && isStockPriceFresh(stock.priceUpdatedAt)) {
-          // 缓存仍新鲜：保留原拉取时间，避免把"x分钟前"刷新成"刚刚"
           skippedCount++;
           continue;
         }
-        const result = await fetchStockPrice(stock.code, logCtx);
-        if (result) {
-          const year = getSelectedYear(updatedStocks[i]);
-          const dividend = getDividendForYear(updatedStocks[i], year);
-          const dividendRate = result.price > 0 ? (dividend / result.price) * 100 : 0;
-          updatedStocks[i] = {
-            ...updatedStocks[i],
-            price: result.price,
-            changePercent: result.changePercent,
-            high: result.high,
-            low: result.low,
-            open: result.open,
-            volume: result.volume,
+        toRefresh.push({ idx: i, stock });
+      }
+      if (toRefresh.length > 0) {
+        const applyResult = (idx: number, r: { price: number; changePercent: number; high: number; low: number; open: number; volume: number }): void => {
+          const year = getSelectedYear(updatedStocks[idx]);
+          const dividend = getDividendForYear(updatedStocks[idx], year);
+          const dividendRate = r.price > 0 ? (dividend / r.price) * 100 : 0;
+          updatedStocks[idx] = {
+            ...updatedStocks[idx],
+            price: r.price,
+            changePercent: r.changePercent,
+            high: r.high,
+            low: r.low,
+            open: r.open,
+            volume: r.volume,
             priceUpdatedAt: batchTime,
             dividendRate2025: dividendRate,
           };
-          changed = true;
-        } else {
-          failedIds.add(stock.id);
+        };
+        // 主路径：N 只 → 1 条批量请求
+        const quotes = await fetchStockPricesBatch(toRefresh.map(t => t.stock.code), logCtx);
+        const missing: { idx: number; stock: StockEntry }[] = [];
+        for (const { idx, stock } of toRefresh) {
+          const quote = quotes.get(toTencentCode(stock.code));
+          if (quote) {
+            applyResult(idx, quote);
+            changed = true;
+          } else {
+            missing.push({ idx, stock });
+          }
+        }
+        // 兜底：批量响应中缺失的少量个股，逐只单点重试
+        for (const { idx, stock } of missing) {
+          const result = await fetchStockPrice(stock.code, logCtx);
+          if (result) {
+            applyResult(idx, result);
+            changed = true;
+          } else {
+            failedIds.add(stock.id);
+          }
         }
       }
       if (skippedCount > 0) {
@@ -3156,7 +3173,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     } finally {
       setIsRefreshing(new Set());
     }
-  }, [stocks, onStocksChange, fetchStockPrice]);
+  }, [stocks, onStocksChange, fetchStockPrice, fetchStockPricesBatch]);
 
   // ---- 长按刷新按钮进入"自动刷新" ----
   // 自动刷新：仅盘中（isTradingHours 命中交易时段）每 interval 秒刷新一次；

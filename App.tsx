@@ -18,7 +18,7 @@ import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, buildStockCl
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.7';
+const APP_VERSION = 'v2.18.8';
 
 // 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
 const ERRLOG_KEY = 'gold_trade_error_log';
@@ -248,56 +248,6 @@ export default function App() {
   }, []);
 
   const [isAddingStock, setIsAddingStock] = useState(false);
-  const [isRefreshingStockPrices, setIsRefreshingStockPrices] = useState(false);
-
-  const handleRefreshStockPrices = async () => {
-    if (stocks.length === 0) return;
-    setIsRefreshingStockPrices(true);
-    try {
-      const newStocks = await Promise.all(stocks.map(async (stock) => {
-        try {
-          let market = 'sh';
-          let code = stock.code;
-          if (code.endsWith('.SZ')) {
-            market = 'sz';
-            code = code.replace('.SZ', '');
-          } else if (code.endsWith('.SH')) {
-            code = code.replace('.SH', '');
-          }
-          const res = await fetch(`https://qt.gtimg.cn/q=${market}${code}`);
-          const buffer = await res.arrayBuffer();
-          const decoder = new TextDecoder('gb18030');
-          const text = decoder.decode(buffer);
-          const match = text.match(/v_\w+="([^"]+)"/);
-          if (match && match[1]) {
-            const data = match[1].split('~');
-            if (data.length >= 8) {
-              const price = parseFloat(data[3]);
-              const prevClose = parseFloat(data[4]);
-              const high = parseFloat(data[7]) || price;
-              const low = parseFloat(data[6]) || price;
-              let changePercent = 0;
-              if (prevClose > 0) {
-                changePercent = ((price - prevClose) / prevClose) * 100;
-              }
-              const dividendRate = price > 0 ? (stock.dividend2025 / price) * 100 : 0;
-              return {
-                ...stock,
-                price,
-                changePercent,
-                priceUpdatedAt: Date.now(),
-                dividendRate2025: dividendRate,
-              };
-            }
-          }
-        } catch {}
-        return stock;
-      }));
-      setStocks(newStocks);
-    } finally {
-      setIsRefreshingStockPrices(false);
-    }
-  };
 
   // --- State ---
   
