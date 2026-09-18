@@ -4435,8 +4435,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       >
                         {hasPosition ? (
                           <div className="flex flex-col items-center leading-tight gap-px">
-                            <span className={`font-mono text-[11px] whitespace-nowrap ${costColor}`}>{yieldPct}</span>
-                            <span className="font-mono text-[10px] text-app-rowtext">{yieldDiffStr}</span>
+                            <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">{yieldPct}</span>
+                            <span className={`font-mono text-[10px] ${costColor}`}>{yieldDiffStr}</span>
                           </div>
                         ) : (
                           <span className="font-mono text-[11px] whitespace-nowrap text-app-subtext">-</span>
@@ -4454,11 +4454,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       >
                         {showCostPct ? (
                           <div className="flex flex-col items-center leading-tight gap-px">
-                            <span className={`font-mono text-[11px] whitespace-nowrap ${costColor}`}>{costText}</span>
-                            <span className="font-mono text-[10px] text-app-rowtext">{positionPctStr}</span>
+                            <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">{costText}</span>
+                            <span className={`font-mono text-[10px] ${costColor}`}>{positionPctStr}</span>
                           </div>
                         ) : (
-                          <span className={`font-mono text-[11px] whitespace-nowrap ${costColor}`}>{costText}</span>
+                          <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">{costText}</span>
                         )}
                       </td>
                     );
@@ -4476,8 +4476,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           const latest = ordinary.length ? [...ordinary].sort((a, b) => b.createdAt - a.createdAt)[0] : null;
                           if (!latest) return (
                             <div className="flex flex-col items-center leading-tight gap-px">
-                              <span className="text-[9px]">&nbsp;</span>
                               <span className="font-mono text-[10px] whitespace-nowrap text-app-subtext">-</span>
+                              <span className="text-[9px]">&nbsp;</span>
                               <span className="font-mono text-[8px]">&nbsp;</span>
                             </div>
                           );
@@ -4499,8 +4499,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             : 'text-app-rowtext';
                           return (
                             <div className="flex flex-col items-center leading-tight gap-px">
-                              <span className={`text-[9px] font-bold whitespace-nowrap ${tradeStatusColor(latest)}`}>{tradeStatusLabel(latest)}</span>
                               <span className="font-mono text-[10px] whitespace-nowrap text-app-rowtext">{formatPrice(latest.price, stock.name)}</span>
+                              <span className={`text-[9px] font-bold whitespace-nowrap ${tradeStatusColor(latest)}`}>{tradeStatusLabel(latest)}</span>
                               {priceDiffPct && <span className={`font-mono text-[8px] font-semibold whitespace-nowrap ${pctColor}`}>{priceDiffPct}</span>}
                             </div>
                           );
