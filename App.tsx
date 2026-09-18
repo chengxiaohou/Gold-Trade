@@ -18,7 +18,7 @@ import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, buildStockCl
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.5';
+const APP_VERSION = 'v2.18.6';
 
 // 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
 const ERRLOG_KEY = 'gold_trade_error_log';
@@ -1759,20 +1759,6 @@ export default function App() {
             >
               <Settings size={16} />
           </button>
-          <button 
-              onClick={() => requestCloudAction('download')}
-              disabled={isDownloading || downloadSuccess || !!cloudConfirm}
-              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-indigo-400 hover:text-indigo-300 hover:border-indigo-500'} disabled:opacity-30`}
-              title="从云端下载"
-            >
-              {isDownloading ? (
-                <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
-              ) : downloadSuccess ? (
-                <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
-              ) : (
-                <CloudDownload size={16} />
-              )}
-          </button>
           {stockCloudDirty && (
             <button 
               onClick={handleStockCloudUpload}
@@ -1789,6 +1775,20 @@ export default function App() {
               )}
             </button>
           )}
+          <button 
+              onClick={() => requestCloudAction('download')}
+              disabled={isDownloading || downloadSuccess || !!cloudConfirm}
+              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-indigo-400 hover:text-indigo-300 hover:border-indigo-500'} disabled:opacity-30`}
+              title="从云端下载"
+            >
+              {isDownloading ? (
+                <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+              ) : downloadSuccess ? (
+                <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
+              ) : (
+                <CloudDownload size={16} />
+              )}
+          </button>
           <button 
               onClick={() => setIsAddingStock(true)}
               className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-text transition-colors w-7 h-7"
