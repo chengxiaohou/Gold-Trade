@@ -84,19 +84,26 @@ export interface StockCloudFingerprintInput {
 
 export function buildStockCloudFingerprint(input: StockCloudFingerprintInput): string {
   const { stocks, stockSettings, backtestStrategyPresets = [] } = input;
-  // 剔除每次编辑都会变更的时间戳 memoUpdatedAt：备忘录"内容一致"即视为无改动，
-  // 避免"输入一个字再删回基线"因时间戳推新而误报为有改动（该字段仍随上传携带，只是不参与差异判定）。
   const cloudStockSettings = stockSettings
-    ? (() => {
-        const { memoUpdatedAt, ...content } = stockSettings;
-        return { ...content, maxRows: undefined, maxWidth: undefined, sortMode: undefined };
-      })()
+    ? { ...stockSettings, maxRows: undefined, maxWidth: undefined, sortMode: undefined }
     : undefined;
   return JSON.stringify({
     stocks: stripStockPriceCache(buildUploadStocks(stocks)),
     stockSettings: cloudStockSettings,
     backtestStrategyPresets,
   });
+}
+
+// 编辑备忘录后应写入的时间戳：
+// 内容重新等于基线（删回下载/上传时的原文）→ 恢复基线时间戳，使指纹回到基线、不再被视为"有改动"；
+// 否则 → 当前编辑时间 now。
+export function resolveMemoUpdatedAt(
+  newMemo: string,
+  memoBaseline: string | undefined,
+  memoUpdatedAtBaseline: number,
+  now: number,
+): number {
+  return newMemo === memoBaseline ? memoUpdatedAtBaseline : now;
 }
 
 // 是否有未同步改动：基线为 null（尚未同步/首次使用）一律视为有改动，便于首次上传建备份

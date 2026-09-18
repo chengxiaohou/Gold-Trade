@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildStockCloudFingerprint, isStockCloudDirty } from '../stockSync';
+import { buildStockCloudFingerprint, isStockCloudDirty, resolveMemoUpdatedAt } from '../stockSync';
 import { mkTrade as t, mkStock, mkPreset } from './test-utils';
 import type { StockSettings } from '../../types';
 
@@ -82,29 +82,12 @@ describe('buildStockCloudFingerprint', () => {
     expect(mk('a')).not.toBe(mk('b'));
   });
 
-  it('备忘录仅 memoUpdatedAt 变化（内容一致）不改变指纹', () => {
+  it('备忘录 memoUpdatedAt 属于指纹：内容相同但时间不同 → 视为有差异', () => {
     const mk = (memoUpdatedAt: number) => buildStockCloudFingerprint({
       stocks: [mkStock('600000', '浦发')],
       stockSettings: { visibleColumns: ['code'], memo: '基线', memoUpdatedAt } as StockSettings,
     });
-    expect(mk(100)).toBe(mk(999));
-  });
-
-  it('备忘录输入一个字再删回基线内容 → 指纹回到基线（上传按钮应隐藏）', () => {
-    const base = buildStockCloudFingerprint({
-      stocks: [mkStock('600000', '浦发')],
-      stockSettings: { visibleColumns: ['code'], memo: '基线' } as StockSettings,
-    });
-    const typed = buildStockCloudFingerprint({
-      stocks: [mkStock('600000', '浦发')],
-      stockSettings: { visibleColumns: ['code'], memo: '基线X' } as StockSettings,
-    });
-    expect(typed).not.toBe(base); // 内容不同 → 有改动
-    const back = buildStockCloudFingerprint({
-      stocks: [mkStock('600000', '浦发')],
-      stockSettings: { visibleColumns: ['code'], memo: '基线', memoUpdatedAt: 999999 } as StockSettings,
-    });
-    expect(back).toBe(base); // 删回基线内容，即使 memoUpdatedAt 推新 → 无改动
+    expect(mk(100)).not.toBe(mk(999));
   });
 
   it('策略组模板 presets 增删/内容变化改变指纹', () => {
@@ -142,5 +125,26 @@ describe('isStockCloudDirty', () => {
     const a = buildStockCloudFingerprint({ stocks: [mkStock('600000', '浦发')] });
     const b = buildStockCloudFingerprint({ stocks: [mkStock('000001', '平安')] });
     expect(isStockCloudDirty(a, b)).toBe(true);
+  });
+});
+
+// ---- 备忘录时间戳恢复 resolveMemoUpdatedAt ----
+// 与"输入一个字再删回基线 → 上传按钮应消失"的修复对应：
+// 内容回到基线时恢复下载/上传时的时间戳，使指纹回到基线、不再被视为有差异。
+describe('resolveMemoUpdatedAt', () => {
+  it('内容回到基线 → 恢复基线时间戳', () => {
+    expect(resolveMemoUpdatedAt('基线', '基线', 12345, 99999)).toBe(12345);
+  });
+
+  it('内容偏离基线 → 用当前编辑时间', () => {
+    expect(resolveMemoUpdatedAt('基线X', '基线', 12345, 99999)).toBe(99999);
+  });
+
+  it('无基线（undefined）且内容非空 → 用当前编辑时间', () => {
+    expect(resolveMemoUpdatedAt('有内容', undefined, 0, 777)).toBe(777);
+  });
+
+  it('内容为空串且基线为空串 → 恢复基线时间戳', () => {
+    expect(resolveMemoUpdatedAt('', '', 12345, 99999)).toBe(12345);
   });
 });

@@ -14,7 +14,7 @@ import type { StockLedgerMap } from './services/stockLedgerStore';
 import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { calcPositionFromTrades } from './services/realizedPnl';
-import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, buildStockCloudFingerprint, isStockCloudDirty } from './services/stockSync';
+import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, buildStockCloudFingerprint, isStockCloudDirty, resolveMemoUpdatedAt } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
@@ -470,6 +470,10 @@ export default function App() {
 
   // 备忘录最近一次成功上传/下载的文字基线，用于判断是否有未同步的改动
   const [memoBaseline, setMemoBaseline] = useState<string>(() => stockSettings.memo || '');
+  // 备忘录最近一次成功上传/下载的时间戳基线：内容删回基线时恢复该值，使指纹回到基线、不算差异
+  const [memoUpdatedAtBaseline, setMemoUpdatedAtBaseline] = useState<number>(
+    () => stockSettings.memoUpdatedAt ?? 0,
+  );
 
   // 策略组模板（backtestStrategyPresets）存于 localStorage，每次增删改由 BacktestModal 回调令版本号自增，
   // 从而让下面的指纹随策略组变化而重算
@@ -1040,6 +1044,7 @@ export default function App() {
     if (ok) {
       setUploadSuccess(true);
       setMemoBaseline(stockSettings?.memo || '');
+      setMemoUpdatedAtBaseline(stockSettings?.memoUpdatedAt ?? 0);
       if (currentPage === 'stocks') setStockCloudBaseline(buildStockCloudFingerprint({
         stocks, stockSettings, backtestStrategyPresets: presetsFromStorage(),
       }));
@@ -1060,6 +1065,7 @@ export default function App() {
     if (ok) {
       setUploadSuccess(true);
       setMemoBaseline(stockSettings?.memo || '');
+      setMemoUpdatedAtBaseline(stockSettings?.memoUpdatedAt ?? 0);
       setStockCloudBaseline(buildStockCloudFingerprint({
         stocks, stockSettings, backtestStrategyPresets: presetsFromStorage(),
       }));
@@ -1075,6 +1081,7 @@ export default function App() {
     const ok = await performStockCloudUpload();
     if (ok) {
       setMemoBaseline(stockSettings?.memo || '');
+      setMemoUpdatedAtBaseline(stockSettings?.memoUpdatedAt ?? 0);
     }
     return ok;
   }, [performStockCloudUpload, stockSettings]);
@@ -1133,6 +1140,7 @@ export default function App() {
             localStorage.setItem('stock_dividend_settings', JSON.stringify(restoredStockSettings));
             // 下载成功后重置备忘录基线，与云端文字对齐
             setMemoBaseline(result.stockSettings.memo || '');
+            setMemoUpdatedAtBaseline(result.stockSettings.memoUpdatedAt ?? 0);
             syncStockSettingsForBaseline = restoredStockSettings;
           }
 
@@ -2395,7 +2403,11 @@ export default function App() {
             memo={stockSettings.memo}
             memoUpdatedAt={stockSettings.memoUpdatedAt}
             memoBaseline={memoBaseline}
-            onMemoChange={(memo) => setStockSettings(prev => ({ ...prev, memo, memoUpdatedAt: Date.now() }))}
+            onMemoChange={(memo) => setStockSettings(prev => ({
+              ...prev,
+              memo,
+              memoUpdatedAt: resolveMemoUpdatedAt(memo, memoBaseline, memoUpdatedAtBaseline, Date.now()),
+            }))}
             onMemoUpload={handleMemoUpload}
             maxRows={stockSettings.maxRows}
             maxWidth={stockSettings.maxWidth}
