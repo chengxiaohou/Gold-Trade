@@ -397,3 +397,412 @@ export function analyzeFengSignals(klines: BollKline[], fmt: (v: number) => stri
   for (let i = Math.max(22, n - 10); i < n; i++) days.push(evalDay(i));
   return { latest: evalDay(n - 1), days };
 }
+
+// ── 破位事件分析：近 N 个交易日“破位”事件（自 components/StockDividendPage.tsx 迁入）──
+export const MARKET_MA_PERIODS = [5, 10, 20, 30, 60, 120, 250, 500];
+
+// 被跌破的均线明细
+export interface MarketMaInfo {
+  period: number;
+  value: number; // 破位当天的均线值
+}
+
+export interface MarketEvent {
+  date: string; // 破位当天日期 YYYY-MM-DD
+  brokenCount: number; // 当日跌破的均线条数 N
+  brokenList: MarketMaInfo[]; // 当日下穿的均线明细（按周期升序）
+  ref: MarketMaInfo; // 参照均线：被跌破中数值最高的一条
+  close: number; // 破位当天收盘价
+  status: 'confirming' | 'trueBreak' | 'falseBreak'; // 修复观察 / 真破位 / 假破位
+  returnDay?: { date: string; close: number; refMa: number }; // 假破位：回到均线上方那天
+  window: { date: string; close: number; refMa: number }[]; // 观测窗口每日数据（破位日起）
+}
+
+// 破位：当日收盘价下穿若干条均线（前一日收盘≥均线、当日收盘<均线）
+// 真/假破位：以被跌破均线中数值最高的一条为参照，破位当天算第1天，3天内
+// 收盘价（每日对比该日最新均线值）回到其上方即假破位，否则第3天收盘后判真破位；
+// 数据不足（事件距今天太近）时保持“修复观察”。
+export function analyzeMarketConditions(klines: BollKline[], lastDays = 5): MarketEvent[] {
+  const n = klines.length;
+  if (n < lastDays + 1) return [];
+  const closes = klines.map(k => k.close);
+  // 各周期均线序列：maSeries[pi][i] 为第 i 天该周期均线值，历史不足时为 null
+  const maSeries = MARKET_MA_PERIODS.map(period => {
+    const res: (number | null)[] = new Array(n).fill(null);
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      sum += closes[i];
+      if (i >= period) sum -= closes[i - period];
+      if (i >= period - 1) res[i] = sum / period;
+    }
+    return res;
+  });
+  const events: MarketEvent[] = [];
+  for (let t = n - lastDays; t < n; t++) {
+    if (t - 1 < 0) continue;
+    // 统计当日下穿的均线集合
+    const broken: MarketMaInfo[] = [];
+    for (let pi = 0; pi < MARKET_MA_PERIODS.length; pi++) {
+      const period = MARKET_MA_PERIODS[pi];
+      const maT = maSeries[pi][t];
+      const maPrev = maSeries[pi][t - 1];
+      if (maT == null || maPrev == null) continue;
+      if (closes[t] < maT && closes[t - 1] >= maPrev) broken.push({ period, value: maT });
+    }
+    if (broken.length === 0) continue;
+    // 参照均线：被跌破中数值最高的一条（价格下跌时最先触到）
+    const ref = broken.reduce((a, b) => (b.value > a.value ? b : a));
+    const refPi = MARKET_MA_PERIODS.indexOf(ref.period);
+    // 3 天观测：破位当天为第 1 天，记录每日收盘与当日最新参照均线值
+    const window: { date: string; close: number; refMa: number }[] = [];
+    let returned = false;
+    for (let d = t; d <= t + 2 && d < n; d++) {
+      const maD = maSeries[refPi][d];
+      const refMa = maD ?? 0;
+      window.push({ date: klines[d].date, close: closes[d], refMa });
+      if (maD != null && closes[d] >= maD) { returned = true; break; }
+    }
+    let status: MarketEvent['status'];
+    if (returned) status = 'falseBreak';
+    else if (n - 1 >= t + 2) status = 'trueBreak';
+    else status = 'confirming';
+    const ev: MarketEvent = {
+      date: klines[t].date,
+      brokenCount: broken.length,
+      brokenList: broken.slice().sort((a, b) => a.period - b.period),
+      ref,
+      close: closes[t],
+      status,
+      window,
+    };
+    if (status === 'falseBreak') ev.returnDay = window[window.length - 1];
+    events.push(ev);
+  }
+  return events;
+}
+
+// ── 交易环境标签体系：趋势结构 / 量价关系 / 动能背离 / 波动率 / 综合强弱周期 ──
+// 参考 docs/行情标签体系说明书.md 实现。打分制：均线40% + 量价40% + 波动(BOLL)20%（MACD 已移除，改由每日信号展示），
+// 总分 ≥0.6 强周期 / ≤-0.6 弱周期，中间为震荡/变盘期；强弱细分再叠加关键信号确认。
+export interface EnvTag {
+  key: string;      // 唯一标识（cycle 或维度标签）
+  label: string;    // 完整名称
+  single: string;   // 单字（单元格备用）
+  color: 'red' | 'green' | 'orange' | 'indigo' | 'slate';
+  score: number;    // 得分 -1~1
+  dim: 'cycle' | 'trend' | 'volume' | 'volatility';
+  detail: string[]; // 判定依据
+}
+export interface EnvResult {
+  tags: EnvTag[]; // cycle + 各维度触发的标签
+  total: number;  // 综合得分
+  dimScores: { trend: number; volume: number; volatility: number };
+}
+
+export function analyzeEnvironment(klines: BollKline[], fmt: (v: number) => string, allowVolume = true, cfg: TagParams = DEFAULT_TAG_PARAMS): EnvResult | null {
+  const nearHighP = cfg.classic.classicNearHigh, masSqueezeP = cfg.classic.classicMaSqueeze;
+  const n = klines.length;
+  if (n < 130) return null; // 需 120 日均线 + 近20日高低点 + 近60日带宽分位
+  const i = n - 1;
+  const k = klines[i];
+  const close = k.close;
+  const prev = klines[i - 1];
+  const fmtVol = (v: number) => (v >= 1e8 ? `${(v / 1e8).toFixed(2)}亿` : v >= 1e4 ? `${(v / 1e4).toFixed(1)}万` : `${v.toFixed(0)}`);
+  const fmtScore = (s: number) => (s >= 0 ? '+' : '') + s.toFixed(2);
+  const ds = k.date.slice(5).replace('-', '/'); // MM/DD
+  // 近20日高低点
+  let high20 = -Infinity, low20 = Infinity;
+  for (let j = i - 19; j <= i; j++) {
+    if (klines[j].high > high20) high20 = klines[j].high;
+    if (klines[j].low < low20) low20 = klines[j].low;
+  }
+  const nearHigh = nearHighP.enabled && close >= high20 * nearHighP.value;
+
+  // 序列指标
+  const m5s = calcMaSeries(klines, 5), m10s = calcMaSeries(klines, 10), m20s = calcMaSeries(klines, 20),
+    m60s = calcMaSeries(klines, 60), m120s = calcMaSeries(klines, 120);
+  const bolls = calcBollSeries(klines);
+
+  const m5 = m5s[i], m10 = m10s[i], m20 = m20s[i], m60 = m60s[i], m120 = m120s[i];
+  const m5p = m5s[i - 1], m10p = m10s[i - 1], m20p = m20s[i - 1], m60p = m60s[i - 1], m120p = m120s[i - 1];
+
+  // ── 趋势结构维度（30%）──
+  let trendScore = 0;
+  let trendTag: EnvTag | null = null;
+  if (m5 && m10 && m20 && m60 && m120 && m5p && m10p && m20p && m60p && m120p) {
+    const spread = Math.max(m5, m10, m20, m60) - Math.min(m5, m10, m20, m60);
+    if (masSqueezeP.enabled && spread < close * masSqueezeP.value) {
+      trendScore = 0;
+      trendTag = { key: 'trend-squeeze', label: '均线粘合', single: '粘', color: 'slate', score: 0, dim: 'trend', detail: [
+        `${ds} 5/10/20/60 均线最大差值 ${fmt(spread)} < 股价×${(masSqueezeP.value * 100).toFixed(1)}%（${fmt(close)}）`,
+        '方向选择的前夜：上破粘合区进强周期，下破进弱周期',
+      ] };
+    } else if (m5 > m10 && m10 > m20 && m20 > m60 && m60 > m120
+      && m5 > m5p && m10 > m10p && m20 > m20p && m60 > m60p && m120 > m120p) {
+      trendScore = 1;
+      trendTag = { key: 'trend-strong-up', label: '多头强排列', single: '多', color: 'red', score: 1, dim: 'trend', detail: [
+        `5>10>20>60>120（${fmt(m5)}>${fmt(m10)}>${fmt(m20)}>${fmt(m60)}>${fmt(m120)}）且斜率全部向上`,
+        '主升浪进攻期：回踩 5/10 日线是高胜算买点',
+      ] };
+    } else if (m5 < m10 && m10 < m20 && m20 < m60 && m60 < m120
+      && m5 < m5p && m10 < m10p && m20 < m20p && m60 < m60p && m120 < m120p) {
+      trendScore = -1;
+      trendTag = { key: 'trend-strong-down', label: '空头强排列', single: '空', color: 'green', score: -1, dim: 'trend', detail: [
+        `120>60>20>10>5（${fmt(m120)}>${fmt(m60)}>${fmt(m20)}>${fmt(m10)}>${fmt(m5)}）且斜率全部向下`,
+        '主跌浪/系统性风险：反弹到 5/10 日线是逃命线',
+      ] };
+    } else if (m5 > m10 && m10 > m20 && m20 > m60) {
+      trendScore = 0.4;
+      trendTag = { key: 'trend-weak-up', label: '多头弱排列', single: '弱', color: 'orange', score: 0.4, dim: 'trend', detail: [
+        `5/10/20 短中期均线在 60 日之上（${fmt(m5)}>${fmt(m10)}>${fmt(m20)}>${fmt(m60)}）但缠绕粘合、斜率未全向上`,
+        '高位震荡/上涨中继：适合高抛低吸，不宜追涨',
+      ] };
+    } else if (m5 < m10 && m10 < m20 && m20 < m60) {
+      trendScore = -0.4;
+      trendTag = { key: 'trend-weak-down', label: '空头弱排列', single: '空弱', color: 'slate', score: -0.4, dim: 'trend', detail: [
+        `5/10/20 短中期均线在 60 日之下（${fmt(m5)}<${fmt(m10)}<${fmt(m20)}<${fmt(m60)}）且走平粘合`,
+        '震荡筑底期：小仓位试盘，等短期均线上穿的金叉确认',
+      ] };
+    }
+  }
+
+  // ── 量价关系维度（40%：未收盘的今日非最后半小时不判定，量价缺席不参与打分）──
+  let volumeScore = 0;
+  let volTag: EnvTag | null = null;
+  const up = close > prev.close;
+  const down = close < prev.close;
+  let volUp = false;
+  let isLowVol = false;
+  if (allowVolume) {
+    let volMa5 = 0;
+    for (let j = i - 5; j <= i - 1; j++) volMa5 += klines[j].volume;
+    volMa5 /= 5;
+    volUp = k.volume >= volMa5;
+    let minVol = Infinity;
+    for (let j = i - 19; j <= i; j++) minVol = Math.min(minVol, klines[j].volume);
+    isLowVol = k.volume <= minVol;
+    if (up && volUp) {
+      volumeScore = 1;
+      volTag = { key: 'vol-up-up', label: '量增价升', single: '增', color: 'red', score: 1, dim: 'volume', detail: [
+        `${ds} 收 ${fmt(close)} > 昨收 ${fmt(prev.close)}，量 ${fmtVol(k.volume)} ≥ 5日均量 ${fmtVol(volMa5)}`,
+        '真金白银的拉升：趋势具持续性，持仓不动是最优解',
+      ] };
+    } else if (up) {
+      volumeScore = 0.2;
+      volTag = { key: 'vol-up-down', label: '量缩价升', single: '缩', color: 'red', score: 0.2, dim: 'volume', detail: [
+        `${ds} 收 ${fmt(close)} > 昨收 ${fmt(prev.close)}，但量 ${fmtVol(k.volume)} < 5日均量 ${fmtVol(volMa5)}`,
+        '动能衰竭警告：高位易形成诱多陷阱，需提高警惕',
+      ] };
+    } else if (down && volUp) {
+      volumeScore = -1;
+      volTag = { key: 'vol-down-up', label: '量增价跌', single: '增', color: 'green', score: -1, dim: 'volume', detail: [
+        `${ds} 收 ${fmt(close)} < 昨收 ${fmt(prev.close)}，量 ${fmtVol(k.volume)} ≥ 5日均量 ${fmtVol(volMa5)}`,
+        nearHigh ? '出现在高位：机构高位出货，坚决离场' : '出现在大跌末端：恐慌盘涌出，往往接近最后一跌',
+      ] };
+    } else {
+      volumeScore = -0.2;
+      volTag = { key: 'vol-down-down', label: '量缩价跌', single: '缩', color: 'green', score: -0.2, dim: 'volume', detail: [
+        `${ds} 收 ${fmt(close)} < 昨收 ${fmt(prev.close)}，量 ${fmtVol(k.volume)} < 5日均量 ${fmtVol(volMa5)}`,
+        '无人接盘的阴跌：除非放量恐慌盘或大阳线，否则不抄底',
+      ] };
+    }
+    if (isLowVol) {
+      volumeScore = Math.min(1, volumeScore + 0.4);
+      volTag.detail.push(`量 ${fmtVol(k.volume)} 创近20日最低 → 地量见地价（抛售枯竭）`);
+    }
+  }
+
+  // ── 动能/MACD 维度（已移除：金叉/死叉改由每日行情信号展示，不参与环境打分）──
+
+  // ── 波动率维度（15%：BOLL 20,2）──
+  let bollScore = 0;
+  let bollTag: EnvTag | null = null;
+  let squeeze = false;
+  const b = bolls[i], b3 = bolls[i - 3];
+  if (b.mid && b.upper && b.lower && b3.upper && b3.lower) {
+    const band = (b.upper - b.lower) / b.mid;
+    const start = Math.max(0, i - 59);
+    const bands: number[] = [];
+    for (let j = start; j <= i; j++) {
+      const bb = bolls[j];
+      if (bb.mid && bb.upper && bb.lower) bands.push((bb.upper - bb.lower) / bb.mid);
+    }
+    bands.sort((a, b2) => a - b2);
+    const p20 = bands[Math.floor(bands.length * 0.2)];
+    squeeze = band < p20;
+    const touchUpper = close >= b.mid + (b.upper - b.mid) * 0.7;
+    const touchLower = close <= b.mid - (b.mid - b.lower) * 0.7;
+    const upperRising = b.upper > b3.upper;
+    const lowerFalling = b.lower < b3.lower;
+    if (squeeze) {
+      bollScore = 0;
+      bollTag = { key: 'vol-squeeze', label: '布林收口', single: '收', color: 'slate', score: 0, dim: 'volatility', detail: [
+        `带宽 ${(band * 100).toFixed(1)}% 低于近60日20%分位（${(p20 * 100).toFixed(1)}%）`,
+        '大变盘前的宁静：盯方向，上破中轨做多、下破做空/离场',
+      ] };
+    } else if (touchUpper && upperRising) {
+      bollScore = 1;
+      bollTag = { key: 'vol-up', label: '上轨扩张', single: '扩', color: 'red', score: 1, dim: 'volatility', detail: [
+        `上轨 ${fmt(b.upper)} 向上翘起，价 ${fmt(close)} 贴上轨运行`,
+        '单边强趋势进行中：持仓者拿住，追高风险极大',
+      ] };
+    } else if (touchLower && lowerFalling) {
+      bollScore = -1;
+      bollTag = { key: 'vol-down', label: '下轨扩张', single: '扩', color: 'green', score: -1, dim: 'volatility', detail: [
+        `下轨 ${fmt(b.lower)} 向下翘起，价 ${fmt(close)} 贴下轨运行`,
+        '单边下跌恐慌中：不接飞刀，等价格站回下轨上方',
+      ] };
+    } else {
+      bollScore = close >= b.mid ? 0.3 : -0.3;
+    }
+  }
+
+  // ── 综合强弱周期（打分定档 + 关键信号确认）──
+  // 权重重分配：均线40% + 量价40% + 波动20%（MACD已移除，权重归一）；量价缺席时剔除并归一
+  const total = allowVolume
+    ? 0.4 * trendScore + 0.4 * volumeScore + 0.2 * bollScore
+    : (0.4 * trendScore + 0.2 * bollScore) / 0.6;
+  const dimLine = allowVolume
+    ? `均线 ${fmtScore(trendScore)} · 量价 ${fmtScore(volumeScore)} · 波动 ${fmtScore(bollScore)}`
+    : `均线 ${fmtScore(trendScore)} · 量价 -- · 波动 ${fmtScore(bollScore)}`;
+  const bear = trendScore <= -0.4;
+  let cycle: EnvTag;
+  if (total >= 0.6) {
+    cycle = { key: 'cycle', label: '强进攻周期', single: '攻', color: 'red', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '趋势/量价/波动共振：重仓持有，逢回踩均线加仓'] };
+  } else if (total <= -0.6) {
+    cycle = { key: 'cycle', label: '弱筑底周期', single: '筑', color: 'indigo', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '下跌力量衰竭：轻仓试盘，等放量大阳线确认反转'] };
+  } else if (total >= 0.2 && ((allowVolume && up && !volUp) || squeeze)) {
+    cycle = { key: 'cycle', label: '强防守周期', single: '防', color: 'orange', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '趋势还在但内核转弱：只出不进，锁定利润，等方向明朗'] };
+  } else if (total <= -0.2 && bear && ((allowVolume && isLowVol) || squeeze)) {
+    cycle = { key: 'cycle', label: '弱筑底周期', single: '筑', color: 'indigo', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '空头衰竭信号（地量/收口）：轻仓试盘，急跌敢买'] };
+  } else if (total <= -0.2 && bear) {
+    cycle = { key: 'cycle', label: '弱反弹周期', single: '弹', color: 'green', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '空头下的超跌反抽：借反弹坚决减仓，绝不追高'] };
+  } else {
+    cycle = { key: 'cycle', label: '震荡变盘期', single: '震', color: 'slate', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '方向未明：控制仓位，等待突破确认'] };
+  }
+  const tags: EnvTag[] = [cycle];
+  if (trendTag) tags.push(trendTag);
+  if (volTag) tags.push(volTag);
+  if (bollTag) tags.push(bollTag);
+  return { tags, total, dimScores: { trend: trendScore, volume: volumeScore, volatility: bollScore } };
+}
+
+// ── 展示辅助（列表缩略 + 弹窗共用，纯函数，便于测试）──
+// 列表缩略展示标签（单字 + 底色 CLS）
+export interface MktTag { key: string; text: string; cls: string }
+
+// 环境维度单字底色：按 EnvTag.color 映射 Tailwind CLS
+const ENV_SINGLE_CLS: Record<EnvTag['color'], string> = {
+  red: 'bg-red-500/10 text-red-500 border-red-500/20',
+  green: 'bg-green-500/10 text-green-500 border-green-500/20',
+  orange: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
+  indigo: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30',
+  slate: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
+};
+
+// 弹窗“环境”区与列表缩略共用：只保留当前启用的 趋势结构 + 布林波动（cycle/volume 已注释）。
+// 将来要恢复综合周期/量价时，改这里一处即可。
+export function selectEnvDisplayTags(tags: EnvTag[]): EnvTag[] {
+  return tags.filter(t => t.dim === 'trend' || t.dim === 'volatility');
+}
+
+// 最新（实时/live）K线的内容指纹：今天这根 bar 会在盘中原地更新，仅用数组引用做缓存键
+// 无法识别这种变化，导致缩略标签（尤其对"今日"敏感的形态如十字星）缓存过期。
+// 把金额——开/高/低/收/量 + 日期——纳入指纹，让 live bar 每次变动都刷新缓存。
+export function latestBarFingerprint(klines: BollKline[]): string {
+  const k = klines[klines.length - 1];
+  if (!k) return '';
+  return `${k.date}|${k.open}|${k.high}|${k.low}|${k.close}|${k.volume}`;
+}
+
+// 列表页缩略展示：封装原 getLatestDayTags 的拼装体——破位单字(破/真/假) → K线形态单字 → 环境(trend/volatility)单字
+// 从"已判定的结果"生成列表页缩略单字标签（纯映射，不再重复判定）。
+// events / patterns / env 由调用方对"同一组（含实时价覆盖后的）K 线"只计算一遍，
+// 列表缩略与弹窗详细共用同一份结果 → 两者判定天然一致，不会因喂不同数据而漂移。
+export function buildLatestShrinkTags(
+  events: MarketEvent[] | null,
+  patterns: KlinePattern[] | null,
+  env: EnvResult | null,
+  lastDate: string,
+): MktTag[] {
+  // 破位类事件标签（不含“修复观察”）
+  const breakTags: MktTag[] = [];
+  if (events) {
+    for (const ev of events) {
+      // 仅保留“观测窗口覆盖最新交易日”的事件标签（含当天新破位）
+      if (!ev.window.some(w => w.date === lastDate)) continue;
+      if (ev.date === lastDate) {
+        // 当天破位
+        breakTags.push({ key: `r-${lastDate}`, text: '破', cls: ENV_SINGLE_CLS.green });
+      } else if (ev.status !== 'confirming') {
+        // 观测窗口恰好在最新交易日收盘后定论（仍在观测中的“修”不展示）
+        breakTags.push({ key: `d-${ev.date}`, text: ev.status === 'trueBreak' ? '真' : '假', cls: ev.status === 'trueBreak' ? ENV_SINGLE_CLS.green : ENV_SINGLE_CLS.red });
+      }
+    }
+  }
+  // 依次拼装：K线形态 → 趋势/布林 → 破位
+  const tags: MktTag[] = [];
+  for (const p of patterns ?? []) {
+    tags.push({
+      key: `p-${p.type}`,
+      text: p.single,
+      cls: p.color === 'red' ? ENV_SINGLE_CLS.red : p.color === 'green' ? ENV_SINGLE_CLS.green : ENV_SINGLE_CLS.slate,
+    });
+  }
+  // 综合周期/量价标签注释掉，仅保留 趋势结构 + 布林波动
+  if (env) {
+    for (const t of selectEnvDisplayTags(env.tags)) {
+      tags.push({ key: `env-${t.key}`, text: t.single, cls: ENV_SINGLE_CLS[t.color] });
+    }
+  }
+  tags.push(...breakTags);
+  return tags;
+}
+
+// 便捷入口：给定 K 线序列（未覆盖实时价），内部判定一遍再生成缩略标签。
+// 组件层不应直接用它做列表/弹窗两套判定——应先用 computeAnalyzed 统一算一次，
+// 再调 buildLatestShrinkTags 复用同一结果。此函数仅作独立快捷用途（含单测）。
+export function buildLatestDayTags(klines: BollKline[], fmt: (v: number) => string, cfg: TagParams = DEFAULT_TAG_PARAMS): MktTag[] {
+  const events = analyzeMarketConditions(klines);
+  const lastDate = klines[klines.length - 1].date;
+  const patterns = analyzeKlinePatterns(klines, fmt, cfg);
+  const env = analyzeEnvironment(klines, fmt, isTodayVolumeEligible(klines), cfg);
+  return buildLatestShrinkTags(events, patterns, env, lastDate);
+}
+
+// 弹窗破位事件“判断依据”文案拼接（封装原 explainLines 中 selEv 分支）
+export function buildBreakExplainLines(
+  ev: MarketEvent,
+  kind: 'event' | 'status' | 'repair',
+  fmt: (v: number) => string,
+  fmtDay: (d: string) => string,
+  fmtShort: (d: string) => string,
+): string[] {
+  const maStr = ev.brokenList.map(b => `MA${b.period} ${fmt(b.value)}`).join(' · ');
+  if (kind === 'event') {
+    return [`${fmtDay(ev.date)} 收盘 ${fmt(ev.close)}`, `当日下穿 ${ev.brokenCount} 条均线：${maStr}`];
+  }
+  if (ev.status === 'trueBreak') {
+    return [
+      `${fmtDay(ev.date)} 收盘 ${fmt(ev.close)}，下穿 ${ev.brokenCount} 条均线`,
+      `参照均线 MA${ev.ref.period}（破位日 ${fmt(ev.ref.value)}）`,
+      ...ev.window.map((w, i) => `${i + 1}天 ${fmtShort(w.date)}：收 ${fmt(w.close)} < 均线 ${fmt(w.refMa)}`),
+      `3 天观测收盘均未回到均线上方 → 真破位`,
+    ];
+  }
+  if (ev.status === 'falseBreak') {
+    const r = ev.returnDay!;
+    return [
+      `${fmtDay(ev.date)} 收盘 ${fmt(ev.close)}，下穿 ${ev.brokenCount} 条均线`,
+      `参照均线 MA${ev.ref.period}（破位日 ${fmt(ev.ref.value)}）`,
+      `${fmtShort(r.date)} 收盘 ${fmt(r.close)} 回到均线上方（MA${ev.ref.period} ${fmt(r.refMa)}）→ 假破位`,
+    ];
+  }
+  const last = ev.window[ev.window.length - 1];
+  return [
+    `${fmtDay(ev.date)} 收盘 ${fmt(ev.close)}，下穿 ${ev.brokenCount} 条均线`,
+    `参照均线 MA${ev.ref.period}（破位日 ${fmt(ev.ref.value)}）`,
+    `已观测 ${ev.window.length}/3 天，最新 ${fmtShort(last.date)} 收盘 ${fmt(last.close)} 仍低于均线 ${fmt(last.refMa)}`,
+    `观测未满 3 天 → 修复观察`,
+  ];
+}

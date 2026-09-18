@@ -1,0 +1,272 @@
+import { describe, it, expect } from 'vitest';
+import type { BollKline } from '../bollService';
+import type { EnvTag, MarketEvent } from '../tagAnalyzers';
+import {
+  analyzeKlinePatterns,
+  analyzeMarketConditions,
+  analyzeEnvironment,
+  buildLatestDayTags,
+  buildLatestShrinkTags,
+  selectEnvDisplayTags,
+  buildBreakExplainLines,
+  latestBarFingerprint,
+} from '../tagAnalyzers';
+
+const fmt = (v: number) => v.toFixed(2);
+const fmtDay = (d: string) => d;
+const fmtShort = (d: string) => d.slice(5).replace('-', '/');
+// 综合周期单字（已注释，不得出现在缩略展示里）
+const CYCLE_SINGLES = ['攻', '防', '弹', '筑', '震'];
+
+// 生成从 2026-01-01 起的第 i 天日期（历史日期，保证 isTodayVolumeEligible 走非当日收盘分支）
+function date(i: number): string {
+  return new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10);
+}
+
+// 便捷构造 K 线序列：base 为收盘均值，可用 overrides 覆盖任意索引的 OHLC
+function mkKlines(
+  n: number,
+  opts: { close?: (i: number) => number; overrides?: Record<number, Partial<BollKline>> } = {},
+): BollKline[] {
+  const arr: BollKline[] = [];
+  for (let i = 0; i < n; i++) {
+    const c = opts.close ? opts.close(i) : 100;
+    arr.push({ date: date(i), open: c, high: c + 0.1, low: c - 0.1, close: c, volume: 1_000_000 });
+  }
+  if (opts.overrides) {
+    for (const [idx, o] of Object.entries(opts.overrides)) {
+      const i = Number(idx);
+      arr[i] = { ...arr[i], ...o };
+    }
+  }
+  return arr;
+}
+
+// 平坦走势 + 最近 3 天跳水（不收回）→ 判定真破位；破位日为 n-3
+const kTrueBreak = mkKlines(83, {
+  overrides: {
+    80: { open: 90, close: 90, high: 92, low: 88 },
+    81: { open: 90, close: 90, high: 92, low: 88 },
+    82: { open: 90, close: 90, high: 92, low: 88 },
+  },
+});
+// 破位次日收回均线上方 → 假破位
+const kFalseBreak = mkKlines(83, {
+  overrides: {
+    80: { open: 90, close: 90, high: 92, low: 88 },
+    81: { open: 100, close: 100, high: 101, low: 99 },
+    82: { open: 100, close: 100, high: 101, low: 99 },
+  },
+});
+// 仅最后一根跳水（观测窗口不足 3 天）→ 修复观察
+const kConfirming = mkKlines(80, {
+  overrides: {
+    79: { open: 90, close: 90, high: 92, low: 88 },
+  },
+});
+
+describe('analyzeKlinePatterns（K线形态）', () => {
+  it('末根十字星 → 单字"十"', () => {
+    const k = mkKlines(140, {
+      overrides: { 139: { open: 100, close: 100, high: 105, low: 95 } },
+    });
+    const ps = analyzeKlinePatterns(k, fmt);
+    expect(ps).toHaveLength(1);
+    expect(ps[0].type).toBe('doji');
+    expect(ps[0].single).toBe('十');
+  });
+
+  it('判断依据 detail 含形态名与实体占比', () => {
+    const k = mkKlines(140, {
+      overrides: { 139: { open: 100, close: 100, high: 105, low: 95 } },
+    });
+    const ps = analyzeKlinePatterns(k, fmt);
+    const joined = ps[0].detail.join('\n');
+    expect(joined).toContain('十字星');
+    expect(joined).toContain('实体占比');
+  });
+});
+
+describe('analyzeMarketConditions（破位与观察）', () => {
+  it('3天不回 → 真破位，窗口含破位日/次日/再日', () => {
+    const evs = analyzeMarketConditions(kTrueBreak);
+    expect(evs).toHaveLength(1);
+    const ev = evs[0];
+    expect(ev.status).toBe('trueBreak');
+    expect(ev.date).toBe(date(80));
+    expect(ev.brokenCount).toBeGreaterThan(0);
+    expect(ev.ref.period).toBeGreaterThan(0);
+    expect(ev.window.map(w => w.date)).toEqual([date(80), date(81), date(82)]);
+  });
+
+  it('次日收回 → 假破位并记录 returnDay', () => {
+    const evs = analyzeMarketConditions(kFalseBreak);
+    expect(evs).toHaveLength(1);
+    const ev = evs[0];
+    expect(ev.status).toBe('falseBreak');
+    expect(ev.returnDay?.date).toBe(date(81));
+  });
+
+  it('窗口不足3天 → 修复观察（confirming）', () => {
+    const evs = analyzeMarketConditions(kConfirming);
+    expect(evs).toHaveLength(1);
+    expect(evs[0].status).toBe('confirming');
+    expect(evs[0].window).toHaveLength(1);
+  });
+});
+
+describe('analyzeEnvironment（趋势结构 / 布林波动）', () => {
+  it('单边上行 → 趋势"多头强排列"（单字"多"）', () => {
+    const k = mkKlines(140, { close: i => 10 + i * 0.2 });
+    const env = analyzeEnvironment(k, fmt);
+    expect(env).not.toBeNull();
+    const trend = env!.tags.find(t => t.dim === 'trend');
+    expect(trend).toBeDefined();
+    expect(trend!.single).toBe('多');
+    expect(trend!.label).toBe('多头强排列');
+  });
+
+  it('详情展开（selectEnvDisplayTags）只保留 trend + volatility', () => {
+    // 单边上行：cycle 必然生成，volume 受量能驱动可能生成，但过滤后都不得出现
+    const k = mkKlines(140, { close: i => 10 + i * 0.2 });
+    const env = analyzeEnvironment(k, fmt);
+    expect(env).not.toBeNull();
+    expect(env!.tags.some(t => t.dim === 'cycle')).toBe(true);
+    const sel = selectEnvDisplayTags(env!.tags);
+    expect(sel.length).toBeGreaterThan(0);
+    for (const t of sel) {
+      expect(t.dim).toMatch(/^(trend|volatility)$/);
+    }
+    // 弹窗"环境"区展示 label（详细展示依据）
+    const trend = sel.find(t => t.dim === 'trend');
+    expect(trend).toBeDefined();
+    expect(trend!.detail.length).toBeGreaterThan(0);
+  });
+});
+
+describe('selectEnvDisplayTags（环境维度过滤）', () => {
+  it('输入含 cycle/volume/trend/volatility → 仅返回 trend+volatility', () => {
+    const tags: EnvTag[] = [
+      { key: 'cycle', label: '震荡变盘期', single: '震', color: 'slate', score: 0, dim: 'cycle', detail: [] },
+      { key: 'vol-up-up', label: '量增价升', single: '增', color: 'red', score: 1, dim: 'volume', detail: [] },
+      { key: 'trend-strong-up', label: '多头强排列', single: '多', color: 'red', score: 1, dim: 'trend', detail: [] },
+      { key: 'vol-up', label: '上轨扩张', single: '扩', color: 'red', score: 1, dim: 'volatility', detail: [] },
+    ];
+    const sel = selectEnvDisplayTags(tags);
+    expect(sel.map(t => t.key)).toEqual(['trend-strong-up', 'vol-up']);
+  });
+});
+
+describe('buildLatestDayTags（列表页缩略展示）', () => {
+  it('K线形态单字进入缩略展示（十字星"十"）', () => {
+    const k = mkKlines(140, {
+      overrides: { 139: { open: 100, close: 100, high: 105, low: 95 } },
+    });
+    const tags = buildLatestDayTags(k, fmt);
+    const texts = tags.map(t => t.text);
+    expect(texts).toContain('十');
+  });
+
+  it('综合周期单字（攻/防/弹/筑/震）绝不进入缩略展示', () => {
+    // 任意 ≥130 根序列：analyzeEnvironment 必要会产出 cycle，读依赖 selectEnvDisplayTags 剔除
+    const k = mkKlines(140, { close: i => 10 + i * 0.2 });
+    const tags = buildLatestDayTags(k, fmt);
+    const texts = tags.map(t => t.text);
+    for (const s of CYCLE_SINGLES) expect(texts).not.toContain(s);
+  });
+
+  it('真破位事件 → 缩略单字"真"', () => {
+    const tags = buildLatestDayTags(kTrueBreak, fmt);
+    expect(tags.map(t => t.text)).toContain('真');
+  });
+
+  it('破位/形态标签带底色 CLS', () => {
+    const tags = buildLatestDayTags(kTrueBreak, fmt);
+    const want = tags.find(t => t.text === '真');
+    expect(want).toBeDefined();
+    expect(want!.cls).toContain('bg-');
+    expect(want!.cls).toContain('text-');
+  });
+});
+
+describe('buildLatestShrinkTags（判定结果 → 缩略单字，纯映射不再重复判定）', () => {
+  // 与弹窗共用的判定结果：对同一组 K 线只算一次 events/patterns/env，再喂给本函数生成缩略。
+  const k = mkKlines(140, {
+    overrides: { 139: { open: 100, close: 100, high: 105, low: 95 } },
+  });
+  const events = analyzeMarketConditions(k, 10);
+  const patterns = analyzeKlinePatterns(k, fmt);
+  const env = analyzeEnvironment(k, fmt);
+  const lastDate = k[k.length - 1].date;
+
+  it('喂入的判定结果直接决定缩略单字（十字星"十" + 环境单字）', () => {
+    const texts = buildLatestShrinkTags(events, patterns, env, lastDate).map(t => t.text);
+    expect(texts).toContain('十');
+  });
+
+  it('不会在内部重新判定：篡改传入的 events 即反映为对应单字', () => {
+    // 传 null → 破位/形态/环境单字全部消失，绝不可能因"内部重新判定"又变出来
+    const texts = buildLatestShrinkTags(null, null, null, lastDate).map(t => t.text);
+    expect(texts).toHaveLength(0);
+  });
+
+  it('综合周期单字绝不进入缩略（依赖 selectEnvDisplayTags 已在其套餐过滤）', () => {
+    const texts = buildLatestShrinkTags(events, patterns, env, lastDate).map(t => t.text);
+    for (const s of CYCLE_SINGLES) expect(texts).not.toContain(s);
+  });
+});
+
+describe('latestBarFingerprint / 列表缩略缓存时效性（回归：今日live bar 原地更新致缓存过期）', () => {
+  it('指纹随末根 bar 内容变化而变（同数组原地修改 close）', () => {
+    const k = mkKlines(140, {
+      overrides: { 139: { open: 100, close: 100, high: 105, low: 95 } },
+    });
+    expect(latestBarFingerprint(k)).not.toBe('');
+    const fp1 = latestBarFingerprint(k);
+    // 盘中实时报价原地改 close（数组引用未变）
+    k[139].close = 101;
+    expect(latestBarFingerprint(k)).not.toBe(fp1);
+  });
+
+  it('盘中价格刷新前是十字星、刷新后不再是——缩略标签必须随之刷新（否则与弹窗不一致）', () => {
+    const k = mkKlines(140, {
+      overrides: { 139: { open: 100, close: 100, high: 105, low: 95 } },
+    });
+    // 第一次算：末根为十字星 → 缩略含"十"
+    const before = buildLatestDayTags(k, fmt);
+    expect(before.map(t => t.text)).toContain('十');
+    // 原地更新末根 close（断言是十字星的形态已消失）→ 指纹变化，重新计算后缩略不得再含"十"
+    k[139].close = 101;
+    const after = buildLatestDayTags(k, fmt);
+    expect(after.map(t => t.text)).not.toContain('十');
+  });
+});
+
+describe('buildBreakExplainLines（破位判断依据）', () => {
+  it('事件点击 → "当日下穿 N 条均线"详情', () => {
+    const ev = analyzeMarketConditions(kTrueBreak)[0];
+    const lines = buildBreakExplainLines(ev, 'event', fmt, fmtDay, fmtShort);
+    expect(lines[0]).toContain('收盘');
+    expect(lines[1]).toContain('当日下穿');
+    expect(lines[1]).toContain('均线');
+  });
+
+  it('真破位 → "→ 真破位"', () => {
+    const ev = analyzeMarketConditions(kTrueBreak)[0];
+    const lines = buildBreakExplainLines(ev, 'status', fmt, fmtDay, fmtShort);
+    expect(lines.join('\n')).toContain('→ 真破位');
+    expect(lines[0]).toContain('收盘');
+  });
+
+  it('假破位 → "→ 假破位"', () => {
+    const ev = analyzeMarketConditions(kFalseBreak)[0];
+    const lines = buildBreakExplainLines(ev, 'status', fmt, fmtDay, fmtShort);
+    expect(lines.join('\n')).toContain('→ 假破位');
+  });
+
+  it('修复观察 → 含"修复观察"', () => {
+    const ev = analyzeMarketConditions(kConfirming)[0];
+    const lines = buildBreakExplainLines(ev, 'repair', fmt, fmtDay, fmtShort);
+    expect(lines.join('\n')).toContain('修复观察');
+  });
+});
