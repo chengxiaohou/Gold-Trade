@@ -706,6 +706,35 @@ export function selectEnvDisplayTags(tags: EnvTag[]): EnvTag[] {
   return tags.filter(t => t.dim === 'trend' || t.dim === 'volatility');
 }
 
+// 回测可用的"环境条件"候选目录：只含趋势结构 + 布林波动（与弹窗 selectEnvDisplayTags 同维度，不含已注释的周期/量价）。
+// 作为回测规则的辅助前提：当且仅当当日环境状态命中该标签（AND 门控），对应的触发标签才允许执行动作。
+export interface EnvConditionDef {
+  key: string;      // 稳定 key（= analyzeEnvironment 产出的 EnvTag.key）
+  label: string;    // 完整名称
+  single: string;   // 单字
+  color: EnvTag['color'];
+  dim: 'trend' | 'volatility';
+}
+export const ENV_TAG_CATALOG: EnvConditionDef[] = [
+  // 趋势结构（dim: trend）
+  { key: 'trend-strong-up', label: '多头强排列', single: '多', color: 'red', dim: 'trend' },
+  { key: 'trend-weak-up', label: '多头弱排列', single: '弱', color: 'orange', dim: 'trend' },
+  { key: 'trend-squeeze', label: '均线粘合', single: '粘', color: 'slate', dim: 'trend' },
+  { key: 'trend-weak-down', label: '空头弱排列', single: '空弱', color: 'slate', dim: 'trend' },
+  { key: 'trend-strong-down', label: '空头强排列', single: '空', color: 'green', dim: 'trend' },
+  // 布林波动（dim: volatility）
+  { key: 'vol-squeeze', label: '布林收口', single: '收', color: 'slate', dim: 'volatility' },
+  { key: 'vol-up', label: '上轨扩张', single: '扩', color: 'red', dim: 'volatility' },
+  { key: 'vol-down', label: '下轨扩张', single: '扩', color: 'green', dim: 'volatility' },
+];
+
+// 环境条件是否成立：当日分析结果里，展示维度（trend/volatility）命中了指定 key。
+// 不判断"状态切换"——只要当日处于该状态即视为成立（贴合"当前条件成立才考虑其他标签"的语义）。
+export function envHasCondition(env: EnvResult | null, key: string): boolean {
+  if (!env) return false;
+  return selectEnvDisplayTags(env.tags).some(t => t.key === key);
+}
+
 // 最新（实时/live）K线的内容指纹：今天这根 bar 会在盘中原地更新，仅用数组引用做缓存键
 // 无法识别这种变化，导致缩略标签（尤其对"今日"敏感的形态如十字星）缓存过期。
 // 把金额——开/高/低/收/量 + 日期——纳入指纹，让 live bar 每次变动都刷新缓存。

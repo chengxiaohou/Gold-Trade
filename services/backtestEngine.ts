@@ -1,13 +1,14 @@
 import type { BollKline } from './bollService';
 import { DEFAULT_TAG_PARAMS } from '../types';
 import type { TagParams, BacktestRule, BacktestStrategy, BacktestTrade, BacktestResult, BacktestTagGroup } from '../types';
-import { analyzeKlinePatterns, analyzeDailySignals, analyzeFengSignals, calcMaSeries } from './tagAnalyzers';
+import { analyzeKlinePatterns, analyzeMarketConditions, analyzeEnvironment, envHasCondition, buildBreakExplainLines } from './tagAnalyzers';
+import type { EnvResult } from './tagAnalyzers';
 
 // ─────────────────────────────────────────────────────────────
 // 回测引擎
 // 输入历史日线 K 线（BollKline[]，date 升序）+ 用户规则（触发标签→方向→仓位），
 // 逐日因果扫描（仅用当日及之前信息），生成买卖点、成交记录与资金统计。
-// 复用 services/tagAnalyzers.ts 的信号判定，保证与原股息页面信号一致。
+// ⚠️ 触发标签完全复用 services/tagAnalyzers.ts 的判断逻辑（弹窗同一套），回测自身不定义独立信号判断。
 // ─────────────────────────────────────────────────────────────
 
 export interface BacktestParams {
@@ -15,71 +16,53 @@ export interface BacktestParams {
   lotSize?: number; // 每手股数（默认 100，整百股成交）
 }
 
-// 触发标签目录：把回测 UI 可选标签映射到信号来源与匹配名
+// 触发标签目录：把回测 UI 可选标签映射到"弹窗同一标签判断逻辑"的匹配值。
+// 与股息页标签弹窗展示集严格同步——只含 K线形态 + 破位事件；
+// 每日信号(MACD/放量)、风系加/减、综合周期/量价已在弹窗注释，回测同样不收录。
 export interface BacktestTagDef {
   key: string;
   label: string;            // UI 展示名 / 成交记录触发标签名
-  abbr: string;             // 预览/单元格单字缩写（缩/放/拉/破/十/针/金）
+  abbr: string;             // 预览/单元格单字缩写
   group: BacktestTagGroup;
-  source: 'feng' | 'pattern' | 'daily' | 'break';
-  signalName?: string;      // analyzer 返回的 name / label / kind 匹配值
+  source: 'pattern' | 'break';
+  signalName?: string;      // pattern 用 analyzeKlinePatterns 返回的 label；break 用固定 token 'break-event'
   action: 'buy' | 'sell';   // 语义方向提示（执行仍以规则 action 为准）
   color: string;            // 标签主题色：买=砖红、卖=蓝（与 B/S 买卖标签同一套）
 }
 export const BACKTEST_TAG_CATALOG: BacktestTagDef[] = [
-  { key: 'feng-low-buy', label: '缩量入场（低位）', abbr: '缩', group: 'feng-add', source: 'feng', signalName: '缩量入场（低位）', action: 'buy', color: '#C44A3D' },
-  { key: 'feng-vol-break', label: '放量突破均线', abbr: '放', group: 'feng-add', source: 'feng', signalName: '放量突破均线', action: 'buy', color: '#C44A3D' },
-  { key: 'feng-shrink-rally', label: '缩量急拉', abbr: '拉', group: 'feng-reduce', source: 'feng', signalName: '无量/缩量急拉', action: 'sell', color: '#4A90D9' },
-  { key: 'break-fail-recover', label: '放量破位不收复', abbr: '破', group: 'break', source: 'break', signalName: '放量破位+2日不收复', action: 'sell', color: '#4A90D9' },
+  // K 线形态（signalName = analyzeKlinePatterns 的 label，弹窗形态 chip 同一来源）
   { key: 'pattern-doji', label: '十字星', abbr: '十', group: 'pattern', source: 'pattern', signalName: '十字星', action: 'sell', color: '#4A90D9' },
   { key: 'pattern-hammer', label: '金针探底', abbr: '针', group: 'pattern', source: 'pattern', signalName: '金针探底', action: 'buy', color: '#C44A3D' },
-  { key: 'macro-macd-gold', label: 'MACD 金叉', abbr: '金', group: 'daily', source: 'daily', signalName: 'macd-gold', action: 'buy', color: '#C44A3D' },
+  { key: 'pattern-boosted-hammer', label: '放量金针', abbr: '针', group: 'pattern', source: 'pattern', signalName: '放量金针', action: 'buy', color: '#C44A3D' },
+  { key: 'pattern-hanging', label: '吊颈线', abbr: '吊', group: 'pattern', source: 'pattern', signalName: '吊颈线', action: 'sell', color: '#4A90D9' },
+  { key: 'pattern-shooting', label: '射击之星', abbr: '射', group: 'pattern', source: 'pattern', signalName: '射击之星', action: 'sell', color: '#4A90D9' },
+  { key: 'pattern-inverted-hammer', label: '倒锤子线', abbr: '倒', group: 'pattern', source: 'pattern', signalName: '倒锤子线', action: 'buy', color: '#C44A3D' },
+  // 破位事件（source=break，走弹窗 analyzeMarketConditions 破位事件；signalName 为固定 token）
+  { key: 'break-event', label: '破位', abbr: '破', group: 'break', source: 'break', signalName: 'break-event', action: 'sell', color: '#4A90D9' },
 ];
 
 const fmtP = (v: number) => v.toFixed(2);
+export const fmtDay = (d: string) => d;
+export const fmtShort = (d: string) => d.slice(5).replace('-', '/');
 
-// 收集某交易日（索引 i，win=klines[0..i] 末根=当日）命中的信号名
-function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams): Set<string> {
-  const hit = new Set<string>();
+// 收集某交易日（win=klines[0..i] 末根=当日）命中的标签名 + 当日环境状态。
+// 逐日因果：win 已是"当日及之前"的前缀，不含未来数据 → 无未来泄漏。
+function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams): { hits: Set<string>; env: EnvResult | null } {
+  const hits = new Set<string>();
   const last = win[win.length - 1];
-  for (const p of analyzeKlinePatterns(win, fmtP, cfg)) if (p.date === last.date) hit.add(p.label);
-  for (const sd of analyzeDailySignals(win, true)) if (sd.date === last.date) hit.add(sd.kind);
-  const f = analyzeFengSignals(win, fmtP, true, cfg).latest;
-  if (f.date === last.date) {
-    for (const a of f.add) hit.add(a.name);
-    for (const r of f.reduce) hit.add(r.name);
-  }
+  // K 线形态：直接用 analyzeKlinePatterns 的 label（弹窗同一套）
+  for (const p of analyzeKlinePatterns(win, fmtP, cfg)) if (p.date === last.date) hits.add(p.label);
+  // 破位事件：复用弹窗 analyzeMarketConditions，只看当日（lastDays=1）
+  for (const ev of analyzeMarketConditions(win, 1)) if (ev.date === last.date && ev.brokenCount > 0) hits.add('break-event');
+  // 环境状态：仅当 K 线足够长（≥130，环境判断需要 120 日均线）才计算，供规则 envCondition 门控判定
+  const env = win.length >= 130 ? analyzeEnvironment(win, fmtP, true, cfg) : null;
   void i;
-  return hit;
-}
-
-// 近5日均量（不含前导不足时用已用天数均值）
-function avgVol(klines: BollKline[], i: number): number {
-  let s = 0;
-  const c = Math.min(5, i + 1);
-  for (let j = Math.max(0, i - 4); j <= i; j++) s += klines[j].volume;
-  return c > 0 ? s / c : 0;
-}
-
-// 放量破位不收复（延迟确认）：执行日 t 收盘后，若 t-2 为"放量跌破MA5且MA10"，且 t-1、t 两日
-// 收盘均低于其当日 MA10（未收复），则确认触发。落点在确认日 t，无未来泄漏。
-function isBreakConfirmed(klines: BollKline[], t: number, ma5s: (number | null)[], ma10s: (number | null)[]): boolean {
-  if (t < 3) return false;
-  const d = t - 2;
-  const kd = klines[d];
-  const ma5d = ma5s[d], ma10d = ma10s[d], ma10a = ma10s[t - 1], ma10b = ma10s[t];
-  if (ma5d == null || ma10d == null || ma10a == null || ma10b == null) return false;
-  const broke = kd.close < ma5d && kd.close < ma10d && kd.volume >= avgVol(klines, d);
-  if (!broke) return false;
-  const noRecover = klines[t - 1].close < ma10a && klines[t].close < ma10b;
-  return noRecover;
+  return { hits, env };
 }
 
 // 引擎主函数：支持加仓/减仓、初始资金基准仓位、先卖后买、每日收盘后结算
 export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestParams = {}): BacktestResult {
-  // A股费用模型：
-  // - 简化版费用：仅保留"最低佣金"（固定每笔费用）。
-  //   佣金费率 / 印花税率已从 UI 隐藏，不参与计算。
+  // 简化版费用：仅"最低佣金"（固定每笔费用），费率/印花税已从 UI 隐藏，不参与计算。
   const commissionMin = s.commissionMin ?? 5; // 单笔固定佣金（默认 5 元）
   const buyFee = (amt: number) => commissionMin;
   const sellFee = (amt: number) => commissionMin;
@@ -87,8 +70,6 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
   const cfg = DEFAULT_TAG_PARAMS;
   const klines = [...k].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const n = klines.length;
-  const ma5s = calcMaSeries(klines, 5);
-  const ma10s = calcMaSeries(klines, 10);
   const enabledRules = (s.rules || []).filter(r => r.enabled);
   const initCap = s.initialCapital;
 
@@ -102,17 +83,18 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
 
   for (let i = 30; i < n; i++) {
     const win = klines.slice(0, i + 1);
-    const hits = collectSignalsOnDay(win, i, cfg);
+    const { hits, env } = collectSignalsOnDay(win, i, cfg);
 
-    // 命中标签里，选已启用规则中仓位最高的一条（break 用延迟确认）
+    // 命中标签里，选已启用规则中仓位最高的一条（且环境前提成立）
     let chosen: BacktestRule | null = null;
     for (const r of enabledRules) {
       const def = BACKTEST_TAG_CATALOG.find(d => d.key === r.tagKey && d.label === r.label);
       if (!def) continue;
-      let matched = def.source === 'break'
-        ? isBreakConfirmed(klines, i, ma5s, ma10s)
-        : def.signalName != null && hits.has(def.signalName);
-      if (matched && (!chosen || r.pct > chosen.pct)) chosen = r;
+      const matched = def.signalName != null && hits.has(def.signalName);
+      if (!matched) continue;
+      // 环境前提门控：规则指定了 envCondition 时，当日环境状态必须命中该 key 才允许动作
+      if (r.envCondition?.key && !envHasCondition(env, r.envCondition.key)) continue;
+      if (!chosen || r.pct > chosen.pct) chosen = r;
     }
 
     if (chosen) {
@@ -120,16 +102,13 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
       if (def) {
         const price = klines[i].close;
         const date = klines[i].date;
-        // 仓位基准：固定按初始资金 × pct% 计算目标交易金额
-        // 优点：加仓不会因剩余现金变少而被挤没；卖出也对称，语义清晰
+        // 仓位基准：固定按初始资金 × pct% 计算目标交易金额（加仓不被剩余现金挤没、卖出对称）
         const targetAmount = initCap * (chosen.pct / 100);
 
         if (chosen.action === 'buy') {
-          // 买入：佣金 = max(金额×费率, 最低5元)，可用现金须覆盖成交金额+佣金
-          const maxAmount = cash; // 佣金最低5元，先按全额现金算本金再校验收支
+          const maxAmount = cash;
           const amount = Math.min(targetAmount, maxAmount);
           let qty = Math.floor(amount / price / lotSize) * lotSize;
-          // 校验：成交金额+买入佣金 ≤ 现金
           if (qty >= lotSize && qty * price + buyFee(qty * price) <= cash) {
             const tradeAmount = qty * price;
             const fee = buyFee(tradeAmount);
@@ -146,13 +125,12 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
             });
           }
         } else if (chosen.action === 'sell' && shares > 0) {
-          // 卖出：目标金额对应股数；若不够 lotSize 且有持仓，允许清仓零股
           let qty = Math.floor(targetAmount / price / lotSize) * lotSize;
           if (qty === 0 && shares > 0) qty = shares;  // 目标太小：全卖
           else if (qty > shares) qty = shares;        // 超过持仓：全卖
           if (qty > 0) {
             const tradeAmount = qty * price;
-            const fee = sellFee(tradeAmount); // 佣金(含最低5元) + 印花税
+            const fee = sellFee(tradeAmount);
             const realized = tradeAmount - fee - qty * avgCost;
             cash += tradeAmount - fee;
             shares -= qty;
@@ -186,43 +164,34 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
   };
 }
 
-// 预览：扫描某标签在完整历史 K 线中命中的所有位置（不模拟交易，纯信号检测）
-// 用于 K 线图上快速预览"该策略标签在哪些 K 线情形下出现"。
-export function scanTagOccurrences(k: BollKline[], tagKey: string): { date: string; barIndex: number; detail: string[] }[] {
+// 预览：扫描某标签在某段完整历史 K 线中命中位置（复用弹窗判定逻辑，不独立判断）。
+// envKey 可选：指定后仅保留"当日环境状态命中该 key"的位置（与回测门控一致）。
+export function scanTagOccurrences(k: BollKline[], tagKey: string, envKey?: string): { date: string; barIndex: number; detail: string[] }[] {
   const def = BACKTEST_TAG_CATALOG.find(d => d.key === tagKey);
   if (!def) return [];
   const cfg = DEFAULT_TAG_PARAMS;
   const klines = [...k].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const n = klines.length;
-  const ma5s = calcMaSeries(klines, 5);
-  const ma10s = calcMaSeries(klines, 10);
   const out: { date: string; barIndex: number; detail: string[] }[] = [];
   for (let i = 30; i < n; i++) {
     const win = klines.slice(0, i + 1);
     const last = win[win.length - 1];
     let detail: string[] | null = null;
     if (def.source === 'break') {
-      if (isBreakConfirmed(klines, i, ma5s, ma10s)) {
-        const kd = klines[i - 2];
-        detail = [
-          `放量破位：${fmtP(kd.close)} 跌破 MA5(${fmtP(ma5s[i - 2] ?? 0)}) 与 MA10(${fmtP(ma10s[i - 2] ?? 0)})，且量 ≥ 前5日均量`,
-          '连续 2 日未收复 MA10，破位确认',
-        ];
-      }
+      // 破位事件：复用 analyzeMarketConditions + buildBreakExplainLines（与弹窗破位 chip 同一依据）
+      const ev = analyzeMarketConditions(win, 1).find(x => x.date === last.date && x.brokenCount > 0);
+      if (ev) detail = buildBreakExplainLines(ev, 'event', fmtP, fmtDay, fmtShort);
     } else if (def.source === 'pattern') {
       const p = analyzeKlinePatterns(win, fmtP, cfg).find(x => x.date === last.date && x.label === def.signalName);
       if (p) detail = p.detail;
-    } else if (def.source === 'daily') {
-      const sd = analyzeDailySignals(win, true).find(x => x.date === last.date && x.kind === def.signalName);
-      if (sd) detail = sd.detail;
-    } else if (def.source === 'feng') {
-      const f = analyzeFengSignals(win, fmtP, true, cfg).latest;
-      if (f.date === last.date) {
-        const fh = [...f.add, ...f.reduce].find(x => x.name === def.signalName);
-        if (fh) detail = fh.detail;
-      }
     }
-    if (detail) out.push({ date: klines[i].date, barIndex: i, detail });
+    if (!detail) continue;
+    // 环境前提：指定了 envKey 时，当日环境状态必须命中该 key 才算命中位置（与 runBacktest 门控一致）
+    if (envKey) {
+      const env = analyzeEnvironment(win, fmtP, true, cfg);
+      if (!envHasCondition(env, envKey)) continue;
+    }
+    out.push({ date: klines[i].date, barIndex: i, detail });
   }
   return out;
 }

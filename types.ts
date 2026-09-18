@@ -168,6 +168,7 @@ export interface BacktestRule {
   action: 'buy' | 'sell';
   pct: number;             // 仓位百分比 1-100
   enabled: boolean;
+  envCondition?: { key: string; label: string } | null; // 可选环境前提（趋势/波动状态）：成立才允许该触发规则动作
 }
 export interface BacktestStrategy {
   rules: BacktestRule[];

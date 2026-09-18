@@ -7,6 +7,7 @@ import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, Backte
 import { fetchBollData } from '../services/bollService';
 import type { BollKline } from '../services/bollService';
 import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG } from '../services/backtestEngine';
+import { ENV_TAG_CATALOG } from '../services/tagAnalyzers';
 import { InputGroup } from './InputGroup';
 
 type ChartCandle = { time: string; open: number; high: number; low: number; close: number };
@@ -158,7 +159,8 @@ export function BacktestModal({ stock, onClose, onPresetsDirty }: BacktestModalP
   // 规则深比较：判断当前 rules 与选中组是否一致（未选中时仅当存在规则才可保存）
   const rulesEqual = (a: BacktestRule[], b: BacktestRule[]) =>
     a.length === b.length && a.every((r, i) =>
-      b[i] && r.id === b[i].id && r.tagKey === b[i].tagKey && r.action === b[i].action && r.pct === b[i].pct && r.enabled === b[i].enabled);
+      b[i] && r.id === b[i].id && r.tagKey === b[i].tagKey && r.action === b[i].action && r.pct === b[i].pct && r.enabled === b[i].enabled
+      && (r.envCondition?.key ?? '') === (b[i].envCondition?.key ?? ''));
   const presetDirty = selectedPreset ? !rulesEqual(selectedPreset.rules, strategy.rules) : strategy.rules.length > 0;
   // 点击保存：打开命名气泡（新建组预填空名，更新组预填原名）
   const openNaming = () => {
@@ -505,12 +507,14 @@ export function BacktestModal({ stock, onClose, onPresetsDirty }: BacktestModalP
     });
   }, [result, klines]);
 
-  // 预览：扫描所选（最多 2 个）标签在完整历史 K 线中的命中位置（含判定依据），预览态在图上画缩写块
+  // 预览：扫描所选（最多 2 个）标签在完整历史 K 线中的命中位置（含判定依据），预览态在图上画缩写块。
+  // 组合键 "tagKey|envKey"：无环境前提时 envKey 为空 → 扫全部命中；有环境前提 → 仅扫满足该环境的命中。
   const previewOccurrences = useMemo(() => {
-    if (previewKeys.length === 0 || !rawKlines) return [] as { key: string; date: string; barIndex: number; detail: string[] }[];
-    const out: { key: string; date: string; barIndex: number; detail: string[] }[] = [];
-    for (const key of previewKeys) {
-      for (const o of scanTagOccurrences(rawKlines, key)) out.push({ key, ...o });
+    if (previewKeys.length === 0 || !rawKlines) return [] as { key: string; tagKey: string; date: string; barIndex: number; detail: string[] }[];
+    const out: { key: string; tagKey: string; date: string; barIndex: number; detail: string[] }[] = [];
+    for (const id of previewKeys) {
+      const [tagKey, envKey] = id.split('|');
+      for (const o of scanTagOccurrences(rawKlines, tagKey, envKey || undefined)) out.push({ key: id, tagKey, ...o });
     }
     return out;
   }, [previewKeys, rawKlines]);
@@ -536,7 +540,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty }: BacktestModalP
       const lowOf = new Map<string, number>(rawKlines?.map(k => [k.date, k.low]) ?? []);
       const sideOf = new Map(previewKeys.map((k, i) => [k, i === 0 ? 'top' : 'bottom']));
       for (const o of previewOccurrences) {
-        const def = defOf.get(o.key);
+        const def = defOf.get(o.tagKey);
         if (!def) continue;
         const side: 'top' | 'bottom' = (sideOf.get(o.key) as 'top' | 'bottom') ?? 'top';
         // 上方锚 K 线 high、下方锚 K 线 low；y 存"方块中心"，渲染时按 side 定偏移
@@ -721,13 +725,15 @@ export function BacktestModal({ stock, onClose, onPresetsDirty }: BacktestModalP
     setPreviewPopup(null);
   };
 
-  // 切换某策略标签的预览：已预览则移除，未预览且未满 2 个则加入（第 3 个不生效）
-  const togglePreview = (tagKey: string) => {
+  // 切换某策略标签的预览：已预览则移除，未预览且未满 2 个则加入（第 3 个不生效）。
+  // 预览键 = 触发标签 + 环境前提的组合键，保证同标签不同环境前提可分别预览。
+  const togglePreview = (tagKey: string, envKey?: string) => {
     setPreviewPopup(null);
+    const id = `${tagKey}|${envKey ?? ''}`;
     setPreviewKeys(prev =>
-      prev.includes(tagKey) ? prev.filter(k => k !== tagKey)
+      prev.includes(id) ? prev.filter(k => k !== id)
       : prev.length >= 2 ? prev
-      : [...prev, tagKey]
+      : [...prev, id]
     );
   };
 
@@ -819,7 +825,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty }: BacktestModalP
             </div>
             <div className="flex-1 overflow-y-auto custom-scrollbar px-2 py-1.5 space-y-1.5">
               {rulesForRender.map((r, idx) => (
-                  <RuleEditor key={r.id} index={idx} value={r} onChange={patch => updateRule(r.id, patch)} onRemove={() => removeRule(r.id)} previewing={previewKeys.includes(r.tagKey)} onTogglePreview={() => togglePreview(r.tagKey)} />
+                  <RuleEditor key={r.id} index={idx} value={r} onChange={patch => updateRule(r.id, patch)} onRemove={() => removeRule(r.id)} previewing={previewKeys.includes(`${r.tagKey}|${r.envCondition?.key ?? ''}`)} onTogglePreview={() => togglePreview(r.tagKey, r.envCondition?.key)} />
                 ))}
               {selectedPreset ? (
                 <span className="block text-[11px] text-app-subtext/70 px-1">{selectedPreset.name}</span>
@@ -1204,27 +1210,52 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
           </button>
         </div>
       </div>
-      <select
-        className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight text-app-text outline-none"
-        value={value.tagKey}
-        onChange={e => {
-          const t = BACKTEST_TAG_CATALOG.find(x => x.key === e.target.value);
-          onChange(t ? { tagKey: t.key, label: t.label, action: t.action as BacktestRule['action'] } : { tagKey: e.target.value });
-        }}
-      >
-        <option value="" disabled>选择标签…</option>
-        {groups.map(([g, list]) => (
-          <optgroup key={g} label={g}>
-            {list.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-          </optgroup>
-        ))}
-      </select>
+      <div className="flex items-center gap-1.5">
+        <span className="shrink-0 text-[11px] text-app-subtext">信号</span>
+        <select
+          className="flex-1 min-w-0 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight text-app-text outline-none"
+          value={value.tagKey}
+          onChange={e => {
+            const t = BACKTEST_TAG_CATALOG.find(x => x.key === e.target.value);
+            onChange(t ? { tagKey: t.key, label: t.label, action: t.action as BacktestRule['action'] } : { tagKey: e.target.value });
+          }}
+        >
+          <option value="" disabled>选择标签…</option>
+          {groups.map(([g, list]) => (
+            <optgroup key={g} label={g}>
+              {list.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+            </optgroup>
+          ))}
+        </select>
+      </div>
       {current && (
         <p className="text-[11px] text-app-subtext leading-tight">将触发至 {current.action === 'buy' ? '买入' : '卖出'}</p>
       )}
       <div className="flex items-center gap-1.5">
+        <span className="shrink-0 text-[11px] text-app-subtext">环境</span>
         <select
-          className="flex-1 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight font-semibold outline-none"
+          className="flex-1 min-w-0 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight outline-none text-app-text"
+          value={value.envCondition?.key ?? ''}
+          onChange={e => {
+            const key = e.target.value;
+            const c = ENV_TAG_CATALOG.find(x => x.key === key);
+            onChange({ envCondition: key ? { key: key, label: c?.label ?? key } : null });
+          }}
+          title="可选前提：该环境状态成立时，触发标签才允许执行动作"
+        >
+          <option value="">-</option>
+          <optgroup label="趋势结构">
+            {ENV_TAG_CATALOG.filter(c => c.dim === 'trend').map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+          </optgroup>
+          <optgroup label="布林波动">
+            {ENV_TAG_CATALOG.filter(c => c.dim === 'volatility').map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+          </optgroup>
+        </select>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="shrink-0 text-[11px] text-app-subtext">操作</span>
+        <select
+          className="flex-1 min-w-0 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight font-semibold outline-none"
           value={value.action}
           onChange={e => onChange({ action: e.target.value as BacktestRule['action'] })}
         >
