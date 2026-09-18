@@ -665,7 +665,9 @@ const formatRelativeTime = (timestamp: number): string => {
   return `${days}天前`;
 };
 
-const formatPercent = (percent: number): string => {
+const formatPercent = (percent: number | null | undefined): string => {
+  // 未拉取到行情（changePercent 可能为 undefined）时兜底，避免 undefined.toFixed() 崩溃
+  if (percent == null || !Number.isFinite(percent)) return '0.00%';
   return percent.toFixed(2) + '%';
 };
 
