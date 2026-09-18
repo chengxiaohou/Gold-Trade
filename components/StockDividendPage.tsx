@@ -3141,8 +3141,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       if (skippedCount > 0) {
         showNotice(skippedCount >= stocks.length
           ? (marketClosed
-              ? '休市中，股价已是最新收盘价，无需重新请求'
-              : '全部股价数据仍新鲜（缓存未过期），无需重新请求')
+              ? '休市期间，行情已是最新，无需刷新'
+              : '全部股价已是最新，无需刷新')
           : `已跳过 ${skippedCount} 只仍新鲜的股票，刷新其余 ${stocks.length - skippedCount} 只`);
       }
       if (changed) {
