@@ -223,7 +223,7 @@ export interface StockSettings {
   dividendRateColumns?: string[];
   dividendRateColorRanges?: DividendRateColorRange[];
   maxRows?: number; // 最大显示行数，用于固定高度内部滚动
-  maxWidth?: number; // 列表最大宽度(px)，默认812
+  maxWidth?: number; // 列表最大宽度(px)，默认942
   tagColors?: Record<string, string>; // 标签颜色配置，与黄金页面独立
   sortMode?: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent' | 'costPct' | 'tradePct'; // 列表排序规则
   memo?: string; // 股息率列表下方备忘录文字（随云端同步）

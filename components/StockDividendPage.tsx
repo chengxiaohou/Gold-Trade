@@ -3881,7 +3881,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     {yearCol === 'dividendLeft' ? dividendYearLeft : dividendYearRight}
                   </th>
                 ))}
-                {dividendYearCols.length > 0 && <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap w-0">登记日</th>}
+                {dividendYearCols.length > 0 && <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap w-[62px]">登记日</th>}
               </tr>
             </thead>
             <tbody>
@@ -4262,7 +4262,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     );
                   })}
                   {dividendYearCols.length > 0 && (
-                    <td className="px-1 py-1.5 text-center border-r border-app-border">
+                    <td className="px-1 py-1.5 text-center border-r border-app-border w-[62px]">
                       {(() => {
                         if (!stock.registerDate) return <span className="text-app-subtext">-</span>;
                         const today = new Date();

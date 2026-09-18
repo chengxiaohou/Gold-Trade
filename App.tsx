@@ -178,6 +178,10 @@ export default function App() {
     localStorage.setItem('gold_current_page', currentPage);
   }, [currentPage]);
 
+  useEffect(() => {
+    document.title = currentPage === 'gold' ? '黄金' : '股息';
+  }, [currentPage]);
+
   const togglePage = () => {
     setCurrentPage(prev => prev === 'gold' ? 'stocks' : 'gold');
   };
@@ -390,7 +394,7 @@ export default function App() {
         tagColors: parsed.tagColors || {},
         sortMode: parsed.sortMode || 'default',
         maxRows: parsed.maxRows || 15,
-        maxWidth: parsed.maxWidth || 812,
+        maxWidth: parsed.maxWidth || 942,
         memo: parsed.memo || '',
         memoUpdatedAt: parsed.memoUpdatedAt || 0,
         autoRefreshInterval: parsed.autoRefreshInterval ?? 60,
@@ -408,7 +412,7 @@ export default function App() {
         tagColors: {},
         sortMode: 'default',
         maxRows: 15,
-        maxWidth: 812,
+        maxWidth: 942,
         memo: '',
         memoUpdatedAt: 0,
         autoRefreshInterval: 60,
@@ -1543,11 +1547,9 @@ export default function App() {
       {/* Cloud Confirmation Popover */}
       {cloudConfirm && (
         <div 
-          className="absolute bottom-full mb-3 z-[100] animate-in fade-in zoom-in slide-in-from-bottom-2 duration-200 pointer-events-none"
+          className="absolute top-full mt-3 z-[100] animate-in fade-in zoom-in slide-in-from-top-2 duration-200 pointer-events-none"
           style={{ 
-            left: cloudConfirm === 'download' 
-              ? 'calc((100% / 7) * 1 + (100% / 14))' 
-              : 'calc((100% / 7) * 2 + (100% / 14))',
+            left: '50%',
             transform: 'translateX(-50%)'
           }}
         >
@@ -1578,16 +1580,16 @@ export default function App() {
                  </button>
               </div>
               <div 
-                className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-app-card border-r border-b border-app-border rotate-45"
+                className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-app-card border-l border-t border-app-border rotate-45"
               ></div>
            </div>
         </div>
       )}
 
-      <div className="grid grid-cols-7 gap-1 lg:gap-2">
+      <div className="flex gap-1.5 lg:gap-2">
           <button 
               onClick={() => openSettings('general')}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-text transition-colors w-7 h-7"
               title="设置"
             >
               <Settings size={16} />
@@ -1596,11 +1598,11 @@ export default function App() {
           <button 
               onClick={() => requestCloudAction('download')}
               disabled={isDownloading || downloadSuccess || !!cloudConfirm}
-              className={`flex items-center justify-center bg-app-card border border-app-border py-2.5 rounded-md transition-all ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-indigo-400 hover:text-indigo-300 hover:border-indigo-500'} disabled:opacity-30`}
+              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-indigo-400 hover:text-indigo-300 hover:border-indigo-500'} disabled:opacity-30`}
               title="从云端下载"
             >
               {isDownloading ? (
-                <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
               ) : downloadSuccess ? (
                 <Check size={16} className="animate-in zoom-in duration-300" />
               ) : (
@@ -1611,11 +1613,11 @@ export default function App() {
           <button 
               onClick={() => requestCloudAction('upload')}
               disabled={isSyncing || uploadSuccess || !!cloudConfirm}
-              className={`flex items-center justify-center bg-app-card border border-app-border py-2.5 rounded-md transition-all ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-brand-yellow hover:bg-brand-yellow/10 hover:border-brand-yellow'} disabled:opacity-30`}
+              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-brand-yellow hover:bg-brand-yellow/10 hover:border-brand-yellow'} disabled:opacity-30`}
               title="上传到云端"
             >
                {isSyncing ? (
-                 <div className="w-4 h-4 border-2 border-brand-yellow border-t-transparent rounded-full animate-spin"></div>
+                 <div className="w-3.5 h-3.5 border-2 border-brand-yellow border-t-transparent rounded-full animate-spin"></div>
                ) : uploadSuccess ? (
                  <Check size={16} className="animate-in zoom-in duration-300" />
                ) : (
@@ -1626,7 +1628,7 @@ export default function App() {
           <button 
               onClick={handleExportClick}
               disabled={trades.length === 0}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors disabled:opacity-50"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-text transition-colors disabled:opacity-50 w-7 h-7"
               title="导出数据"
             >
               <Download size={16} />
@@ -1634,7 +1636,7 @@ export default function App() {
 
           <button 
               onClick={handleImportClick} 
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-app-text hover:border-app-text transition-colors"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-text transition-colors w-7 h-7"
               title="导入数据"
             >
               <Upload size={16} />
@@ -1642,7 +1644,7 @@ export default function App() {
 
           <button 
               onClick={requestReset} 
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-red-400 hover:border-red-400 transition-colors"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-red-400 hover:border-red-400 transition-colors w-7 h-7"
               title="重置"
             >
               <RefreshCcw size={16} />
@@ -1650,7 +1652,7 @@ export default function App() {
 
           <button
               onClick={toggleTheme}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext py-2.5 rounded-md hover:text-brand-yellow hover:border-brand-yellow transition-colors"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-brand-yellow hover:border-brand-yellow transition-colors w-7 h-7"
               title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
           >
               {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
@@ -1920,23 +1922,14 @@ export default function App() {
 
       <div className="max-w-[1400px] w-full pb-12 flex flex-col">
         {currentPage === 'gold' && (
-        <header className="mb-6 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-bold text-app-subtext tracking-wide">黄金交易模拟</h1>
-            <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1">{APP_VERSION}</span>
-            <button
-              onClick={togglePage}
-              className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text ml-1 transition-colors"
-              title="切换到股票股息率计算器"
-            >
-              [股票]
-            </button>
-          </div>
-
+        <header className="mb-6 flex items-end justify-between gap-4">
+          <h1 className="text-3xl font-bold text-app-subtext tracking-wide">黄金交易模拟</h1>
+          <div className="flex items-center gap-3">{renderActionButtons()}</div>
         </header>
         )}
 
         {currentPage === 'gold' ? (
+          <>
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6 items-start">
             <div className="lg:col-span-8 flex flex-col gap-6 order-2 lg:order-1">
                <div className="space-y-3">
@@ -2341,9 +2334,22 @@ export default function App() {
                   hasPlan={hasPlan}
                 />
               </div>
-              <div className="hidden lg:block">{renderActionButtons()}</div>
             </div>
           </div>
+          {/* 页面底部：版本号与股票切换 */}
+          <div className="flex justify-center -mt-3">
+            <div className="w-full flex justify-end items-center gap-3">
+              <span className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text">{APP_VERSION}</span>
+              <button
+                onClick={togglePage}
+                className="text-[10px] text-white/[0.01] font-mono select-all hover:text-app-text transition-colors"
+                title="切换到股票股息率计算器"
+              >
+                [股票]
+              </button>
+            </div>
+          </div>
+          </>
         ) : (
           <PageErrorBoundary>
             <StockDividendPage 
@@ -2391,7 +2397,6 @@ export default function App() {
             />
           </PageErrorBoundary>
         )}
-        <div className="lg:hidden mt-2 order-3">{currentPage === 'gold' && renderActionButtons()}</div>
       </div>
     </div>
   );
