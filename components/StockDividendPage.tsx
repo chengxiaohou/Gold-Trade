@@ -3168,12 +3168,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const autoInFlight = useRef(false);                // 防止自动刷新 tick 之间/与手动并发
   const refreshAllRef = useRef(handleRefreshAll);    // 始终持有最新的 handleRefreshAll
   refreshAllRef.current = handleRefreshAll;
-  const autoIntervalRef = useRef(autoRefreshInterval); // 始终持有最新的间隔值
-  autoIntervalRef.current = autoRefreshInterval;
 
   // 自动刷新主循环：autoRefreshOn 时启动，非盘中停止；
-  // 页面不在前台（后台标签页/浏览器切走）时跳过刷新，切回前台立即补一次
+  // 页面不在前台（后台标签页/浏览器切走）时跳过刷新，切回前台立即补一次。
+  // 依赖 autoRefreshInterval：运行中修改间隔会重建定时器以新节奏计时。
+  const autoWasOn = useRef(false);
   useEffect(() => {
+    const justEnabled = autoRefreshOn && !autoWasOn.current;
+    autoWasOn.current = autoRefreshOn;
     if (!autoRefreshOn) return;
     const tick = () => {
       // 页面不处于前台则不自动刷新（浏览器后台的 setInterval 仅被限流、不会停）
@@ -3186,8 +3188,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       autoInFlight.current = true;
       refreshAllRef.current(false).finally(() => { autoInFlight.current = false; });
     };
-    tick(); // 进入自动模式立即刷新一次
-    const intervalMs = Math.max(autoIntervalRef.current, 5) * 1000;
+    if (justEnabled) tick(); // 仅进入自动模式时立即刷新一次；改间隔只重置计时，不额外补刷
+    const intervalMs = Math.max(autoRefreshInterval || 60, 5) * 1000;
     autoTimer.current = window.setInterval(tick, intervalMs);
     // 从后台切回前台时，立即刷新一次（追平后台欠下的刷新）
     const onVisibility = () => { if (document.visibilityState === 'visible') tick(); };
@@ -3196,7 +3198,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       if (autoTimer.current) { clearInterval(autoTimer.current); autoTimer.current = null; }
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [autoRefreshOn]);
+  }, [autoRefreshOn, autoRefreshInterval]);
 
   // 长按进入自动刷新的手势状态：按下后 600ms 未抬起/未移出则触发
   const startAutoHold = () => {
