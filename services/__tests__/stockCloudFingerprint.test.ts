@@ -82,6 +82,31 @@ describe('buildStockCloudFingerprint', () => {
     expect(mk('a')).not.toBe(mk('b'));
   });
 
+  it('备忘录仅 memoUpdatedAt 变化（内容一致）不改变指纹', () => {
+    const mk = (memoUpdatedAt: number) => buildStockCloudFingerprint({
+      stocks: [mkStock('600000', '浦发')],
+      stockSettings: { visibleColumns: ['code'], memo: '基线', memoUpdatedAt } as StockSettings,
+    });
+    expect(mk(100)).toBe(mk(999));
+  });
+
+  it('备忘录输入一个字再删回基线内容 → 指纹回到基线（上传按钮应隐藏）', () => {
+    const base = buildStockCloudFingerprint({
+      stocks: [mkStock('600000', '浦发')],
+      stockSettings: { visibleColumns: ['code'], memo: '基线' } as StockSettings,
+    });
+    const typed = buildStockCloudFingerprint({
+      stocks: [mkStock('600000', '浦发')],
+      stockSettings: { visibleColumns: ['code'], memo: '基线X' } as StockSettings,
+    });
+    expect(typed).not.toBe(base); // 内容不同 → 有改动
+    const back = buildStockCloudFingerprint({
+      stocks: [mkStock('600000', '浦发')],
+      stockSettings: { visibleColumns: ['code'], memo: '基线', memoUpdatedAt: 999999 } as StockSettings,
+    });
+    expect(back).toBe(base); // 删回基线内容，即使 memoUpdatedAt 推新 → 无改动
+  });
+
   it('策略组模板 presets 增删/内容变化改变指纹', () => {
     const none = buildStockCloudFingerprint({ stocks: [mkStock('600000', '浦发')] });
     const one = buildStockCloudFingerprint({ stocks: [mkStock('600000', '浦发')], backtestStrategyPresets: [mkPreset('p1')] });

@@ -84,8 +84,13 @@ export interface StockCloudFingerprintInput {
 
 export function buildStockCloudFingerprint(input: StockCloudFingerprintInput): string {
   const { stocks, stockSettings, backtestStrategyPresets = [] } = input;
+  // 剔除每次编辑都会变更的时间戳 memoUpdatedAt：备忘录"内容一致"即视为无改动，
+  // 避免"输入一个字再删回基线"因时间戳推新而误报为有改动（该字段仍随上传携带，只是不参与差异判定）。
   const cloudStockSettings = stockSettings
-    ? { ...stockSettings, maxRows: undefined, maxWidth: undefined, sortMode: undefined }
+    ? (() => {
+        const { memoUpdatedAt, ...content } = stockSettings;
+        return { ...content, maxRows: undefined, maxWidth: undefined, sortMode: undefined };
+      })()
     : undefined;
   return JSON.stringify({
     stocks: stripStockPriceCache(buildUploadStocks(stocks)),
