@@ -74,7 +74,7 @@ export function stripStockPriceCache(list: StockEntry[]): StockEntry[] {
 // 与"最近一次成功上传/下载时的基线"比较，即可得到"是否有未同步改动"。
 // 与 performStockCloudUpload 的上传规则保持一致：
 //   - stocks 剔除价格缓存字段（现价/涨跌/高低量/更新时刻/价格派生股息率），避免价格刷新误报
-//   - stockSettings 剔除设备特定字段（maxRows/maxWidth/sortMode），避免设备差异误报
+//   - stockSettings 剔除设备特定字段（maxRows/maxWidth/sortMode/autoRefreshInterval），避免设备差异误报
 //   - backtestStrategyPresets（策略组模板）整体纳入
 export interface StockCloudFingerprintInput {
   stocks: StockEntry[];
@@ -85,7 +85,7 @@ export interface StockCloudFingerprintInput {
 export function buildStockCloudFingerprint(input: StockCloudFingerprintInput): string {
   const { stocks, stockSettings, backtestStrategyPresets = [] } = input;
   const cloudStockSettings = stockSettings
-    ? { ...stockSettings, maxRows: undefined, maxWidth: undefined, sortMode: undefined }
+    ? { ...stockSettings, maxRows: undefined, maxWidth: undefined, sortMode: undefined, autoRefreshInterval: undefined }
     : undefined;
   return JSON.stringify({
     stocks: stripStockPriceCache(buildUploadStocks(stocks)),

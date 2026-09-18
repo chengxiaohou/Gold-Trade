@@ -18,7 +18,7 @@ import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, buildStockCl
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.1';
+const APP_VERSION = 'v2.18.2';
 
 // 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
 const ERRLOG_KEY = 'gold_trade_error_log';
@@ -442,6 +442,7 @@ export default function App() {
         maxWidth: parsed.maxWidth || 812,
         memo: parsed.memo || '',
         memoUpdatedAt: parsed.memoUpdatedAt || 0,
+        autoRefreshInterval: parsed.autoRefreshInterval ?? 60,
         tagParams: parsed.tagParams || DEFAULT_TAG_PARAMS
       };
     } catch {
@@ -459,6 +460,7 @@ export default function App() {
         maxWidth: 812,
         memo: '',
         memoUpdatedAt: 0,
+        autoRefreshInterval: 60,
         tagParams: DEFAULT_TAG_PARAMS
       };
     }
@@ -979,12 +981,14 @@ export default function App() {
         maxRows: undefined,
         maxWidth: undefined,
         sortMode: undefined,
+        autoRefreshInterval: undefined,
       } : undefined;
       const cloudExistingStockSettings = existingStockSettings ? {
         ...existingStockSettings,
         maxRows: undefined,
         maxWidth: undefined,
         sortMode: undefined,
+        autoRefreshInterval: undefined,
       } : undefined;
 
       // 读取本地策略组合模板（BacktestModal 写入），上传时与云端按 id 合并（保留本地版本，云端独有的保留）
@@ -2411,6 +2415,7 @@ export default function App() {
             onMemoUpload={handleMemoUpload}
             maxRows={stockSettings.maxRows}
             maxWidth={stockSettings.maxWidth}
+            autoRefreshInterval={stockSettings.autoRefreshInterval ?? 60}
             actionButtons={renderStockActionButtons()}
             appVersion={APP_VERSION}
             onTogglePage={togglePage}

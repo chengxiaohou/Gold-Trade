@@ -127,6 +127,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   // 挂单备注占位文字，买入和卖出分开设置（随云端同步）
   const [buyOrderPlaceholder, setBuyOrderPlaceholder] = useState<string>(stockSettings?.buyOrderPlaceholder || '');
   const [sellOrderPlaceholder, setSellOrderPlaceholder] = useState<string>(stockSettings?.sellOrderPlaceholder || '');
+  // 股价自动刷新间隔（秒），0=关闭；设备本地设置不与云端同步
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(stockSettings?.autoRefreshInterval ?? 60);
 
   // 标签判定参数操作辅助
   const updateTagParam = (group: 'feng' | 'classic', key: string, patch: Partial<TagParamEntry>) => {
@@ -295,6 +297,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       sortMode: stockSettings?.sortMode ?? 'default',
       memo: stockSettings?.memo ?? '',
       memoUpdatedAt: stockSettings?.memoUpdatedAt ?? 0,
+      autoRefreshInterval,
       buyOrderPlaceholder: currentPage === 'stock' ? buyOrderPlaceholder : stockSettings?.buyOrderPlaceholder,
       sellOrderPlaceholder: currentPage === 'stock' ? sellOrderPlaceholder : stockSettings?.sellOrderPlaceholder,
       tagParams,
@@ -1109,6 +1112,23 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                              touchMode
                              className="text-sm"
                            />
+                        </div>
+                        {/* 股价自动刷新间隔：长按刷新按钮进入自动刷新 */ }
+                        <div className="pt-3 flex items-end gap-3">
+                           <InputGroup
+                             label="自动刷新间隔"
+                             value={autoRefreshInterval}
+                             onChange={(v) => {
+                               const val = parseInt(v) || 0;
+                               if (val >= 0) setAutoRefreshInterval(val);
+                             }}
+                             step={10}
+                             precision={0}
+                             min={0}
+                             touchMode
+                             className="text-sm"
+                           />
+                           <span className="text-xs text-app-subtext pb-1">秒/次（0=关闭，默认60）；仅盘中自动刷新，收盘/未开盘自动停止</span>
                         </div>
                      </div>
 

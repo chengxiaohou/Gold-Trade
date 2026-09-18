@@ -229,4 +229,5 @@ export interface StockSettings {
   tagParams?: TagParams; // 标签判定比例/容差参数（风系 + 原有），随云端同步
   buyOrderPlaceholder?: string; // 买入挂单备注占位文字（随云端同步）
   sellOrderPlaceholder?: string; // 卖出挂单备注占位文字（随云端同步）
+  autoRefreshInterval?: number; // 股价自动刷新间隔（秒），0=关闭；设备本地设置，不随云端同步
 }

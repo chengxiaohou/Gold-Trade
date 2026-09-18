@@ -235,6 +235,7 @@ interface StockDividendPageProps {
   onTagColorsChange?: (colors: Record<string, string>) => void;
   maxRows?: number;
   maxWidth?: number;
+  autoRefreshInterval?: number; // 股价自动刷新间隔（秒），0=关闭；设备本地设置
   actionButtons?: React.ReactNode;
   appVersion?: string;
   onTogglePage?: () => void;
@@ -1311,7 +1312,7 @@ type SrRow =
   | { kind: 'plain'; text: string }
   | { kind: 'cell'; name: string; color?: string; rest: string };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, autoRefreshInterval = 60, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty }) => {
   // 全量备份导入用的隐藏文件选择（放入盈利统计面板）
   const fullBackupInputRef = useRef<HTMLInputElement>(null);
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
@@ -3157,6 +3158,52 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     }
   }, [stocks, onStocksChange, fetchStockPrice]);
 
+  // ---- 长按刷新按钮进入"自动刷新" ----
+  // 自动刷新：仅盘中（isTradingHours 命中交易时段）每 interval 秒刷新一次；
+  // 收盘/未开盘/午休时段直接停止。自动模式下按钮图标持续旋转并显示主题色，区别于手动加载。
+  const [autoRefreshOn, setAutoRefreshOn] = useState(false);
+  const autoHoldTimer = useRef<number | null>(null); // 长按 600ms 判定定时器
+  const autoFired = useRef(false);                   // 长按已触发，吞掉随后的 click 以免误取消
+  const autoTimer = useRef<number | null>(null);     // 自动刷新 interval
+  const autoInFlight = useRef(false);                // 防止自动刷新 tick 之间/与手动并发
+  const refreshAllRef = useRef(handleRefreshAll);    // 始终持有最新的 handleRefreshAll
+  refreshAllRef.current = handleRefreshAll;
+  const autoIntervalRef = useRef(autoRefreshInterval); // 始终持有最新的间隔值
+  autoIntervalRef.current = autoRefreshInterval;
+
+  // 自动刷新主循环：autoRefreshOn 时启动，非盘中停止
+  useEffect(() => {
+    if (!autoRefreshOn) return;
+    const tick = () => {
+      if (!isTradingHours()) {
+        setAutoRefreshOn(false); // 收盘 / 未开盘 / 午休 → 自动刷新直接停止
+        return;
+      }
+      if (autoInFlight.current) return; // 上一轮还没结束，跳过本次
+      autoInFlight.current = true;
+      refreshAllRef.current(false).finally(() => { autoInFlight.current = false; });
+    };
+    tick(); // 进入自动模式立即刷新一次
+    const intervalMs = Math.max(autoIntervalRef.current, 5) * 1000;
+    autoTimer.current = window.setInterval(tick, intervalMs);
+    return () => {
+      if (autoTimer.current) { clearInterval(autoTimer.current); autoTimer.current = null; }
+    };
+  }, [autoRefreshOn]);
+
+  // 长按进入自动刷新的手势状态：按下后 600ms 未抬起/未移出则触发
+  const startAutoHold = () => {
+    if (autoRefreshOn) return; // 自动模式下左键为取消，不进长按
+    autoFired.current = false;
+    autoHoldTimer.current = window.setTimeout(() => {
+      autoFired.current = true;
+      setAutoRefreshOn(true);
+    }, 600);
+  };
+  const cancelAutoHold = () => {
+    if (autoHoldTimer.current) { clearTimeout(autoHoldTimer.current); autoHoldTimer.current = null; }
+  };
+
   // 批量获取所有股票的 2024/2025 全年分红（东方财富，按报告期年度汇总）
   const handleFetchAllDividends = useCallback(async () => {
     if (isFetchingDividends || stocks.length === 0) return;
@@ -4039,12 +4086,24 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     <div className="flex items-center justify-center gap-1">
                       <span>{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</span>
                       <button
-                        onClick={() => handleRefreshAll(false)}
-                        disabled={isRefreshing.size > 0}
+                        onClick={() => {
+                          if (autoFired.current) { autoFired.current = false; return; } // 长按触发后吞掉这次 click
+                          if (autoRefreshOn) { setAutoRefreshOn(false); return; }        // 自动模式下点击 = 取消自动刷新
+                          handleRefreshAll(false);
+                        }}
+                        onPointerDown={startAutoHold}
+                        onPointerUp={cancelAutoHold}
+                        onPointerLeave={cancelAutoHold}
+                        onContextMenu={(e) => e.preventDefault()}
+                        disabled={!autoRefreshOn && isRefreshing.size > 0}
                         className="p-0.5 hover:bg-app-card rounded transition-colors disabled:opacity-50"
-                        title="刷新所有股价"
+                        title={autoRefreshOn
+                          ? `自动刷新中（间隔 ${autoRefreshInterval || 60} 秒），点击取消`
+                          : '点击刷新所有股价；长按进入自动刷新'}
                       >
-                        <RefreshCw size={10} className={isRefreshing.size > 0 ? 'animate-spin' : ''} />
+                        <RefreshCw size={10} className={autoRefreshOn
+                          ? 'animate-spin text-indigo-400'
+                          : (isRefreshing.size > 0 ? 'animate-spin' : '')} />
                       </button>
                     </div>
                   </th>}
