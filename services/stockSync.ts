@@ -27,9 +27,16 @@ export function mergeStockFromCloud(
     (a, b) => (a.filledAt ?? a.createdAt) - (b.filledAt ?? b.createdAt)
   );
   const { shares, avgCost } = calcPositionFromTrades(finalTrades);
+  // 云端记录可能残留本设备的价格缓存字段（旧数据 / 其它设备的旧版本）。
+  // 这些字段本就不该通过上传同步，因此下载合并时统一剔除：
+  // 既避免旧残留再次进入本地，也避免用云端的过期价覆盖本设备的现价。
+  const {
+    price, changePercent, high, low, open, volume, priceUpdatedAt, dividendRate2025,
+    ...restCloud
+  } = cloudStock;
   return {
     stock: {
-      ...cloudStock,
+      ...(restCloud as StockEntry),
       stockTrades: finalTrades,
       positionShares: shares,
       positionCost: avgCost,

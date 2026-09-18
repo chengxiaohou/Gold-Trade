@@ -113,6 +113,32 @@ describe('mergeStockFromCloud / mergeCloudStocks', () => {
     expect(stock.positionCost).toBe(10);
   });
 
+  it('云端残留的价格缓存字段在合并时被剔除', () => {
+    const cloud = mkStock('600000', '浦发', {
+      price: 999, changePercent: 5, high: 1000, low: 1,
+      open: 500, volume: 99999, priceUpdatedAt: 123, dividendRate2025: 66.6,
+    });
+    cloud.stockTrades = [t({ side: 'buy', price: 10, shares: 100 })];
+    const { stock } = mergeStockFromCloud(cloud, undefined);
+    expect(stock.price).toBeUndefined();
+    expect(stock.changePercent).toBeUndefined();
+    expect(stock.high).toBeUndefined();
+    expect(stock.low).toBeUndefined();
+    expect(stock.open).toBeUndefined();
+    expect(stock.volume).toBeUndefined();
+    expect(stock.dividendRate2025).toBeUndefined();
+    // 持仓仍按交易重算，不受云端残留价影响
+    expect(stock.positionShares).toBe(100);
+    expect(stock.positionCost).toBe(10);
+  });
+
+  it('合并不会用云端过期价覆盖本地现价', () => {
+    const cloud = mkStock('600000', '浦发', { price: 1, priceUpdatedAt: 1 });
+    const { stock } = mergeStockFromCloud(cloud, undefined);
+    expect(stock.price).toBeUndefined();
+    expect(stock.priceUpdatedAt).toBeUndefined();
+  });
+
   it('云端同 id 覆盖本地（编辑回传）', () => {
     const cloudStock = mkStock('600000', '浦发');
     const cloudTrade = t({ id: 'same', side: 'buy', price: 20, shares: 100, createdAt: 1 });
