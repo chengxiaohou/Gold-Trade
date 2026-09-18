@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS } from '../types';
-import { fetchBollData, checkAllBollCache, countStaleBollCache, countVisibleBollItems, getBollCacheTimestamps, ensureBollCacheRestored, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
+import { fetchBollData, planBollCache, emitBollCacheHits, getBollCacheTimestamps, ensureBollCacheRestored, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getMarketStatus, getDynamicBollCacheTTL, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import { toTencentCode, parseTencentQuoteText, type TencentQuote } from '../services/tencentQuote';
@@ -2610,19 +2610,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setStockBollMap(new Map());
     setStockBollErrorMap(new Map());
     
-    // 先检查缓存
+    // 先检查缓存（纯函数：判定 + 批量/逐只决策，时间/缓存注入，便于单元测试）
     const dynamicTTL = getDynamicBollCacheTTL();
-    const visibleTotal = countVisibleBollItems(stocks);
-    const staleCount = countStaleBollCache(stocks, bollAdjust, apiSource, dynamicTTL);
+    const nowDate = new Date();
+    const plan = planBollCache(stocks, bollAdjust, apiSource, nowDate, dynamicTTL);
+    const { allCached, cachedData, staleCount, visibleTotal } = plan;
     // 计算缓存时间信息用于日志
     const cacheTimestamps = getBollCacheTimestamps(stocks, bollAdjust, apiSource);
-    const now = Date.now();
     let cacheInfoStr = '';
     let oldCacheInfoStr = '';
     if (cacheTimestamps.length > 0) {
       const maxTs = Math.max(...cacheTimestamps); // 使用最新缓存时间，更准确反映缓存有效期
-      const isTrading = isTradingHours();
-      const expiryTime = isTrading ? maxTs + dynamicTTL : now + dynamicTTL;
+      const nowMs = nowDate.getTime();
+      const isTrading = isTradingHours(nowDate);
+      const expiryTime = isTrading ? maxTs + dynamicTTL : nowMs + dynamicTTL;
       cacheInfoStr = `（缓存有效期至：${formatCacheTime(expiryTime)}）`;
       // 原缓存有效期：按其缓存时间 + TTL 计算（标注在"已过期"后，区别于新缓存的有效期）
       oldCacheInfoStr = `（原缓存有效期至 ${formatCacheTime(maxTs + dynamicTTL)}）`;
@@ -2632,7 +2633,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         ? `${trigger}：${visibleTotal} 项缓存均未过期，无需请求${cacheInfoStr}`
         : `${trigger}：${staleCount}/${visibleTotal} 项已过期${oldCacheInfoStr}，重新请求 ${staleCount} 条请求${cacheInfoStr}`
     );
-    const { allCached, cachedData } = checkAllBollCache(stocks, bollAdjust, apiSource, dynamicTTL, logCtx);
+    emitBollCacheHits(plan.hitKeys, logCtx);
     
     if (fetchVersionRef.current !== currentVersion) {
       // 已被新请求取消，旧请求中止，新请求会负责最终的清理

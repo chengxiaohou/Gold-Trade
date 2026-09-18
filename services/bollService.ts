@@ -2,6 +2,7 @@ import { ApiSource } from '../types';
 import { getDynamicBollCacheTTL, getLastTradingOpen, getMarketStatus, setLastFetchTime } from './cacheService';
 import { requestLogService, type LogBatchContext } from './requestLogService';
 import { getBollCacheFromStore, saveBollCacheToStore, clearBollCacheFromStore } from './bollCacheStore';
+import { planBollCacheUse, type BollCacheEntry, type BollStockInput } from './bollSync';
 
 // 生产环境配置
 const isDev = import.meta.env.DEV;
@@ -387,6 +388,43 @@ export function checkAllBollCache(
   }
   
   return { allCached, cachedData };
+}
+
+// 基于纯函数 planBollCacheUse 的接线：注入内存缓存与 key 生成，返回统一决策。
+// 供 fetchAllBoll 使用，"判定 + 批量/逐只"逻辑集中在 bollSync.planBollCacheUse，便于单元测试。
+export function planBollCache(
+  stocks: Array<{ id: string; code: string; bollHidden?: boolean }>,
+  adjust: BollAdjust,
+  apiSource: ApiSource,
+  now: Date,
+  dynamicTTL: number
+): ReturnType<typeof planBollCacheUse> {
+  return planBollCacheUse({
+    stocks,
+    adjust,
+    apiSource,
+    now,
+    tradingTTL: dynamicTTL,
+    cacheGet: (key) => cache.get(key),
+    cacheKeyFor: (stock: BollStockInput, period) => {
+      const { market, code } = getMarketPrefix(stock.code);
+      return getCacheKey(`${market}${code}`, period, adjust, apiSource);
+    },
+  });
+}
+
+// 为缓存命中的 key 补发"缓存命中"日志（原 checkAllBollCache 的行为），便于请求面板展示
+export function emitBollCacheHits(
+  hitKeys: string[],
+  logCtx?: LogBatchContext
+): void {
+  for (const key of hitKeys) {
+    const parts = key.split('_');
+    const fullCode = parts[0] ?? '';
+    const period = parts[1] as BollPeriod;
+    const url = logTencentUrl(`/appstock/app/fqkline/get?param=${fullCode},${period}`);
+    requestLogService.cacheHit(url, logCtx);
+  }
 }
 
 function getScaleParam(period: BollPeriod): number {

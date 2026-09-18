@@ -109,8 +109,11 @@ export function getLastTradingOpen(date: Date = new Date()): Date {
   const d = new Date(date);
 
   if (status === 'closed') {
-    // 已收盘：数据基准为当天下午13:00开盘后的数据（需包含最终收盘K线）
-    d.setHours(13, 0, 0, 0);
+    // 已收盘：数据基准为"当天上午开盘(9:30)"。曾误用当天13:00(下午开盘)，
+    // 导致当天上午/午间拉取的缓存被误判过期、盘后仍逐只重拉（一格一格）。
+    // 改为当天9:30后：任何当天拉取的缓存盘后均视为新鲜（K线已不再变化），
+    // 与 fetchBollData 内部 TTL(距下次开盘)口径一致。
+    d.setHours(9, 30, 0, 0);
     return d;
   }
 
