@@ -755,7 +755,7 @@ export interface StabilizeTag {
   label: string;
   single: string;   // 回 / 稳 / 效
   color: 'green' | 'red'; // 回踩=绿(非买点) 企稳/有效=红(买/关注)
-  detail: string[]; // 判定依据，含对话的参考价值说明
+  detail: string[]; // 判定依据（量能/价格/均线的具体数值），参考价值由弹窗底部独立区域按 kind 映射
 }
 
 export function analyzeStabilize(klines: BollKline[], fmt: (v: number) => string, allowVol: boolean, cfg: TagParams = DEFAULT_TAG_PARAMS): StabilizeTag | null {
@@ -797,7 +797,6 @@ export function analyzeStabilize(klines: BollKline[], fmt: (v: number) => string
       detail: [
         `${ds} 有效企稳：连续 ${DAYS} 日低点不创新低，今日放量 ${fmtV(V)} > 1.3×5日均量 ${fmtV(MAV5)}，收 ${fmt(C)} 站上 MA10 ${fmt(MA10 == null ? C : MA10)}`,
         `量能（放量确认）→ 价格（低点连抬）→ 均线（收复MA10）三重验证`,
-        `参考价值：较高 —— 连续缩量后放量收复关键位，通常是可交易买点`,
       ],
     };
   }
@@ -808,7 +807,6 @@ export function analyzeStabilize(klines: BollKline[], fmt: (v: number) => string
       detail: [
         `${ds} 缩量企稳：量 ${fmtV(V)} < 5日均量 ${fmtV(MAV5)}，低点 ${fmt(L)} 不再创新低（≥ 昨低 ${fmt(pk.low)}），${C >= pk.close ? '收盘止跌' : '出现放量'}，MA5 ${fmt(MA5)} ${MA5 >= MA5p ? '走平/上翘' : '仍向下'}`,
         `量缩 + 价格止跌 + 短均线走平上翘 → 缩量企稳（初步信号）`,
-        `参考价值：中等 —— 短线可关注，需等放量确认或站稳 MA10 再行动`,
       ],
     };
   }
@@ -819,7 +817,6 @@ export function analyzeStabilize(klines: BollKline[], fmt: (v: number) => string
       detail: [
         `${ds} 缩量回踩：量 ${fmtV(V)} < 5日均量 ${fmtV(MAV5)}，收 ${fmt(C)} < MA5 ${fmt(MA5)}，低点 ${fmt(L)} 未抬高（≤ 昨低 ${fmt(pk.low)}）`,
         `量缩但价格仍弱、低点未抬高 → 更可能是下跌中继，不是企稳`,
-        `参考价值：低 —— 不宜急于抄底，应等待企稳信号`,
       ],
     };
   }

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS } from '../types';
-import { fetchBollData, planBollCache, emitBollCacheHits, getBollCacheTimestamps, ensureBollCacheRestored, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
+import { fetchBollData, planBollCache, emitBollCacheHits, getBollCacheTimestamps, ensureBollCacheRestored, BollData, BollPeriod, BollAdjust, BollKline, mergeTodayBarToKlines } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getMarketStatus, getDynamicBollCacheTTL, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import { toTencentCode, parseTencentQuoteText, type TencentQuote } from '../services/tencentQuote';
@@ -479,28 +479,6 @@ interface IndicatorResult {
   macd: { dif: number | null; dea: number | null; macd: number | null };
 }
 
-// 基于K线序列计算技术指标（9日KDJ / 6,12,24日RSI / 12,26,9 MACD）
-// 用实时行情覆盖/追加今日K线，保证技术指标显示今日数据（不依赖K线缓存是否已含今日K线）
-function mergeTodayBarToKlines(
-  klines: BollKline[],
-  rt: { open?: number; high?: number; low?: number; price?: number; volume?: number }
-): BollKline[] {
-  if (!klines || klines.length === 0) return klines;
-  const price = rt.price ?? 0;
-  const open = rt.open ?? 0;
-  if (price <= 0 || open <= 0) return klines; // 无有效实时行情时不修改
-  const high = rt.high && rt.high > 0 ? rt.high : price;
-  const low = rt.low && rt.low > 0 ? rt.low : price;
-  const today = (() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  })();
-  const todayBar: BollKline = { date: today, open, high, low, close: price, volume: rt.volume ?? 0 };
-  const last = klines[klines.length - 1];
-  // K 线末根已是当日：替换为实时数据；否则追加一个今日K线
-  return last.date === today ? [...klines.slice(0, -1), todayBar] : [...klines, todayBar];
-}
-
 // 基于K线序列计算技术指标（KDJ/RSI/MACD、最高/最低/成交量及涨跌幅等）
 function calcIndicators(klines: BollKline[]): IndicatorResult | null {
   if (!klines || klines.length === 0) return null;
@@ -698,6 +676,13 @@ const ENV_REFERENCE: Record<string, string> = {
   '布林收口': '大变盘前的宁静（高价值信号）。盯紧方向：向上突破中轨做多，向下跌破中轨做空或离场。',
   '上轨扩张': '单边强趋势进行中，加速上涨标志。持仓者要拿住，但追高风险极大。',
   '下轨扩张': '单边下跌恐慌中，加速赶底。不要试图接飞刀，必须等价格重新站回下轨之上。',
+};
+
+// 底部企稳标签参考价值：key 为 StabilizeTag.kind
+const STABILIZE_REFERENCE: Record<string, string> = {
+  retrace: '低 —— 缩量回踩量能虽缩但价格仍弱、低点未抬高，更可能是下跌中继，不宜急于抄底。',
+  stable: '中等 —— 缩量企稳是初步止跌信号，短线可关注；需等放量确认或站稳 MA10 再行动。',
+  confirm: '较高 —— 有效企稳（放量收复 MA10 + 低点连抬）通常是可交易买点，是缩量企稳体系里最可靠的信号。',
 };
 
 // 每日量价/MACD 显著信号的参考价值（实战含义）：key 为 DailySignal.kind，
@@ -1715,7 +1700,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       // 仅在仍是当前目标股票时应用结果（避免悬停切换/移开后残留旧数据）
       if (priceInfoActiveIdRef.current !== stock.id) return;
       // 用实时行情(开/高/低/量/现价)覆盖或追加今日K线，保证浮窗显示今日数据
-      const merged = mergeTodayBarToKlines(result.data?.klines || [], stock);
+      const merged = mergeTodayBarToKlines(result.data?.klines || [], stock, getMarketStatus());
       const ind = calcIndicators(merged);
       setPriceInfoData(ind);
       setPriceInfoLoading(false);
@@ -6162,7 +6147,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   <div className="text-[9px] text-app-rowtext">-</div>
                 );
               })() : selKey && selKey.kind === 'stabilize' ? (
-                <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{(stabilize?.detail.find(d => d.includes('参考价值')) ?? '-')}</div>
+                <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{STABILIZE_REFERENCE[stabilize?.kind ?? ''] ?? '-'}</div>
               ) : /* daily 参考价值暂时注释
               selKey && selKey.kind === 'daily' ? (
                 <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{DAILY_REFERENCE[selKey.dkey] ?? '-'}</div>

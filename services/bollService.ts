@@ -906,3 +906,37 @@ export function clearAllCache(): void {
   clearBollCacheFromStore();
   try { localStorage.removeItem(CACHE_STORAGE_KEY); } catch { /* 忽略 */ }
 }
+
+// ── 把今日实时行情 merge 到 K 线数组 ──
+// 纯函数：输入 K 线数组 + 实时行情 + 市场状态，输出合并后的 K 线数组。
+// 盘中实时行情的 volume 是"累计但未收盘"的值，会污染 MAV5 等量能指标，
+// 因此 volume 只在 marketStatus=closed 时才用实时行情的全天量，盘中用上一根历史 K 线的 volume。
+// open/high/low/close 在任何市场状态下都用实时行情（盘中价格本身是准的）。
+export interface TodayBarInput {
+  open?: number;
+  high?: number;
+  low?: number;
+  price?: number;
+  volume?: number;
+}
+export function mergeTodayBarToKlines(
+  klines: BollKline[],
+  rt: TodayBarInput,
+  marketStatus: string,
+  now: Date = new Date(),
+): BollKline[] {
+  if (!klines || klines.length === 0) return klines;
+  const price = rt.price ?? 0;
+  const open = rt.open ?? 0;
+  if (price <= 0 || open <= 0) return klines; // 无有效实时行情时不修改
+  const high = rt.high && rt.high > 0 ? rt.high : price;
+  const low = rt.low && rt.low > 0 ? rt.low : price;
+  const last = klines[klines.length - 1];
+  const today = `${String(now.getFullYear())}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const isClosed = marketStatus === 'closed';
+  // 收盘后 rt.volume 等于全天量；盘中用上一根历史 K 线的 volume，避免累计值污染 MAV5/缩量判定等
+  const volume = isClosed ? (rt.volume ?? last.volume) : (last.volume ?? 0);
+  const todayBar: BollKline = { date: today, open, high, low, close: price, volume };
+  // K 线末根已是当日：替换为实时数据；否则追加一个今日K线
+  return last.date === today ? [...klines.slice(0, -1), todayBar] : [...klines, todayBar];
+}
