@@ -700,15 +700,42 @@ export function BacktestModal({ stock, onClose, onPresetsDirty }: BacktestModalP
   const removeRule = (id: string) => setStrategy(prev => ({ ...prev, rules: prev.rules.filter(x => x.id !== id) }));
   const updateRule = (id: string, patch: Partial<BacktestRule>) => setStrategy(prev => ({ ...prev, rules: prev.rules.map(r => (r.id === id ? { ...r, ...patch } : r)) }));
 
-  // 策略变更（修改信号/环境条件、删除规则）→ 自动清理 previewKeys 中已失效的组合键，
-  // 避免图表预览残留旧信号、与当前编辑状态不同步。
+  // 策略变更（修改信号/环境条件、删除规则）→ 自动同步 previewKeys：
+  // - 删除规则 → 清理对应组合键
+  // - 修改已预览规则的信号/环境 → 用新组合键替换旧组合键（保持预览不中断）
+  const prevRulesRef = useRef<BacktestRule[]>(strategy.rules);
   useEffect(() => {
-    if (previewKeys.length === 0) return;
-    const valid = new Set(strategy.rules.map(r => `${r.tagKey}|${r.envCondition?.key ?? ''}`));
-    setPreviewKeys(prev => {
-      const kept = prev.filter(k => valid.has(k));
-      return kept.length === prev.length ? prev : kept;
+    const prev = prevRulesRef.current;
+    const curr = strategy.rules;
+    const prevById = new Map<string, BacktestRule>(prev.map(r => [r.id, r]));
+    const currById = new Map<string, BacktestRule>(curr.map(r => [r.id, r]));
+    // 1. 找到"仍存在但 key 变了"的 rule：旧 key 在 previewKeys 中 → 需要替换为新 key
+    const replaceMap = new Map<string, string>(); // oldKey → newKey
+    for (const rule of curr) {
+      const old = prevById.get(rule.id);
+      if (!old) continue; // 新增的规则，不管
+      const oldKey = `${old.tagKey}|${old.envCondition?.key ?? ''}`;
+      const newKey = `${rule.tagKey}|${rule.envCondition?.key ?? ''}`;
+      if (oldKey !== newKey) replaceMap.set(oldKey, newKey);
+    }
+    // 2. 找到"被删除"的 rule → 它们的旧 key 需要清理
+    const removedOldKeys = prev
+      .filter(r => !currById.has(r.id))
+      .map(r => `${r.tagKey}|${r.envCondition?.key ?? ''}`);
+    // 3. 过滤 + 替换
+    const removedSet = new Set([...removedOldKeys, ...replaceMap.keys()]);
+    if (removedSet.size === 0) { prevRulesRef.current = curr; return; }
+    setPreviewKeys(prevKeys => {
+      const result: string[] = [];
+      for (const k of prevKeys) {
+        if (!removedSet.has(k)) { result.push(k); continue; }
+        const replacement = replaceMap.get(k);
+        if (replacement) result.push(replacement);
+        // 被删除的 rule → 直接丢弃（无 replacement）
+      }
+      return result;
     });
+    prevRulesRef.current = curr;
   }, [strategy.rules]);
 
   // 运行回测：按所选周期截取历史K线，用当前规则+初始资金调引擎，写入 result 驱动图表买卖点/成交/统计
@@ -1211,10 +1238,10 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
           <button
             type="button"
             onClick={onTogglePreview}
-            className={`p-0.5 transition-colors ${previewing ? 'text-indigo-300' : 'text-app-subtext hover:text-indigo-300'}`}
+            className={`p-0.5 rounded transition-all active:scale-90 ${previewing ? 'text-indigo-300' : 'text-app-subtext hover:text-indigo-300'}`}
             title={previewing ? '取消预览该标签在 K 线上的命中位置' : '预览该标签在 K 线上的命中位置'}
           >
-            {previewing ? <EyeOff size={13} /> : <Eye size={13} />}
+            {previewing ? <Eye size={13} /> : <EyeOff size={13} />}
           </button>
           <button type="button" onClick={onRemove} className="text-app-subtext hover:text-brand-red transition-colors p-0.5" title="删除策略">
             <Trash2 size={13} />

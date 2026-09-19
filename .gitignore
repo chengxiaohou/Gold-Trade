@@ -26,3 +26,6 @@ dist-ssr
 .next/trace
 .next/cache/config.json
 docs/风轻云淡/
+
+# TRAE tool artifacts
+.trae/
