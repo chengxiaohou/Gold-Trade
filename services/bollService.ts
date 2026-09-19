@@ -659,6 +659,18 @@ async function fetchBollFromTencent(
       return { data: null, error: `K线数据不足 (${klines?.length || 0}/20)` };
     }
 
+    // 盘中拉取的今日 K 线 volume 是累计但未收盘的值，会污染 MAV5 等量能指标
+    // 根因：腾讯 qfqday 日线接口盘中返回的今日 volume = 盘中累计值，不是全天量
+    // 保护：若最后一根 K 线是今日且 marketStatus !== 'closed'，用上一根历史 K 线的 volume 覆盖
+    {
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const lastIdx = klines.length - 1;
+      if (klines[lastIdx].date === today && getMarketStatus() !== 'closed' && lastIdx >= 1) {
+        klines[lastIdx].volume = klines[lastIdx - 1].volume;
+      }
+    }
+
     // 腾讯接口内嵌实时行情，不复权模式下直接使用
     const realtimePrice = adjust === 'none' ? getTencentRealtimePrice(result.data, code) : null;
 
@@ -808,6 +820,16 @@ async function fetchBollFromSina(
     if (klines.length < 20) {
       requestLogService.failed(requestId, `K线数据不足 (${klines.length}/20)`);
       return { data: null, error: `K线数据不足 (${klines.length}/20)` };
+    }
+
+    // 盘中拉取的今日 K 线 volume 保护（同腾讯接口：盘中累计值会污染 MAV5）
+    {
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const lastIdx = klines.length - 1;
+      if (klines[lastIdx].day === today && getMarketStatus() !== 'closed' && lastIdx >= 1) {
+        klines[lastIdx].volume = klines[lastIdx - 1].volume;
+      }
     }
 
     // 新浪只支持前复权，不需要请求实时价格
