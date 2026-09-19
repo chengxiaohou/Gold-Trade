@@ -152,7 +152,7 @@ export const DEFAULT_TAG_PARAMS: TagParams = {
   },
   classic: {
     classicDojiBody: { enabled: true, value: 0.05 },  // 十字星实体比例
-    classicSmallBody: { enabled: true, value: 0.1 },  // 小实体比例
+    classicSmallBody: { enabled: true, value: 0.3 },  // 小实体比例
     classicNearHigh: { enabled: true, value: 0.95 },  // 接近近20日新高
     classicNearLow: { enabled: true, value: 1.05 },   // 接近近20日新低
     classicMaSqueeze: { enabled: true, value: 0.04 }, // 均线粘合比例
