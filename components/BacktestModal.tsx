@@ -262,7 +262,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty }: BacktestModalP
   useEffect(() => {
     const chart = chartInstance.current;
     if (!chart) return;
-    const isCursor = zoomMode === 'cursor';
+    const isCursor = zoomModeRef.current === 'cursor';
     chart.applyOptions({ handleScale: { mouseWheel: false, pinch: isCursor } });
     if (chartRef.current) chartRef.current.style.touchAction = isCursor ? 'none' : 'pan-y';
   }, [zoomMode]);
@@ -456,6 +456,14 @@ export function BacktestModal({ stock, onClose, onPresetsDirty }: BacktestModalP
     // 缩放/平移导致可视区变化时，重算覆盖层标签位置，保证跟随 K 线
     const onTimeScaleChange = () => computeTicksRef.current?.();
     chart.timeScale().subscribeVisibleLogicalRangeChange(onTimeScaleChange);
+    // 初始化时立即把当前 zoomMode 的缩放/触屏配置应用到新创建的 chart
+    // （zoomMode 的 useEffect 依赖的是 state，chart 没 ready 时跑过一次 return 就跳过了；
+    //  chart ready 后不会因 zoomMode 没变再触发——所以这里兜底一次，确保刷新页面 pinch 也能立即生效）
+    {
+      const isCursor = zoomModeRef.current === 'cursor';
+      chart.applyOptions({ handleScale: { mouseWheel: false, pinch: isCursor } });
+      el.style.touchAction = isCursor ? 'none' : 'pan-y';
+    }
     return () => {
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onTimeScaleChange);
       ro?.disconnect();
