@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, Trash2, GripHorizontal, Play, Eye } from 'lucide-react';
+import { X, Plus, Trash2, GripHorizontal, Play, Eye, EyeOff } from 'lucide-react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset } from '../types';
@@ -700,6 +700,17 @@ export function BacktestModal({ stock, onClose, onPresetsDirty }: BacktestModalP
   const removeRule = (id: string) => setStrategy(prev => ({ ...prev, rules: prev.rules.filter(x => x.id !== id) }));
   const updateRule = (id: string, patch: Partial<BacktestRule>) => setStrategy(prev => ({ ...prev, rules: prev.rules.map(r => (r.id === id ? { ...r, ...patch } : r)) }));
 
+  // 策略变更（修改信号/环境条件、删除规则）→ 自动清理 previewKeys 中已失效的组合键，
+  // 避免图表预览残留旧信号、与当前编辑状态不同步。
+  useEffect(() => {
+    if (previewKeys.length === 0) return;
+    const valid = new Set(strategy.rules.map(r => `${r.tagKey}|${r.envCondition?.key ?? ''}`));
+    setPreviewKeys(prev => {
+      const kept = prev.filter(k => valid.has(k));
+      return kept.length === prev.length ? prev : kept;
+    });
+  }, [strategy.rules]);
+
   // 运行回测：按所选周期截取历史K线，用当前规则+初始资金调引擎，写入 result 驱动图表买卖点/成交/统计
   const runTest = () => {
     if (!rawKlines) return;
@@ -1203,7 +1214,7 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
             className={`p-0.5 transition-colors ${previewing ? 'text-indigo-300' : 'text-app-subtext hover:text-indigo-300'}`}
             title={previewing ? '取消预览该标签在 K 线上的命中位置' : '预览该标签在 K 线上的命中位置'}
           >
-            <Eye size={13} />
+            {previewing ? <EyeOff size={13} /> : <Eye size={13} />}
           </button>
           <button type="button" onClick={onRemove} className="text-app-subtext hover:text-brand-red transition-colors p-0.5" title="删除策略">
             <Trash2 size={13} />
