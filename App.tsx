@@ -18,7 +18,7 @@ import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, buildStockCl
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.13';
+const APP_VERSION = 'v2.18.14';
 
 // 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
 const ERRLOG_KEY = 'gold_trade_error_log';
@@ -1036,14 +1036,21 @@ export default function App() {
   };
 
   // 备忘录专用上传：与主上传按钮上传同一份数据，返回是否成功
+  // 成功后同步重置 stockCloudBaseline，确保右上角上传按钮状态与备忘录按钮一致
   const handleMemoUpload = useCallback(async (): Promise<boolean> => {
     const ok = await performStockCloudUpload();
     if (ok) {
       setMemoBaseline(stockSettings?.memo || '');
       setMemoUpdatedAtBaseline(stockSettings?.memoUpdatedAt ?? 0);
+      // 同步重置云端指纹基线，让右上角上传按钮也消失（避免"备忘录上传成功但右上角仍提示脏"的状态漂移）
+      if (currentPage === 'stocks') {
+        setStockCloudBaseline(buildStockCloudFingerprint({
+          stocks, stockSettings, backtestStrategyPresets: presetsFromStorage(),
+        }));
+      }
     }
     return ok;
-  }, [performStockCloudUpload, stockSettings]);
+  }, [performStockCloudUpload, stockSettings, stocks, currentPage]);
 
   const handleCloudDownload = async () => {
     setCloudConfirm(null);
