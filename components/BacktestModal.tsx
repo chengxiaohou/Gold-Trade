@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, Plus, Trash2, GripHorizontal, Play, Eye, EyeOff } from 'lucide-react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, Time } from 'lightweight-charts';
-import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset } from '../types';
+import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams } from '../types';
 import { fetchBollData } from '../services/bollService';
 import type { BollKline } from '../services/bollService';
 import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL } from '../services/backtestEngine';
@@ -23,6 +23,7 @@ export interface BacktestModalProps {
   stock: StockEntry;
   onClose: () => void;
   onPresetsDirty?: () => void; // 策略组有增删改时调用，用于告知上层"有改动需上传"
+  tagParams?: TagParams; // 标签判定参数：与弹窗同一份，保证回测与弹窗信号判定严格一致
 }
 
 interface RuleEditorProps {
@@ -106,7 +107,7 @@ function formatChartTime(time: Time): string {
   return `${y}-${pad(m)}-${pad(d)}`;
 }
 
-export function BacktestModal({ stock, onClose, onPresetsDirty }: BacktestModalProps) {
+export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: BacktestModalProps) {
   // 策略按股票持久化到 localStorage：刷新/重开页面后自动恢复上次设置
   const strategyStorageKey = `bt_strategy_${stock.code}`;
   const loadStrategy = (): BacktestStrategy => {
@@ -522,10 +523,10 @@ export function BacktestModal({ stock, onClose, onPresetsDirty }: BacktestModalP
     const out: { key: string; tagKey: string; date: string; barIndex: number; detail: string[] }[] = [];
     for (const id of previewKeys) {
       const [tagKey, envKey] = id.split('|');
-      for (const o of scanTagOccurrences(rawKlines, tagKey, envKey || undefined)) out.push({ key: id, tagKey, ...o });
+      for (const o of scanTagOccurrences(rawKlines, tagKey, envKey || undefined, tagParams)) out.push({ key: id, tagKey, ...o });
     }
     return out;
-  }, [previewKeys, rawKlines]);
+  }, [previewKeys, rawKlines, tagParams]);
 
   // 覆盖层定位：把对每个标签的 time→x、anchorPrice→y 换算成像素坐标；time/price 坐标不可得（K线滚出可视区）则隐藏
   const computeTickPositions = useCallback(() => {
@@ -766,7 +767,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty }: BacktestModalP
         src = rawKlines.filter(k => k.date >= cutoff);
       }
     }
-    setResult(runBacktest(src, { ...strategy }));
+    setResult(runBacktest(src, { ...strategy }, { cfg: tagParams }));
     setPreviewKeys([]); // 执行回测时取消预览态
     setPreviewPopup(null);
   };

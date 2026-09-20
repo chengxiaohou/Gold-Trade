@@ -14,6 +14,7 @@ import type { EnvResult, BacktestTagDef } from './tagAnalyzers';
 export interface BacktestParams {
   feeRate?: number; // 单边手续费比例（默认 0）
   lotSize?: number; // 每手股数（默认 100，整百股成交）
+  cfg?: TagParams;  // 标签判定参数：必须与标签弹窗同一份（默认 DEFAULT_TAG_PARAMS），保证两侧信号判定严格一致
 }
 
 // 回测触发标签目录 = 直接复用 tagAnalyzers 里的【单一数据源】DAILY_SIGNAL_CATALOG。
@@ -58,7 +59,7 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
   const buyFee = (amt: number) => commissionMin;
   const sellFee = (amt: number) => commissionMin;
   const lotSize = p.lotSize ?? 100;
-  const cfg = DEFAULT_TAG_PARAMS;
+  const cfg = p.cfg ?? DEFAULT_TAG_PARAMS; // ⚠️ 必须与弹窗 tagParams 一致，否则同 K 线两侧判定会漂移
   const klines = [...k].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const n = klines.length;
   const enabledRules = (s.rules || []).filter(r => r.enabled);
@@ -157,10 +158,9 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
 
 // 预览：扫描某标签在某段完整历史 K 线中命中位置（复用弹窗判定逻辑，不独立判断）。
 // envKey 可选：指定后仅保留"当日环境状态命中该 key"的位置（与回测门控一致）。
-export function scanTagOccurrences(k: BollKline[], tagKey: string, envKey?: string): { date: string; barIndex: number; detail: string[] }[] {
+export function scanTagOccurrences(k: BollKline[], tagKey: string, envKey?: string, cfg: TagParams = DEFAULT_TAG_PARAMS): { date: string; barIndex: number; detail: string[] }[] {
   const def = BACKTEST_TAG_CATALOG.find(d => d.key === tagKey);
   if (!def) return [];
-  const cfg = DEFAULT_TAG_PARAMS;
   const klines = [...k].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const n = klines.length;
   const out: { date: string; barIndex: number; detail: string[] }[] = [];

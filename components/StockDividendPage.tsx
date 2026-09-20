@@ -6652,7 +6652,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       </div>
       )}
       {backtestStock && (
-        <BacktestModal stock={backtestStock} onClose={() => setBacktestStock(null)} onPresetsDirty={onBacktestPresetsDirty} />
+        <BacktestModal stock={backtestStock} onClose={() => setBacktestStock(null)} onPresetsDirty={onBacktestPresetsDirty} tagParams={tagParams} />
       )}
     </div>
   );

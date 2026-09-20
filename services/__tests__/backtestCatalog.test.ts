@@ -3,7 +3,8 @@ import type { BollKline } from '../bollService';
 import { BACKTEST_TAG_CATALOG, runBacktest, scanTagOccurrences } from '../backtestEngine';
 import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, analyzeStabilizeAt, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags } from '../tagAnalyzers';
 import type { EnvTag } from '../tagAnalyzers';
-import type { BacktestStrategy } from '../../types';
+import type { BacktestStrategy, TagParams } from '../../types';
+import { DEFAULT_TAG_PARAMS } from '../../types';
 
 const fmt = (v: number) => v.toFixed(2);
 
@@ -279,5 +280,43 @@ describe('环境前提（envCondition）', () => {
     expect(results[0].trades.length).toBeGreaterThan(0); // 无前提 → 触发
     expect(results[1].trades.length).toBe(0);            // 不成立前提 → 全程不触发
     expect(results[2].trades.length).toBeGreaterThan(0); // 成立前提 → 触发
+  });
+});
+
+//
+// 4. 参数一致性：回测必须与弹窗用【同一份】标签判定参数（cfg）
+// 若用户在设置里改了判定参数，回测不跟随 → 同一根 K 线两侧判定会漂移，此节杜绝。
+//
+describe('回测与弹窗采用同一套标签判定参数（参数一致性）', () => {
+  // 自定义参数：把"放量倍数"阈值调成 0.01，使任何正量均判为"放量"（默认 1.20 下平量）
+  const customCfg: TagParams = JSON.parse(JSON.stringify(DEFAULT_TAG_PARAMS));
+  customCfg.classic.classicVolUp.value = 0.01;
+
+  // 平量序列（每日 volume 相同 → 量比恒为 1.0）
+  const flatKlines = mkKlines(140, undefined, { 50: { volume: 1_000_000 } });
+
+  it('默认参数下扫描不命中"放量" → 自定义参数下同一段 K 线命中"放量"（回测确实遵循传入 cfg）', () => {
+    const byDefault = scanTagOccurrences(flatKlines, 'volume-up', undefined, DEFAULT_TAG_PARAMS);
+    const byCustom = scanTagOccurrences(flatKlines, 'volume-up', undefined, customCfg);
+    expect(byDefault.length).toBe(0);                 // 默认 1.20：量比 1.0 平量 → 无"放量"
+    expect(byCustom.length).toBeGreaterThan(0);        // 0.01：量比 1.0 ≥ 0.01 → 每根都"放量"
+  });
+
+  it('回测扫描命中的"放量"集合 == 弹窗 classifyVolumeAt(同一 cfg) 的判集（同函数同参数 → 同判定）', () => {
+    const scanHits = scanTagOccurrences(flatKlines, 'volume-up', undefined, customCfg).map(o => o.date);
+    const windowStart = 30; // scanTagOccurrences 从 i=30 起扫
+    const analyzerHits: string[] = [];
+    for (let i = windowStart; i < flatKlines.length; i++) {
+      if (classifyVolumeAt(flatKlines.slice(0, i + 1), i, customCfg) === '放量') analyzerHits.push(flatKlines[i].date);
+    }
+    expect(scanHits).toEqual(analyzerHits); // 逐日严格一致：回测复用弹窗同参判定，无任何改判
+  });
+
+  it('runBacktest 遵循传入 cfg：默认参数平量不触发"放量"买 → 自定义参数触发"放量"买', () => {
+    const rule = { id: 'r', tagKey: 'volume-up', label: '放量', action: 'buy' as const, pct: 10, enabled: true };
+    const strat = (cfg: TagParams | undefined) =>
+      runBacktest(flatKlines, { rules: [{ ...rule }], initialCapital: 100000 } as BacktestStrategy, { cfg });
+    expect(strat(undefined).trades.length).toBe(0);   // 不传 cfg → 默认 1.20：平量 → 全程不触发
+    expect(strat(customCfg).trades.length).toBeGreaterThan(0); // 0.01：放量 → 触发买入
   });
 });
