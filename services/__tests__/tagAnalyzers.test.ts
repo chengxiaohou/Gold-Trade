@@ -3,6 +3,10 @@ import type { BollKline } from '../bollService';
 import type { EnvTag, MarketEvent, StabilizeTag } from '../tagAnalyzers';
 import {
   analyzeKlinePatterns,
+  analyzeKlineCombo,
+  classifyPosition,
+  classifyVolume,
+  dojiColorByDim,
   analyzeMarketConditions,
   analyzeEnvironment,
   analyzeStabilize,
@@ -130,6 +134,114 @@ describe('analyzeKlinePatterns（K线形态）', () => {
     expect(ps[0].type).toBe('invertedHammer');
     expect(ps[0].single).toBe('倒');
     expect(ps[0].color).toBe('red');
+  });
+});
+
+describe('classifyPosition / classifyVolume / dojiColorByDim（K线形态原子维度）', () => {
+  it('K线不足21根 → 位置 中位', () => {
+    expect(classifyPosition(mkKlines(5))).toBe('中位');
+  });
+  it('末根贴近近20日高点 → 高位', () => {
+    // 近20日含一个低点钉（79），末根收盘 130 贴近高点 130.1、但离低点远 → 高位
+    const k = mkKlines(40, {
+      close: i => (i < 20 ? 100 : 130),
+      overrides: { 20: { open: 100, close: 99, high: 121, low: 79 } },
+    });
+    expect(classifyPosition(k)).toBe('高位');
+  });
+  it('末根贴近近20日低点 → 低位', () => {
+    // 近20日含一个高点钉（121），末根收盘 70 贴近低点 69.9、但离高点远 → 低位
+    const k = mkKlines(40, {
+      close: i => (i < 20 ? 100 : 70),
+      overrides: { 20: { open: 100, close: 99, high: 121, low: 79 } },
+    });
+    expect(classifyPosition(k)).toBe('低位');
+  });
+  it('区间中部收盘 → 中位', () => {
+    // 近20日区间 79~121，末根收盘 95 处于中间 → 既不贴近高、也不贴近低
+    const k = mkKlines(40, {
+      close: i => (i < 20 ? 100 : 95),
+      overrides: { 20: { open: 100, close: 99, high: 121, low: 79 } },
+    });
+    expect(classifyPosition(k)).toBe('中位');
+  });
+
+  it('K线不足6根 → 量能 平量', () => {
+    expect(classifyVolume(mkKlines(3))).toBe('平量');
+  });
+  it('末根量/前5日均量 ≥1.2 → 放量', () => {
+    const k = mkKlines(40, { overrides: { 39: { volume: 2_000_000 } } });
+    expect(classifyVolume(k)).toBe('放量');
+  });
+  it('末根量/前5日均量 ≤0.8 → 缩量', () => {
+    const k = mkKlines(40, { overrides: { 39: { volume: 100_000 } } });
+    expect(classifyVolume(k)).toBe('缩量');
+  });
+  it('末根量与均量相当 → 平量', () => {
+    expect(classifyVolume(mkKlines(40))).toBe('平量');
+  });
+
+  it('dojiColorByDim：低位+缩量 → 红（底部信号）', () => {
+    expect(dojiColorByDim('低位', '缩量')).toBe('red');
+  });
+  it('dojiColorByDim：高位+放量 → 绿（顶部风险）', () => {
+    expect(dojiColorByDim('高位', '放量')).toBe('green');
+  });
+  it('dojiColorByDim：其余组合 → 蓝（中性/变盘前夜）', () => {
+    expect(dojiColorByDim('中位', '平量')).toBe('blue');
+    expect(dojiColorByDim('高位', '缩量')).toBe('blue');
+    expect(dojiColorByDim('低位', '放量')).toBe('blue');
+  });
+});
+
+describe('analyzeKlineCombo（组合词条 位置·量能·形态 + 参考价值）', () => {
+  it('无命中形态 → 空数组', () => {
+    expect(analyzeKlineCombo([], [])).toEqual([]);
+  });
+
+  it('低位+缩量+十字星 → 组合词条：低位/缩量/十字星 三 token，颜色按多空', () => {
+    // 末根十字星、贴近近20日低点、量大幅萎缩 → 低位·缩量·十字星（偏多/红）
+    const k = mkKlines(40, {
+      close: i => (i < 20 ? 100 : 70),
+      overrides: {
+        20: { open: 100, close: 99, high: 121, low: 79 }, // 高点钉：拉高 high20，让末根 70 贴近低点
+        39: { open: 70, close: 70, high: 71, low: 69, volume: 100_000 },
+      },
+    });
+    const pats = analyzeKlinePatterns(k, fmt);
+    expect(pats).toHaveLength(1);
+    expect(pats[0].color).toBe('red'); // 十字星 color 由位置×量能动态决定
+    const combos = analyzeKlineCombo(k, pats);
+    expect(combos).toHaveLength(1);
+    const c = combos[0];
+    expect(c.tokens.map(t => t.text)).toEqual(['低位', '缩量', '十字星']);
+    expect(c.tokens[0].cls).toBe('text-red-500');   // 低位（看多）
+    expect(c.tokens[1].cls).toBe('text-brand-green'); // 缩量（看空）
+    expect(c.tokens[2].cls).toBe('text-red-500');   // 形态偏多
+    expect(c.reference.length).toBeGreaterThan(0);
+  });
+
+  it('高位+放量+十字星 → 组合词条颜色偏空（绿色形态）', () => {
+    const k = mkKlines(40, {
+      close: i => (i < 20 ? 100 : 130),
+      overrides: { 39: { open: 130, close: 130, high: 131, low: 129, volume: 2_000_000 } },
+    });
+    const pats = analyzeKlinePatterns(k, fmt);
+    expect(pats).toHaveLength(1);
+    expect(pats[0].color).toBe('green');
+    const combos = analyzeKlineCombo(k, pats);
+    expect(combos[0].tokens.map(t => t.text)).toEqual(['高位', '放量', '十字星']);
+    expect(combos[0].tokens[2].cls).toBe('text-brand-green');
+  });
+
+  it('未预定义的组合 → 回落形态基础参考价值兜底', () => {
+    // 中位+平量+金针探底组合没有预定义映射，应回落 PATTERN_BASE_REFERENCE（金针偏看多）
+    const k = mkKlines(150, { overrides: { 149: { open: 98.8, close: 99, high: 99, low: 96 } } });
+    const pats = analyzeKlinePatterns(k, fmt);
+    const hammer = pats.find(p => p.type === 'hammer');
+    expect(hammer).toBeTruthy();
+    const combo = analyzeKlineCombo(k, pats).map(c => c.reference).join(' ');
+    expect(combo).toContain('金针探底');
   });
 });
 

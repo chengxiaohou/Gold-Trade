@@ -15,10 +15,113 @@ export interface KlinePattern {
   date: string;   // 形态当天日期 YYYY-MM-DD
   label: string;  // 完整名称（十字星 / 金针探底 / 吊颈线 / 射击之星 / 倒锤子线）
   single: string; // 列表单元格单字（十 / 金 / 吊 / 射 / 倒）
-  color: 'green' | 'red' | 'slate'; // 红=买/看多 绿=卖/看空 灰=中性
+  color: 'green' | 'red' | 'slate' | 'blue'; // 红=买/看多 绿=卖/看空 蓝=中性 灰=中性(旧)
   boosted?: boolean;   // 放量金针：当日成交量 > 前5日均量
   direction?: 'high' | 'low' | 'flat'; // 十字星趋势上下文
   detail: string[];    // 判定依据文案
+}
+
+// ── K 线形态原子信号：位置 / 量能 维度（同一根K线对所有形态共享同值）──
+export type KlinePosition = '高位' | '低位' | '中位';
+export type KlineVolume = '放量' | '缩量' | '平量';
+export interface KlineDimensions { position: KlinePosition; volume: KlineVolume }
+// 组合词条：一个命中的形态，由 位置 + 量能 + 形态名 三个 token 拼装，附组合参考价值
+export interface PatternCombo {
+  type: KlinePattern['type'];
+  date: string;
+  tokens: { text: string; cls: string }[];   // 位置 / 量能 / 形态 三 token
+  reference: string;                         // 预定义组合参考价值
+}
+// 形态 token 用纯形态名（避免 label 里"放量金针"污染量能维度）
+const PURESHAPE: Record<KlinePattern['type'], string> = {
+  doji: '十字星', hammer: '金针探底', hangingMan: '吊颈线', shootingStar: '射击之星', invertedHammer: '倒锤子线',
+};
+// 位置/量能 token 着色（看多=红 / 看空=绿 / 中性=蓝）
+const POS_CLS: Record<KlinePosition, string> = { 低位: 'text-red-500', 高位: 'text-brand-green', 中位: 'text-blue-500' };
+const VOL_CLS: Record<KlineVolume, string> = { 放量: 'text-red-500', 缩量: 'text-brand-green', 平量: 'text-blue-500' };
+// 非十字星形态 token 着色
+const SHAPE_CLS: Record<Exclude<KlinePattern['color'], 'slate'>, string> = { red: 'text-red-500', green: 'text-brand-green', blue: 'text-blue-500' };
+
+// 位置维度：贴近近20日高点→高位，贴近近20日低点→低位，否则中位
+export function classifyPosition(klines: BollKline[], cfg: TagParams = DEFAULT_TAG_PARAMS): KlinePosition {
+  const classic = cfg.classic;
+  const n = klines.length;
+  if (n < 21) return '中位';
+  const i = n - 1;
+  const k = klines[i];
+  let high20 = -Infinity, low20 = Infinity;
+  for (let j = i - 19; j <= i; j++) {
+    if (klines[j].high > high20) high20 = klines[j].high;
+    if (klines[j].low < low20) low20 = klines[j].low;
+  }
+  if (classic.classicNearHigh.enabled && k.close >= high20 * classic.classicNearHigh.value) return '高位';
+  if (classic.classicNearLow.enabled && k.close <= low20 * classic.classicNearLow.value) return '低位';
+  return '中位';
+}
+
+// 量能维度：当日量/前5日均量 ≥ volUp→放量，≤ volDown→缩量，否则平量
+export function classifyVolume(klines: BollKline[], cfg: TagParams = DEFAULT_TAG_PARAMS): KlineVolume {
+  const classic = cfg.classic;
+  const n = klines.length;
+  if (n < 6) return '平量';
+  const i = n - 1;
+  let sum = 0;
+  for (let j = i - 5; j <= i - 1; j++) sum += klines[j].volume;
+  if (sum <= 0) return '平量';
+  const ratio = klines[i].volume / (sum / 5);
+  if (classic.classicVolUp.enabled && ratio >= classic.classicVolUp.value) return '放量';
+  if (classic.classicVolDown.enabled && ratio <= classic.classicVolDown.value) return '缩量';
+  return '平量';
+}
+
+// 十字星形态 token 着色：结合位置×量能的整体多空倾向（理财 AI 语义）
+export function dojiColorByDim(position: KlinePosition, volume: KlineVolume): 'red' | 'green' | 'blue' {
+  if (position === '低位' && volume === '缩量') return 'red';  // 抛压衰竭/底部信号
+  if (position === '高位' && volume === '放量') return 'green'; // 抛压增加/顶部风险高
+  return 'blue';  // 其余：多空分歧/滞涨/整理/变盘前夜 → 中性
+}
+
+// 预定义组合参考价值：key 为 `${position}-${volume}-${type}`；未预定义的回落形态兜底文案
+const PATTERN_COMBO_REFERENCE: Record<string, string> = {
+  '低位-缩量-doji': '抛压衰竭的底部变盘信号。空头力竭、多头开始抵抗，需随后出现阳线（尤其放量阳线）收复短期均线方可确认底部；若继续缩量阴跌则只是下跌中继。',
+  '高位-放量-doji': '放量滞涨的顶部预警。多空分歧剧烈、抛压增加，主力有兑现嫌疑；后随出现放量阴线并跌破短期均线，则顶部风险明显升高。',
+  '高位-缩量-doji': '上涨乏力的滞涨警示。动能衰减但抛压未明显放大，方向未明；若出现放量阴线则转空。',
+  '低位-放量-doji': '低位多空分歧大。量能放大但价格横盘，需后续阳线确认方向；未确认前不构成直接买卖依据。',
+  '低位-缩量-hammer': '下跌末端承接较强的底部信号。下影长、缩量说明抛压衰竭，买盘开始接管；可视为底部企稳的候选，仍待次日阳线确认。',
+  '高位-放量-shootingStar': '放量滞涨的冲高诱多。上影长且放量说明上方抛压沉重、主力诱多出货嫌疑大，顶部风险高。',
+  '高位-放量-hangingMan': '上涨末端假承接。长下影被放量拉回但高位滞涨，空头反扑迹象明显，应警惕顶部。',
+  '低位-放量-invertedHammer': '低位放量试盘。冲高回落但放量说明有资金试探，若次阳确认则可能启动；否则仍需观察。',
+};
+// 形态基础参考价值兜底
+const PATTERN_BASE_REFERENCE: Record<KlinePattern['type'], string> = {
+  doji: '十字星是多空暂时平衡的变盘预警，本身不是买卖指令。必须结合位置（低位看止跌、高位看滞涨）与量能，并等下一根K线确认方向。',
+  hammer: '金针探底是下跌末端的承接信号，偏看多。示意下方有买盘托底，但仍需阳线确认与放量配合，未确认前不急于抄底。',
+  hangingMan: '吊颈线是上涨末端的假承接，偏看空。形态似金针但出现在高位，需警惕冲高回落与顶部反转。',
+  shootingStar: '射击之星是冲高诱多的看空信号。上影越长、放量越大，见顶概率越高。',
+  invertedHammer: '倒锤子线是下跌末端的试盘信号，偏看多。冲高回落后若能阳线确认，可能启动反弹。',
+};
+
+// 组合词条：对每个命中形态组装 位置·量能·形态 三元 token + 参考价值（位置/量能全形态共享）
+export function analyzeKlineCombo(klines: BollKline[], patterns: KlinePattern[], cfg: TagParams = DEFAULT_TAG_PARAMS): PatternCombo[] {
+  if (!patterns || patterns.length === 0) return [];
+  const dims: KlineDimensions = { position: classifyPosition(klines, cfg), volume: classifyVolume(klines, cfg) };
+  return patterns.map(p => {
+    const shapeCls = p.type === 'doji'
+      ? SHAPE_CLS[dojiColorByDim(dims.position, dims.volume)]
+      : SHAPE_CLS[p.color as Exclude<KlinePattern['color'], 'slate'>];
+    const reference = PATTERN_COMBO_REFERENCE[`${dims.position}-${dims.volume}-${p.type}`]
+      ?? PATTERN_BASE_REFERENCE[p.type] ?? '';
+    return {
+      type: p.type,
+      date: p.date,
+      tokens: [
+        { text: dims.position, cls: POS_CLS[dims.position] },
+        { text: dims.volume, cls: VOL_CLS[dims.volume] },
+        { text: PURESHAPE[p.type], cls: shapeCls },
+      ],
+      reference,
+    };
+  });
 }
 
 // 每日量价信号（MACD 金叉/死叉 + 放量/缩量）
@@ -79,14 +182,18 @@ export function analyzeKlinePatterns(klines: BollKline[], fmt: (v: number) => st
   // 1. 十字星：实体 ≤ 振幅*5%，且振幅 > 平均振幅*10%（区分一字板）；结合前20日趋势定方向
   if (tinyBody && range > avgRange * 0.1) {
     const dir: 'high' | 'low' | 'flat' = nearHigh ? 'high' : nearLow ? 'low' : 'flat';
+    const pos = classifyPosition(klines, cfg);
+    const vol = classifyVolume(klines, cfg);
+    const dojiColor = dojiColorByDim(pos, vol);
     patterns.push({
-      type: 'doji', date: k.date, label: '十字星', single: '十', color: 'slate', direction: dir,
+      type: 'doji', date: k.date, label: '十字星', single: '十', color: dojiColor, direction: dir,
       detail: [
         `${ds} 十字星：开 ${fmt(k.open)} ≈ 收 ${fmt(k.close)}`,
         `实体占比 ${pct}% ≤ ${(dojiBody.value * 100).toFixed(1)}%（多空平衡）`,
         dir === 'high' ? `现价贴近近20日高点（≥${(nearHighP.value * 100).toFixed(1)}%区间）→ 高位警示`
           : dir === 'low' ? `现价贴近近20日低点（≤${(nearLowP.value * 100).toFixed(1)}%区间）→ 低位关注`
           : '趋势方向中性',
+        `${pos} · ${vol} → ${dojiColor === 'red' ? '偏多（低位缩量，抛压衰竭）' : dojiColor === 'green' ? '偏空（高位放量，顶部风险）' : '中性（方向未明）'}`,
       ],
     });
     return patterns; // 十字星优先：实体过小，其余形态不再判定
@@ -855,7 +962,7 @@ export function buildLatestShrinkTags(
     tags.push({
       key: `p-${p.type}`,
       text: p.single,
-      cls: p.color === 'red' ? ENV_SINGLE_CLS.red : p.color === 'green' ? ENV_SINGLE_CLS.green : ENV_SINGLE_CLS.slate,
+      cls: p.color === 'red' ? ENV_SINGLE_CLS.red : p.color === 'green' ? ENV_SINGLE_CLS.green : p.color === 'blue' ? ENV_SINGLE_CLS.indigo : ENV_SINGLE_CLS.slate,
     });
   }
   // 综合周期/量价标签注释掉，仅保留 趋势结构 + 布林波动

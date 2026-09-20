@@ -140,7 +140,7 @@ export interface TagParamEntry {
 // 标签判定参数：仅比例/容差类。feng=风系加/减，classic=原有形态/环境。随 stockSettings 云端同步。
 export interface TagParams {
   feng: Record<'fengLowBuy' | 'fengPullback' | 'fengVolBreak', TagParamEntry>;
-  classic: Record<'classicDojiBody' | 'classicSmallBody' | 'classicNearHigh' | 'classicNearLow' | 'classicMaSqueeze', TagParamEntry>;
+  classic: Record<'classicDojiBody' | 'classicSmallBody' | 'classicNearHigh' | 'classicNearLow' | 'classicMaSqueeze' | 'classicVolUp' | 'classicVolDown', TagParamEntry>;
 }
 export type TagParamKey = keyof TagParams['feng'] | keyof TagParams['classic'];
 
@@ -156,6 +156,8 @@ export const DEFAULT_TAG_PARAMS: TagParams = {
     classicNearHigh: { enabled: true, value: 0.95 },  // 接近近20日新高
     classicNearLow: { enabled: true, value: 1.05 },   // 接近近20日新低
     classicMaSqueeze: { enabled: true, value: 0.04 }, // 均线粘合比例
+    classicVolUp: { enabled: true, value: 1.2 },      // 量能：放量倍数（当日量/前5日均量 ≥ 此值）
+    classicVolDown: { enabled: true, value: 0.8 },    // 量能：缩量比例（当日量/前5日均量 ≤ 此值）
   },
 };
 
