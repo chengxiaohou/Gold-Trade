@@ -10,19 +10,19 @@ import { getMarketStatus } from './cacheService';
 // ─────────────────────────────────────────────────────────────
 
 // ── 回测可选信号【单一数据源】──────────────────────────────
-// 这里是"哪些每日信号能作为回测触发标签"的唯一注册表。
-// 股息页标签弹窗的每日信号（位置/量能/形态/破位/企稳）与回测可选信号，
-// 都以本清单为准：弹窗从下方各分析函数即时渲染，回测目录直接 = 本清单。
+// 这里是"哪些每日信号能作为回测触发标签"的唯一注册表（形态/破位/量能/企稳）。
+// 股息页标签弹窗的每日信号与回测可选信号都以本清单为准：
+// 弹窗从下方各分析函数即时渲染，回测目录直接 = 本清单。
 // ✅ 新增一个弹窗每日信号 → 只在本清单加一行（label 用对应分析函数的产出值），
 //    回测与弹窗自动同步，无需在回测引擎再写一遍。
-// ⚠️ 环境标签（趋势/波动）走另一套 ENV_TAG_CATALOG（envCondition 前提门控），不在此列。
+// ⚠️ 环境标签（趋势/波动/位置=高位/低位）走另一套 ENV_TAG_CATALOG（envCondition 前提门控），不在此列。
 export interface BacktestTagDef {
   key: string;
   label: string;            // UI 展示名 / 成交记录触发标签名
   abbr: string;             // 预览/单元格单字缩写
   group: BacktestTagGroup;
-  source: 'pattern' | 'break' | 'volume' | 'position' | 'stabilize';
-  signalName?: string;      // 各 source 用其判定函数返回的 label 匹配（pattern=analyzeKlinePatterns 的 label；break=固定 token 'break-event'；volume=classifyVolumeAt；position=classifyPositionAt；stabilize=analyzeStabilizeAt 的 label）
+  source: 'pattern' | 'break' | 'volume' | 'stabilize';
+  signalName?: string;      // 各 source 用其判定函数返回的 label 匹配（pattern=analyzeKlinePatterns 的 label；break=固定 token 'break-event'；volume=classifyVolumeAt；stabilize=analyzeStabilizeAt 的 label）
   action: 'buy' | 'sell';   // 语义方向提示（执行仍以规则 action 为准）
   color: string;            // 标签主题色：买=砖红、卖=蓝（与 B/S 买卖标签同一套）
 }
@@ -40,9 +40,7 @@ export const DAILY_SIGNAL_CATALOG: BacktestTagDef[] = [
   { key: 'volume-up', label: '放量', abbr: '放', group: 'volume', source: 'volume', signalName: '放量', action: 'buy', color: '#C44A3D' },
   { key: 'volume-down', label: '缩量', abbr: '缩', group: 'volume', source: 'volume', signalName: '缩量', action: 'sell', color: '#4A90D9' },
   { key: 'volume-flat', label: '平量', abbr: '平', group: 'volume', source: 'volume', signalName: '平量', action: 'buy', color: '#C44A3D' },
-  // 位置（source=position，signalName = classifyPositionAt 返回值；中位为中性默认，不入可选列表）
-  { key: 'position-high', label: '高位', abbr: '高', group: 'position', source: 'position', signalName: '高位', action: 'sell', color: '#4A90D9' },
-  { key: 'position-low', label: '低位', abbr: '低', group: 'position', source: 'position', signalName: '低位', action: 'buy', color: '#C44A3D' },
+  // 位置(高位/低位)属于"环境前提"(ENV_TAG_CATALOG)，不作为每日信号——不在此列
   // 底部企稳（source=stabilize，signalName = analyzeStabilizeAt 的 label）
   { key: 'stabilize-confirm', label: '有效企稳', abbr: '效', group: 'stabilize', source: 'stabilize', signalName: '有效企稳', action: 'buy', color: '#C44A3D' },
   { key: 'stabilize-stable', label: '缩量企稳', abbr: '稳', group: 'stabilize', source: 'stabilize', signalName: '缩量企稳', action: 'buy', color: '#C44A3D' },
@@ -898,23 +896,22 @@ const ENV_SINGLE_CLS: Record<EnvTag['color'], string> = {
   slate: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
 };
 
-// 弹窗“环境”区与列表缩略共用：只保留当前启用的 趋势结构 + 布林波动（cycle/volume 已注释）。
+// 弹窗“环境”区与列表缩略共用：只保留当前启用的 趋势结构 + 布林波动 + 位置（cycle/volume 已注释）。
 // 将来要恢复综合周期/量价时，改这里一处即可。
 export function selectEnvDisplayTags(tags: EnvTag[]): EnvTag[] {
-  // 环境区只显示"可作为回测环境前提"的维度：趋势结构 + 布林波动。
-  // 位置(高位/低位)属于"每日信号"（回测走 signalName），不属于环境前提——刻意排除，
-  // 否则会与回测"环境"下拉（ENV_TAG_CATALOG，仅 trend/volatility）不一致。
-  return tags.filter(t => t.dim === 'trend' || t.dim === 'volatility');
+  // 环境区显示"可作为回测环境前提"的维度：趋势结构 + 布林波动 + 位置(高位/低位)。
+  // 位置属于环境前提（回测走 envCondition 门控），不属于每日信号——与 ENV_TAG_CATALOG 保持一致。
+  return tags.filter(t => t.dim === 'trend' || t.dim === 'volatility' || t.dim === 'position');
 }
 
-// 回测可用的"环境条件"候选目录：只含趋势结构 + 布林波动（与弹窗 selectEnvDisplayTags 同维度，不含已注释的周期/量价）。
+// 回测可用的"环境条件"候选目录：趋势结构 + 布林波动 + 位置（与弹窗 selectEnvDisplayTags 同维度，不含已注释的周期/量价）。
 // 作为回测规则的辅助前提：当且仅当当日环境状态命中该标签（AND 门控），对应的触发标签才允许执行动作。
 export interface EnvConditionDef {
   key: string;      // 稳定 key（= analyzeEnvironment 产出的 EnvTag.key）
   label: string;    // 完整名称
   single: string;   // 单字
   color: EnvTag['color'];
-  dim: 'trend' | 'volatility';
+  dim: 'trend' | 'volatility' | 'position';
 }
 export const ENV_TAG_CATALOG: EnvConditionDef[] = [
   // 趋势结构（dim: trend）
@@ -927,9 +924,12 @@ export const ENV_TAG_CATALOG: EnvConditionDef[] = [
   { key: 'vol-squeeze', label: '布林收口', single: '收', color: 'slate', dim: 'volatility' },
   { key: 'vol-up', label: '上轨扩张', single: '扩', color: 'red', dim: 'volatility' },
   { key: 'vol-down', label: '下轨扩张', single: '扩', color: 'green', dim: 'volatility' },
+  // 位置（dim: position）——环境前提，非每日信号；中位为中性默认不入选
+  { key: 'pos-high', label: '高位', single: '高', color: 'green', dim: 'position' },
+  { key: 'pos-low', label: '低位', single: '低', color: 'red', dim: 'position' },
 ];
 
-// 环境条件是否成立：当日分析结果里，展示维度（trend/volatility）命中了指定 key。
+// 环境条件是否成立：当日分析结果里，展示维度（trend/volatility/position）命中了指定 key。
 // 不判断"状态切换"——只要当日处于该状态即视为成立（贴合"当前条件成立才考虑其他标签"的语义）。
 export function envHasCondition(env: EnvResult | null, key: string): boolean {
   if (!env) return false;

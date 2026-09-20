@@ -1296,6 +1296,9 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
           <optgroup label="布林波动">
             {ENV_TAG_CATALOG.filter(c => c.dim === 'volatility').map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
           </optgroup>
+          <optgroup label="位置">
+            {ENV_TAG_CATALOG.filter(c => c.dim === 'position').map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+          </optgroup>
         </select>
       </div>
       <div className="flex items-center gap-1.5">

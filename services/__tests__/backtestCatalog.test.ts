@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { BollKline } from '../bollService';
 import { BACKTEST_TAG_CATALOG, runBacktest, scanTagOccurrences } from '../backtestEngine';
-import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPositionAt, analyzeStabilizeAt, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags } from '../tagAnalyzers';
+import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, analyzeStabilizeAt, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags } from '../tagAnalyzers';
 import type { EnvTag } from '../tagAnalyzers';
 import type { BacktestStrategy } from '../../types';
 
@@ -92,18 +92,19 @@ describe('BACKTEST_TAG_CATALOG 与标签弹窗展示集同步', () => {
     }
   });
 
-  it('反向兜底：回测目录穷尽弹窗全部可选信号（新增弹窗信号但漏登记回测目录时此处必然卡住）', () => {
+  it('反向兜底：回测目录穷尽弹窗全部可选信号（新增弹窗每日信号但漏登记回测目录时此处必然卡住）', () => {
     // 弹窗“每日类”可选信号全集（与 StockDividendPage.tsx 弹窗 chip 来源一致）：
-    // 形态 + 破位 + 量能 + 位置 + 企稳，label 均为对应分析函数的产出值
+    // 形态 + 破位 + 量能 + 企稳。位置(高位/低位)属于环境前提（ENV_TAG_CATALOG），不进信号栏。
     const POPUP_SIGNALS = [
       '十字星', '金针探底', '放量金针', '吊颈线', '射击之星', '倒锤子线', // pattern
       '破位',                                                          // break
       '放量', '缩量', '平量',                                          // volume
-      '高位', '低位',                                                  // position
       '有效企稳', '缩量企稳', '缩量回踩',                              // stabilize
     ];
     expect(BACKTEST_TAG_CATALOG.map(d => d.label).sort()).toEqual([...POPUP_SIGNALS].sort());
     expect(DAILY_SIGNAL_CATALOG.map(d => d.label).sort()).toEqual([...POPUP_SIGNALS].sort());
+    // 高位/低位绝不进入信号目录
+    for (const pos of ['高位', '低位']) expect(DAILY_SIGNAL_CATALOG.some(d => d.label === pos)).toBe(false);
   });
 
   it('单一数据源：回测目录与分析器的信号清单是同一份引用（从此彻底杜绝“回测忘了登记”式漂移）', () => {
@@ -118,9 +119,6 @@ describe('BACKTEST_TAG_CATALOG 与标签弹窗展示集同步', () => {
     expect(classifyVolumeAt(mkKlines(140, undefined, { 139: { volume: 5_000_000 } }), 139)).toBe('放量');
     expect(classifyVolumeAt(mkKlines(140, undefined, { 139: { volume: 100_000 } }), 139)).toBe('缩量');
     expect(classifyVolumeAt(mkKlines(140), 139)).toBe('平量');
-    // 位置：下行序列末位=低位，上行序列末位=高位
-    expect(classifyPositionAt(mkKlines(140, i => 200 - i * 0.5), 139)).toBe('低位');
-    expect(classifyPositionAt(mkKlines(140, i => 10 + i * 0.2), 139)).toBe('高位');
     // 企稳：缩量回踩（下跌序列 + 末根缩量）
     const stz = analyzeStabilizeAt(mkKlines(40, i => 100 - i * 0.1, { 39: { volume: 200_000 } }), 39, fmt, true);
     expect(stz?.label).toBe('缩量回踩');
@@ -160,9 +158,9 @@ describe('scanTagOccurrences（预览扫描，复用弹窗判定）', () => {
     expect(scanTagOccurrences(mkKlines(140, undefined, { 139: { volume: 100_000 } }), 'volume-down').length).toBeGreaterThan(0);
   });
 
-  it('位置信号命中：下行序列末位 → position-low；上行序列末位 → position-high', () => {
-    expect(scanTagOccurrences(mkKlines(140, i => 200 - i * 0.5), 'position-low').length).toBeGreaterThan(0);
-    expect(scanTagOccurrences(mkKlines(140, i => 10 + i * 0.2), 'position-high').length).toBeGreaterThan(0);
+  it('位置不属于信号：回测信号目录无位置条目 → scanTagOccurrences(位置key) 为空', () => {
+    expect(scanTagOccurrences(mkKlines(140, i => 10 + i * 0.2), 'position-high')).toEqual([]);
+    expect(scanTagOccurrences(mkKlines(140, i => 200 - i * 0.5), 'position-low')).toEqual([]);
   });
 
   it('企稳信号命中：下跌序列 + 末根缩量 → stabilize-retrace 命中', () => {
@@ -175,10 +173,10 @@ describe('scanTagOccurrences（预览扫描，复用弹窗判定）', () => {
 // 只含趋势结构 + 布林波动（与弹窗 selectEnvDisplayTags 同维度，不含周期/量价）
 //
 describe('环境前提（envCondition）', () => {
-  it('ENV_TAG_CATALOG 全部为趋势/波动维度，不与弹窗注释的周期/量价冲突', () => {
+  it('ENV_TAG_CATALOG 全部为趋势/波动/位置维度，不与弹窗注释的周期/量价冲突', () => {
     expect(ENV_TAG_CATALOG.length).toBeGreaterThan(0);
     for (const c of ENV_TAG_CATALOG) {
-      expect(['trend', 'volatility']).toContain(c.dim);
+      expect(['trend', 'volatility', 'position']).toContain(c.dim);
       expect(c.key).toBeTruthy();
       expect(c.label).toBeTruthy();
     }
@@ -191,7 +189,7 @@ describe('环境前提（envCondition）', () => {
     for (const k of envKeys) expect(sigKeys.has(k)).toBe(false);              // 环境键 ≠ 信号键
   });
 
-  it('弹窗“环境”展示集 == 回测“环境”下拉集：仅趋势+波动，位置/周期/量价被过滤', () => {
+  it('弹窗“环境”展示集 == 回测“环境”下拉集：趋势+波动+位置都在，仅周期/量价被过滤', () => {
     // 覆盖 analyzeEnvironment 可能输出的全部维度（趋势5 + 波动3 + 位置3 + 周期1 + 量价1）
     const ALL: EnvTag[] = [
       { key: 'trend-strong-up', label: '多头强排列', single: '多', color: 'red', score: 1, dim: 'trend', detail: [] },
@@ -209,13 +207,35 @@ describe('环境前提（envCondition）', () => {
       { key: 'vol-up-up', label: '量增价升', single: '增', color: 'red', score: 1, dim: 'volume', detail: [] },
     ];
     const shown = selectEnvDisplayTags(ALL);
-    // 弹窗展示的环境标签 == 回测“环境”下拉（ENV_TAG_CATALOG）的 key 一一对应
-    expect(shown.map(t => t.key).sort()).toEqual(ENV_TAG_CATALOG.map(c => c.key).sort());
-    // 环境区绝不混入位置/周期/量价
-    for (const t of shown) expect(['trend', 'volatility']).toContain(t.dim);
-    // 位置(高位/低位)只作为”每日信号“存在于信号目录，不出现在任何环境条目里
-    const envLabelSet = new Set(ENV_TAG_CATALOG.map(c => c.label));
-    for (const sig of ['高位', '低位']) expect(envLabelSet.has(sig)).toBe(false);
+    // 弹窗“环境”展示集 == 回测“环境”下拉（ENV_TAG_CATALOG）：唯一差值是中位(中性默认，下拉不提供)
+    const shownKeys = shown.map(t => t.key).sort();
+    const envKeys = ENV_TAG_CATALOG.map(c => c.key).sort();
+    expect(shownKeys).toEqual([...envKeys, 'pos-mid'].sort());
+    // 环境区只含 趋势/波动/位置（含高位/低位），周期/量价被过滤
+    const shownDim = shown.map(t => t.dim);
+    for (const d of shownDim) expect(['trend', 'volatility', 'position']).toContain(d);
+    expect(shownDim).toContain('position');               // 位置在环境区
+    expect(shown.some(t => t.dim === 'cycle')).toBe(false);
+    expect(shown.some(t => t.dim === 'volume')).toBe(false);
+    // 位置(高位/低位)在环境目录里可作为前提；中位(中性默认)不入选下拉
+    expect(ENV_TAG_CATALOG.some(c => c.key === 'pos-high')).toBe(true);
+    expect(ENV_TAG_CATALOG.some(c => c.key === 'pos-low')).toBe(true);
+    expect(ENV_TAG_CATALOG.some(c => c.key === 'pos-mid')).toBe(false);
+  });
+
+  it('位置环境门控：runBacktest 可用 高位/低位 作 envCondition 前提（位置不在信号栏，但确实能作环境前提）', () => {
+    // 下行序列 → 末根贴近近20日低点 → 环境命中 pos-low（低位）
+    const ks = mkKlines(160, i => 10 + (140 - i) * 0.2);
+    const env = analyzeEnvironment(ks, fmt, true);
+    expect(env).not.toBeNull();
+    expect(envHasCondition(env, 'pos-low')).toBe(true);
+    expect(envHasCondition(env, 'pos-high')).toBe(false);
+    // 作为环境前提门控：低位成立时触发、高位前提不触发
+    const base = { id: 'r1', tagKey: 'pattern-doji', label: '十字星', action: 'buy' as const, pct: 10, enabled: true };
+    const low = runBacktest(ks, { rules: [{ ...base, envCondition: { key: 'pos-low', label: '低位' } }], initialCapital: 100000 } as BacktestStrategy);
+    const high = runBacktest(ks, { rules: [{ ...base, envCondition: { key: 'pos-high', label: '高位' } }], initialCapital: 100000 } as BacktestStrategy);
+    expect(low.trades.length).toBeGreaterThan(0);
+    expect(high.trades.length).toBe(0);
   });
 
   it('每日信号只在“信号”栏可选：信号目录直接对应弹窗信号集，不与任何环境条目同名/同键', () => {

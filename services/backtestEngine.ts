@@ -1,7 +1,7 @@
 import type { BollKline } from './bollService';
 import { DEFAULT_TAG_PARAMS } from '../types';
 import type { TagParams, BacktestRule, BacktestStrategy, BacktestTrade, BacktestResult, BacktestTagGroup } from '../types';
-import { analyzeKlinePatterns, analyzeMarketConditions, analyzeEnvironment, envHasCondition, buildBreakExplainLines, classifyPositionAt, classifyVolumeAt, analyzeStabilizeAt, DAILY_SIGNAL_CATALOG } from './tagAnalyzers';
+import { analyzeKlinePatterns, analyzeMarketConditions, analyzeEnvironment, envHasCondition, buildBreakExplainLines, classifyVolumeAt, analyzeStabilizeAt, DAILY_SIGNAL_CATALOG } from './tagAnalyzers';
 import type { EnvResult, BacktestTagDef } from './tagAnalyzers';
 
 // ─────────────────────────────────────────────────────────────
@@ -42,9 +42,6 @@ function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams): { hit
   for (const ev of analyzeMarketConditions(win, 1)) if (ev.date === last.date && ev.brokenCount > 0) hits.add('break-event');
   // 每日量能：classifyVolumeAt 当日（弹窗 volday chip 同源）
   hits.add(classifyVolumeAt(win, win.length - 1, cfg));
-  // 位置：classifyPositionAt 当日（中位为中性默认，不入命中集合，避免被目录误匹配）
-  const pos = classifyPositionAt(win, win.length - 1, cfg);
-  if (pos !== '中位') hits.add(pos);
   // 底部企稳：analyzeStabilizeAt 当日（弹窗企稳 chip 同源）；历史已收盘 → allowVol=true
   const st = analyzeStabilizeAt(win, win.length - 1, fmtP, true, cfg);
   if (st) hits.add(st.label);
@@ -188,13 +185,6 @@ export function scanTagOccurrences(k: BollKline[], tagKey: string, envKey?: stri
         detail = [`${fmtShort(last.date)} ${def.signalName}：当日量/前5日均量 = ${ratio.toFixed(2)}`];
       } else if (classifyVolumeAt(win, win.length - 1, cfg) === def.signalName && def.signalName === '平量') {
         detail = [`${fmtShort(last.date)} 平量：当日量/前5日均量处于放量与缩量阈值之间`];
-      }
-    } else if (def.source === 'position') {
-      // 位置：与弹窗组合词条位置 token 同源（classifyPositionAt）
-      if (classifyPositionAt(win, win.length - 1, cfg) === def.signalName) {
-        detail = def.signalName === '高位'
-          ? [`${fmtShort(last.date)} 高位：收盘贴近近20日高点`]
-          : [`${fmtShort(last.date)} 低位：收盘贴近近20日低点`];
       }
     } else if (def.source === 'stabilize') {
       // 底部企稳：与弹窗企稳 chip 同源（analyzeStabilizeAt）；detail 复用其判定依据
