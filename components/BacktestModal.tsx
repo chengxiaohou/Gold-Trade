@@ -6,7 +6,7 @@ import type { IChartApi, ISeriesApi, LineData, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset } from '../types';
 import { fetchBollData } from '../services/bollService';
 import type { BollKline } from '../services/bollService';
-import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG } from '../services/backtestEngine';
+import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL } from '../services/backtestEngine';
 import { ENV_TAG_CATALOG } from '../services/tagAnalyzers';
 import { InputGroup } from './InputGroup';
 
@@ -1268,7 +1268,7 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
         >
           <option value="" disabled>选择标签…</option>
           {groups.map(([g, list]) => (
-            <optgroup key={g} label={g}>
+            <optgroup key={g} label={BT_GROUP_LABEL[g as keyof typeof BT_GROUP_LABEL] ?? g}>
               {list.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
             </optgroup>
           ))}

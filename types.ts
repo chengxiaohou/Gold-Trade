@@ -218,7 +218,7 @@ export interface BacktestResult {
   tradeCount: number;
 }
 // 标签目录分组（策略编辑器的下拉选项结构）
-export type BacktestTagGroup = 'feng-add' | 'feng-reduce' | 'pattern' | 'env' | 'break' | 'daily';
+export type BacktestTagGroup = 'feng-add' | 'feng-reduce' | 'pattern' | 'env' | 'break' | 'daily' | 'volume' | 'position' | 'stabilize';
 
 export interface StockSettings {
   visibleColumns?: string[];

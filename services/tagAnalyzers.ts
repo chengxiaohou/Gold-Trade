@@ -55,12 +55,11 @@ function normalizeTagParams(cfg: TagParams = DEFAULT_TAG_PARAMS): TagParams {
   return { feng: merge(cfg.feng, DEFAULT_TAG_PARAMS.feng), classic: merge(cfg.classic, DEFAULT_TAG_PARAMS.classic) };
 }
 
-// 位置维度：贴近近20日高点→高位，贴近近20日低点→低位，否则中位
-export function classifyPosition(klines: BollKline[], cfg: TagParams = DEFAULT_TAG_PARAMS): KlinePosition {
+// 位置维度（按指定日期索引 i）：贴近近20日高点→高位，贴近近20日低点→低位，否则中位。
+// 逐日展示/回测“高位/低位”信号时，对任意一天索引用此函数判定。
+export function classifyPositionAt(klines: BollKline[], i: number, cfg: TagParams = DEFAULT_TAG_PARAMS): KlinePosition {
   const classic = normalizeTagParams(cfg).classic;
-  const n = klines.length;
-  if (n < 21) return '中位';
-  const i = n - 1;
+  if (i < 20) return '中位'; // 需 ≥21 根K线（20日窗口）
   const k = klines[i];
   let high20 = -Infinity, low20 = Infinity;
   for (let j = i - 19; j <= i; j++) {
@@ -70,6 +69,11 @@ export function classifyPosition(klines: BollKline[], cfg: TagParams = DEFAULT_T
   if (classic.classicNearHigh.enabled && k.close >= high20 * classic.classicNearHigh.value) return '高位';
   if (classic.classicNearLow.enabled && k.close <= low20 * classic.classicNearLow.value) return '低位';
   return '中位';
+}
+
+// 位置维度（最新一根K线）：委托归类到最近索引
+export function classifyPosition(klines: BollKline[], cfg: TagParams = DEFAULT_TAG_PARAMS): KlinePosition {
+  return classifyPositionAt(klines, (klines?.length ?? 1) - 1, cfg);
 }
 
 // 量能维度（按指定日期索引 i）：当日量/前5日均量 ≥ volUp→放量，≤ volDown→缩量，否则平量。
@@ -912,11 +916,12 @@ export interface StabilizeTag {
   detail: string[]; // 判定依据（量能/价格/均线的具体数值），参考价值由弹窗底部独立区域按 kind 映射
 }
 
-export function analyzeStabilize(klines: BollKline[], fmt: (v: number) => string, allowVol: boolean, cfg: TagParams = DEFAULT_TAG_PARAMS): StabilizeTag | null {
-  const n = klines.length;
+// 底部企稳判定（按指定日期索引 t）：缩量回踩/缩量企稳/有效企稳，t 为收盘日索引。
+// 逐日/回测复用同一套判定；未收盘的量能未定型时不判定（由 allowVol 控制）。
+export function analyzeStabilizeAt(klines: BollKline[], t: number, fmt: (v: number) => string, allowVol: boolean, cfg: TagParams = DEFAULT_TAG_PARAMS): StabilizeTag | null {
   // 需至少6根（MA5 与 5日均量）；未收盘的今日量能未定型时不判定（与量价类一致，由 allowVol 控制）
-  if (n < 6 || !allowVol) return null;
-  const t = n - 1, p = t - 1;
+  if (t < 5 || !allowVol) return null;
+  const p = t - 1;
   const k = klines[t], pk = klines[p];
   const V = k.volume, C = k.close, L = k.low;
   const fmtV = (v: number) => v >= 1e8 ? `${(v / 1e8).toFixed(2)}亿` : v >= 1e4 ? `${(v / 1e4).toFixed(1)}万` : `${v.toFixed(0)}`;
@@ -936,7 +941,7 @@ export function analyzeStabilize(klines: BollKline[], fmt: (v: number) => string
   const notNewLow = L >= pk.low;            // 价格端：低点不再创新低
   // 连续低点不创新低 + 放量日前一段持续量缩（k=3）
   const DAYS = 3;
-  let contOk = !!(n >= DAYS + 1);
+  let contOk = !!(t >= DAYS);
   if (contOk) {
     for (let i = t - DAYS + 1; i <= t; i++) {
       if (i < 1 || klines[i].low < klines[i - 1].low) { contOk = false; break; } // 低点连抬
@@ -975,6 +980,10 @@ export function analyzeStabilize(klines: BollKline[], fmt: (v: number) => string
     };
   }
   return null;
+}
+
+export function analyzeStabilize(klines: BollKline[], fmt: (v: number) => string, allowVol: boolean, cfg: TagParams = DEFAULT_TAG_PARAMS): StabilizeTag | null {
+  return analyzeStabilizeAt(klines, (klines?.length ?? 1) - 1, fmt, allowVol, cfg);
 }
 
 // 列表页缩略展示：封装原 getLatestDayTags 的拼装体——破位单字(破/真/假) → K线形态单字 → 环境(trend/volatility)单字

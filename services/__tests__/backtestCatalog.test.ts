@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { BollKline } from '../bollService';
 import { BACKTEST_TAG_CATALOG, runBacktest, scanTagOccurrences } from '../backtestEngine';
-import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG } from '../tagAnalyzers';
+import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPositionAt, analyzeStabilizeAt } from '../tagAnalyzers';
 import type { BacktestStrategy } from '../../types';
 
 const fmt = (v: number) => v.toFixed(2);
@@ -90,6 +90,31 @@ describe('BACKTEST_TAG_CATALOG 与标签弹窗展示集同步', () => {
       else expect(d.color).toBe('#4A90D9');
     }
   });
+
+  it('反向兜底：回测目录穷尽弹窗全部可选信号（新增弹窗信号但漏登记回测目录时此处必然卡住）', () => {
+    // 弹窗“每日类”可选信号全集：形态 + 破位 + 量能 + 位置 + 企稳（来源均为 tagAnalyzers 同一判定函数）
+    const POPUP_SIGNALS = [
+      '十字星', '金针探底', '放量金针', '吊颈线', '射击之星', '倒锤子线', // pattern
+      '破位',                                                          // break
+      '放量', '缩量', '平量',                                          // volume
+      '高位', '低位',                                                  // position
+      '有效企稳', '缩量企稳', '缩量回踩',                              // stabilize
+    ];
+    expect(BACKTEST_TAG_CATALOG.map(d => d.label).sort()).toEqual([...POPUP_SIGNALS].sort());
+  });
+
+  it('新 signal source 都能被对应 tagAnalyzers 判定函数真实产出（不悬空、复用同一判断）', () => {
+    // 量能：末根放量（高量）/缩量（低量）
+    expect(classifyVolumeAt(mkKlines(140, undefined, { 139: { volume: 5_000_000 } }), 139)).toBe('放量');
+    expect(classifyVolumeAt(mkKlines(140, undefined, { 139: { volume: 100_000 } }), 139)).toBe('缩量');
+    expect(classifyVolumeAt(mkKlines(140), 139)).toBe('平量');
+    // 位置：下行序列末位=低位，上行序列末位=高位
+    expect(classifyPositionAt(mkKlines(140, i => 200 - i * 0.5), 139)).toBe('低位');
+    expect(classifyPositionAt(mkKlines(140, i => 10 + i * 0.2), 139)).toBe('高位');
+    // 企稳：缩量回踩（下跌序列 + 末根缩量）
+    const stz = analyzeStabilizeAt(mkKlines(40, i => 100 - i * 0.1, { 39: { volume: 200_000 } }), 39, fmt, true);
+    expect(stz?.label).toBe('缩量回踩');
+  });
 });
 
 // 构造末根为某形态时，analyzeKlinePatterns 产出的 label 集合（与 catalog 匹配用）
@@ -118,6 +143,20 @@ describe('scanTagOccurrences（预览扫描，复用弹窗判定）', () => {
   it('未知 tagKey → 空结果', () => {
     const ks = mkKlines(140);
     expect(scanTagOccurrences(ks, 'no-such-key')).toEqual([]);
+  });
+
+  it('量能信号命中：末根放量 → volume-up 命中；末根缩量 → volume-down 命中', () => {
+    expect(scanTagOccurrences(mkKlines(140, undefined, { 139: { volume: 5_000_000 } }), 'volume-up').length).toBeGreaterThan(0);
+    expect(scanTagOccurrences(mkKlines(140, undefined, { 139: { volume: 100_000 } }), 'volume-down').length).toBeGreaterThan(0);
+  });
+
+  it('位置信号命中：下行序列末位 → position-low；上行序列末位 → position-high', () => {
+    expect(scanTagOccurrences(mkKlines(140, i => 200 - i * 0.5), 'position-low').length).toBeGreaterThan(0);
+    expect(scanTagOccurrences(mkKlines(140, i => 10 + i * 0.2), 'position-high').length).toBeGreaterThan(0);
+  });
+
+  it('企稳信号命中：下跌序列 + 末根缩量 → stabilize-retrace 命中', () => {
+    expect(scanTagOccurrences(mkKlines(40, i => 100 - i * 0.1, { 39: { volume: 200_000 } }), 'stabilize-retrace').length).toBeGreaterThan(0);
   });
 });
 
