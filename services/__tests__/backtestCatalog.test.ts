@@ -207,20 +207,17 @@ describe('环境前提（envCondition）', () => {
       { key: 'vol-up-up', label: '量增价升', single: '增', color: 'red', score: 1, dim: 'volume', detail: [] },
     ];
     const shown = selectEnvDisplayTags(ALL);
-    // 弹窗“环境”展示集 == 回测“环境”下拉（ENV_TAG_CATALOG）：唯一差值是中位(中性默认，下拉不提供)
-    const shownKeys = shown.map(t => t.key).sort();
-    const envKeys = ENV_TAG_CATALOG.map(c => c.key).sort();
-    expect(shownKeys).toEqual([...envKeys, 'pos-mid'].sort());
-    // 环境区只含 趋势/波动/位置（含高位/低位），周期/量价被过滤
-    const shownDim = shown.map(t => t.dim);
-    for (const d of shownDim) expect(['trend', 'volatility', 'position']).toContain(d);
-    expect(shownDim).toContain('position');               // 位置在环境区
+    // 弹窗“环境”展示集 【==】 回测“环境”下拉（ENV_TAG_CATALOG）——两边完全一模一样（含低位/中位/高位）
+    expect(shown.map(t => t.key).sort()).toEqual(ENV_TAG_CATALOG.map(c => c.key).sort());
+    // 环境区只含 趋势/波动/位置，周期/量价被过滤
+    for (const t of shown) expect(['trend', 'volatility', 'position']).toContain(t.dim);
+    expect(shown.some(t => t.dim === 'position')).toBe(true);                // 位置在环境区
     expect(shown.some(t => t.dim === 'cycle')).toBe(false);
     expect(shown.some(t => t.dim === 'volume')).toBe(false);
-    // 位置(高位/低位)在环境目录里可作为前提；中位(中性默认)不入选下拉
+    // 位置三档（高位/中位/低位）全量入选环境目录
     expect(ENV_TAG_CATALOG.some(c => c.key === 'pos-high')).toBe(true);
+    expect(ENV_TAG_CATALOG.some(c => c.key === 'pos-mid')).toBe(true);
     expect(ENV_TAG_CATALOG.some(c => c.key === 'pos-low')).toBe(true);
-    expect(ENV_TAG_CATALOG.some(c => c.key === 'pos-mid')).toBe(false);
   });
 
   it('位置环境门控：runBacktest 可用 高位/低位 作 envCondition 前提（位置不在信号栏，但确实能作环境前提）', () => {

@@ -924,8 +924,9 @@ export const ENV_TAG_CATALOG: EnvConditionDef[] = [
   { key: 'vol-squeeze', label: '布林收口', single: '收', color: 'slate', dim: 'volatility' },
   { key: 'vol-up', label: '上轨扩张', single: '扩', color: 'red', dim: 'volatility' },
   { key: 'vol-down', label: '下轨扩张', single: '扩', color: 'green', dim: 'volatility' },
-  // 位置（dim: position）——环境前提，非每日信号；中位为中性默认不入选
+  // 位置（dim: position）——环境前提，非每日信号；高位/低位/中位全量可选
   { key: 'pos-high', label: '高位', single: '高', color: 'green', dim: 'position' },
+  { key: 'pos-mid', label: '中位', single: '中', color: 'slate', dim: 'position' },
   { key: 'pos-low', label: '低位', single: '低', color: 'red', dim: 'position' },
 ];
 
