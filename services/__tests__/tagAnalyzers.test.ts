@@ -226,7 +226,7 @@ describe('classifyVolumeAt（按日期索引的量能判定，供“近10交易�
 });
 
 describe('位置维度 → 环境标签（高位/低位/中位，归入环境区展示）', () => {
-  it('末根贴近近20日高点 → 环境含 高位 标签（绿/偏空），且 selectEnvDisplayTags 保留 position 维度', () => {
+  it('末根贴近近20日高点 → 环境结果含 高位 标签（绿/偏空），但 selectEnvDisplayTags 排除 position（归每日信号）', () => {
     const k = mkKlines(140, {
       close: i => (i < 120 ? 100 : 130),
       overrides: { 120: { open: 100, close: 99, high: 121, low: 79 } }, // 近20日低点钉，抬高区间，末根 130 贴近高点
@@ -237,7 +237,8 @@ describe('位置维度 → 环境标签（高位/低位/中位，归入环境区
     expect(pos).toBeDefined();
     expect(pos!.label).toBe('高位');
     expect(pos!.color).toBe('green');
-    expect(selectEnvDisplayTags(env!.tags).some(t => t.key === 'pos-high')).toBe(true);
+    // 位置归每日信号走回测“信号”栏，不进入“环境”展示/环境前提下拉
+    expect(selectEnvDisplayTags(env!.tags).some(t => t.key === 'pos-high')).toBe(false);
   });
 
   it('K线不足130根 analyzeEnvironment 为 null（位置标签随 env 一起缺席，不单独判）', () => {
@@ -381,19 +382,20 @@ describe('analyzeEnvironment（趋势结构 / 布林波动）', () => {
     expect(trend!.label).toBe('多头强排列');
   });
 
-  it('详情展开（selectEnvDisplayTags）只保留 trend + volatility + position', () => {
-    // 单边上行：cycle 必然生成，volume 受量能驱动可能生成，但过滤后都不得出现；position（位置）维度保留
+  it('详情展开（selectEnvDisplayTags）只保留 trend + volatility（position 归每日信号，环境区不含）', () => {
+    // 单边上行：cycle 必然生成，volume 受量能驱动可能生成，position 也会生成，但过滤后都不得出现——环境区仅趋势+波动
     const k = mkKlines(140, { close: i => 10 + i * 0.2 });
     const env = analyzeEnvironment(k, fmt);
     expect(env).not.toBeNull();
     expect(env!.tags.some(t => t.dim === 'cycle')).toBe(true);
+    expect(env!.tags.some(t => t.dim === 'position')).toBe(true);
     const sel = selectEnvDisplayTags(env!.tags);
     expect(sel.length).toBeGreaterThan(0);
     for (const t of sel) {
-      expect(t.dim).toMatch(/^(trend|volatility|position)$/);
+      expect(['trend', 'volatility']).toContain(t.dim);
     }
-    // position 维度也进入环境区展示
-    expect(sel.some(t => t.dim === 'position')).toBe(true);
+    // 位置维度不进入环境区展示（作为每日信号走回测“信号”栏）
+    expect(sel.some(t => t.dim === 'position')).toBe(false);
     // 弹窗"环境"区展示 label（详细展示依据）
     const trend = sel.find(t => t.dim === 'trend');
     expect(trend).toBeDefined();

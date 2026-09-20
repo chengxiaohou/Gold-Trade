@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { BollKline } from '../bollService';
 import { BACKTEST_TAG_CATALOG, runBacktest, scanTagOccurrences } from '../backtestEngine';
-import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPositionAt, analyzeStabilizeAt, DAILY_SIGNAL_CATALOG } from '../tagAnalyzers';
+import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPositionAt, analyzeStabilizeAt, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags } from '../tagAnalyzers';
+import type { EnvTag } from '../tagAnalyzers';
 import type { BacktestStrategy } from '../../types';
 
 const fmt = (v: number) => v.toFixed(2);
@@ -188,6 +189,41 @@ describe('环境前提（envCondition）', () => {
     expect(new Set(envKeys).size).toBe(envKeys.length);                       // 环境键自身唯一
     const sigKeys = new Set(BACKTEST_TAG_CATALOG.map(d => d.key));
     for (const k of envKeys) expect(sigKeys.has(k)).toBe(false);              // 环境键 ≠ 信号键
+  });
+
+  it('弹窗“环境”展示集 == 回测“环境”下拉集：仅趋势+波动，位置/周期/量价被过滤', () => {
+    // 覆盖 analyzeEnvironment 可能输出的全部维度（趋势5 + 波动3 + 位置3 + 周期1 + 量价1）
+    const ALL: EnvTag[] = [
+      { key: 'trend-strong-up', label: '多头强排列', single: '多', color: 'red', score: 1, dim: 'trend', detail: [] },
+      { key: 'trend-weak-up', label: '多头弱排列', single: '弱', color: 'orange', score: 0.4, dim: 'trend', detail: [] },
+      { key: 'trend-squeeze', label: '均线粘合', single: '粘', color: 'slate', score: 0, dim: 'trend', detail: [] },
+      { key: 'trend-weak-down', label: '空头弱排列', single: '空弱', color: 'slate', score: -0.4, dim: 'trend', detail: [] },
+      { key: 'trend-strong-down', label: '空头强排列', single: '空', color: 'green', score: -1, dim: 'trend', detail: [] },
+      { key: 'vol-squeeze', label: '布林收口', single: '收', color: 'slate', score: 0, dim: 'volatility', detail: [] },
+      { key: 'vol-up', label: '上轨扩张', single: '扩', color: 'red', score: 1, dim: 'volatility', detail: [] },
+      { key: 'vol-down', label: '下轨扩张', single: '扩', color: 'green', score: -1, dim: 'volatility', detail: [] },
+      { key: 'pos-high', label: '高位', single: '高', color: 'green', score: -0.5, dim: 'position', detail: [] },
+      { key: 'pos-low', label: '低位', single: '低', color: 'red', score: 0.5, dim: 'position', detail: [] },
+      { key: 'pos-mid', label: '中位', single: '中', color: 'slate', score: 0, dim: 'position', detail: [] },
+      { key: 'cycle', label: '强进攻周期', single: '攻', color: 'red', score: 1, dim: 'cycle', detail: [] },
+      { key: 'vol-up-up', label: '量增价升', single: '增', color: 'red', score: 1, dim: 'volume', detail: [] },
+    ];
+    const shown = selectEnvDisplayTags(ALL);
+    // 弹窗展示的环境标签 == 回测“环境”下拉（ENV_TAG_CATALOG）的 key 一一对应
+    expect(shown.map(t => t.key).sort()).toEqual(ENV_TAG_CATALOG.map(c => c.key).sort());
+    // 环境区绝不混入位置/周期/量价
+    for (const t of shown) expect(['trend', 'volatility']).toContain(t.dim);
+    // 位置(高位/低位)只作为”每日信号“存在于信号目录，不出现在任何环境条目里
+    const envLabelSet = new Set(ENV_TAG_CATALOG.map(c => c.label));
+    for (const sig of ['高位', '低位']) expect(envLabelSet.has(sig)).toBe(false);
+  });
+
+  it('每日信号只在“信号”栏可选：信号目录直接对应弹窗信号集，不与任何环境条目同名/同键', () => {
+    // 信号键 —— 完全来自 DAILY_SIGNAL_CATALOG（单一数据源）
+    const sigKeys = new Set(DAILY_SIGNAL_CATALOG.map(d => d.key));
+    expect(sigKeys.size).toBe(BACKTEST_TAG_CATALOG.length);
+    // 没有任何信号 getValueAsenvCondition 键
+    for (const d of ENV_TAG_CATALOG) expect(sigKeys.has(d.key)).toBe(false);
   });
 
   it('envHasCondition：状态成立返回 true、其它状态 false、空结果 false', () => {

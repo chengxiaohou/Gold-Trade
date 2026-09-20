@@ -901,7 +901,10 @@ const ENV_SINGLE_CLS: Record<EnvTag['color'], string> = {
 // 弹窗“环境”区与列表缩略共用：只保留当前启用的 趋势结构 + 布林波动（cycle/volume 已注释）。
 // 将来要恢复综合周期/量价时，改这里一处即可。
 export function selectEnvDisplayTags(tags: EnvTag[]): EnvTag[] {
-  return tags.filter(t => t.dim === 'trend' || t.dim === 'volatility' || t.dim === 'position');
+  // 环境区只显示"可作为回测环境前提"的维度：趋势结构 + 布林波动。
+  // 位置(高位/低位)属于"每日信号"（回测走 signalName），不属于环境前提——刻意排除，
+  // 否则会与回测"环境"下拉（ENV_TAG_CATALOG，仅 trend/volatility）不一致。
+  return tags.filter(t => t.dim === 'trend' || t.dim === 'volatility');
 }
 
 // 回测可用的"环境条件"候选目录：只含趋势结构 + 布林波动（与弹窗 selectEnvDisplayTags 同维度，不含已注释的周期/量价）。
