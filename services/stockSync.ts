@@ -114,14 +114,16 @@ export function stripStockPriceCache(list: StockEntry[]): StockEntry[] {
 //   - stocks 剔除价格缓存字段（现价/涨跌/高低量/更新时刻/价格派生股息率），避免价格刷新误报
 //   - stockSettings 剔除设备特定字段（maxRows/maxWidth/sortMode/autoRefreshInterval），避免设备差异误报
 //   - backtestStrategyPresets（策略组模板）整体纳入
+//   - appSettings（黄金/股息两页全局设置，含总资金 totalCapital / dividendTotalCapital，上传时整包推送）
 export interface StockCloudFingerprintInput {
   stocks: StockEntry[];
   stockSettings?: StockSettings;
   backtestStrategyPresets?: BacktestStrategyPreset[];
+  appSettings?: Record<string, unknown>;
 }
 
 export function buildStockCloudFingerprint(input: StockCloudFingerprintInput): string {
-  const { stocks, stockSettings, backtestStrategyPresets = [] } = input;
+  const { stocks, stockSettings, backtestStrategyPresets = [], appSettings } = input;
   const cloudStockSettings = stockSettings
     ? { ...stockSettings, maxRows: undefined, maxWidth: undefined, sortMode: undefined, autoRefreshInterval: undefined }
     : undefined;
@@ -129,6 +131,7 @@ export function buildStockCloudFingerprint(input: StockCloudFingerprintInput): s
     stocks: stripStockPriceCache(buildUploadStocks(stocks)),
     stockSettings: cloudStockSettings,
     backtestStrategyPresets,
+    appSettings,
   });
 }
 

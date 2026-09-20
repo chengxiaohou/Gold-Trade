@@ -18,7 +18,7 @@ import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, buildStockCl
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.16';
+const APP_VERSION = 'v2.18.17';
 
 // 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
 const ERRLOG_KEY = 'gold_trade_error_log';
@@ -452,8 +452,9 @@ export default function App() {
       stocks,
       stockSettings,
       backtestStrategyPresets: presetsFromStorage(),
+      appSettings,
     }),
-    [stocks, stockSettings, backtestPresetsVersion, presetsFromStorage],
+    [stocks, stockSettings, backtestPresetsVersion, presetsFromStorage, appSettings],
   );
   // 最近一次成功上传/下载时云端字段的指纹基线；null 表示尚未同步（首次使用需先上传建备份）
   const [stockCloudBaseline, setStockCloudBaseline] = useState<string | null>(
@@ -1005,7 +1006,7 @@ export default function App() {
       setMemoBaseline(stockSettings?.memo || '');
       setMemoUpdatedAtBaseline(stockSettings?.memoUpdatedAt ?? 0);
       if (currentPage === 'stocks') setStockCloudBaseline(buildStockCloudFingerprint({
-        stocks, stockSettings, backtestStrategyPresets: presetsFromStorage(),
+        stocks, stockSettings, backtestStrategyPresets: presetsFromStorage(), appSettings,
       }));
       setTimeout(() => setUploadSuccess(false), 2000);
     } else {
@@ -1026,7 +1027,7 @@ export default function App() {
       setMemoBaseline(stockSettings?.memo || '');
       setMemoUpdatedAtBaseline(stockSettings?.memoUpdatedAt ?? 0);
       setStockCloudBaseline(buildStockCloudFingerprint({
-        stocks, stockSettings, backtestStrategyPresets: presetsFromStorage(),
+        stocks, stockSettings, backtestStrategyPresets: presetsFromStorage(), appSettings,
       }));
       setTimeout(() => setUploadSuccess(false), 2000);
     } else {
@@ -1045,12 +1046,12 @@ export default function App() {
       // 同步重置云端指纹基线，让右上角上传按钮也消失（避免"备忘录上传成功但右上角仍提示脏"的状态漂移）
       if (currentPage === 'stocks') {
         setStockCloudBaseline(buildStockCloudFingerprint({
-          stocks, stockSettings, backtestStrategyPresets: presetsFromStorage(),
+          stocks, stockSettings, backtestStrategyPresets: presetsFromStorage(), appSettings,
         }));
       }
     }
     return ok;
-  }, [performStockCloudUpload, stockSettings, stocks, currentPage]);
+  }, [performStockCloudUpload, stockSettings, stocks, currentPage, appSettings]);
 
   const handleCloudDownload = async () => {
     setCloudConfirm(null);
@@ -1128,6 +1129,7 @@ export default function App() {
             stocks: syncStocksForBaseline,
             stockSettings: syncStockSettingsForBaseline,
             backtestStrategyPresets: presetsFromStorage(),
+            appSettings: { ...appSettings, ...(result.settings || {}) },
           }));
         }
         

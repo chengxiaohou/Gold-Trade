@@ -101,6 +101,28 @@ describe('buildStockCloudFingerprint', () => {
     expect(renamed).not.toBe(one);
   });
 
+  it('appSettings 中黄金页总资金 totalCapital 变化改变指纹', () => {
+    const mk = (v: number) => buildStockCloudFingerprint({
+      stocks: [mkStock('600000', '浦发')],
+      appSettings: { totalCapital: v },
+    });
+    expect(mk(100000)).not.toBe(mk(120000));
+  });
+
+  it('appSettings 中股息页总资金 dividendTotalCapital 变化改变指纹', () => {
+    const mk = (v: number) => buildStockCloudFingerprint({
+      stocks: [mkStock('600000', '浦发')],
+      appSettings: { dividendTotalCapital: v },
+    });
+    expect(mk(100000)).not.toBe(mk(120000));
+  });
+
+  it('appSettings 无变化具有确定性', () => {
+    const appSettings = { totalCapital: 100000, dividendTotalCapital: 50000 };
+    const input = { stocks: [mkStock('600000', '浦发')], appSettings };
+    expect(buildStockCloudFingerprint(input)).toBe(buildStockCloudFingerprint(input));
+  });
+
   it('无任何变化 → 指纹相等', () => {
     const input = {
       stocks: [mkStock('600000', '浦发'), mkStock('000001', '平安')],
