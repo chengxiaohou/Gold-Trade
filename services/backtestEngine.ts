@@ -1,8 +1,8 @@
 import type { BollKline } from './bollService';
 import { DEFAULT_TAG_PARAMS } from '../types';
 import type { TagParams, BacktestRule, BacktestStrategy, BacktestTrade, BacktestResult, BacktestTagGroup } from '../types';
-import { analyzeKlinePatterns, analyzeMarketConditions, analyzeEnvironment, envHasCondition, buildBreakExplainLines, classifyPositionAt, classifyVolumeAt, analyzeStabilizeAt } from './tagAnalyzers';
-import type { EnvResult } from './tagAnalyzers';
+import { analyzeKlinePatterns, analyzeMarketConditions, analyzeEnvironment, envHasCondition, buildBreakExplainLines, classifyPositionAt, classifyVolumeAt, analyzeStabilizeAt, DAILY_SIGNAL_CATALOG } from './tagAnalyzers';
+import type { EnvResult, BacktestTagDef } from './tagAnalyzers';
 
 // ─────────────────────────────────────────────────────────────
 // 回测引擎
@@ -16,42 +16,10 @@ export interface BacktestParams {
   lotSize?: number; // 每手股数（默认 100，整百股成交）
 }
 
-// 触发标签目录：把回测 UI 可选标签映射到"弹窗同一标签判断逻辑"的匹配值。
-// 与股息页标签弹窗"每日类"信号（位置/量能/形态/破位/企稳）严格同步——
-// 每新增一个弹窗每日信号，都必须在此登记一行（用 tagAnalyzers 同一判定函数产出）。
-// 每日信号(MACD量大)、风系加/减、综合周期/量价在弹窗已注释，回测同样不收录。
-export interface BacktestTagDef {
-  key: string;
-  label: string;            // UI 展示名 / 成交记录触发标签名
-  abbr: string;             // 预览/单元格单字缩写
-  group: BacktestTagGroup;
-  source: 'pattern' | 'break' | 'volume' | 'position' | 'stabilize';
-  signalName?: string;      // 各 source 用其判定函数返回的 label 匹配（pattern=analyzeKlinePatterns 的 label；break=固定 token；volume=classifyVolumeAt；position=classifyPositionAt；stabilize=analyzeStabilizeAt 的 label）
-  action: 'buy' | 'sell';   // 语义方向提示（执行仍以规则 action 为准）
-  color: string;            // 标签主题色：买=砖红、卖=蓝（与 B/S 买卖标签同一套）
-}
-export const BACKTEST_TAG_CATALOG: BacktestTagDef[] = [
-  // K 线形态（signalName = analyzeKlinePatterns 的 label，弹窗形态 chip 同一来源）
-  { key: 'pattern-doji', label: '十字星', abbr: '十', group: 'pattern', source: 'pattern', signalName: '十字星', action: 'sell', color: '#4A90D9' },
-  { key: 'pattern-hammer', label: '金针探底', abbr: '针', group: 'pattern', source: 'pattern', signalName: '金针探底', action: 'buy', color: '#C44A3D' },
-  { key: 'pattern-boosted-hammer', label: '放量金针', abbr: '针', group: 'pattern', source: 'pattern', signalName: '放量金针', action: 'buy', color: '#C44A3D' },
-  { key: 'pattern-hanging', label: '吊颈线', abbr: '吊', group: 'pattern', source: 'pattern', signalName: '吊颈线', action: 'sell', color: '#4A90D9' },
-  { key: 'pattern-shooting', label: '射击之星', abbr: '射', group: 'pattern', source: 'pattern', signalName: '射击之星', action: 'sell', color: '#4A90D9' },
-  { key: 'pattern-inverted-hammer', label: '倒锤子线', abbr: '倒', group: 'pattern', source: 'pattern', signalName: '倒锤子线', action: 'buy', color: '#C44A3D' },
-  // 破位事件（source=break，走弹窗 analyzeMarketConditions 破位事件；signalName 为固定 token）
-  { key: 'break-event', label: '破位', abbr: '破', group: 'break', source: 'break', signalName: 'break-event', action: 'sell', color: '#4A90D9' },
-  // 每日量能（source=volume，signalName = classifyVolumeAt 返回值）
-  { key: 'volume-up', label: '放量', abbr: '放', group: 'volume', source: 'volume', signalName: '放量', action: 'buy', color: '#C44A3D' },
-  { key: 'volume-down', label: '缩量', abbr: '缩', group: 'volume', source: 'volume', signalName: '缩量', action: 'sell', color: '#4A90D9' },
-  { key: 'volume-flat', label: '平量', abbr: '平', group: 'volume', source: 'volume', signalName: '平量', action: 'buy', color: '#C44A3D' },
-  // 位置（source=position，signalName = classifyPositionAt 返回值；中位为中性默认，不入可选列表）
-  { key: 'position-high', label: '高位', abbr: '高', group: 'position', source: 'position', signalName: '高位', action: 'sell', color: '#4A90D9' },
-  { key: 'position-low', label: '低位', abbr: '低', group: 'position', source: 'position', signalName: '低位', action: 'buy', color: '#C44A3D' },
-  // 底部企稳（source=stabilize，signalName = analyzeStabilizeAt 的 label）
-  { key: 'stabilize-confirm', label: '有效企稳', abbr: '效', group: 'stabilize', source: 'stabilize', signalName: '有效企稳', action: 'buy', color: '#C44A3D' },
-  { key: 'stabilize-stable', label: '缩量企稳', abbr: '稳', group: 'stabilize', source: 'stabilize', signalName: '缩量企稳', action: 'buy', color: '#C44A3D' },
-  { key: 'stabilize-retrace', label: '缩量回踩', abbr: '回', group: 'stabilize', source: 'stabilize', signalName: '缩量回踩', action: 'sell', color: '#4A90D9' },
-];
+// 回测触发标签目录 = 直接复用 tagAnalyzers 里的【单一数据源】DAILY_SIGNAL_CATALOG。
+// 不再在回测里另存一份信号清单——新增弹窗每日信号，只需改 tagAnalyzers 一处，回测自动获得。
+export const BACKTEST_TAG_CATALOG: BacktestTagDef[] = DAILY_SIGNAL_CATALOG;
+export type { BacktestTagDef } from './tagAnalyzers';
 
 // 策略编辑器下拉的分组中文名（<optgroup> 标签）
 export const BT_GROUP_LABEL: Record<BacktestTagGroup, string> = {

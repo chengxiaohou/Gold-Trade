@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { BollKline } from '../bollService';
 import { BACKTEST_TAG_CATALOG, runBacktest, scanTagOccurrences } from '../backtestEngine';
-import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPositionAt, analyzeStabilizeAt } from '../tagAnalyzers';
+import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPositionAt, analyzeStabilizeAt, DAILY_SIGNAL_CATALOG } from '../tagAnalyzers';
 import type { BacktestStrategy } from '../../types';
 
 const fmt = (v: number) => v.toFixed(2);
@@ -92,7 +92,8 @@ describe('BACKTEST_TAG_CATALOG 与标签弹窗展示集同步', () => {
   });
 
   it('反向兜底：回测目录穷尽弹窗全部可选信号（新增弹窗信号但漏登记回测目录时此处必然卡住）', () => {
-    // 弹窗“每日类”可选信号全集：形态 + 破位 + 量能 + 位置 + 企稳（来源均为 tagAnalyzers 同一判定函数）
+    // 弹窗“每日类”可选信号全集（与 StockDividendPage.tsx 弹窗 chip 来源一致）：
+    // 形态 + 破位 + 量能 + 位置 + 企稳，label 均为对应分析函数的产出值
     const POPUP_SIGNALS = [
       '十字星', '金针探底', '放量金针', '吊颈线', '射击之星', '倒锤子线', // pattern
       '破位',                                                          // break
@@ -101,6 +102,14 @@ describe('BACKTEST_TAG_CATALOG 与标签弹窗展示集同步', () => {
       '有效企稳', '缩量企稳', '缩量回踩',                              // stabilize
     ];
     expect(BACKTEST_TAG_CATALOG.map(d => d.label).sort()).toEqual([...POPUP_SIGNALS].sort());
+    expect(DAILY_SIGNAL_CATALOG.map(d => d.label).sort()).toEqual([...POPUP_SIGNALS].sort());
+  });
+
+  it('单一数据源：回测目录与分析器的信号清单是同一份引用（从此彻底杜绝“回测忘了登记”式漂移）', () => {
+    // 回测不再自建清单，而是直接引用 tagAnalyzers 的 DAILY_SIGNAL_CATALOG
+    expect(BACKTEST_TAG_CATALOG).toBe(DAILY_SIGNAL_CATALOG);
+    // 每个条目元数据完整且同源一致（key 唯一）
+    expect(new Set(BACKTEST_TAG_CATALOG.map(d => d.key)).size).toBe(BACKTEST_TAG_CATALOG.length);
   });
 
   it('新 signal source 都能被对应 tagAnalyzers 判定函数真实产出（不悬空、复用同一判断）', () => {
@@ -172,6 +181,13 @@ describe('环境前提（envCondition）', () => {
       expect(c.key).toBeTruthy();
       expect(c.label).toBeTruthy();
     }
+  });
+
+  it('环境标签与信号标签两套不混：env 键互不重复、且与回测触发信号键不重叠', () => {
+    const envKeys = ENV_TAG_CATALOG.map(c => c.key);
+    expect(new Set(envKeys).size).toBe(envKeys.length);                       // 环境键自身唯一
+    const sigKeys = new Set(BACKTEST_TAG_CATALOG.map(d => d.key));
+    for (const k of envKeys) expect(sigKeys.has(k)).toBe(false);              // 环境键 ≠ 信号键
   });
 
   it('envHasCondition：状态成立返回 true、其它状态 false、空结果 false', () => {
