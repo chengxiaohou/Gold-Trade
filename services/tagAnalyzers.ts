@@ -42,9 +42,22 @@ const VOL_CLS: Record<KlineVolume, string> = { 放量: 'text-red-500', 缩量: '
 // 非十字星形态 token 着色
 const SHAPE_CLS: Record<Exclude<KlinePattern['color'], 'slate'>, string> = { red: 'text-red-500', green: 'text-brand-green', blue: 'text-blue-500' };
 
+// 归一化：老缓存/云端同步的 tagParams 可能缺少新版新增的字段（如 classicVolUp），
+// 缺失项回落默认值，避免 `undefined.enabled` 崩溃。组合词条判定一律经此归一。
+function normalizeTagParams(cfg: TagParams = DEFAULT_TAG_PARAMS): TagParams {
+  const merge = (src: Record<string, { enabled: boolean; value: number }> | undefined, defaults: Record<string, { enabled: boolean; value: number }>) => {
+    const out: Record<string, { enabled: boolean; value: number }> = {};
+    for (const k of Object.keys(defaults)) {
+      out[k] = { ...defaults[k], ...(src?.[k] || {}) };
+    }
+    return out as any;
+  };
+  return { feng: merge(cfg.feng, DEFAULT_TAG_PARAMS.feng), classic: merge(cfg.classic, DEFAULT_TAG_PARAMS.classic) };
+}
+
 // 位置维度：贴近近20日高点→高位，贴近近20日低点→低位，否则中位
 export function classifyPosition(klines: BollKline[], cfg: TagParams = DEFAULT_TAG_PARAMS): KlinePosition {
-  const classic = cfg.classic;
+  const classic = normalizeTagParams(cfg).classic;
   const n = klines.length;
   if (n < 21) return '中位';
   const i = n - 1;
@@ -61,7 +74,7 @@ export function classifyPosition(klines: BollKline[], cfg: TagParams = DEFAULT_T
 
 // 量能维度：当日量/前5日均量 ≥ volUp→放量，≤ volDown→缩量，否则平量
 export function classifyVolume(klines: BollKline[], cfg: TagParams = DEFAULT_TAG_PARAMS): KlineVolume {
-  const classic = cfg.classic;
+  const classic = normalizeTagParams(cfg).classic;
   const n = klines.length;
   if (n < 6) return '平量';
   const i = n - 1;

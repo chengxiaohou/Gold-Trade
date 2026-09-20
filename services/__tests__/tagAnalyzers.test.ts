@@ -180,6 +180,15 @@ describe('classifyPosition / classifyVolume / dojiColorByDim（K线形态原子�
   it('末根量与均量相当 → 平量', () => {
     expect(classifyVolume(mkKlines(40))).toBe('平量');
   });
+  it('老缓存缺新增字段（classicVolUp/classicVolDown）不崩溃，回落默认值', () => {
+    const oldCfg = {
+      feng: { fengLowBuy: { enabled: true, value: 1.05 }, fengPullback: { enabled: true, value: 1.01 }, fengVolBreak: { enabled: true, value: 1.2 } },
+      classic: { classicDojiBody: { enabled: true, value: 0.05 }, classicSmallBody: { enabled: true, value: 0.3 }, classicNearHigh: { enabled: true, value: 0.95 }, classicNearLow: { enabled: true, value: 1.05 }, classicMaSqueeze: { enabled: true, value: 0.04 } },
+    } as any; // 模拟云端/本地旧结构：classic 缺少 classicVolUp/classicVolDown
+    const k = mkKlines(40, { overrides: { 39: { volume: 100_000 } } });
+    expect(classifyVolume(k, oldCfg)).toBe('缩量'); // 回落默认 classicVolDown=0.8
+    expect(classifyPosition(k, oldCfg)).toBe('高位'); // 不崩溃，正常归一后按默认阈值判定
+  });
 
   it('dojiColorByDim：低位+缩量 → 红（底部信号）', () => {
     expect(dojiColorByDim('低位', '缩量')).toBe('red');
