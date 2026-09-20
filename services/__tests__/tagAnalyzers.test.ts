@@ -5,6 +5,7 @@ import {
   analyzeKlinePatterns,
   analyzeKlineCombo,
   classifyPosition,
+  classifyVolumeAt,
   classifyVolume,
   dojiColorByDim,
   analyzeMarketConditions,
@@ -203,6 +204,93 @@ describe('classifyPosition / classifyVolume / dojiColorByDim（K线形态原子�
   });
 });
 
+describe('classifyVolumeAt（按日期索引的量能判定，供“近10交易日”每日一行量能标签）', () => {
+  it('中间某日放量（≥1.2）→ 该日为放量，且其前 1 日不受影响仍为平量', () => {
+    const k = mkKlines(40, { overrides: { 20: { volume: 3_000_000 } } });
+    expect(classifyVolumeAt(k, 20)).toBe('放量');
+    expect(classifyVolumeAt(k, 19)).toBe('平量'); // 19 日的前5日均量取 14~18，未含放量日，仍是平量
+  });
+  it('中间某日缩量（≤0.8）→ 该日为 缩量', () => {
+    const k = mkKlines(40, { overrides: { 15: { volume: 100_000 } } });
+    expect(classifyVolumeAt(k, 15)).toBe('缩量');
+  });
+  it('索引 <5 时无 5 日均量 → 平量（不越界崩溃）', () => {
+    const k = mkKlines(40);
+    expect(classifyVolumeAt(k, 3)).toBe('平量');
+  });
+  it('最新索引与 classifyVolume 结果一致', () => {
+    const k = mkKlines(40, { overrides: { 39: { volume: 2_000_000 } } });
+    expect(classifyVolume(k)).toBe('放量');
+    expect(classifyVolumeAt(k, 39)).toBe('放量');
+  });
+});
+
+describe('位置维度 → 环境标签（高位/低位/中位，归入环境区展示）', () => {
+  it('末根贴近近20日高点 → 环境含 高位 标签（绿/偏空），且 selectEnvDisplayTags 保留 position 维度', () => {
+    const k = mkKlines(140, {
+      close: i => (i < 120 ? 100 : 130),
+      overrides: { 120: { open: 100, close: 99, high: 121, low: 79 } }, // 近20日低点钉，抬高区间，末根 130 贴近高点
+    });
+    const env = analyzeEnvironment(k, fmt);
+    expect(env).not.toBeNull();
+    const pos = env!.tags.find(t => t.dim === 'position');
+    expect(pos).toBeDefined();
+    expect(pos!.label).toBe('高位');
+    expect(pos!.color).toBe('green');
+    expect(selectEnvDisplayTags(env!.tags).some(t => t.key === 'pos-high')).toBe(true);
+  });
+
+  it('K线不足130根 analyzeEnvironment 为 null（位置标签随 env 一起缺席，不单独判）', () => {
+    expect(analyzeEnvironment(mkKlines(50), fmt)).toBeNull();
+  });
+});
+
+describe('十字星参考价值：直接给出具体位置×量能的组合判断（不再回落通用文案）', () => {
+  it('中位-放量 十字星 → 具体“变盘启动点”参考，非通用“必须结合位置量能”文案', () => {
+    const k = mkKlines(40, {
+      close: i => (i < 20 ? 100 : 95),
+      overrides: {
+        20: { open: 100, close: 99, high: 121, low: 79 }, // 高点钉：区间 79~121，末根 95 居中 → 中位
+        39: { open: 95, close: 95, high: 96, low: 94, volume: 2_000_000 }, // 放量
+      },
+    });
+    const pats = analyzeKlinePatterns(k, fmt);
+    expect(pats.some(p => p.type === 'doji')).toBe(true);
+    const combo = analyzeKlineCombo(k, pats).find(c => c.type === 'doji');
+    expect(combo).toBeDefined();
+    expect(combo!.reference).toContain('变盘启动点');        // 具体组合文案
+    expect(combo!.reference).not.toContain('必须结合位置');   // 不再用通用兜底
+    expect(combo!.tokens.map(t => t.text)).toEqual(['中位', '放量', '十字星']);
+  });
+
+  it('高位-放量 十字星 → 顶部预警参考，形态 token 偏空(绿)', () => {
+    const k = mkKlines(40, {
+      close: i => (i < 20 ? 100 : 130),
+      overrides: { 39: { open: 130, close: 130, high: 131, low: 129, volume: 2_000_000 } },
+    });
+    const pats = analyzeKlinePatterns(k, fmt);
+    const combo = analyzeKlineCombo(k, pats).find(c => c.type === 'doji');
+    expect(combo).toBeDefined();
+    expect(combo!.reference).toContain('顶部预警');
+    expect(combo!.tokens[2].cls).toBe('text-brand-green');
+  });
+
+  it('低位-缩量 十字星 → 底部信号参考，形态 token 偏多(红)', () => {
+    const k = mkKlines(40, {
+      close: i => (i < 20 ? 100 : 70),
+      overrides: {
+        20: { open: 100, close: 99, high: 121, low: 79 },
+        39: { open: 70, close: 70, high: 71, low: 69, volume: 100_000 },
+      },
+    });
+    const pats = analyzeKlinePatterns(k, fmt);
+    const combo = analyzeKlineCombo(k, pats).find(c => c.type === 'doji');
+    expect(combo).toBeDefined();
+    expect(combo!.reference).toContain('抛压衰竭');
+    expect(combo!.tokens[2].cls).toBe('text-red-500');
+  });
+});
+
 describe('analyzeKlineCombo（组合词条 位置·量能·形态 + 参考价值）', () => {
   it('无命中形态 → 空数组', () => {
     expect(analyzeKlineCombo([], [])).toEqual([]);
@@ -293,8 +381,8 @@ describe('analyzeEnvironment（趋势结构 / 布林波动）', () => {
     expect(trend!.label).toBe('多头强排列');
   });
 
-  it('详情展开（selectEnvDisplayTags）只保留 trend + volatility', () => {
-    // 单边上行：cycle 必然生成，volume 受量能驱动可能生成，但过滤后都不得出现
+  it('详情展开（selectEnvDisplayTags）只保留 trend + volatility + position', () => {
+    // 单边上行：cycle 必然生成，volume 受量能驱动可能生成，但过滤后都不得出现；position（位置）维度保留
     const k = mkKlines(140, { close: i => 10 + i * 0.2 });
     const env = analyzeEnvironment(k, fmt);
     expect(env).not.toBeNull();
@@ -302,8 +390,10 @@ describe('analyzeEnvironment（趋势结构 / 布林波动）', () => {
     const sel = selectEnvDisplayTags(env!.tags);
     expect(sel.length).toBeGreaterThan(0);
     for (const t of sel) {
-      expect(t.dim).toMatch(/^(trend|volatility)$/);
+      expect(t.dim).toMatch(/^(trend|volatility|position)$/);
     }
+    // position 维度也进入环境区展示
+    expect(sel.some(t => t.dim === 'position')).toBe(true);
     // 弹窗"环境"区展示 label（详细展示依据）
     const trend = sel.find(t => t.dim === 'trend');
     expect(trend).toBeDefined();

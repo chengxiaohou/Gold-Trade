@@ -72,12 +72,11 @@ export function classifyPosition(klines: BollKline[], cfg: TagParams = DEFAULT_T
   return '中位';
 }
 
-// 量能维度：当日量/前5日均量 ≥ volUp→放量，≤ volDown→缩量，否则平量
-export function classifyVolume(klines: BollKline[], cfg: TagParams = DEFAULT_TAG_PARAMS): KlineVolume {
+// 量能维度（按指定日期索引 i）：当日量/前5日均量 ≥ volUp→放量，≤ volDown→缩量，否则平量。
+// 逐日展示“放量/缩量/平量”标签时，对任意一天索引用此函数判定。
+export function classifyVolumeAt(klines: BollKline[], i: number, cfg: TagParams = DEFAULT_TAG_PARAMS): KlineVolume {
   const classic = normalizeTagParams(cfg).classic;
-  const n = klines.length;
-  if (n < 6) return '平量';
-  const i = n - 1;
+  if (!klines || klines.length === 0 || i < 5) return '平量';
   let sum = 0;
   for (let j = i - 5; j <= i - 1; j++) sum += klines[j].volume;
   if (sum <= 0) return '平量';
@@ -85,6 +84,11 @@ export function classifyVolume(klines: BollKline[], cfg: TagParams = DEFAULT_TAG
   if (classic.classicVolUp.enabled && ratio >= classic.classicVolUp.value) return '放量';
   if (classic.classicVolDown.enabled && ratio <= classic.classicVolDown.value) return '缩量';
   return '平量';
+}
+
+// 量能维度（最新一根K线）：委托分类到最近索引
+export function classifyVolume(klines: BollKline[], cfg: TagParams = DEFAULT_TAG_PARAMS): KlineVolume {
+  return classifyVolumeAt(klines, (klines?.length ?? 1) - 1, cfg);
 }
 
 // 十字星形态 token 着色：结合位置×量能的整体多空倾向（理财 AI 语义）
@@ -96,15 +100,26 @@ export function dojiColorByDim(position: KlinePosition, volume: KlineVolume): 'r
 
 // 预定义组合参考价值：key 为 `${position}-${volume}-${type}`；未预定义的回落形态兜底文案
 const PATTERN_COMBO_REFERENCE: Record<string, string> = {
-  '低位-缩量-doji': '抛压衰竭的底部变盘信号。空头力竭、多头开始抵抗，需随后出现阳线（尤其放量阳线）收复短期均线方可确认底部；若继续缩量阴跌则只是下跌中继。',
-  '高位-放量-doji': '放量滞涨的顶部预警。多空分歧剧烈、抛压增加，主力有兑现嫌疑；后随出现放量阴线并跌破短期均线，则顶部风险明显升高。',
-  '高位-缩量-doji': '上涨乏力的滞涨警示。动能衰减但抛压未明显放大，方向未明；若出现放量阴线则转空。',
-  '低位-放量-doji': '低位多空分歧大。量能放大但价格横盘，需后续阳线确认方向；未确认前不构成直接买卖依据。',
   '低位-缩量-hammer': '下跌末端承接较强的底部信号。下影长、缩量说明抛压衰竭，买盘开始接管；可视为底部企稳的候选，仍待次日阳线确认。',
   '高位-放量-shootingStar': '放量滞涨的冲高诱多。上影长且放量说明上方抛压沉重、主力诱多出货嫌疑大，顶部风险高。',
   '高位-放量-hangingMan': '上涨末端假承接。长下影被放量拉回但高位滞涨，空头反扑迹象明显，应警惕顶部。',
   '低位-放量-invertedHammer': '低位放量试盘。冲高回落但放量说明有资金试探，若次阳确认则可能启动；否则仍需观察。',
 };
+// 十字星参考价值：已能确定具体位置×量能，直接给出该组合的具体判断（不再回落“需结合位置量能”的通用文案）
+function dojiReferenceByDim(position: KlinePosition, volume: KlineVolume): string {
+  switch (`${position}-${volume}`) {
+    case '低位-缩量': return '抛压衰竭的底部变盘信号。空头力竭、多头开始抵抗，需随后出现阳线（尤其放量阳线）收复短期均线方可确认底部；若继续缩量阴跌则只是下跌中继。';
+    case '低位-平量': return '低位整理中的变盘前夜。多空暂时平衡但方向未明、量能未放量确认；需等待放量阳线选择方向，未破前低前不宜直接抄底。';
+    case '低位-放量': return '低位多空分歧剧烈。量能放大但价格横盘，说明有资金试盘也有抛压；需后续阳线确认方向，未确认前不构成直接买卖依据。';
+    case '中位-缩量': return '区间中部的缩量十字星。抛压减弱但多头也未发力，方向中性；等量能选择方向，跌破或放量上破均线再定夺。';
+    case '中位-平量': return '中位多空暂时平衡的变盘前夜。本身不是买卖指令，需等下一根K线结合量能确认方向。';
+    case '中位-放量': return '中位放量十字星。多空分歧显著放大，往往是变盘启动点；放量后方向一旦明确，波动会快速放大。';
+    case '高位-缩量': return '上涨乏力的滞涨警示。动能衰减但抛压未明显放大，方向未明；若出现放量阴线则转空，需防诱多。';
+    case '高位-平量': return '高位盘整的滞涨信号。多空分歧暂平衡，但处于高位本身风险偏高；后续放量阴线或跌破短期均线，则顶部概率上升。';
+    case '高位-放量': return '放量滞涨的顶部预警。多空分歧剧烈、抛压增加，主力有兑现嫌疑；后随出现放量阴线并跌破短期均线，则顶部风险明显升高。';
+  }
+  return '';
+}
 // 形态基础参考价值兜底
 const PATTERN_BASE_REFERENCE: Record<KlinePattern['type'], string> = {
   doji: '十字星是多空暂时平衡的变盘预警，本身不是买卖指令。必须结合位置（低位看止跌、高位看滞涨）与量能，并等下一根K线确认方向。',
@@ -122,8 +137,9 @@ export function analyzeKlineCombo(klines: BollKline[], patterns: KlinePattern[],
     const shapeCls = p.type === 'doji'
       ? SHAPE_CLS[dojiColorByDim(dims.position, dims.volume)]
       : SHAPE_CLS[p.color as Exclude<KlinePattern['color'], 'slate'>];
-    const reference = PATTERN_COMBO_REFERENCE[`${dims.position}-${dims.volume}-${p.type}`]
-      ?? PATTERN_BASE_REFERENCE[p.type] ?? '';
+    const reference = p.type === 'doji'
+      ? dojiReferenceByDim(dims.position, dims.volume)
+      : PATTERN_COMBO_REFERENCE[`${dims.position}-${dims.volume}-${p.type}`] ?? PATTERN_BASE_REFERENCE[p.type] ?? '';
     return {
       type: p.type,
       date: p.date,
@@ -610,7 +626,7 @@ export interface EnvTag {
   single: string;   // 单字（单元格备用）
   color: 'red' | 'green' | 'orange' | 'indigo' | 'slate';
   score: number;    // 得分 -1~1
-  dim: 'cycle' | 'trend' | 'volume' | 'volatility';
+  dim: 'cycle' | 'trend' | 'volume' | 'volatility' | 'position';
   detail: string[]; // 判定依据
 }
 export interface EnvResult {
@@ -620,7 +636,7 @@ export interface EnvResult {
 }
 
 export function analyzeEnvironment(klines: BollKline[], fmt: (v: number) => string, allowVolume = true, cfg: TagParams = DEFAULT_TAG_PARAMS): EnvResult | null {
-  const nearHighP = cfg.classic.classicNearHigh, masSqueezeP = cfg.classic.classicMaSqueeze;
+  const nearHighP = cfg.classic.classicNearHigh, nearLowP = cfg.classic.classicNearLow, masSqueezeP = cfg.classic.classicMaSqueeze;
   const n = klines.length;
   if (n < 130) return null; // 需 120 日均线 + 近20日高低点 + 近60日带宽分位
   const i = n - 1;
@@ -801,6 +817,24 @@ export function analyzeEnvironment(klines: BollKline[], fmt: (v: number) => stri
     cycle = { key: 'cycle', label: '震荡变盘期', single: '震', color: 'slate', score: total, dim: 'cycle', detail: [`综合得分 ${fmtScore(total)}`, dimLine, '方向未明：控制仓位，等待突破确认'] };
   }
   const tags: EnvTag[] = [cycle];
+  // 位置维度（长期稳定标签）：贴近近20日高/低点 → 高位/低位，归入环境区展示（低位红=偏多、高位绿=偏空、中位灰=中性）
+  const pos = classifyPosition(klines, cfg);
+  if (pos === '高位') {
+    tags.push({ key: 'pos-high', label: '高位', single: '高', color: 'green', score: -0.5, dim: 'position', detail: [
+      `${ds} 现价 ${fmt(close)} 贴近近20日高点（≥${(nearHighP.value * 100).toFixed(1)}%）→ 中期位置偏高`,
+      '高位追涨性价比低：结合量能，若放量滞涨/冲高回落则顶部风险大',
+    ] });
+  } else if (pos === '低位') {
+    tags.push({ key: 'pos-low', label: '低位', single: '低', color: 'red', score: 0.5, dim: 'position', detail: [
+      `${ds} 现价 ${fmt(close)} 贴近近20日低点（≤${(nearLowP.value * 100).toFixed(1)}%）→ 中期位置偏低`,
+      '低位关注止跌：缩量十字星/放量金针等企稳信号出现后再考虑介入',
+    ] });
+  } else {
+    tags.push({ key: 'pos-mid', label: '中位', single: '中', color: 'slate', score: 0, dim: 'position', detail: [
+      `${ds} 现价 ${fmt(close)} 处于近20日区间中部 → 位置中性`,
+      '无明确高低位倾向：方向取决于趋势结构与量价配合',
+    ] });
+  }
   if (trendTag) tags.push(trendTag);
   if (volTag) tags.push(volTag);
   if (bollTag) tags.push(bollTag);
@@ -823,7 +857,7 @@ const ENV_SINGLE_CLS: Record<EnvTag['color'], string> = {
 // 弹窗“环境”区与列表缩略共用：只保留当前启用的 趋势结构 + 布林波动（cycle/volume 已注释）。
 // 将来要恢复综合周期/量价时，改这里一处即可。
 export function selectEnvDisplayTags(tags: EnvTag[]): EnvTag[] {
-  return tags.filter(t => t.dim === 'trend' || t.dim === 'volatility');
+  return tags.filter(t => t.dim === 'trend' || t.dim === 'volatility' || t.dim === 'position');
 }
 
 // 回测可用的"环境条件"候选目录：只含趋势结构 + 布林波动（与弹窗 selectEnvDisplayTags 同维度，不含已注释的周期/量价）。
