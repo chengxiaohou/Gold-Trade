@@ -36,7 +36,7 @@ export default function SignalTagsFooter({ win, i, cfg, fmt, onPin }: SignalTags
   return (
     <div className="border-t border-app-border mt-1 pt-1.5">
       <div className="text-[9px] text-app-subtext mb-1">当日信号</div>
-      <div className="flex items-center gap-1 flex-wrap" data-test="price-footer">
+      <div className="flex items-center gap-1 flex-wrap">
         {tags.map(t => {
           const active = displayKey === t.key;
           return (

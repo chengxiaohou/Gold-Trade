@@ -182,13 +182,6 @@ export default function App() {
     document.title = currentPage === 'gold' ? '黄金' : '股息';
   }, [currentPage]);
 
-  // 查询式测试模式：URL 携带 ?test=signals 时自动切到股票页，
-  // 使 StockDividendPage 挂载并自动拉取真实数据源 + 有效缓存，供外部脚本比对。
-  useEffect(() => {
-    const qs = new URLSearchParams(window.location.search);
-    if (qs.get('test') === 'signals') setCurrentPage('stocks');
-  }, []);
-
   const togglePage = () => {
     setCurrentPage(prev => prev === 'gold' ? 'stocks' : 'gold');
   };
