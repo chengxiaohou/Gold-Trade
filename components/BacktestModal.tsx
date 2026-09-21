@@ -7,6 +7,7 @@ import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, Backte
 import { fetchBollData } from '../services/bollService';
 import type { BollKline } from '../services/bollService';
 import { mergeTodayBarToKlines } from '../services/bollService';
+import { priceBureau } from '../services/priceBureau';
 import { getMarketStatus } from '../services/cacheService';
 import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL } from '../services/backtestEngine';
 import { ENV_TAG_CATALOG } from '../services/tagAnalyzers';
@@ -537,6 +538,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
     (async () => {
       const res = await fetchBollData(stock.code, 'daily', 'qfq');
       if (cancelled) return;
+      priceBureau.absorb(stock.code, 'daily', res);
       if (res.data?.klines?.length) {
         const base = [...res.data.klines].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
         const merged = mergeTodayBarToKlines(base, stock, getMarketStatus());

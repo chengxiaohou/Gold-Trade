@@ -3,8 +3,9 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS } from '../types';
-import { fetchBollData, planBollCache, emitBollCacheHits, getBollCacheTimestamps, ensureBollCacheRestored, BollData, BollPeriod, BollAdjust, BollKline, mergeTodayBarToKlines } from '../services/bollService';
-import { isStockPriceFresh, isTradingHours, getMarketStatus, getDynamicBollCacheTTL, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
+import { fetchBollData, getBollCacheTimestamps, BollData, BollPeriod, BollAdjust, BollKline, mergeTodayBarToKlines } from '../services/bollService';
+import { isStockPriceFresh, isTradingHours, getMarketStatus, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
+import { priceBureau } from '../services/priceBureau';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import { toTencentCode, parseTencentQuoteText, type TencentQuote } from '../services/tencentQuote';
 import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
@@ -1164,6 +1165,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       fetchBollData(stock.code, 'weekly', 'qfq', apiSource, undefined, popupLogCtx),
       fetchBollData(stock.code, 'monthly', 'qfq', apiSource, undefined, popupLogCtx),
     ]).then(([dailyR, weeklyR, monthlyR]) => {
+      priceBureau.absorb(stock.code, 'daily', dailyR);
+      priceBureau.absorb(stock.code, 'weekly', weeklyR);
+      priceBureau.absorb(stock.code, 'monthly', monthlyR);
       if (!listSrActiveIdRef.current || listSrActiveIdRef.current !== stock.id) return;
       const periodLabels: { period: string; data: BollData | null }[] = [
         { period: '日', data: dailyR.data },
@@ -1604,6 +1608,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx).then(result => {
       // 仅在仍是当前目标股票时应用结果（避免悬停切换/移开后残留旧数据）
       if (priceInfoActiveIdRef.current !== stock.id) return;
+      priceBureau.absorb(stock.code, 'daily', result);
       // 用实时行情(开/高/低/量/现价)覆盖或追加今日K线，保证浮窗显示今日数据
       const merged = mergeTodayBarToKlines(result.data?.klines || [], stock, getMarketStatus());
       const ind = calcIndicators(merged);
@@ -1713,6 +1718,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx).then(result => {
       // 仅在仍是当前目标股票时应用结果（避免悬停切换/移开后残留旧数据）
       if (divRateInfoActiveIdRef.current !== stock.id) return;
+      priceBureau.absorb(stock.code, 'daily', result);
       const klines = result.data?.klines || [];
       setDivRateInfoKlines(klines);
       setDivRateInfoLoading(false);
@@ -1866,8 +1872,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
 
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
-  const [stockBollErrorMap, setStockBollErrorMap] = useState<Map<string, { daily?: string; weekly?: string; monthly?: string }>>(new Map());
   const [isRefreshingBoll, setIsRefreshingBoll] = useState(false);
+
+  // 价格数据部订阅：权威数据只存于 priceBureau，本状态仅为渲染镜像。
+  // 任何写入（缓存命中/逐只落地/清场）都会 notify，这里重建镜像触发重渲。
+  useEffect(() => {
+    const sync = () => {
+      const m = new Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>();
+      for (const s of stocks) {
+        const e = priceBureau.getEntry(s.code);
+        if (e) m.set(s.id, e);
+      }
+      setStockBollMap(m);
+    };
+    sync();
+    return priceBureau.subscribe(sync);
+  }, [stocks]);
 
   // 名称列第二行展示模式：默认“状态标签”，点击“代码”表头切换为展示代码
   const [nameSubMode, setNameSubMode] = useState<'tags' | 'code'>('tags');
@@ -2156,160 +2176,37 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return unsubscribe;
   }, []);
 
-  // 防止 StrictMode 双重调用
-  const isFetchingRef = useRef(false);
   // 请求版本号：每次切换数据源递增，用于取消旧请求
   const fetchVersionRef = useRef(0);
 
   const fetchAllBoll = useCallback(async (trigger = '打开股息页自动刷新布林线') => {
-    // 等待从 IndexedDB 恢复缓存，确保日志能展示原缓存有效期时间
-    await ensureBollCacheRestored();
-    // 先递增版本号，让旧请求通过版本检查自行取消，避免新请求被阻塞无法产生日志
+    // 价格数据部持权威数据与订阅；这里只做：源切换清场 + 委托批量加载 + 维护刷新态信号。
+    // 请求取消/缓存判定/逐个落地/250ms 节流/日志全在 priceBureau.ensureBatch 内完成。
     const currentVersion = ++fetchVersionRef.current;
-    // 同一批次所有请求共享同一时间戳，确保缓存时间统一
-    const batchTimestamp = Date.now();
 
     // 只在前复权模式下批量获取所有股票的BOLL数据
     // 新浪不支持不复权模式，跳过批量获取
     if (apiSource === 'sina' && bollAdjust === 'none') {
-      setStockBollMap(new Map());
-      setStockBollErrorMap(new Map());
+      priceBureau.clear();
       return;
     }
-    
+
     // 不复权模式下腾讯也需要处理实时价格，减少批量请求
     if (bollAdjust === 'none') {
-      setStockBollMap(new Map());
-      setStockBollErrorMap(new Map());
+      priceBureau.clear();
       return;
     }
-    
-    isFetchingRef.current = true;
+
     setIsRefreshingBoll(true);
-    
     // 清空旧数据，显示加载状态
-    setStockBollMap(new Map());
-    setStockBollErrorMap(new Map());
-    
-    // 先检查缓存（纯函数：判定 + 批量/逐只决策，时间/缓存注入，便于单元测试）
-    const dynamicTTL = getDynamicBollCacheTTL();
-    const nowDate = new Date();
-    const plan = planBollCache(stocks, bollAdjust, apiSource, nowDate, dynamicTTL);
-    const { allCached, cachedData, staleCount, visibleTotal } = plan;
-    // 计算缓存时间信息用于日志
-    const cacheTimestamps = getBollCacheTimestamps(stocks, bollAdjust, apiSource);
-    let cacheInfoStr = '';
-    let oldCacheInfoStr = '';
-    if (cacheTimestamps.length > 0) {
-      const maxTs = Math.max(...cacheTimestamps); // 使用最新缓存时间，更准确反映缓存有效期
-      const nowMs = nowDate.getTime();
-      const isTrading = isTradingHours(nowDate);
-      const expiryTime = isTrading ? maxTs + dynamicTTL : nowMs + dynamicTTL;
-      cacheInfoStr = `（缓存有效期至：${formatCacheTime(expiryTime)}）`;
-      // 原缓存有效期：按其缓存时间 + TTL 计算（标注在"已过期"后，区别于新缓存的有效期）
-      oldCacheInfoStr = `（原缓存有效期至 ${formatCacheTime(maxTs + dynamicTTL)}）`;
-    }
-    const logCtx = requestLogService.beginBatch(
-      staleCount === 0
-        ? `${trigger}：${visibleTotal} 项缓存均未过期，无需请求${cacheInfoStr}`
-        : `${trigger}：${staleCount}/${visibleTotal} 项已过期${oldCacheInfoStr}，重新请求 ${staleCount} 条请求${cacheInfoStr}`
-    );
-    emitBollCacheHits(plan.hitKeys, logCtx);
-    
-    if (fetchVersionRef.current !== currentVersion) {
-      // 已被新请求取消，旧请求中止，新请求会负责最终的清理
-      return;
-    }
-    
-    if (allCached) {
-      // 所有数据都在缓存中，一次性批量更新
-      setStockBollMap(cachedData);
-      setStockBollErrorMap(new Map());
-      
-      isFetchingRef.current = false;
-      setIsRefreshingBoll(false);
-      return;
-    }
-    
-    // 部分缓存命中：先把所有已命中项一次性批量应用，避免"既用缓存又一格一格
-    // 拉出来像发请求一样"的观感；仅对真正缺失/过期的项随后逐个请求。
-    setStockBollMap(prev => {
-      const newMap = new Map(prev);
-      for (const [id, data] of cachedData) {
-        if (data?.daily && data?.weekly && data?.monthly) newMap.set(id, data);
-      }
-      return newMap;
+    priceBureau.clear();
+
+    await priceBureau.ensureBatch(stocks, apiSource, bollAdjust, {
+      trigger,
+      order: sortedStocks,
+      cancelCheck: () => fetchVersionRef.current !== currentVersion,
     });
-    
-    // 部分或全部数据不在缓存中，逐个获取缺失项
-    // 请求顺序遵循列表当前的排列顺序（sortedStocks），而非固定固有顺序
-    const order = sortedStocks;
-    for (let i = 0; i < order.length; i++) {
-      // 检查版本号，如果已被新请求替代则取消
-      if (fetchVersionRef.current !== currentVersion) {
-        // 已被新请求取消，旧请求中止，新请求会负责最终的清理
-        return;
-      }
-      
-      const stock = order[i];
-      
-      // 跳过已隐藏布林线的股票
-      if (stock.bollHidden) continue;
-      
-      // 先检查这只股票是否已缓存
-      const cachedStockData = cachedData.get(stock.id);
-      if (cachedStockData?.daily && cachedStockData?.weekly && cachedStockData?.monthly) {
-        continue; // 已在循环前一次性批量应用，跳过网络请求
-      }
-      
-      // 未缓存，发起网络请求
-      const [dailyR, weeklyR, monthlyR] = await Promise.all([
-        fetchBollData(stock.code, 'daily', bollAdjust, apiSource, batchTimestamp, logCtx),
-        fetchBollData(stock.code, 'weekly', bollAdjust, apiSource, batchTimestamp, logCtx),
-        fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, batchTimestamp, logCtx),
-      ]);
-      
-      // 请求完成后再次检查版本号
-      if (fetchVersionRef.current !== currentVersion) {
-        // 已被新请求取消，旧请求中止，新请求会负责最终的清理
-        return;
-      }
-      
-      // 立即更新状态
-      setStockBollMap(prev => {
-        const newMap = new Map(prev);
-        newMap.set(stock.id, {
-          daily: dailyR.data,
-          weekly: weeklyR.data,
-          monthly: monthlyR.data,
-        });
-        return newMap;
-      });
-      
-      const errors: { daily?: string; weekly?: string; monthly?: string } = {};
-      if (dailyR.error) errors.daily = dailyR.error;
-      if (weeklyR.error) errors.weekly = weeklyR.error;
-      if (monthlyR.error) errors.monthly = monthlyR.error;
-      if (Object.keys(errors).length > 0) {
-        setStockBollErrorMap(prev => {
-          const newErrorMap = new Map(prev);
-          newErrorMap.set(stock.id, errors);
-          return newErrorMap;
-        });
-      }
-      
-      // 网络请求后，等待250ms再请求下一只股票（但期间要检查是否被取消）
-      if (i < order.length - 1) {
-        for (let w = 0; w < 25; w++) {
-          await new Promise(resolve => setTimeout(resolve, 10));
-          if (fetchVersionRef.current !== currentVersion) {
-            // 已被新请求取消，旧请求中止，新请求会负责最终的清理
-            return;
-          }
-        }
-      }
-    }
-    isFetchingRef.current = false;
+
     setIsRefreshingBoll(false);
   }, [stocks, bollAdjust, apiSource, sortedStocks]);
 
@@ -3955,6 +3852,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             if (!stock.bollHidden) {
                               const popupLogCtx = requestLogService.beginBatch('打开 BOLL 弹窗：1 只股票 · 1 条请求');
                               fetchBollData(stock.code, key, bollAdjust, apiSource, undefined, popupLogCtx).then(result => {
+                                priceBureau.absorb(stock.code, key, result);
                                 setBollData(result.data);
                                 setBollError(result.error || null);
                               });
@@ -4376,6 +4274,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           if (stock.bollHidden) return;
           const popupLogCtx = requestLogService.beginBatch('切换布林线周期/复权：1 只股票 · 1 条请求');
           fetchBollData(stock.code, period, adjust, apiSource, undefined, popupLogCtx).then(result => {
+            priceBureau.absorb(stock.code, period, result);
             setBollData(result.data);
             setBollError(result.error || null);
             setBollUnsupported(result.unsupported || false);
@@ -4409,6 +4308,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             fetchBollData(stock.code, 'weekly', bollAdjust, apiSource, undefined, popupLogCtx),
             fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, undefined, popupLogCtx),
           ]).then(([dailyR, weeklyR, monthlyR]) => {
+            priceBureau.absorb(stock.code, 'daily', dailyR);
+            priceBureau.absorb(stock.code, 'weekly', weeklyR);
+            priceBureau.absorb(stock.code, 'monthly', monthlyR);
             const text = [
               `${stock.name}（${adjustLabel}）`,
               buildLine('日线', dailyR.data),
@@ -4450,6 +4352,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             fetchBollData(stock.code, 'weekly', bollAdjust, apiSource, undefined, popupLogCtx),
             fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, undefined, popupLogCtx),
           ]).then(([dailyR, weeklyR, monthlyR]) => {
+            priceBureau.absorb(stock.code, 'daily', dailyR);
+            priceBureau.absorb(stock.code, 'weekly', weeklyR);
+            priceBureau.absorb(stock.code, 'monthly', monthlyR);
             const periodLabels: { period: string; data: BollData | null }[] = [
               { period: '日', data: dailyR.data },
               { period: '周', data: weeklyR.data },
@@ -4643,6 +4548,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, undefined, popupLogCtx),
                       ]).then(([dailyR, weeklyR, monthlyR]) => {
                         if (!srBtnRef.current) return;
+                        priceBureau.absorb(stock.code, 'daily', dailyR);
+                        priceBureau.absorb(stock.code, 'weekly', weeklyR);
+                        priceBureau.absorb(stock.code, 'monthly', monthlyR);
                         const periodLabels: { period: string; data: BollData | null }[] = [
                           { period: '日', data: dailyR.data },
                           { period: '周', data: weeklyR.data },
@@ -4745,6 +4653,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, undefined, popupLogCtx),
                       ]).then(([dailyR, weeklyR, monthlyR]) => {
                         if (!srHoveredRef.current || !srBtnRef.current || srTooltipPinned) return;
+                        priceBureau.absorb(stock.code, 'daily', dailyR);
+                        priceBureau.absorb(stock.code, 'weekly', weeklyR);
+                        priceBureau.absorb(stock.code, 'monthly', monthlyR);
                         const periodLabels: { period: string; data: BollData | null }[] = [
                           { period: '日', data: dailyR.data },
                           { period: '周', data: weeklyR.data },
@@ -4880,6 +4791,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                               fetchBollData(stock.code, 'monthly', bollAdjust, apiSource, undefined, popupLogCtx),
                             ]).then(([dailyR, weeklyR, monthlyR]) => {
                               if (!copyHoveredRef.current) return;
+                              priceBureau.absorb(stock.code, 'daily', dailyR);
+                              priceBureau.absorb(stock.code, 'weekly', weeklyR);
+                              priceBureau.absorb(stock.code, 'monthly', monthlyR);
                               const text = [
                                 `${stock.name}（${adjustLabel}）`,
                                 maLine('日线', dailyR.data),
@@ -5938,6 +5852,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 fetchBollData(stock.code, 'weekly', 'qfq', apiSource, undefined, popupLogCtx),
                 fetchBollData(stock.code, 'monthly', 'qfq', apiSource, undefined, popupLogCtx),
               ]).then(([dailyR, weeklyR, monthlyR]) => {
+                priceBureau.absorb(stock.code, 'daily', dailyR);
+                priceBureau.absorb(stock.code, 'weekly', weeklyR);
+                priceBureau.absorb(stock.code, 'monthly', monthlyR);
                 const text = [
                   `${stock.name}（${adjustLabel}）`,
                   buildLine('日线', dailyR.data),
