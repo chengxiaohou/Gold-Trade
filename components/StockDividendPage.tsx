@@ -19,6 +19,7 @@ import { InputGroup } from './InputGroup';
 import { BacktestModal } from './BacktestModal';
 import PriceInfoPopover from './PriceInfoPopover';
 import SignalTagsFooter from './SignalTagsFooter';
+import { getDayTagSet, type DayTag } from '../services/signalTagDetail';
 import { calcIndicators, formatPrice, formatVolume, type IndicatorResult } from '../services/indicators';
 
 const TAG_PALETTE = [
@@ -1379,6 +1380,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // event/status = 破位类标签；pattern = K线形态标签；env = 环境标签
   // status = 观测末尾状态徽标（真/假/修）；repair = 中间观测日的“修复观察”徽标
   type MktSel = { date: string; kind: 'event' | 'status' | 'repair' }
+    | { date: string; kind: 'daytag'; tagKey: string }
     | { date: string; kind: 'pattern'; ptype: KlinePattern['type'] }
     | { date: string; kind: 'env'; ekey: string }
     | { date: string; kind: 'pricestate' }
@@ -5692,8 +5694,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const klines = analyzed.klines;
         const events = analyzed.events;
         // const dailySignals = klines && klines.length > 0 ? analyzeDailySignals(klines, allowVol) : []; // 暂时注释，后续可能重新启用
-        const patterns = analyzed.patterns;
-        const combos = analyzed.combos;
         const env = analyzed.env;
         // const feng = klines && klines.length > 0 ? analyzeFengSignals(klines, v => formatPrice(v, mktInfoStock.name), allowVol, tagParams) : null; // 暂时注释，后续可能重新启用
         const fmtDay = (d: string) => {
@@ -5702,11 +5702,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         };
         const fmtShort = (d: string) => d.slice(5).replace('-', '/');
         const chipBase = 'inline-flex items-center justify-center rounded text-[9px] font-medium border px-1 py-px cursor-pointer transition-colors';
-        const statusChip = (ev: MarketEvent) => {
-          if (ev.status === 'trueBreak') return { cls: greenCls, selCls: greenSelCls, label: '真破位' };
-          if (ev.status === 'falseBreak') return { cls: 'bg-red-500/10 text-red-500 border-red-500/20', selCls: ' border-red-500/60', label: '假破位' };
-          return { cls: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30', selCls: ' border-indigo-400/60', label: '观察' };
-        };
+        // 统一价格格式化（量价均线/判定依据共用）
+        const fp = (v: number) => formatPrice(v, mktInfoStock.name);
         // 收盘价着色：对照前一交易日，当日收盘涨红、跌绿
         const kIdx = new Map<string, number>();
         if (klines) klines.forEach((k, i) => kIdx.set(k.date, i));
@@ -5719,10 +5716,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           const dn = p != null && c < p;
           return <span className={`text-[9px] font-mono shrink-0 w-[30px] text-right ${up ? 'text-red-500' : dn ? 'text-green-500' : 'text-app-rowtext'}`}>{fp(c)}</span>;
         };
-        // 默认选中：无指向时展示最新日期事件的“破位”标签
-        const defaultSel = events && events.length > 0 ? { date: events[events.length - 1].date, kind: 'event' as const } : null;
+        // 默认选中：无指向时展示最新交易日行首枚标签（由权威 getDayTagSet 产出）
+        const lastK = klines && klines.length > 0 ? klines[klines.length - 1] : null;
+        const lastDayTags: DayTag[] = lastK ? getDayTagSet(klines!, tagParams, fp, { events: events ?? [] }) : [];
+        const defaultSel = lastDayTags.length > 0
+          ? { date: lastK!.date, kind: 'daytag' as const, tagKey: lastDayTags[0].key }
+          : null;
         const selKey = mktSel ?? defaultSel;
-        const isSel = (ev: MarketEvent, kind: 'event' | 'status' | 'repair') => !!selKey && selKey.kind !== 'pattern' && selKey.kind !== 'env' && selKey.date === ev.date && selKey.kind === kind;
+        const isDayTagSel = (date: string, tagKey: string) => !!selKey && selKey.kind === 'daytag' && selKey.date === date && selKey.tagKey === tagKey;
         const isPatSel = (p: KlinePattern) => !!selKey && selKey.kind === 'pattern' && selKey.ptype === p.type && selKey.date === p.date;
         const isEnvSel = (t: EnvTag) => !!selKey && selKey.kind === 'env' && selKey.ekey === t.key;
         const envChipCls: Record<EnvTag['color'], { cls: string; sel: string }> = {
@@ -5733,81 +5734,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           slate: { cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30', sel: ' border-slate-400/60' },
         };
         const envDate = klines && klines.length > 0 ? klines[klines.length - 1].date : '';
-        const fp = (v: number) => formatPrice(v, mktInfoStock.name);
         const selEv = selKey && selKey.kind !== 'pattern' && selKey.kind !== 'env' && events ? events.find(e => e.date === selKey.date) : null;
-        // 判定依据文案：普通字符串行；或 {t,cls} 定制样式的行；或 {seg} 同一行内多个不同样式的片段
+        // 判定依据文案：普通字符串行；或 {t,cls} 定制样式的行；或 {seg} 同一行内多个不同样式的片段。
+        // 每日行标签（量能/价格态/形态/破位观测）统一取 getDayTagSet 的 detail；环境标签走 env。
+        const daytagForSel: DayTag | null = (() => {
+          if (!klines || !selKey || selKey.kind !== 'daytag') return null;
+          const pi = klines.findIndex(k => k.date === selKey.date);
+          if (pi < 0) return null;
+          return getDayTagSet(klines.slice(0, pi + 1), tagParams, fp, { events: events ?? [] }).find(t => t.key === selKey.tagKey) ?? null;
+        })();
         const explainLines: (string | { t: string; cls: string } | { seg: { t: string; cls: string }[] })[] = [];
-        if (selKey && selKey.kind === 'pattern') {
-          // 形态判定依据：按选中日期（selKey.date）重新判定该日形态，避免串到别日（与逐日 chip、回测同源）
-          const pi = klines ? klines.findIndex(k => k.date === selKey.date) : -1;
-          const ps = pi >= 0 && klines ? analyzeKlinePatternsAt(klines, pi, fp, tagParams) : [];
-          const p = selKey.ptype != null ? ps.find(x => x.type === selKey.ptype) : undefined;
-          if (p) {
-            // 组合词条：位置·量能·形态 三元 token 着色（红=偏多 / 绿=偏空 / 蓝=中性）
-            const combo = combos.find(x => x.type === selKey.ptype && x.date === p.date);
-            if (combo && combo.tokens.length > 0) {
-              explainLines.push({ seg: combo.tokens.map(t => ({ t: t.text, cls: `${t.cls} font-semibold` })) });
-            }
-            explainLines.push(...p.detail);
-          }
-        } else if (selKey && selKey.kind === 'env') {
+        if (selKey && selKey.kind === 'env') {
           const t = env?.tags.find(x => x.key === selKey.ekey);
           if (t) explainLines.push(...t.detail);
-        } else if (selKey && selKey.kind === 'pricestate') {
-          // 价格态原子：判定依据见 detail（量能由独立 volday chip 展示，参考价值区给组合映射）
-          const psi = klines ? klines.findIndex(k => k.date === selKey.date) : -1;
-          if (psi >= 0 && klines) {
-            const ps = classifyPriceStateAt(klines, psi, fp, tagParams);
-            if (ps) explainLines.push(...ps.detail);
-          }
-        } else if (selKey && selKey.kind === 'volday') {
-          // 每日量能标签：判定依据（当日量 vs 前5日均量 + 量比）
-          const di = klines ? klines.findIndex(k => k.date === selKey.date) : -1;
-          if (di >= 0 && klines) {
-            const kd = klines[di];
-            const v = classifyVolumeAt(klines, di, tagParams);
-            const fix = (x: number) => x >= 1e8 ? `${(x / 1e8).toFixed(2)}亿` : x >= 1e4 ? `${(x / 1e4).toFixed(1)}万` : `${x.toFixed(0)}`;
-            let ratio = 0;
-            if (di >= 5) { let s = 0; for (let j = di - 5; j <= di - 1; j++) s += klines[j].volume; ratio = s > 0 ? kd.volume / (s / 5) : 0; }
-            explainLines.push(`${fmtDay(selKey.date)} 量能 ${v}`);
-            explainLines.push(`当日量 ${fix(kd.volume)}，前5日均量 ${fix(ratio > 0 ? kd.volume / ratio : 0)}`);
-            if (ratio > 0) { const vb = volBucket(v); explainLines.push(`量比 ${ratio.toFixed(2)}，收${kd.close < klines[di - 1]?.close ? '跌' : '涨'}，${vb === '放量' ? '资金活跃' : vb === '缩量' ? '动能减弱' : '势均力敌'}`); }
-          }
-        /* 每日信号判定依据暂时注释
-        } else if (selKey && selKey.kind === 'daily') {
-          // 每日量价/MACD 显著信号：判定依据来自信号触发条件（区别于环境量价的"当前状态"描述）
-          const sig = dailySignals.find(s => s.date === selKey.date && s.kind === selKey.dkey);
-          if (sig) explainLines.push(`${fmtDay(sig.date)} ${SIG_LABEL[sig.kind]}`, ...sig.detail);
-        */
-        /* 风系加/减判定依据暂时注释
-        } else if (selKey && selKey.kind === 'feng') {
-          // 风系加/减信号：逐条列出命中的信号与各自的判定依据
-          const day = feng?.days.find(d => d.date === selKey.date);
-          const hits = day ? (selKey.dir === 'add' ? day.add : day.reduce) : [];
-          if (hits.length > 0) {
-            const total = hits.reduce((a, h) => a + h.score, 0);
-            const dirLabel = selKey.dir === 'add' ? '加仓' : '减仓';
-            const dirColor = selKey.dir === 'add' ? 'text-red-500' : 'text-green-500';
-            // 汇总行着方向色，但括号内说明不着色
-            const headLabel = `${fmtDay(selKey.date)} ${dirLabel} ${Number(total.toFixed(2))}`;
-            const bracketLabel = `（${selKey.dir === 'add' ? '风系加仓信号' : '风系减仓信号'}，${hits.length} 个信号合计）`;
-            explainLines.push({ seg: [{ t: headLabel, cls: `${dirColor} font-semibold` }, { t: bracketLabel, cls: 'text-app-subtext' }] });
-            for (const h of hits) {
-              // ① 标签名着方向色，与正文同字号
-              explainLines.push({ t: `${h.name}  ${h.score.toFixed(2)}`, cls: `${dirColor} font-semibold` });
-              // ② 文字说明（"… → …"结论）放标签名下一行
-              const summary = h.detail.find(d => d.includes('→'));
-              if (summary) explainLines.push({ t: summary, cls: 'text-app-subtext' });
-              // ③ 计算公式（现价/量比等数据）；与得分行同字号弱色
-              for (const d of h.detail) if (!d.startsWith('得分 ') && !d.includes('→')) explainLines.push({ t: d, cls: 'text-[8px] text-app-rowtext' });
-              // ④ 得分计算放最后，小字号 + 弱色（暗于正文）
-              const scoreLine = h.detail.find(d => d.startsWith('得分 '));
-              if (scoreLine) explainLines.push({ t: scoreLine, cls: 'text-[8px] text-app-rowtext' });
-            }
-          }
-        */
+        } else if (daytagForSel) {
+          explainLines.push(...daytagForSel.detail);
         } else if (selEv) {
-          explainLines.push(...buildBreakExplainLines(selEv, selKey!.kind as 'event' | 'status' | 'repair', fp, fmtDay, fmtShort));
+          explainLines.push(...buildBreakExplainLines(selEv, 'event', fp, fmtDay, fmtShort));
         }
         return (
           <div
@@ -5866,138 +5809,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 arr.push({ key: `${date}-${arr.length}`, node });
                 byDate.set(date, arr);
               };
-              // 每日量能标签（量能5档原词）：近10个交易日起，每天一行一个；点击查看判定依据（配色=共享 VOLDAY_CLS）
-              const isSelVolday = (date: string) => !!selKey && selKey.kind === 'volday' && selKey.date === date;
-              const volChip = (date: string, i: number) => {
-                const v = classifyVolumeAt(klines, i, tagParams);
-                return (
-                  <span
-                    className={`${chipBase} ${VOLDAY_CLS[v].cls}${isSelVolday(date) ? VOLDAY_CLS[v].sel : ''}`}
-                    onMouseEnter={() => handleMktTagEnter({ date, kind: 'volday' })}
-                    onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date, kind: 'volday' }); }}
-                  >{v}</span>
-                );
-              };
-              // 价格态原子（反弹/企稳/回踩）chip：与量能 chip 并列展示；无态（null）则不显示，避免普通日子刷屏
-              const isSelPriceState = (date: string) => !!selKey && selKey.kind === 'pricestate' && selKey.date === date;
-              const priceStateChip = (date: string, i: number) => {
-                const ps = classifyPriceStateAt(klines, i, fp, tagParams);
-                if (!ps || !ps.name) return null;
-                const pc = PRICESTATE_CLS[ps.color === 'green' ? 'green' : 'red'];
-                return (
-                  <span
-                    className={`${chipBase} ${pc.cls}${isSelPriceState(date) ? pc.sel : ''}`}
-                    onMouseEnter={() => handleMktTagEnter({ date, kind: 'pricestate' })}
-                    onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date, kind: 'pricestate' }); }}
-                  >{ps.name}</span>
-                );
-              };
+              // 逐日 chip 权威：量能5档 + 价格态 + 形态 + 破位观测态（观察/真/假）全部由 getDayTagSet 统一产出，
+              // 与价格浮窗底栏/回测同一接口，绝不在此另拼；点击/悬浮选中同一 (date, tagKey)。
               const vStart = Math.max(0, klines.length - 10);
-              // 形态 chip：对"每个展示交易日"用 analyzeKlinePatternsAt 判定该日形态（逐日不会只在最新日出现），
-              // 与回测"以该日为末端的窗口"判定同一索引结果一致；无形态则该日不显示。
-              const patternChip = (date: string, i: number) => {
-                const ps = analyzeKlinePatternsAt(klines, i, fp, tagParams);
-                if (ps.length === 0) return null;
-                return (
-                  <span
-                    key={`pat-${date}-${ps[0].type}`}
-                    className={`${chipBase} ${patChipCls[ps[0].color].cls}${isPatSel(ps[0]) ? patChipCls[ps[0].color].sel : ''}`}
-                    onMouseEnter={() => handleMktTagEnter({ date, kind: 'pattern', ptype: ps[0].type })}
-                    onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date, kind: 'pattern', ptype: ps[0].type }); }}
-                  >{ps[0].label}</span>
-                );
-              };
               for (let vi = vStart; vi < klines.length; vi++) {
-                addChip(klines[vi].date, volChip(klines[vi].date, vi));
-                const pc = priceStateChip(klines[vi].date, vi);
-                if (pc) addChip(klines[vi].date, pc);
-                const ptC = patternChip(klines[vi].date, vi);
-                if (ptC) addChip(klines[vi].date, ptC);
-              }
-              const repairChip = (ev: MarketEvent) => (
-                <span
-                  className={`${chipBase} bg-indigo-500/10 text-indigo-400 border-indigo-500/30${isSel(ev, 'repair') ? ' border-indigo-400/60' : ''}`}
-                  onMouseEnter={() => handleMktTagEnter({ date: ev.date, kind: 'repair' })}
-                  onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date: ev.date, kind: 'repair' }); }}
-                >观察 x{ev.brokenCount}</span>
-              );
-              /* 每日信号 chip 暂时注释
-              // 每日信号徽标（color+缩写，区别于环境量价的"当前状态"chip）
-              const sigChipCls: Record<DailySignal['kind'], { cls: string; sel: string }> = {
-                'macd-gold': { cls: 'bg-red-500/10 text-red-500 border-red-500/20', sel: ' border-red-500/60' },
-                'macd-dead': { cls: 'bg-green-500/10 text-green-500 border-green-500/20', sel: ' border-green-500/60' },
-                'vol-up': { cls: 'bg-red-500/10 text-red-500 border-red-500/20', sel: ' border-red-500/60' },
-                'vol-down': { cls: 'bg-green-500/10 text-green-500 border-green-500/20', sel: ' border-green-500/60' },
-                'vol-shrink': { cls: 'bg-orange-500/10 text-orange-500 border-orange-500/20', sel: ' border-orange-500/60' },
-              };
-              const sigLabel = SIG_LABEL;
-              const isSelSig = (sig: DailySignal) => !!selKey && selKey.kind === 'daily' && selKey.date === sig.date && selKey.dkey === sig.kind;
-              const sigChip = (sig: DailySignal) => (
-                <span
-                  className={`${chipBase} ${sigChipCls[sig.kind].cls}${isSelSig(sig) ? sigChipCls[sig.kind].sel : ''}`}
-                  onMouseEnter={() => handleMktTagEnter({ date: sig.date, kind: 'daily', dkey: sig.kind })}
-                  onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date: sig.date, kind: 'daily', dkey: sig.kind }); }}
-                >{sigLabel[sig.kind]}</span>
-              );
-              */
-              /* 风系加/减信号 chip 暂时注释
-              const fengChip = (day: FengDaySignal, dir: 'add' | 'reduce') => {
-                const hits = dir === 'add' ? day.add : day.reduce;
-                const total = hits.reduce((a, h) => a + h.score, 0);
-                const totalStr = Number(total.toFixed(2));
-                const label = dir === 'add' ? `加仓 ${totalStr}` : `减仓 ${totalStr}`;
-                const isSelFeng = !!selKey && selKey.kind === 'feng' && selKey.date === day.date && selKey.dir === dir;
-                const cls = dir === 'add' ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-green-500/10 text-green-500 border-green-500/20';
-                const sel = dir === 'add' ? ' border-red-500/60' : ' border-green-500/60';
-                return (
-                  <span
-                    className={`${chipBase} ${cls}${isSelFeng ? sel : ''}`}
-                    onMouseEnter={() => handleMktTagEnter({ date: day.date, kind: 'feng', dir })}
-                    onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date: day.date, kind: 'feng', dir }); }}
-                  >{label}</span>
-                );
-              };
-              */
-              // 破位事件
-              if (events) for (const ev of events) {
-                addChip(ev.date, (
-                  <span
-                    className={`${chipBase} ${greenCls}${isSel(ev, 'event') ? greenSelCls : ''}`}
-                    onMouseEnter={() => handleMktTagEnter({ date: ev.date, kind: 'event' })}
-                    onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date: ev.date, kind: 'event' }); }}
-                  >破位 x{ev.brokenCount}</span>
-                ));
-                if (ev.window.length === 1) {
-                  addChip(ev.date, repairChip(ev));
-                } else {
-                  // 中间观测日：修复观察（与破位 xN 同步，展示被观察的破位条数）
-                  for (let i = 1; i < ev.window.length - 1; i++) addChip(ev.window[i].date, repairChip(ev));
-                  // 观测末尾：定论（真/假）或当前状态（修复观察带进度）
-                  const last = ev.window[ev.window.length - 1];
-                  const st = statusChip(ev);
-                  addChip(last.date, ev.status === 'confirming'
-                    ? repairChip(ev)
-                    : (
-                      <span
-                        className={`${chipBase} ${st.cls}${isSel(ev, 'status') ? st.selCls : ''}`}
-                        onMouseEnter={() => handleMktTagEnter({ date: ev.date, kind: 'status' })}
-                        onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date: ev.date, kind: 'status' }); }}
-                      >{st.label} x{ev.brokenCount}</span>
-                    ));
+                const d = klines[vi].date;
+                const dayTags = getDayTagSet(klines.slice(0, vi + 1), tagParams, fp, { events: events ?? [] });
+                for (const t of dayTags) {
+                  addChip(d, (
+                    <span
+                      className={`${chipBase} ${t.cls}${isDayTagSel(d, t.key) ? t.sel : ''}`}
+                      onMouseEnter={() => handleMktTagEnter({ date: d, kind: 'daytag', tagKey: t.key })}
+                      onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date: d, kind: 'daytag', tagKey: t.key }); }}
+                    >{t.label}</span>
+                  ));
                 }
               }
-              /* 每日信号渲染暂时注释
-              // 每日信号（MACD/量价）
-              for (const sig of dailySignals) addChip(sig.date, sigChip(sig));
-              */
-              /* 风系加/减渲染暂时注释
-              // 风系加/减信号（一天最多两个 chip：加仓 总分 / 减仓 总分）
-              if (feng) for (const day of feng.days) {
-                if (day.add.length > 0) addChip(day.date, fengChip(day, 'add'));
-                if (day.reduce.length > 0) addChip(day.date, fengChip(day, 'reduce'));
-              }
-              */
-              // 底部企稳已拆成 量能5档 + 价格态 两个原子 chip，在逐日循环中展示，无需追加独立企稳 chip
+              // 底部企稳已拆成 量能5档 + 价格态 两个原子 chip，由 getDayTagSet 提供，无需追加独立企稳 chip
               // 最新收盘日：价格列显示缓存现价（红涨绿跌），其余日期显示当日收盘
               const latestDate = klines && klines.length ? klines[klines.length - 1].date : '';
               const dates = [...byDate.keys()].sort();
@@ -6031,40 +5859,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 ) : (
                   <div className="text-[9px] text-app-rowtext">-</div>
                 );
-              })() : selKey && selKey.kind === 'pricestate' ? (() => {
-                // 参考价值：当日同时有 量能与价格态 两个原子 → 展示组合参考价值（价格态×量能）
-                // 回踩按 sub 分档展示（健康回踩/弱势回踩），底部确认走"放量底部确认"高价值文案
-                const pi = klines ? klines.findIndex(k => k.date === selKey.date) : -1;
-                if (pi >= 0 && klines) {
-                  const ps = classifyPriceStateAt(klines, pi, fp, tagParams);
-                  if (ps && ps.name) {
-                    const vol = classifyVolumeAt(klines, pi, tagParams);
-                    const psName = ps.kind === 'pullback' ? (ps.sub === 'weak' ? '弱势回踩' : '健康回踩') : ps.name;
-                    return (
-                      <div className="text-[9px] leading-relaxed text-app-rowtext break-all">
-                        <span className="text-app-subtext">{volBucket(vol)}{psName}：</span>{stabilizeComboReference(ps.name, vol, ps.sub)}
-                      </div>
-                    );
-                  }
-                }
-                return <div className="text-[9px] text-app-rowtext">-</div>;
-              })() : selKey && selKey.kind === 'pattern' ? (() => {
-                // 参考价值：按选中日期取当日组合参考（组合随时间/量能变化，避免串到别日）
-                const pi = klines ? klines.findIndex(k => k.date === selKey.date) : -1;
-                const ps = pi >= 0 && klines ? analyzeKlinePatternsAt(klines, pi, fp, tagParams) : [];
-                const p = selKey.ptype != null ? ps.find(x => x.type === selKey.ptype) : undefined;
-                const combo = p ? combos.find(x => x.type === selKey.ptype && x.date === p.date) : undefined;
-                return combo && combo.reference ? (
-                  <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{combo.reference}</div>
+              })() : daytagForSel ? (
+                daytagForSel.reference ? (
+                  <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{daytagForSel.reference}</div>
                 ) : (
                   <div className="text-[9px] text-app-rowtext">-</div>
-                );
-              })() : selKey && selKey.kind === 'volday' ? (
-                <div className="text-[9px] leading-relaxed text-app-rowtext break-all">量能标签：放量=资金活跃/量增价升有持续性；缩量=动能减弱，高位缩量防滞涨、低位缩量常为见底前兆；平量=势均力敌的信息量低。需结合价格方向与所处位置综合判断。</div>
-              ) : /* daily 参考价值暂时注释
-              selKey && selKey.kind === 'daily' ? (
-                <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{DAILY_REFERENCE[selKey.dkey] ?? '-'}</div>
-              ) : */ (
+                )
+              ) : (
                 <div className="text-[9px] text-app-rowtext">-</div>
               )}
             </div>

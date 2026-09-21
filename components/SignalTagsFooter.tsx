@@ -1,11 +1,11 @@
 // 每日信号标签底部栏 —— 单一实现，列表页价格浮窗与回测图十字线悬浮共用。
-// 计算复用 services/signalTagDetail.getSignalTagDetail（→ backtestEngine + tagAnalyzers，
-// 与股票标签弹窗完全同源）；chip 配色 = tagAnalyzers 的 CHIP_CLS 单一数据源，
+// 计算复用 services/signalTagDetail.getDayTagSet（唯一权威：量能5档 + 价格态 + 形态 + 破位观测态，
+// 与股票标签弹窗"近10交易日"当日行完全一致）；chip 配色 = tagAnalyzers 的 CHIP_CLS 单一数据源，
 // 每个 chip hover/点击弹出「判定依据」「参考价值」两字段面板。
 import React, { useMemo, useState } from 'react';
 import type { BollKline } from '../services/bollService';
 import type { TagParams } from '../types';
-import { getSignalTagDetail, type SignalTagDetail } from '../services/signalTagDetail';
+import { getDayTagSet, type DayTag } from '../services/signalTagDetail';
 
 export interface SignalTagsFooterProps {
   win: BollKline[];      // 该日及其之前的前缀 K 线（末根=当日），勿含未来数据
@@ -19,36 +19,38 @@ export interface SignalTagsFooterProps {
 const CHIP_BASE = 'inline-flex items-center justify-center rounded text-[9px] font-medium border px-1 py-px cursor-pointer transition-colors';
 
 export default function SignalTagsFooter({ win, i, cfg, fmt, onPin }: SignalTagsFooterProps) {
-  const tags: SignalTagDetail[] = useMemo(
-    () => getSignalTagDetail(win, i, cfg, fmt),
-    [win, i, cfg, fmt],
+  // 权威接口：与标签弹窗"当日行"同一套；i 恒与 win 末根一致
+  const tags: DayTag[] = useMemo(
+    () => getDayTagSet(win, cfg, fmt),
+    [win, cfg, fmt],
   );
-  const [pinnedLabel, setPinnedLabel] = useState<string | null>(null);
-  const [hoverLabel, setHoverLabel] = useState<string | null>(null);
+  const [pinnedKey, setPinnedKey] = useState<string | null>(null);
+  const [hoverKey, setHoverKey] = useState<string | null>(null);
+  void i;
 
   if (tags.length === 0) return null;
 
-  const displayLabel = pinnedLabel ?? hoverLabel;
-  const displayTag = displayLabel ? tags.find(t => t.label === displayLabel) : undefined;
+  const displayKey = pinnedKey ?? hoverKey;
+  const displayTag = displayKey ? tags.find(t => t.key === displayKey) : undefined;
 
   return (
     <div className="border-t border-app-border mt-1 pt-1.5">
       <div className="text-[9px] text-app-subtext mb-1">当日信号</div>
       <div className="flex items-center gap-1 flex-wrap">
         {tags.map(t => {
-          const active = displayLabel === t.label;
+          const active = displayKey === t.key;
           return (
             <button
-              key={t.label}
+              key={t.key}
               type="button"
               className={`${CHIP_BASE} ${t.cls}${active ? t.sel : ''}`}
-              onMouseEnter={() => setHoverLabel(t.label)}
-              onMouseLeave={() => setHoverLabel(null)}
+              onMouseEnter={() => setHoverKey(t.key)}
+              onMouseLeave={() => setHoverKey(null)}
               onClick={(e) => {
                 e.stopPropagation();
-                const next = pinnedLabel === t.label ? null : t.label;
+                const next = pinnedKey === t.key ? null : t.key;
                 if (next && onPin) onPin();
-                setPinnedLabel(next);
+                setPinnedKey(next);
               }}
             >
               {t.label}

@@ -171,10 +171,12 @@ export const CHIP_CLS_RED = 'bg-red-500/10 text-red-500 border-red-500/20';
 export const CHIP_CLS_GREEN = 'bg-green-500/10 text-green-500 border-green-500/20';
 export const CHIP_CLS_BLUE = 'bg-blue-500/10 text-blue-400 border-blue-500/30';
 export const CHIP_CLS_SLATE = 'bg-slate-500/10 text-slate-400 border-slate-500/30';
+export const CHIP_CLS_INDIGO = 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30';
 export const CHIP_SEL_RED = ' border-red-500/60';
 export const CHIP_SEL_GREEN = ' border-green-500/60';
 export const CHIP_SEL_BLUE = ' border-blue-400/60';
 export const CHIP_SEL_SLATE = ' border-slate-400/60';
+export const CHIP_SEL_INDIGO = ' border-indigo-400/60';
 // K 线形态 chip：按 KlinePattern.color（red/green/blue/slate）
 export const PATTERN_CHIP_CLS: Record<KlinePattern['color'], ChipCls> = {
   red: { cls: CHIP_CLS_RED, sel: CHIP_SEL_RED },
