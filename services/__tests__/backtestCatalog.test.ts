@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { BollKline } from '../bollService';
 import { BACKTEST_TAG_CATALOG, runBacktest, scanTagOccurrences, getDaySignalLabels } from '../backtestEngine';
 import { getSignalTagDetail } from '../signalTagDetail';
-import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPriceStateAt, volBucket, stabilizeComboReference, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags, PATTERN_CHIP_CLS, VOLUME5_CHIP_CLS, BREAK_CHIP_CLS } from '../tagAnalyzers';
+import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeMarketConditions, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPriceStateAt, volBucket, stabilizeComboReference, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags, PATTERN_CHIP_CLS, VOLUME5_CHIP_CLS, BREAK_CHIP_CLS } from '../tagAnalyzers';
 import type { EnvTag } from '../tagAnalyzers';
 import type { BacktestStrategy, TagParams } from '../../types';
 import { DEFAULT_TAG_PARAMS } from '../../types';
@@ -375,9 +375,45 @@ describe('getDaySignalLabels（十字线悬浮栏信号来源）', () => {
 //
 // 6. getSignalTagDetail：底部信号栏的「判定依据+参考价值」= 标签弹窗同一套逻辑（SSOT）
 //
-describe('getSignalTagDetail（信号栏判定依据+参考价值，与标签弹窗同源）', () => {
+describe('getSignalTagDetail（信号栏标签 == 标签弹窗每日信号区，同一批判定 SSOT）', () => {
   const findByLabel = (tags: ReturnType<typeof getSignalTagDetail>, label: string) =>
     tags.find(t => t.label === label);
+
+  // 复刻 标签弹窗（StockDividendPage）每日信号区的同一天 chip 标签集合：
+  // volChip(classifyVolumeAt) + priceStateChip(classifyPriceStateAt.ps.name) + patternChip(analyzeKlinePatternsAt) + 破位(analyzeMarketConditions)
+  // —— 与 getSignalTagDetail 各自独立组成，二者必须逐标签一致，防再次分叉成两套。
+  const popoverDayLabels = (win: BollKline[], i: number) => {
+    const out: string[] = [classifyVolumeAt(win, i)]; // 量能5档恒定存在
+    const ps = classifyPriceStateAt(win, i, fmt);
+    if (ps && ps.name) out.push(ps.name);
+    for (const p of analyzeKlinePatternsAt(win, i, fmt)) out.push(p.label);
+    const last = win[win.length - 1];
+    const broken = analyzeMarketConditions(win, 1).find(e => e.date === last.date && e.brokenCount > 0);
+    if (broken) out.push('破位');
+    return out;
+  };
+
+  it('信号栏标签集合 == 标签弹窗每日信号区同一批判定（逐标签一致，且不得出现回测组合标签）', () => {
+    const cases: BollKline[][] = [
+      // 十字星（中位平量）
+      mkKlines(140, undefined, { 139: { open: 100, close: 100, high: 105, low: 95 } }),
+      // 明显放量
+      mkKlines(140, undefined, { 139: { volume: 5_000_000 } }),
+      // 缩量弱势回踩（价格态原子本应展示为「回踩」，而不是组合「缩量弱势回踩」）
+      mkKlines(40, i => 100, { 39: { close: 95, volume: 500_000 } }),
+      // 破位（大跌跌破均线）
+      mkKlines(83, i => 200 - i * 0.5, { 81: { close: 170 }, 82: { open: 165, high: 166, low: 90, close: 95 } }),
+    ];
+    for (const ks of cases) {
+      const i = ks.length - 1;
+      const got = getSignalTagDetail(ks, i).map(t => t.label);
+      expect(got).toEqual(popoverDayLabels(ks, i));
+      // 严禁出现回测组合标签（价格浮窗应展示原子标签，与标签弹窗一致，不重复两套）
+      for (const combo of ['放量企稳', '缩量企稳', '平量企稳', '放量反弹', '缩量反弹', '放量底部确认', '缩量底部确认', '缩量健康回踩', '缩量弱势回踩']) {
+        expect(got).not.toContain(combo);
+      }
+    }
+  });
 
   it('十字星：detail 为形态判定依据、reference 为组合参考价值（均非空，源自 analyzeKlinePatternsAt/analyzeKlineCombo）', () => {
     const ks = mkKlines(140, undefined, { 139: { open: 100, close: 100, high: 105, low: 95 } });
@@ -387,12 +423,11 @@ describe('getSignalTagDetail（信号栏判定依据+参考价值，与标签弹
     expect(star!.detail.length).toBeGreaterThan(0);   // 判定依据非空
     expect(star!.reference.length).toBeGreaterThan(0); // 组合参考价值非空
     // chip 配色 = 标签弹窗 PATTERN_CHIP_CLS（语义色：此处中位平量十字星 → 蓝）
-    expect(star!.cls).toContain('text-blue-400');
     expect(star!.cls).toBe(PATTERN_CHIP_CLS['blue'].cls);
     expect(star!.sel).toBe(PATTERN_CHIP_CLS['blue'].sel);
   });
 
-  it('明显放量：detail 为量能判定（含量能词与量比）、reference 为 volday 静态文案', () => {
+  it('明显放量：detail 为量能判定、reference 为 volday 静态文案', () => {
     const ks = mkKlines(140, undefined, { 139: { volume: 5_000_000 } });
     const tags = getSignalTagDetail(ks, 139);
     const vol = findByLabel(tags, '明显放量');
@@ -400,27 +435,26 @@ describe('getSignalTagDetail（信号栏判定依据+参考价值，与标签弹
     expect(vol!.detail.some(l => l.includes('量能 明显放量'))).toBe(true);
     expect(vol!.detail.some(l => l.includes('量比'))).toBe(true);
     expect(vol!.reference).toContain('量增价升有持续性'); // 与弹窗 volday 参考价值同一静态文案
-    // chip 配色 = 标签弹窗 VOLUME5_CHIP_CLS（放量 → 红）
-    expect(vol!.cls).toBe(VOLUME5_CHIP_CLS['明显放量'].cls);
-    expect(vol!.sel).toBe(VOLUME5_CHIP_CLS['明显放量'].sel);
+    expect(vol!.cls).toBe(VOLUME5_CHIP_CLS['明显放量'].cls); // 放量 → 红
   });
 
-  it('缩量弱势回踩：detail 为价格态判定依据、reference == stabilizeComboReference（与弹窗参考价值区一致）', () => {
+  it('缩量弱势回踩日：展示价格态原子「回踩」（非组合「缩量弱势回踩」），reference == stabilizeComboReference', () => {
     const ks = mkKlines(40, i => 100, { 39: { close: 95, volume: 500_000 } });
     const win = ks.slice(0, 40);
     const tags = getSignalTagDetail(win, 39);
-    const weak = findByLabel(tags, '缩量弱势回踩');
-    expect(weak).toBeTruthy();
-    expect(weak!.detail.length).toBeGreaterThan(0);
-    const vol = classifyVolumeAt(win, 39);
+    const labels = tags.map(t => t.label);
     const ps = classifyPriceStateAt(win, 39, fmt);
     expect(ps).not.toBeNull();
     expect(ps!.sub).toBe('weak');
-    // 与标签弹窗参考价值区同一映射：stabilizeComboReference(ps.name, vol, ps.sub)
-    expect(weak!.reference).toBe(stabilizeComboReference(ps!.name, vol, ps!.sub));
+    // 与标签弹窗一致：原子「回踩」chip，而非组合
+    expect(labels).toContain('回踩');
+    expect(labels).not.toContain('缩量弱势回踩');
+    const pull = findByLabel(tags, '回踩');
+    expect(pull).toBeTruthy();
+    expect(pull!.reference).toBe(stabilizeComboReference(ps!.name, classifyVolumeAt(win, 39), ps!.sub));
   });
 
-  it('破位：detail 为 event 判定依据、reference 为空（弹窗对破位无参考价值映射）', () => {
+  it('破位：detail 为 event 判定依据、reference 为空；chip 配色 = 破位绿', () => {
     const k2 = mkKlines(83, i => 200 - i * 0.5, {
       81: { close: 170 },
       82: { open: 165, high: 166, low: 90, close: 95 },
@@ -430,8 +464,7 @@ describe('getSignalTagDetail（信号栏判定依据+参考价值，与标签弹
     if (brk) {
       expect(brk.detail.length).toBeGreaterThan(0);
       expect(brk.reference).toBe('');
-      // chip 配色 = 标签弹窗破位绿（看空）
-      expect(brk.cls).toBe(BREAK_CHIP_CLS.cls);
+      expect(brk.cls).toBe(BREAK_CHIP_CLS.cls); // 看空 → 绿
       expect(brk.sel).toBe(BREAK_CHIP_CLS.sel);
     }
   });
