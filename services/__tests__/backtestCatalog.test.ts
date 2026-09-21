@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { BollKline } from '../bollService';
 import { BACKTEST_TAG_CATALOG, runBacktest, scanTagOccurrences, getDaySignalLabels } from '../backtestEngine';
-import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPriceStateAt, volBucket, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags } from '../tagAnalyzers';
+import { getSignalTagDetail } from '../signalTagDetail';
+import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPriceStateAt, volBucket, stabilizeComboReference, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags } from '../tagAnalyzers';
 import type { EnvTag } from '../tagAnalyzers';
 import type { BacktestStrategy, TagParams } from '../../types';
 import { DEFAULT_TAG_PARAMS } from '../../types';
@@ -368,5 +369,61 @@ describe('getDaySignalLabels（十字线悬浮栏信号来源）', () => {
     expect(def).toBeTruthy();
     const { trades } = runBacktest(ks, { rules: [{ id: 'x', tagKey: def!.key, label: def!.label, action: 'buy' as const, pct: 10, enabled: true }], initialCapital: 100000 } as BacktestStrategy, { cfg });
     expect(trades.length).toBeGreaterThan(0);
+  });
+});
+
+//
+// 6. getSignalTagDetail：底部信号栏的「判定依据+参考价值」= 标签弹窗同一套逻辑（SSOT）
+//
+describe('getSignalTagDetail（信号栏判定依据+参考价值，与标签弹窗同源）', () => {
+  const findByLabel = (tags: ReturnType<typeof getSignalTagDetail>, label: string) =>
+    tags.find(t => t.label === label);
+
+  it('十字星：detail 为形态判定依据、reference 为组合参考价值（均非空，源自 analyzeKlinePatternsAt/analyzeKlineCombo）', () => {
+    const ks = mkKlines(140, undefined, { 139: { open: 100, close: 100, high: 105, low: 95 } });
+    const tags = getSignalTagDetail(ks, 139);
+    const star = findByLabel(tags, '十字星');
+    expect(star).toBeTruthy();
+    expect(star!.detail.length).toBeGreaterThan(0);   // 判定依据非空
+    expect(star!.reference.length).toBeGreaterThan(0); // 组合参考价值非空
+    expect(star!.color).toBeTruthy();
+  });
+
+  it('明显放量：detail 为量能判定（含量能词与量比）、reference 为 volday 静态文案', () => {
+    const ks = mkKlines(140, undefined, { 139: { volume: 5_000_000 } });
+    const tags = getSignalTagDetail(ks, 139);
+    const vol = findByLabel(tags, '明显放量');
+    expect(vol).toBeTruthy();
+    expect(vol!.detail.some(l => l.includes('量能 明显放量'))).toBe(true);
+    expect(vol!.detail.some(l => l.includes('量比'))).toBe(true);
+    expect(vol!.reference).toContain('量增价升有持续性'); // 与弹窗 volday 参考价值同一静态文案
+  });
+
+  it('缩量弱势回踩：detail 为价格态判定依据、reference == stabilizeComboReference（与弹窗参考价值区一致）', () => {
+    const ks = mkKlines(40, i => 100, { 39: { close: 95, volume: 500_000 } });
+    const win = ks.slice(0, 40);
+    const tags = getSignalTagDetail(win, 39);
+    const weak = findByLabel(tags, '缩量弱势回踩');
+    expect(weak).toBeTruthy();
+    expect(weak!.detail.length).toBeGreaterThan(0);
+    const vol = classifyVolumeAt(win, 39);
+    const ps = classifyPriceStateAt(win, 39, fmt);
+    expect(ps).not.toBeNull();
+    expect(ps!.sub).toBe('weak');
+    // 与标签弹窗参考价值区同一映射：stabilizeComboReference(ps.name, vol, ps.sub)
+    expect(weak!.reference).toBe(stabilizeComboReference(ps!.name, vol, ps!.sub));
+  });
+
+  it('破位：detail 为 event 判定依据、reference 为空（弹窗对破位无参考价值映射）', () => {
+    const k2 = mkKlines(83, i => 200 - i * 0.5, {
+      81: { close: 170 },
+      82: { open: 165, high: 166, low: 90, close: 95 },
+    });
+    const tags = getSignalTagDetail(k2, 82);
+    const brk = findByLabel(tags, '破位');
+    if (brk) {
+      expect(brk.detail.length).toBeGreaterThan(0);
+      expect(brk.reference).toBe('');
+    }
   });
 });

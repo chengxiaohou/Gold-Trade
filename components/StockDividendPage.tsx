@@ -18,6 +18,7 @@ import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
 import { InputGroup } from './InputGroup';
 import { BacktestModal } from './BacktestModal';
 import PriceInfoPopover from './PriceInfoPopover';
+import SignalTagsFooter from './SignalTagsFooter';
 import { calcIndicators, formatPrice, formatVolume, type IndicatorResult } from '../services/indicators';
 
 const TAG_PALETTE = [
@@ -1348,6 +1349,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 价格技术指标浮窗（复用现有K线数据，不额外请求）
   const [priceInfoData, setPriceInfoData] = useState<IndicatorResult | null>(null);
+  const [priceInfoKlines, setPriceInfoKlines] = useState<BollKline[] | null>(null); // 供底部信号栏(末根=今日)复用标签弹窗同源判定
   const [priceInfoStock, setPriceInfoStock] = useState<StockEntry | null>(null);
   const [priceInfoPos, setPriceInfoPos] = useState({ left: 0, top: 0 });
   const [priceInfoLoading, setPriceInfoLoading] = useState(false);
@@ -1596,6 +1598,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setPriceInfoStock(stock);
     setPriceInfoLoading(true);
     setPriceInfoData(null);
+    setPriceInfoKlines(null);
     // 定位：参考名称弹窗，出现在价格右侧并垂直居中
     const popupW = 195;
     const estH = 330;
@@ -1615,6 +1618,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       // 用实时行情(开/高/低/量/现价)覆盖或追加今日K线，保证浮窗显示今日数据
       const merged = mergeTodayBarToKlines(result.data?.klines || [], stock, getMarketStatus());
       const ind = calcIndicators(merged);
+      setPriceInfoKlines(merged);
       setPriceInfoData(ind);
       setPriceInfoLoading(false);
       // 自适应高度：数据渲染后用浮窗实际高度重算垂直居中
@@ -1654,6 +1658,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     priceInfoActiveIdRef.current = undefined;
     setPriceInfoStock(null);
     setPriceInfoData(null);
+    setPriceInfoKlines(null);
     setPriceInfoLoading(false);
   };
 
@@ -1675,6 +1680,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     priceInfoActiveIdRef.current = undefined;
     setPriceInfoStock(null);
     setPriceInfoData(null);
+    setPriceInfoKlines(null);
     setPriceInfoLoading(false);
   };
 
@@ -5375,6 +5381,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           width={210}
           onMouseEnter={() => { priceInfoHoveredRef.current = true; }}
           onMouseLeave={handlePriceInfoFloatLeave}
+          footer={priceInfoKlines && priceInfoKlines.length > 0 ? (
+            <SignalTagsFooter
+              win={priceInfoKlines}
+              i={priceInfoKlines.length - 1}
+              cfg={tagParams}
+              onPin={() => setPriceInfoPinned(true)}
+            />
+          ) : undefined}
         />
       )}
 

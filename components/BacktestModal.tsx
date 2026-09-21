@@ -8,10 +8,11 @@ import { fetchBollData } from '../services/bollService';
 import type { BollKline } from '../services/bollService';
 import { mergeTodayBarToKlines } from '../services/bollService';
 import { getMarketStatus } from '../services/cacheService';
-import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL, getDaySignalLabels } from '../services/backtestEngine';
+import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL } from '../services/backtestEngine';
 import { ENV_TAG_CATALOG } from '../services/tagAnalyzers';
 import { calcIndicators, type IndicatorResult } from '../services/indicators';
 import PriceInfoPopover from './PriceInfoPopover';
+import SignalTagsFooter from './SignalTagsFooter';
 import { InputGroup } from './InputGroup';
 
 type ChartCandle = { time: string; open: number; high: number; low: number; close: number };
@@ -133,7 +134,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
   }, [strategy, strategyStorageKey]);
   const [rawKlines, setRawKlines] = useState<BollKline[] | null>(null); // 已并入实时今日K线、回测信号需含 volume 的全量 K 线
   // 十字线悬浮行情面板（复用列表页"当日行情"浮窗）
-  const [hoverQuote, setHoverQuote] = useState<{ name: string; price: number; changePercent: number | null; data: IndicatorResult; left: number; top: number; signals: string[] } | null>(null);
+  const [hoverQuote, setHoverQuote] = useState<{ name: string; price: number; changePercent: number | null; data: IndicatorResult; left: number; top: number; win: BollKline[]; idx: number } | null>(null);
   const rawKlinesRef = useRef<BollKline[] | null>(null);
   const tagParamsRef = useRef<TagParams | undefined>(tagParams);
   useEffect(() => { rawKlinesRef.current = rawKlines; }, [rawKlines]);
@@ -471,7 +472,6 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
     // 仅当悬停在 K 线实体所在横带上才展示；热区外(空白/边缘)→ 隐藏。按日缓存指标，避免每像素重算。
     let cachedDay: string | null = null;
     let cachedInd: IndicatorResult | null = null;
-    let cachedSignals: string[] = [];
     let cachedChange: number | null = null;
     const onCrosshairMove = (param: MouseEventParams) => {
       const series = seriesRef.current;
@@ -484,14 +484,13 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
       if (idx < 0 || idx < 30) { setHoverQuote(null); return; } // 非候选K线(如数据空洞/前段)不弹
       const prefix = data.slice(0, idx + 1);
       if (cachedDay === day) {
-        // same day：仅更新跟随位置，复用缓存的指标/信号
+        // same day：仅更新跟随位置，复用缓存的指标
       } else {
         const ind = calcIndicators(prefix);
         if (!ind) { setHoverQuote(null); return; }
         const prevClose = idx > 0 ? data[idx - 1].close : data[idx].close;
         cachedChange = prevClose && prevClose > 0 ? ((data[idx].close - prevClose) / prevClose) * 100 : null;
         cachedInd = ind;
-        cachedSignals = getDaySignalLabels(prefix, idx, tagParamsRef.current);
         cachedDay = day;
       }
       if (!cachedInd) { setHoverQuote(null); return; }
@@ -501,7 +500,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
       if (left + popW > window.innerWidth - 8) left = Math.max(8, rect.left + param.point.x - popW - 12);
       let top = rect.top + param.point.y + 12;
       if (top + 240 > window.innerHeight - 8) top = Math.max(8, rect.top + param.point.y - 240 - 12);
-      setHoverQuote({ name: stock.name, price: data[idx].close, changePercent: cachedChange, data: cachedInd, left, top, signals: cachedSignals });
+      setHoverQuote({ name: stock.name, price: data[idx].close, changePercent: cachedChange, data: cachedInd, left, top, win: prefix, idx });
     };
     chart.subscribeCrosshairMove(onCrosshairMove);
     // 初始化时立即把当前 zoomMode 的缩放/触屏配置应用到新创建的 chart
@@ -852,16 +851,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
           top={hoverQuote.top}
           width={210}
           footer={(
-            <div className="mt-1 pt-1 border-t border-app-border flex flex-wrap gap-1">
-              {hoverQuote.signals.length === 0 ? (
-                <span className="text-[10px] text-app-subtext">本日无信号</span>
-              ) : hoverQuote.signals.map(sig => {
-                const def = BACKTEST_TAG_CATALOG.find(d => (sig === 'break-event' ? d.key === 'break-event' : d.signalName === sig));
-                const label = sig === 'break-event' ? '破位' : (def?.label ?? sig);
-                const color = def?.color ?? (sig.includes('放') || sig.includes('高') || sig.includes('破') ? '#C44A3D' : sig.includes('缩') || sig.includes('低') ? '#22c55e' : '#94a3b8');
-                return <span key={sig} className="text-[10px] px-1.5 py-0.5 rounded border" style={{ borderColor: color + '55', color, background: color + '14' }}>{label}</span>;
-              })}
-            </div>
+            <SignalTagsFooter win={hoverQuote.win} i={hoverQuote.idx} cfg={tagParamsRef.current} />
           )}
         />
       )}
