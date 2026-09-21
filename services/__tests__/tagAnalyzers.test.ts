@@ -3,6 +3,7 @@ import type { BollKline } from '../bollService';
 import type { EnvTag, MarketEvent, PriceStateTag } from '../tagAnalyzers';
 import {
   analyzeKlinePatterns,
+  analyzeKlinePatternsAt,
   analyzeKlineCombo,
   classifyPosition,
   classifyVolumeAt,
@@ -138,6 +139,60 @@ describe('analyzeKlinePatterns（K线形态）', () => {
     expect(ps[0].type).toBe('invertedHammer');
     expect(ps[0].single).toBe('倒');
     expect(ps[0].color).toBe('red');
+  });
+});
+
+describe('analyzeKlinePatternsAt（按索引判定形态：弹窗逐日区与回测同源）', () => {
+  it('末根索引（i=n-1）与 analyzeKlinePatterns 结果一致', () => {
+    const k = mkKlines(140, {
+      overrides: { 139: { open: 100, close: 100, high: 105, low: 95 } },
+    });
+    const at = analyzeKlinePatternsAt(k, 139, fmt);
+    const full = analyzeKlinePatterns(k, fmt);
+    expect(at).toEqual(full);
+    expect(at[0].type).toBe('doji');
+    expect(at[0].date).toBe(k[139].date);
+  });
+
+  it('历史日索引 i 能判出形态（十字星）且 date 正确：回测对历史日窗口判定同索引一致', () => {
+    // 构造历史日 99 为十字星（开=收、高=+5、低=-5）；最新日 139 给强实体避免也成十字星
+    const k = mkKlines(140, {
+      overrides: {
+        99: { open: 100, close: 100, high: 105, low: 95 },
+        139: { open: 100, close: 104, high: 106, low: 96 },
+      },
+    });
+    const ps = analyzeKlinePatternsAt(k, 99, fmt);
+    expect(ps).toHaveLength(1);
+    expect(ps[0].type).toBe('doji');
+    expect(ps[0].date).toBe(k[99].date);
+    // 最新日形态不受影响（146 强实体非十字星）
+    expect(analyzeKlinePatternsAt(k, 139, fmt)).toEqual([]);
+  });
+
+  it('历史日索引 i 能判出形态（金针探底）且 date 正确', () => {
+    // 把"下影长/上影短/实体小 + 贴近近20日低点"的十字星样例放到历史日 100
+    const k = mkKlines(140, {
+      overrides: { 100: { open: 98.8, close: 99, high: 99.0, low: 96 } },
+    });
+    const ps = analyzeKlinePatternsAt(k, 100, fmt);
+    expect(ps).toHaveLength(1);
+    expect(ps[0].type).toBe('hammer');
+    expect(ps[0].date).toBe(k[100].date);
+    expect(ps[0].color).toBe('red');
+  });
+
+  it('越界保护：i < 20（前20日均线窗口不完整）→ 空数组', () => {
+    const k = mkKlines(40);
+    expect(analyzeKlinePatternsAt(k, 19, fmt)).toEqual([]);
+    expect(analyzeKlinePatternsAt(k, 0, fmt)).toEqual([]);
+    expect(analyzeKlinePatternsAt(k, -1, fmt)).toEqual([]);
+  });
+
+  it('越界保护：i ≥ 序列长度 → 空数组', () => {
+    const k = mkKlines(40);
+    expect(analyzeKlinePatternsAt(k, 40, fmt)).toEqual([]);
+    expect(analyzeKlinePatternsAt(k, k.length, fmt)).toEqual([]);
   });
 });
 

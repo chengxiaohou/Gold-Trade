@@ -12,7 +12,7 @@ import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
 import { calcRealizedPnlForRange, calcPositionFromTrades } from '../services/realizedPnl';
-import { analyzeKlinePatterns, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, classifyPriceState, classifyPriceStateAt, volBucket, stabilizeComboReference, buildLatestShrinkTags, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, type KlineVolume5 } from '../services/tagAnalyzers';
+import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, classifyPriceState, classifyPriceStateAt, volBucket, stabilizeComboReference, buildLatestShrinkTags, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, type KlineVolume5 } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PriceStateTag, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
 import { InputGroup } from './InputGroup';
@@ -1960,7 +1960,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [nameSubMode, setNameSubMode] = useState<'tags' | 'code'>('tags');
   // 首次判定的统一数据源：对"同一组（实时价覆盖后的）K 线"只计算一遍 破位/形态/环境，
   // 列表缩略标签（buildLatestShrinkTags）与行情浮窗详细展示共用这份结果，杜绝两套判定喂不同数据。
-  const LATEST_TAG_VERSION = 18; // 判定/展示逻辑变更时 +1，避免 HMR 保留旧缓存导致缩略与弹窗不一致
+  const LATEST_TAG_VERSION = 19; // 判定/展示逻辑变更时 +1，避免 HMR 保留旧缓存导致缩略与弹窗不一致
   const analyzedCache = useRef(new Map<string, { v: number; key: string; data: { klines: BollKline[] | null; events: MarketEvent[] | null; allowVol: boolean; patterns: KlinePattern[] | null; combos: PatternCombo[]; env: EnvResult | null; priceState: PriceStateTag | null; latestVol: KlineVolume5 | null } }>());
   const computeAnalyzed = (stock: StockEntry): { klines: BollKline[] | null; events: MarketEvent[] | null; allowVol: boolean; patterns: KlinePattern[] | null; combos: PatternCombo[]; env: EnvResult | null; priceState: PriceStateTag | null; latestVol: KlineVolume5 | null } => {
     const daily = stockBollMap.get(stock.id)?.daily;
@@ -5860,7 +5860,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const defaultSel = events && events.length > 0 ? { date: events[events.length - 1].date, kind: 'event' as const } : null;
         const selKey = mktSel ?? defaultSel;
         const isSel = (ev: MarketEvent, kind: 'event' | 'status' | 'repair') => !!selKey && selKey.kind !== 'pattern' && selKey.kind !== 'env' && selKey.date === ev.date && selKey.kind === kind;
-        const isPatSel = (p: KlinePattern) => !!selKey && selKey.kind === 'pattern' && selKey.ptype === p.type;
+        const isPatSel = (p: KlinePattern) => !!selKey && selKey.kind === 'pattern' && selKey.ptype === p.type && selKey.date === p.date;
         const isEnvSel = (t: EnvTag) => !!selKey && selKey.kind === 'env' && selKey.ekey === t.key;
         const envChipCls: Record<EnvTag['color'], { cls: string; sel: string }> = {
           red: { cls: 'bg-red-500/10 text-red-500 border-red-500/20', sel: ' border-red-500/60' },
@@ -5881,7 +5881,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         // 判定依据文案：普通字符串行；或 {t,cls} 定制样式的行；或 {seg} 同一行内多个不同样式的片段
         const explainLines: (string | { t: string; cls: string } | { seg: { t: string; cls: string }[] })[] = [];
         if (selKey && selKey.kind === 'pattern') {
-          const p = patterns?.find(x => x.type === selKey.ptype);
+          // 形态判定依据：按选中日期（selKey.date）重新判定该日形态，避免串到别日（与逐日 chip、回测同源）
+          const pi = klines ? klines.findIndex(k => k.date === selKey.date) : -1;
+          const ps = pi >= 0 && klines ? analyzeKlinePatternsAt(klines, pi, fp, tagParams) : [];
+          const p = selKey.ptype != null ? ps.find(x => x.type === selKey.ptype) : undefined;
           if (p) {
             // 组合词条：位置·量能·形态 三元 token 着色（红=偏多 / 绿=偏空 / 蓝=中性）
             const combo = combos.find(x => x.type === selKey.ptype && x.date === p.date);
@@ -6044,10 +6047,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 );
               };
               const vStart = Math.max(0, klines.length - 10);
+              // 形态 chip：对"每个展示交易日"用 analyzeKlinePatternsAt 判定该日形态（逐日不会只在最新日出现），
+              // 与回测"以该日为末端的窗口"判定同一索引结果一致；无形态则该日不显示。
+              const patternChip = (date: string, i: number) => {
+                const ps = analyzeKlinePatternsAt(klines, i, fp, tagParams);
+                if (ps.length === 0) return null;
+                return (
+                  <span
+                    key={`pat-${date}-${ps[0].type}`}
+                    className={`${chipBase} ${patChipCls[ps[0].color].cls}${isPatSel(ps[0]) ? patChipCls[ps[0].color].sel : ''}`}
+                    onMouseEnter={() => handleMktTagEnter({ date, kind: 'pattern', ptype: ps[0].type })}
+                    onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date, kind: 'pattern', ptype: ps[0].type }); }}
+                  >{ps[0].label}</span>
+                );
+              };
               for (let vi = vStart; vi < klines.length; vi++) {
                 addChip(klines[vi].date, volChip(klines[vi].date, vi));
                 const pc = priceStateChip(klines[vi].date, vi);
                 if (pc) addChip(klines[vi].date, pc);
+                const ptC = patternChip(klines[vi].date, vi);
+                if (ptC) addChip(klines[vi].date, ptC);
               }
               const repairChip = (ev: MarketEvent) => (
                 <span
@@ -6132,16 +6151,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 if (day.reduce.length > 0) addChip(day.date, fengChip(day, 'reduce'));
               }
               */
-              // 最新K线形态（十字星/金针等）并进最新日期那一行，不单独占一行
-              if (patterns && patterns.length > 0) {
-                for (const p of patterns) addChip(p.date, (
-                  <span
-                    className={`${chipBase} ${patChipCls[p.color].cls}${isPatSel(p) ? patChipCls[p.color].sel : ''}`}
-                    onMouseEnter={() => handleMktTagEnter({ date: p.date, kind: 'pattern', ptype: p.type })}
-                    onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date: p.date, kind: 'pattern', ptype: p.type }); }}
-                  >{p.label}</span>
-                ));
-              }
               // 底部企稳已拆成 量能5档 + 价格态 两个原子 chip，在逐日循环中展示，无需追加独立企稳 chip
               // 最新收盘日：价格列显示缓存现价（红涨绿跌），其余日期显示当日收盘
               const latestDate = klines && klines.length ? klines[klines.length - 1].date : '';
@@ -6194,7 +6203,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 }
                 return <div className="text-[9px] text-app-rowtext">-</div>;
               })() : selKey && selKey.kind === 'pattern' ? (() => {
-                const combo = combos.find(x => x.type === selKey.ptype);
+                // 参考价值：按选中日期取当日组合参考（组合随时间/量能变化，避免串到别日）
+                const pi = klines ? klines.findIndex(k => k.date === selKey.date) : -1;
+                const ps = pi >= 0 && klines ? analyzeKlinePatternsAt(klines, pi, fp, tagParams) : [];
+                const p = selKey.ptype != null ? ps.find(x => x.type === selKey.ptype) : undefined;
+                const combo = p ? combos.find(x => x.type === selKey.ptype && x.date === p.date) : undefined;
                 return combo && combo.reference ? (
                   <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{combo.reference}</div>
                 ) : (

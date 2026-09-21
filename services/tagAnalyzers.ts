@@ -240,12 +240,14 @@ export interface FengDaySignal { date: string; add: FengHit[]; reduce: FengHit[]
 // 基础数据单元（基于 OHLC）：
 //   实体高度 = |收盘-开盘|；上影线 = 最高-MAX(开,收)；下影线 = MIN(开,收)-最低；振幅 = 最高-最低
 // 通用阈值：小实体 ≤ 振幅*10%；长影线 ≥ 实体*2；极短影线 ≤ 振幅*5%；十字星实体 ≤ 振幅*5%
-export function analyzeKlinePatterns(klines: BollKline[], fmt: (v: number) => string, cfg: TagParams = DEFAULT_TAG_PARAMS): KlinePattern[] {
+// 按指定日期索引 i 判定当日 K 线形态（十字星/金针/吊颈/射击之星/倒锤子线）。
+// 基础指标（前20日均线方向 / 近20日高低点与平均振幅 / 前5日均量 / 位置 / 量能）均基于 i 之前的数据计算，
+// 与回测“以该日为末端的窗口”判定同一索引时结果一致；越界保护要求 i≥20（前20日窗口 / 前5日均量不越界）。
+export function analyzeKlinePatternsAt(klines: BollKline[], i: number, fmt: (v: number) => string, cfg: TagParams = DEFAULT_TAG_PARAMS): KlinePattern[] {
   const classic = cfg.classic;
   const dojiBody = classic.classicDojiBody, smallBodyP = classic.classicSmallBody, nearHighP = classic.classicNearHigh, nearLowP = classic.classicNearLow;
   const n = klines.length;
-  if (n < 21) return []; // 需 ≥21 根K线（前20日趋势 / 平均振幅）
-  const i = n - 1; // 仅分析最新收盘交易日
+  if (n < 21 || i < 20 || i >= n) return []; // 需 ≥21 根K线（前20日趋势 / 平均振幅），且 i≥20 保证窗口不越界
   const k = klines[i];
   const body = Math.abs(k.close - k.open);
   const upper = k.high - Math.max(k.open, k.close);
@@ -282,8 +284,8 @@ export function analyzeKlinePatterns(klines: BollKline[], fmt: (v: number) => st
   // 1. 十字星：实体 ≤ 振幅*5%，且振幅 > 平均振幅*10%（区分一字板）；结合前20日趋势定方向
   if (tinyBody && range > avgRange * 0.1) {
     const dir: 'high' | 'low' | 'flat' = nearHigh ? 'high' : nearLow ? 'low' : 'flat';
-    const pos = classifyPosition(klines, cfg);
-    const vol = volBucket(classifyVolume(klines, cfg));
+    const pos = classifyPositionAt(klines, i, cfg);
+    const vol = volBucket(classifyVolumeAt(klines, i, cfg));
     const dojiColor = dojiColorByDim(pos, vol);
     patterns.push({
       type: 'doji', date: k.date, label: '十字星', single: '十', color: dojiColor, direction: dir,
@@ -344,6 +346,11 @@ export function analyzeKlinePatterns(klines: BollKline[], fmt: (v: number) => st
     }
   }
   return patterns;
+}
+
+// 全部形态判定（K线形态，最新收盘交易日）：委托到最近索引，保持既有调用兼容（回测/列表缩略仍复用同一判定）
+export function analyzeKlinePatterns(klines: BollKline[], fmt: (v: number) => string, cfg: TagParams = DEFAULT_TAG_PARAMS): KlinePattern[] {
+  return analyzeKlinePatternsAt(klines, (klines?.length ?? 1) - 1, fmt, cfg);
 }
 
 // ── 序列化指标计算（供环境分析/每日信号/风系分析使用，输入为完整K线序列）──
