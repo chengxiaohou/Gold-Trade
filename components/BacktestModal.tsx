@@ -883,16 +883,15 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
           left={displayQuote.left}
           top={displayQuote.top}
           width={210}
-          headerRight={(
+          headerLeft={(
               pinnedQuote ? (
                 <button
                   type="button"
                   onClick={togglePin}
                   title="取消固定，恢复随鼠标显示"
-                  className="flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] leading-none text-brand-red bg-brand-red/10 hover:bg-brand-red/20 transition-colors"
+                  className="flex items-center justify-center rounded p-0.5 text-app-subtext hover:text-app-subtext transition-colors"
                 >
                   <PinOff size={11} />
-                  <span>取消固定</span>
                 </button>
               ) : undefined
             )}

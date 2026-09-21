@@ -71,7 +71,7 @@ export default function SignalTagsFooter({ win, i, cfg, fmt, onPin, envChips }: 
         })}
       </div>
       {displayTag && (
-        <div className="mt-1 text-[9px] leading-relaxed bg-app-bg rounded border border-slate-500/20 px-1.5 py-1">
+        <div className="mt-1 text-[9px] leading-relaxed">
           <div className="text-app-subtext mb-0.5">判定依据</div>
           {displayTag.detail.length > 0 ? (
             <div className="text-app-rowtext break-all">{displayTag.detail.map((l, j) => <div key={j}>{l}</div>)}</div>
