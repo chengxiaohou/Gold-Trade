@@ -14,6 +14,7 @@ import type { StockLedgerMap } from '../services/stockLedgerStore';
 import { calcRealizedPnlForRange, calcPositionFromTrades } from '../services/realizedPnl';
 import { analyzeKlinePatterns, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, classifyPriceState, classifyPriceStateAt, volBucket, stabilizeComboReference, buildLatestShrinkTags, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, type KlineVolume5 } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PriceStateTag, PatternCombo } from '../services/tagAnalyzers';
+import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
 import { InputGroup } from './InputGroup';
 import { BacktestModal } from './BacktestModal';
 
@@ -3484,71 +3485,37 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 撤单/删除一条交易记录：挂单直接删除；已成交记录删除时同步回退持仓（买入回减股数与成本加权、卖出回增股数与已实现盈亏）
   const handleRemoveTrade = useCallback((stockId: string, tradeId: string) => {
-    onStocksChange(stocks.map(s => {
-      if (s.id !== stockId) return s;
-      const trade = (s.stockTrades || []).find(t => t.id === tradeId);
-      if (!trade || trade.isMerged) return s;
-      let shares = s.positionShares || 0;
-      let cost = s.positionCost || 0;
-      // 已成交记录删除：回退其持仓影响（与"取消成交"回退逻辑一致）
-      if (trade.status === 'filled') {
-        if (trade.side === 'buy') {
-          shares = Math.max(0, shares - trade.shares);
-          if (shares > 0) cost = (cost * (shares + trade.shares) - trade.price * trade.shares) / shares;
-          else cost = 0;
-        } else {
-          shares = shares + trade.shares;
-          // 若此前卖出已清仓导致成本归零，此处成本无法精准恢复，保持当前值
-        }
-      }
-      return { ...s, stockTrades: (s.stockTrades || []).filter(t => t.id !== tradeId), positionShares: shares, positionCost: cost };
-    }));
-  }, [stocks, onStocksChange]);
+    const target = stocks.find(s => s.id === stockId);
+    if (!target) return;
+    const patch = removeTrade(target, tradeId);
+    if (!patch.changed) return;
+    // 同步写本地流水账（IndexedDB）：否则刷新时启动回填会把已删除/撤销的挂单重新加回来
+    pushLedger(stockId, patch.stockTrades);
+    onStocksChange(stocks.map(s => s.id === stockId ? {
+      ...s,
+      stockTrades: patch.stockTrades,
+      positionShares: patch.positionShares,
+      positionCost: patch.positionCost,
+    } : s));
+  }, [stocks, onStocksChange, pushLedger]);
 
   // 标记挂单成交：买入加权成本、卖出结算已实现盈亏；并控制已成交记录条数上限
   const handleToggleTrade = useCallback((stockId: string, tradeId: string) => {
-    let updatedTradesForLedger: StockTrade[] | null = null;
-    const newStocks = stocks.map(s => {
-      if (s.id !== stockId) return s;
-      const trade = (s.stockTrades || []).find(t => t.id === tradeId);
-      if (!trade || trade.isMerged) return s;
-      let shares = s.positionShares || 0;
-      let cost = s.positionCost || 0;
-      let updatedTrade: StockTrade;
-      let newTrades: StockTrade[];
-      if (trade.status === 'pending') {
-        // 标记成交：买入加权成本，卖出按当前均价结算已实现盈亏
-        let realizedPnL: number | undefined;
-        if (trade.side === 'buy') {
-          shares = shares + trade.shares;
-          cost = shares > 0 ? (cost * (shares - trade.shares) + trade.price * trade.shares) / shares : 0;
-        } else {
-          shares = Math.max(0, shares - trade.shares);
-          realizedPnL = cost > 0 ? (trade.price - cost) * trade.shares : 0;
-          if (shares === 0) cost = 0;
-        }
-        updatedTrade = { ...trade, status: 'filled', filledAt: Date.now(), realizedPnL };
-      } else {
-        // 取消成交（反选）：反向回退持仓，已实现盈亏与成交时间一并清除
-        if (trade.side === 'buy') {
-          shares = Math.max(0, shares - trade.shares);
-          if (shares > 0) cost = (cost * (shares + trade.shares) - trade.price * trade.shares) / shares;
-          else cost = 0;
-        } else {
-          shares = shares + trade.shares;
-          // 若此前卖出已清仓（cost 归零），此处成本无法精准恢复，保持当前值，可手动校正
-        }
-        updatedTrade = { ...trade, status: 'pending', filledAt: undefined, realizedPnL: undefined };
-      }
-      newTrades = (s.stockTrades || []).map(t => t.id === tradeId ? updatedTrade : t);
-      // 已成交记录超限：折叠最旧成交为合并汇总（只读，不计入上限），仅在标记成交时触发
-      if (updatedTrade.status === 'filled') newTrades = compactFilledTrades(newTrades);
-      updatedTradesForLedger = newTrades;
-      return { ...s, stockTrades: newTrades, positionShares: shares, positionCost: cost };
-    });
+    const target = stocks.find(s => s.id === stockId);
+    if (!target) return;
+    const patch = toggleTradeStatus(target, tradeId);
+    if (!patch.changed) return;
+    // 已成交记录超限：折叠最旧成交为合并汇总（只读，不计入上限），仅在标记成交时触发
+    let trades = patch.stockTrades;
+    if (patch.status === 'filled') trades = compactFilledTrades(trades);
     // 同步写本地流水账（IndexedDB）：否则刷新时启动回填会用旧挂单记录覆盖，"标记成交"状态丢失、回退成挂单
-    if (updatedTradesForLedger !== null) pushLedger(stockId, updatedTradesForLedger);
-    onStocksChange(newStocks);
+    pushLedger(stockId, trades);
+    onStocksChange(stocks.map(s => s.id === stockId ? {
+      ...s,
+      stockTrades: trades,
+      positionShares: patch.positionShares,
+      positionCost: patch.positionCost,
+    } : s));
   }, [stocks, onStocksChange, pushLedger]);
 
   const handleAddStock = useCallback(async () => {
