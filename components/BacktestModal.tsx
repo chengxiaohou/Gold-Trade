@@ -6,6 +6,8 @@ import type { IChartApi, ISeriesApi, LineData, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams } from '../types';
 import { fetchBollData } from '../services/bollService';
 import type { BollKline } from '../services/bollService';
+import { mergeTodayBarToKlines } from '../services/bollService';
+import { getMarketStatus } from '../services/cacheService';
 import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL } from '../services/backtestEngine';
 import { ENV_TAG_CATALOG } from '../services/tagAnalyzers';
 import { InputGroup } from './InputGroup';
@@ -127,7 +129,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
   useEffect(() => {
     try { localStorage.setItem(strategyStorageKey, JSON.stringify(strategy)); } catch { /* 忽略写入失败 */ }
   }, [strategy, strategyStorageKey]);
-  const [rawKlines, setRawKlines] = useState<BollKline[] | null>(null); // 回测信号需含 volume 的全量 K 线
+  const [rawKlines, setRawKlines] = useState<BollKline[] | null>(null); // 已并入实时今日K线、回测信号需含 volume 的全量 K 线
   const [result, setResult] = useState<BacktestResult | null>(null);    // 回测结果（买卖点+成交+统计）
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
   // —— 策略组合模板（全局，仅规则列表，localStorage 持久化 + 云端独立字段同步）——
@@ -240,7 +242,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
   const computeTicksRef = useRef<(() => void) | null>(null);
   const maSeriesRef = useRef<ISeriesApi<'Line'>[] | null>(null);
   const bollSeriesRef = useRef<ISeriesApi<'Line'>[] | null>(null);
-  const [klines, setKlines] = useState<ChartCandle[] | null>(null);
+  const [klines, setKlines] = useState<ChartCandle[] | null>(null); // 图表 K 线（含实时今日K线）
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState<string | null>(null);
   // 图表指标模式：均线(默认) / 布林线
@@ -480,6 +482,8 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
   }, []);
 
   // 加载真实日线K线数据
+  // ⚠️ 把"实时今日K线"并入日线基座（mergeTodayBarToKlines，与股息页同一来源）：日线接口本身带 120 分钟 BOLL 缓存，
+  // 若直接拿末根今日K线会滞后；用页面已刷新的实时现价(开/高/低/量/现价)覆盖今日K线，保证与页面显示一致。
   useEffect(() => {
     let cancelled = false;
     setChartLoading(true);
@@ -488,18 +492,19 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
       const res = await fetchBollData(stock.code, 'daily', 'qfq');
       if (cancelled) return;
       if (res.data?.klines?.length) {
-        const candles: ChartCandle[] = res.data.klines
-          .map(k => ({ time: k.date, open: k.open, high: k.high, low: k.low, close: k.close }))
-          .sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+        const base = [...res.data.klines].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+        const merged = mergeTodayBarToKlines(base, stock, getMarketStatus());
+        const candles: ChartCandle[] = merged.map(k => ({ time: k.date, open: k.open, high: k.high, low: k.low, close: k.close })).sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
         setKlines(candles);
-        setRawKlines([...res.data.klines].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)));
+        setRawKlines(merged);
       } else {
         setChartError(res.error || '无K线数据');
       }
       setChartLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [stock.code]);
+    // stock.priceUpdatedAt：页面刷新出新实时价时，用新实时价重新合并今日K线（基座仍命中日线缓存，今日K线实时更新）
+  }, [stock.code, stock.priceUpdatedAt, stock.price, stock.open, stock.high, stock.low, stock.volume]);
 
   // 回测买卖点：由真实回测结果的成交记录映射为覆盖层标签（图⇄表一一对应）
   const demoMarkers = useMemo<TickSpec[]>(() => {
