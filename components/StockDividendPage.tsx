@@ -3507,7 +3507,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 标记挂单成交：买入加权成本、卖出结算已实现盈亏；并控制已成交记录条数上限
   const handleToggleTrade = useCallback((stockId: string, tradeId: string) => {
-    onStocksChange(stocks.map(s => {
+    let updatedTradesForLedger: StockTrade[] | null = null;
+    const newStocks = stocks.map(s => {
       if (s.id !== stockId) return s;
       const trade = (s.stockTrades || []).find(t => t.id === tradeId);
       if (!trade || trade.isMerged) return s;
@@ -3542,9 +3543,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       newTrades = (s.stockTrades || []).map(t => t.id === tradeId ? updatedTrade : t);
       // 已成交记录超限：折叠最旧成交为合并汇总（只读，不计入上限），仅在标记成交时触发
       if (updatedTrade.status === 'filled') newTrades = compactFilledTrades(newTrades);
+      updatedTradesForLedger = newTrades;
       return { ...s, stockTrades: newTrades, positionShares: shares, positionCost: cost };
-    }));
-  }, [stocks, onStocksChange]);
+    });
+    // 同步写本地流水账（IndexedDB）：否则刷新时启动回填会用旧挂单记录覆盖，"标记成交"状态丢失、回退成挂单
+    if (updatedTradesForLedger !== null) pushLedger(stockId, updatedTradesForLedger);
+    onStocksChange(newStocks);
+  }, [stocks, onStocksChange, pushLedger]);
 
   const handleAddStock = useCallback(async () => {
     if (!newStock.code.trim()) return;
