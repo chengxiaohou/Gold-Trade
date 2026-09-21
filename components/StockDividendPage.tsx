@@ -593,6 +593,16 @@ const ENV_REFERENCE: Record<string, string> = {
   '下轨扩张': '单边下跌恐慌中，加速赶底。不要试图接飞刀，必须等价格重新站回下轨之上。',
 };
 
+// 环境 chip 配色 + 底座（标签弹窗"环境"区与价格弹窗底栏共用，单一配色来源，勿在别处另写一套）
+const ENV_CHIP_CLS: Record<EnvTag['color'], { cls: string; sel: string }> = {
+  red: { cls: 'bg-red-500/10 text-red-500 border-red-500/20', sel: ' border-red-500/60' },
+  green: { cls: 'bg-green-500/10 text-green-500 border-green-500/20', sel: ' border-green-500/60' },
+  orange: { cls: 'bg-orange-500/10 text-orange-500 border-orange-500/20', sel: ' border-orange-500/60' },
+  indigo: { cls: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30', sel: ' border-indigo-400/60' },
+  slate: { cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30', sel: ' border-slate-400/60' },
+};
+const ENV_CHIP_BASE = 'inline-flex items-center justify-center rounded text-[9px] font-medium border px-1 py-px cursor-pointer transition-colors';
+
 // 每日量价/MACD 显著信号的参考价值（实战含义）：key 为 DailySignal.kind，
 // 与"环境量价（当前状态）"的参考价值区分——这里是时间轴上的转折点/信号提示。
 const DAILY_REFERENCE: Record<DailySignal['kind'], string> = {
@@ -5290,14 +5300,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             // 底栏与标签弹窗共用同一 computeAnalyzed canonical K线，杜绝"尾巴接错源"；
             // 之前这里独立走 mergeTodayBarToKlines 的实时合并数组，导致同日量能漂移(明显放量/明显缩量)。
             const a = computeAnalyzed(priceInfoStock);
-            return a.klines && a.klines.length > 0 ? (
+            if (!a.klines || a.klines.length === 0) return undefined;
+            // 环境标签：与标签弹窗"环境"区同源(same computeAnalyzed.env→selectEnvDisplayTags)、同配色(ENV_CHIP_CLS)，放在"当日信号"上方
+            const envChips = a.env ? selectEnvDisplayTags(a.env.tags).map(t => ({
+              key: t.key,
+              label: t.label,
+              cls: `${ENV_CHIP_BASE} ${ENV_CHIP_CLS[t.color].cls}`,
+            })) : undefined;
+            return (
               <SignalTagsFooter
                 win={a.klines}
                 i={a.klines.length - 1}
                 cfg={tagParams}
+                envChips={envChips}
                 onPin={() => setPriceInfoPinned(true)}
               />
-            ) : undefined;
+            );
           })()}
         />
       )}
@@ -5640,13 +5658,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const isDayTagSel = (date: string, tagKey: string) => !!selKey && selKey.kind === 'daytag' && selKey.date === date && selKey.tagKey === tagKey;
         const isPatSel = (p: KlinePattern) => !!selKey && selKey.kind === 'pattern' && selKey.ptype === p.type && selKey.date === p.date;
         const isEnvSel = (t: EnvTag) => !!selKey && selKey.kind === 'env' && selKey.ekey === t.key;
-        const envChipCls: Record<EnvTag['color'], { cls: string; sel: string }> = {
-          red: { cls: 'bg-red-500/10 text-red-500 border-red-500/20', sel: ' border-red-500/60' },
-          green: { cls: 'bg-green-500/10 text-green-500 border-green-500/20', sel: ' border-green-500/60' },
-          orange: { cls: 'bg-orange-500/10 text-orange-500 border-orange-500/20', sel: ' border-orange-500/60' },
-          indigo: { cls: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30', sel: ' border-indigo-400/60' },
-          slate: { cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30', sel: ' border-slate-400/60' },
-        };
+        const envChipCls = ENV_CHIP_CLS;
         const envDate = klines && klines.length > 0 ? klines[klines.length - 1].date : '';
         const selEv = selKey && selKey.kind !== 'pattern' && selKey.kind !== 'env' && events ? events.find(e => e.date === selKey.date) : null;
         // 判定依据文案：普通字符串行；或 {t,cls} 定制样式的行；或 {seg} 同一行内多个不同样式的片段。

@@ -13,12 +13,16 @@ export interface SignalTagsFooterProps {
   cfg?: TagParams;       // 标签判定参数（需与股票标签弹窗同一份）
   fmt?: (v: number) => string;
   onPin?: () => void;    // 点击 chip 将详情固定时通知宿主（如让父弹窗保持展开）
+  envChips?: EnvChip[];  // 环境标签（渲染在"当日信号"上方）；chip 已带完整样式
 }
+
+// 环境 chip 描述（label + 完整 className，配色由宿主用共享 ENV_CHIP_CLS 生成）
+export interface EnvChip { key: string; label: string; cls: string; }
 
 // chip 底座样式与标签弹窗一致（chipBase）
 const CHIP_BASE = 'inline-flex items-center justify-center rounded text-[9px] font-medium border px-1 py-px cursor-pointer transition-colors';
 
-export default function SignalTagsFooter({ win, i, cfg, fmt, onPin }: SignalTagsFooterProps) {
+export default function SignalTagsFooter({ win, i, cfg, fmt, onPin, envChips }: SignalTagsFooterProps) {
   // 权威接口：与标签弹窗"当日行"同一套；i 恒与 win 末根一致
   const tags: DayTag[] = useMemo(
     () => getDayTagSet(win, cfg, fmt),
@@ -28,13 +32,21 @@ export default function SignalTagsFooter({ win, i, cfg, fmt, onPin }: SignalTags
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   void i;
 
-  if (tags.length === 0) return null;
+  if (tags.length === 0 && (!envChips || envChips.length === 0)) return null;
 
   const displayKey = pinnedKey ?? hoverKey;
   const displayTag = displayKey ? tags.find(t => t.key === displayKey) : undefined;
 
   return (
     <div className="border-t border-app-border mt-1 pt-1.5">
+      {envChips && envChips.length > 0 && (
+        <div className="mb-1.5">
+          <div className="text-[9px] text-app-subtext mb-1">环境</div>
+          <div className="flex items-center gap-1 flex-wrap">
+            {envChips.map(c => <span key={c.key} className={c.cls}>{c.label}</span>)}
+          </div>
+        </div>
+      )}
       <div className="text-[9px] text-app-subtext mb-1">当日信号</div>
       <div className="flex items-center gap-1 flex-wrap">
         {tags.map(t => {

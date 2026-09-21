@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, Trash2, GripHorizontal, Play, Eye, EyeOff } from 'lucide-react';
+import { X, Plus, Trash2, GripHorizontal, Play, Eye, EyeOff, PinOff } from 'lucide-react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, MouseEventParams, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams } from '../types';
@@ -136,6 +136,21 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
   const [rawKlines, setRawKlines] = useState<BollKline[] | null>(null); // 已并入实时今日K线、回测信号需含 volume 的全量 K 线
   // 十字线悬浮行情面板（复用列表页"当日行情"浮窗）
   const [hoverQuote, setHoverQuote] = useState<{ name: string; price: number; changePercent: number | null; data: IndicatorResult; left: number; top: number; win: BollKline[]; idx: number } | null>(null);
+  // 固定态：把某一天的弹窗"钉"住，不再随鼠标跨天切换，方便点击弹窗内标签。
+  // read 走 ref（在 echarts 回调里读最新值），写走 state（驱动重渲）。cancel 时同时清 hoverQuote 隐藏弹窗。
+  const [pinnedQuote, setPinnedQuote] = useState<{ name: string; price: number; changePercent: number | null; data: IndicatorResult; left: number; top: number; win: BollKline[]; idx: number } | null>(null);
+  const pinnedRef = useRef<{ name: string; price: number; changePercent: number | null; data: IndicatorResult; left: number; top: number; win: BollKline[]; idx: number } | null>(null);
+  const displayQuote = pinnedQuote ?? hoverQuote;
+  const togglePin = () => {
+    if (pinnedRef.current) {
+      pinnedRef.current = null;
+      setPinnedQuote(null);
+      setHoverQuote(null); // 取消固定后隐藏弹窗（否者停留在旧位置，鼠标需重移到图上才恢复跟随）
+    } else if (hoverQuote) {
+      pinnedRef.current = hoverQuote;
+      setPinnedQuote(hoverQuote);
+    }
+  };
   const rawKlinesRef = useRef<BollKline[] | null>(null);
   const tagParamsRef = useRef<TagParams | undefined>(tagParams);
   useEffect(() => { rawKlinesRef.current = rawKlines; }, [rawKlines]);
@@ -474,36 +489,51 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
     let cachedDay: string | null = null;
     let cachedInd: IndicatorResult | null = null;
     let cachedChange: number | null = null;
-    const onCrosshairMove = (param: MouseEventParams) => {
+    // 从 MouseEventParams 统一构造 quote（hover 与 click 共用同一套取数/缓存逻辑）
+    const tryBuildQuote = (param: MouseEventParams) => {
       const series = seriesRef.current;
       const data = rawKlinesRef.current;
-      if (!series || !data || data.length === 0 || !param.time || !param.point) { setHoverQuote(null); return; }
+      if (!series || !data || data.length === 0 || !param.time || !param.point) return null;
       const bar = param.seriesData.get(series) as (ChartCandle & { time: Time }) | undefined;
-      if (!bar) { setHoverQuote(null); return; }
+      if (!bar) return null;
       const day = String(bar.time);
       const idx = data.findIndex(k => k.date === day);
-      if (idx < 0 || idx < 30) { setHoverQuote(null); return; } // 非候选K线(如数据空洞/前段)不弹
+      if (idx < 0 || idx < 30) return null; // 非候选K线(如数据空洞/前段)不弹
       const prefix = data.slice(0, idx + 1);
-      if (cachedDay === day) {
-        // same day：仅更新跟随位置，复用缓存的指标
-      } else {
+      if (cachedDay !== day) {
         const ind = calcIndicators(prefix);
-        if (!ind) { setHoverQuote(null); return; }
+        if (!ind) return null;
         const prevClose = idx > 0 ? data[idx - 1].close : data[idx].close;
         cachedChange = prevClose && prevClose > 0 ? ((data[idx].close - prevClose) / prevClose) * 100 : null;
         cachedInd = ind;
         cachedDay = day;
       }
-      if (!cachedInd) { setHoverQuote(null); return; }
+      if (!cachedInd) return null;
       const rect = el.getBoundingClientRect();
       const popW = 210;
       let left = rect.left + param.point.x + 12;
       if (left + popW > window.innerWidth - 8) left = Math.max(8, rect.left + param.point.x - popW - 12);
       let top = rect.top + param.point.y + 12;
       if (top + 240 > window.innerHeight - 8) top = Math.max(8, rect.top + param.point.y - 240 - 12);
-      setHoverQuote({ name: stock.name, price: data[idx].close, changePercent: cachedChange, data: cachedInd, left, top, win: prefix, idx });
+      return { name: stock.name, price: data[idx].close, changePercent: cachedChange, data: cachedInd, left, top, win: prefix, idx };
+    };
+    const onCrosshairMove = (param: MouseEventParams) => {
+      if (pinnedRef.current) return; // 固定中：冻结弹窗，不随鼠标跨天切换也不关闭
+      const q = tryBuildQuote(param);
+      setHoverQuote(q); // null 即隐藏
+    };
+    // 点击图表 → 钉住当前悬停那根 K 线的弹窗（进入固定模式）。
+    // 固定模式下弹窗不再跟随鼠标移动，方便用户点击弹窗内标签查看「判定依据」「参考价值」。
+    const onChartClick = (param: MouseEventParams) => {
+      if (pinnedRef.current) return; // 已固定中忽略（避免连点导致覆盖）
+      const q = tryBuildQuote(param);
+      if (!q) return;
+      pinnedRef.current = q;
+      setPinnedQuote(q);
+      setHoverQuote(q); // 同时写 hover 保证 render 时 pinned 未及时同步也能显示
     };
     chart.subscribeCrosshairMove(onCrosshairMove);
+    chart.subscribeClick(onChartClick);
     // 初始化时立即把当前 zoomMode 的缩放/触屏配置应用到新创建的 chart
     // （zoomMode 的 useEffect 依赖的是 state，chart 没 ready 时跑过一次 return 就跳过了；
     //  chart ready 后不会因 zoomMode 没变再触发——所以这里兜底一次，确保刷新页面 pinch 也能立即生效）
@@ -515,6 +545,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
     return () => {
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onTimeScaleChange);
       chart.unsubscribeCrosshairMove(onCrosshairMove);
+      chart.unsubscribeClick(onChartClick);
       setHoverQuote(null);
       ro?.disconnect();
       el.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
@@ -842,18 +873,36 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
   return createPortal(
     <div className="fixed inset-0 z-[9999] bg-app-bg">
       {/* 十字线悬浮：复用列表页"当日行情"浮窗，底部叠加当日命中信号 */}
-      {hoverQuote && (
+      {displayQuote && (
         <PriceInfoPopover
-          name={hoverQuote.name}
-          price={hoverQuote.price}
-          changePercent={hoverQuote.changePercent}
-          data={hoverQuote.data}
+          name={displayQuote.name}
+          price={displayQuote.price}
+          changePercent={displayQuote.changePercent}
+          data={displayQuote.data}
           loading={false}
-          left={hoverQuote.left}
-          top={hoverQuote.top}
+          left={displayQuote.left}
+          top={displayQuote.top}
           width={210}
+          headerRight={(
+              pinnedQuote ? (
+                <button
+                  type="button"
+                  onClick={togglePin}
+                  title="取消固定，恢复随鼠标显示"
+                  className="flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] leading-none text-brand-red bg-brand-red/10 hover:bg-brand-red/20 transition-colors"
+                >
+                  <PinOff size={11} />
+                  <span>取消固定</span>
+                </button>
+              ) : undefined
+            )}
           footer={(
-            <SignalTagsFooter win={hoverQuote.win} i={hoverQuote.idx} cfg={tagParamsRef.current} />
+            <SignalTagsFooter
+              win={displayQuote.win}
+              i={displayQuote.idx}
+              cfg={tagParamsRef.current}
+              onPin={() => { if (!pinnedRef.current && hoverQuote) { pinnedRef.current = hoverQuote; setPinnedQuote(hoverQuote); } }} // 点标签顺带固定，便于连续看各标签依据（幂等，不会误取消）
+            />
           )}
         />
       )}

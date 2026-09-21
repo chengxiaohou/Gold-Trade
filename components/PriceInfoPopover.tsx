@@ -17,11 +17,12 @@ export interface PriceInfoPopoverProps {
   onMouseEnter?: (e: React.MouseEvent<HTMLDivElement>) => void;
   onMouseLeave?: (e: React.MouseEvent<HTMLDivElement>) => void;
   footer?: React.ReactNode;          // 可选底部追加区（回测叠"当日信号标签"行）
+  headerRight?: React.ReactNode;     // 可选标题行右侧操作区（回测放"固定/取消固定"按钮）
 }
 
 export default function PriceInfoPopover({
   name, price, changePercent, data, loading, left, top, width = 210,
-  innerRef, onMouseEnter, onMouseLeave, footer,
+  innerRef, onMouseEnter, onMouseLeave, footer, headerRight,
 }: PriceInfoPopoverProps) {
   return (
     <div
@@ -31,8 +32,11 @@ export default function PriceInfoPopover({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
-      <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center">
+      <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center relative">
         <span className="text-[11px] font-bold text-app-subtext">{name}</span>
+        {headerRight && (
+          <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center">{headerRight}</div>
+        )}
       </div>
       <div className="px-2.5 py-1.5 bg-app-card">
         {loading && <div className="text-[10px] text-app-subtext py-2 text-center">加载中…</div>}
