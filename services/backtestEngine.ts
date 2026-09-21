@@ -58,6 +58,11 @@ function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams): { hit
   return { hits, env };
 }
 
+// 供回测图"十字线悬浮栏"展示某日命中的信号标签 —— 与 collectSignalsOnDay 同一来源，绝不另算一套。
+export function getDaySignalLabels(win: BollKline[], i: number, cfg?: TagParams): string[] {
+  return [...collectSignalsOnDay(win, i, cfg ?? DEFAULT_TAG_PARAMS).hits].sort();
+}
+
 // 引擎主函数：支持加仓/减仓、初始资金基准仓位、先卖后买、每日收盘后结算
 export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestParams = {}): BacktestResult {
   // 简化版费用：仅"最低佣金"（固定每笔费用），费率/印花税已从 UI 隐藏，不参与计算。

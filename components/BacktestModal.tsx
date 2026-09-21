@@ -2,14 +2,16 @@ import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom';
 import { X, Plus, Trash2, GripHorizontal, Play, Eye, EyeOff } from 'lucide-react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi, LineData, Time } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, LineData, MouseEventParams, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams } from '../types';
 import { fetchBollData } from '../services/bollService';
 import type { BollKline } from '../services/bollService';
 import { mergeTodayBarToKlines } from '../services/bollService';
 import { getMarketStatus } from '../services/cacheService';
-import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL } from '../services/backtestEngine';
+import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL, getDaySignalLabels } from '../services/backtestEngine';
 import { ENV_TAG_CATALOG } from '../services/tagAnalyzers';
+import { calcIndicators, type IndicatorResult } from '../services/indicators';
+import PriceInfoPopover from './PriceInfoPopover';
 import { InputGroup } from './InputGroup';
 
 type ChartCandle = { time: string; open: number; high: number; low: number; close: number };
@@ -130,6 +132,12 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
     try { localStorage.setItem(strategyStorageKey, JSON.stringify(strategy)); } catch { /* 忽略写入失败 */ }
   }, [strategy, strategyStorageKey]);
   const [rawKlines, setRawKlines] = useState<BollKline[] | null>(null); // 已并入实时今日K线、回测信号需含 volume 的全量 K 线
+  // 十字线悬浮行情面板（复用列表页"当日行情"浮窗）
+  const [hoverQuote, setHoverQuote] = useState<{ name: string; price: number; changePercent: number | null; data: IndicatorResult; left: number; top: number; signals: string[] } | null>(null);
+  const rawKlinesRef = useRef<BollKline[] | null>(null);
+  const tagParamsRef = useRef<TagParams | undefined>(tagParams);
+  useEffect(() => { rawKlinesRef.current = rawKlines; }, [rawKlines]);
+  useEffect(() => { tagParamsRef.current = tagParams; }, [tagParams]);
   const [result, setResult] = useState<BacktestResult | null>(null);    // 回测结果（买卖点+成交+统计）
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
   // —— 策略组合模板（全局，仅规则列表，localStorage 持久化 + 云端独立字段同步）——
@@ -459,6 +467,43 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
     // 缩放/平移导致可视区变化时，重算覆盖层标签位置，保证跟随 K 线
     const onTimeScaleChange = () => computeTicksRef.current?.();
     chart.timeScale().subscribeVisibleLogicalRangeChange(onTimeScaleChange);
+    // —— 十字线悬浮行情面板（复用列表页"当日行情"浮窗 PriceInfoPopover）——
+    // 仅当悬停在 K 线实体所在横带上才展示；热区外(空白/边缘)→ 隐藏。按日缓存指标，避免每像素重算。
+    let cachedDay: string | null = null;
+    let cachedInd: IndicatorResult | null = null;
+    let cachedSignals: string[] = [];
+    let cachedChange: number | null = null;
+    const onCrosshairMove = (param: MouseEventParams) => {
+      const series = seriesRef.current;
+      const data = rawKlinesRef.current;
+      if (!series || !data || data.length === 0 || !param.time || !param.point) { setHoverQuote(null); return; }
+      const bar = param.seriesData.get(series) as (ChartCandle & { time: Time }) | undefined;
+      if (!bar) { setHoverQuote(null); return; }
+      const day = String(bar.time);
+      const idx = data.findIndex(k => k.date === day);
+      if (idx < 0 || idx < 30) { setHoverQuote(null); return; } // 非候选K线(如数据空洞/前段)不弹
+      const prefix = data.slice(0, idx + 1);
+      if (cachedDay === day) {
+        // same day：仅更新跟随位置，复用缓存的指标/信号
+      } else {
+        const ind = calcIndicators(prefix);
+        if (!ind) { setHoverQuote(null); return; }
+        const prevClose = idx > 0 ? data[idx - 1].close : data[idx].close;
+        cachedChange = prevClose && prevClose > 0 ? ((data[idx].close - prevClose) / prevClose) * 100 : null;
+        cachedInd = ind;
+        cachedSignals = getDaySignalLabels(prefix, idx, tagParamsRef.current);
+        cachedDay = day;
+      }
+      if (!cachedInd) { setHoverQuote(null); return; }
+      const rect = el.getBoundingClientRect();
+      const popW = 210;
+      let left = rect.left + param.point.x + 12;
+      if (left + popW > window.innerWidth - 8) left = Math.max(8, rect.left + param.point.x - popW - 12);
+      let top = rect.top + param.point.y + 12;
+      if (top + 240 > window.innerHeight - 8) top = Math.max(8, rect.top + param.point.y - 240 - 12);
+      setHoverQuote({ name: stock.name, price: data[idx].close, changePercent: cachedChange, data: cachedInd, left, top, signals: cachedSignals });
+    };
+    chart.subscribeCrosshairMove(onCrosshairMove);
     // 初始化时立即把当前 zoomMode 的缩放/触屏配置应用到新创建的 chart
     // （zoomMode 的 useEffect 依赖的是 state，chart 没 ready 时跑过一次 return 就跳过了；
     //  chart ready 后不会因 zoomMode 没变再触发——所以这里兜底一次，确保刷新页面 pinch 也能立即生效）
@@ -469,6 +514,8 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
     }
     return () => {
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onTimeScaleChange);
+      chart.unsubscribeCrosshairMove(onCrosshairMove);
+      setHoverQuote(null);
       ro?.disconnect();
       el.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
       el.removeEventListener('touchstart', onTouchStart);
@@ -793,6 +840,31 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] bg-app-bg">
+      {/* 十字线悬浮：复用列表页"当日行情"浮窗，底部叠加当日命中信号 */}
+      {hoverQuote && (
+        <PriceInfoPopover
+          name={hoverQuote.name}
+          price={hoverQuote.price}
+          changePercent={hoverQuote.changePercent}
+          data={hoverQuote.data}
+          loading={false}
+          left={hoverQuote.left}
+          top={hoverQuote.top}
+          width={210}
+          footer={(
+            <div className="mt-1 pt-1 border-t border-app-border flex flex-wrap gap-1">
+              {hoverQuote.signals.length === 0 ? (
+                <span className="text-[10px] text-app-subtext">本日无信号</span>
+              ) : hoverQuote.signals.map(sig => {
+                const def = BACKTEST_TAG_CATALOG.find(d => (sig === 'break-event' ? d.key === 'break-event' : d.signalName === sig));
+                const label = sig === 'break-event' ? '破位' : (def?.label ?? sig);
+                const color = def?.color ?? (sig.includes('放') || sig.includes('高') || sig.includes('破') ? '#C44A3D' : sig.includes('缩') || sig.includes('低') ? '#22c55e' : '#94a3b8');
+                return <span key={sig} className="text-[10px] px-1.5 py-0.5 rounded border" style={{ borderColor: color + '55', color, background: color + '14' }}>{label}</span>;
+              })}
+            </div>
+          )}
+        />
+      )}
       <div className="h-full flex flex-col">
         {/* 标题栏 */}
         <div className="bg-app-bg/90 backdrop-blur-md px-3 py-2 flex items-center justify-between border-b border-app-border select-none shrink-0">

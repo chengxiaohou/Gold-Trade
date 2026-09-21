@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { BollKline } from '../bollService';
-import { BACKTEST_TAG_CATALOG, runBacktest, scanTagOccurrences } from '../backtestEngine';
+import { BACKTEST_TAG_CATALOG, runBacktest, scanTagOccurrences, getDaySignalLabels } from '../backtestEngine';
 import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPriceStateAt, volBucket, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags } from '../tagAnalyzers';
 import type { EnvTag } from '../tagAnalyzers';
 import type { BacktestStrategy, TagParams } from '../../types';
@@ -340,5 +340,33 @@ describe('回测与弹窗采用同一套标签判定参数（参数一致性）'
       runBacktest(flatKlines, { rules: [{ ...rule }], initialCapital: 100000 } as BacktestStrategy, { cfg });
     expect(strat(undefined).trades.length).toBe(0);   // 不传 cfg → 默认 1.40：平量 → 全程不触发
     expect(strat(customCfg).trades.length).toBeGreaterThan(0); // 0.01：明显放量 → 触发买入
+  });
+});
+
+//
+// 5. 回测图十字线悬浮栏的信号来源 = 回测/弹窗同一套（getDaySignalLabels 不另算）
+//
+describe('getDaySignalLabels（十字线悬浮栏信号来源）', () => {
+  it('末根十字星日 → 当日命中含"十字星"', () => {
+    const ks = mkKlines(140, undefined, { 139: { open: 100, close: 100, high: 105, low: 95 } });
+    const labels = getDaySignalLabels(ks, 139);
+    expect(labels).toContain('十字星');
+  });
+
+  it('与 runBacktest 同一判据：命中信号集合能驱动对应 catalog 规则触发', () => {
+    // 用手工放大数 case 构造"明显放量"日
+    const ks = mkKlines(140);
+    const idx = 139;
+    const prefix = ks.slice(0, idx + 1);
+    // 自定义 cfg：量比 1.0 ≥ 0.01 → 每根都"明显放量"；悬浮栏应报出该信号
+    const cfg: TagParams = JSON.parse(JSON.stringify(DEFAULT_TAG_PARAMS));
+    cfg.classic.classicVolHighStrong.value = 0.01;
+    const labels = getDaySignalLabels(prefix, idx, cfg);
+    expect(labels).toContain('明显放量');
+    // 且该信号能真实触发 catalog 里对应 key 的规则（目录与信号判定同源不悬空）
+    const def = BACKTEST_TAG_CATALOG.find(d => d.signalName === '明显放量');
+    expect(def).toBeTruthy();
+    const { trades } = runBacktest(ks, { rules: [{ id: 'x', tagKey: def!.key, label: def!.label, action: 'buy' as const, pct: 10, enabled: true }], initialCapital: 100000 } as BacktestStrategy, { cfg });
+    expect(trades.length).toBeGreaterThan(0);
   });
 });

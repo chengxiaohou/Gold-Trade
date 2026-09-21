@@ -17,6 +17,8 @@ import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, Env
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
 import { InputGroup } from './InputGroup';
 import { BacktestModal } from './BacktestModal';
+import PriceInfoPopover from './PriceInfoPopover';
+import { calcIndicators, formatPrice, formatVolume, type IndicatorResult } from '../services/indicators';
 
 const TAG_PALETTE = [
   { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20', hover: 'hover:border-gray-500/50' },
@@ -322,13 +324,6 @@ const formatDividendCell = (current: number, fetched: number | null, hasData: bo
   );
 };
 
-// 根据名称判断：ETF 显示 3 位小数，普通股票显示 2 位小数
-const formatPrice = (price: number | undefined | null, name?: string): string => {
-  if (price == null || !Number.isFinite(price)) return '-';
-  const isETF = name?.includes('ETF') || name?.includes('etf');
-  return isETF ? price.toFixed(3) : price.toFixed(2);
-};
-
 // ---- 交易记录通用常量与共享控件（交易窗口与交易列简易浮窗复用） ----
 const TRADE_STATUS_LABEL: Record<string, string> = {
   'buy-pending': '挂买', 'sell-pending': '挂卖',
@@ -484,102 +479,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stockName, currentPr
   );
 }
 
-// ---- 技术指标计算（复用已有K线数据，不额外请求） ----
-
-interface IndicatorResult {
-  open: number | null;   // 最新一根K线的开盘价
-  high: number | null;   // 最新一根K线的最高价
-  low: number | null;    // 最新一根K线的最低价
-  changePct: number | null; // 最新收盘较昨收涨跌幅
-  volume: number | null; // 最新一根K线的成交量
-  volumeMa5: number | null; // 最近5根K线成交量均值
-  kdj: { k: number | null; d: number | null; j: number | null };
-  rsi: { rsi6: number | null; rsi12: number | null; rsi24: number | null };
-  macd: { dif: number | null; dea: number | null; macd: number | null };
-}
-
-// 基于K线序列计算技术指标（KDJ/RSI/MACD、最高/最低/成交量及涨跌幅等）
-function calcIndicators(klines: BollKline[]): IndicatorResult | null {
-  if (!klines || klines.length === 0) return null;
-  const last = klines[klines.length - 1];
-  const prev = klines.length >= 2 ? klines[klines.length - 2] : null;
-
-  const high = last.high ?? null;
-  const low = last.low ?? null;
-  const volume = last.volume ?? null;
-  // 成交量 MA5：最近5根K线成交量均值
-  const volumeMa5 = klines.length >= 5
-    ? klines.slice(-5).reduce((sum, k) => sum + (k.volume ?? 0), 0) / 5
-    : null;
-  const changePct = prev && prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : null;
-
-  // ---- KDJ (9) ----
-  let kv: number | null = null, dv: number | null = null, jv: number | null = null;
-  if (klines.length >= 9) {
-    let k = 50, d = 50, prevK = 50;
-    for (let i = 0; i < klines.length; i++) {
-      const start = Math.max(0, i - 9 + 1);
-      let hh = -Infinity, ll = Infinity;
-      for (let j = start; j <= i; j++) {
-        if (klines[j].high > hh) hh = klines[j].high;
-        if (klines[j].low < ll) ll = klines[j].low;
-      }
-      const rsv = hh === ll ? 50 : ((klines[i].close - ll) / (hh - ll)) * 100;
-      k = (2 / 3) * (prevK === 50 ? k : prevK) + (1 / 3) * rsv;
-      prevK = k;
-      d = (2 / 3) * d + (1 / 3) * k;
-    }
-    kv = parseFloat(k.toFixed(2));
-    dv = parseFloat(d.toFixed(2));
-    jv = parseFloat((3 * k - 2 * d).toFixed(2));
-  }
-
-  // ---- RSI (6/12/24) ----
-  const calcRsi = (n: number): number | null => {
-    if (klines.length <= n) return null;
-    let up = 0, down = 0;
-    for (let i = klines.length - n; i < klines.length; i++) {
-      const diff = klines[i].close - klines[i - 1].close;
-      if (diff > 0) up += diff; else down -= diff;
-    }
-    if (down === 0) return up === 0 ? 50 : 100;
-    return parseFloat((100 - 100 / (1 + up / down)).toFixed(2));
-  };
-
-  // ---- MACD (12,26,9) ----
-  const ema = (arr: number[], n: number): number[] => {
-    const res: number[] = [];
-    const alpha = 2 / (n + 1);
-    let prevEma = 0;
-    arr.forEach((v, i) => {
-      if (i === 0) { prevEma = v; res.push(v); }
-      else { prevEma = alpha * v + (1 - alpha) * prevEma; res.push(prevEma); }
-    });
-    return res;
-  };
-  const closes = klines.map(k => k.close);
-  let dif: number | null = null, dea: number | null = null, macd: number | null = null;
-  if (closes.length >= 26) {
-    const ema12 = ema(closes, 12);
-    const ema26 = ema(closes, 26);
-    const n = closes.length;
-    const difArr = closes.map((_, i) => ema12[i] - ema26[i]);
-    const deaArr = ema(difArr, 9);
-    dif = parseFloat(difArr[n - 1].toFixed(3));
-    dea = parseFloat(deaArr[deaArr.length - 1].toFixed(3));
-    macd = parseFloat((2 * (difArr[n - 1] - deaArr[deaArr.length - 1])).toFixed(3));
-  }
-
-  return { open: last.open ?? null, high, low, changePct, volume, volumeMa5, kdj: { k: kv, d: dv, j: jv }, rsi: { rsi6: calcRsi(6), rsi12: calcRsi(12), rsi24: calcRsi(24) }, macd: { dif, dea, macd } };
-}
-
-// 成交量格式化（万/亿,单位手）
-const formatVolume = (v: number | null): string => {
-  if (v == null) return '-';
-  if (v >= 1e8) return `${(v / 1e8).toFixed(2)}亿手`;
-  if (v >= 1e4) return `${(v / 1e4).toFixed(2)}万手`;
-  return `${Math.round(v)}手`;
-};
+// ---- 技术指标计算：由 services/indicators 统一实现（列表页与回测图共用） ----
 
 const formatFetchTime = (timestamp: number): string => {
   if (!timestamp || timestamp < 1000000000000) return '-';
@@ -4173,8 +4073,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           const latest = ordinary.length ? [...ordinary].sort((a, b) => b.createdAt - a.createdAt)[0] : null;
                           if (!latest) return (
                             <div className="flex flex-col items-center leading-tight gap-px">
-                              <span className="font-mono text-[10px] whitespace-nowrap text-app-subtext">-</span>
-                              <span className="text-[9px]">&nbsp;</span>
+                              <span className="font-mono text-[10px]">&nbsp;</span>
+                              <span className="text-[9px] text-app-subtext">-</span>
                               <span className="font-mono text-[8px]">&nbsp;</span>
                             </div>
                           );
@@ -5463,87 +5363,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
       {/* 列表页价格技术指标弹窗 */}
       {priceInfoStock && (
-        <div
-          ref={priceInfoRef}
-          className="fixed z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden"
-          style={{ top: priceInfoPos.top, left: priceInfoPos.left, width: 210 }}
+        <PriceInfoPopover
+          innerRef={priceInfoRef}
+          name={priceInfoStock.name}
+          price={priceInfoStock.price}
+          changePercent={priceInfoStock.changePercent}
+          data={priceInfoData}
+          loading={priceInfoLoading}
+          left={priceInfoPos.left}
+          top={priceInfoPos.top}
+          width={210}
           onMouseEnter={() => { priceInfoHoveredRef.current = true; }}
           onMouseLeave={handlePriceInfoFloatLeave}
-        >
-          <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center">
-            <span className="text-[11px] font-bold text-app-subtext">{priceInfoStock.name}</span>
-          </div>
-          <div className="px-2.5 py-1.5 bg-app-card">
-            {priceInfoLoading && <div className="text-[10px] text-app-subtext py-2 text-center">加载中…</div>}
-            {!priceInfoLoading && !priceInfoData && <div className="text-[10px] text-app-subtext py-2 text-center">暂无数据</div>}
-            {!priceInfoLoading && priceInfoData && (() => {
-              const d = priceInfoData;
-              const fmt = (v: number | null) => v == null ? '-' : formatPrice(v, priceInfoStock!.name);
-              const pctColor = d.changePct == null ? 'text-app-subtext' : d.changePct >= 0 ? 'text-brand-red' : 'text-brand-green';
-              // 昨收价：现价 / (1 + 涨跌幅)
-              const prevClose = (d.changePct == null || priceInfoStock == null || priceInfoStock.price <= 0)
-                ? null : priceInfoStock.price / (1 + d.changePct / 100);
-              // 开/现/低/高 各自与昨收价比较着色（符合正规交易软件规则）
-              const priceColor = (v: number | null) => {
-                if (v == null || prevClose == null) return 'text-app-subtext';
-                if (v > prevClose) return 'text-brand-red';
-                if (v < prevClose) return 'text-brand-green';
-                return 'text-app-rowtext';
-              };
-              const fmtPct = (v: number | null) => v == null ? '-' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
-              const numFmt = (v: number | null, dec = 2) => v == null ? '-' : v.toFixed(dec);
-              const cell2 = (label: string, val: React.ReactNode, colorClass = 'text-app-rowtext') => (
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-[10px] text-app-subtext whitespace-nowrap">{label}</span>
-                  <span className={`font-mono text-[11px] ${colorClass}`}>{val}</span>
-                </div>
-              );
-              const volumeRatioText = (() => {
-                if (d.volume == null || d.volumeMa5 == null || d.volumeMa5 === 0) return '-';
-                return (d.volume / d.volumeMa5).toFixed(2);
-              })();
-              const volumeColor = d.volume != null && d.volumeMa5 != null && d.volumeMa5 !== 0
-                ? (d.volume >= d.volumeMa5 ? 'text-brand-red' : 'text-brand-green')
-                : 'text-app-rowtext';
-              const changeAmount = (() => {
-                if (d.changePct == null || priceInfoStock == null || priceInfoStock.price <= 0) return '-';
-                return formatPrice(priceInfoStock.price - priceInfoStock.price / (1 + d.changePct / 100), priceInfoStock.name);
-              })();
-              const subRows = (label: string, vals: [string, string | null, string?][]) => {
-                return (
-                  <div className="py-[3px]">
-                    <div className="text-[10px] text-app-subtext mb-0.5">{label}</div>
-                    <div className="flex gap-2">
-                      {vals.map(([k, v, c]) => (
-                        <span key={k} className="flex-1 text-center font-mono text-[10px] text-app-rowtext">
-                          <span>{k}<span>:</span></span>
-                          <span className={c ?? ''}>{v ?? '-'}</span>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                );
-              };
-              // 超买(数值偏高)用红色，超卖(数值偏低)用绿色
-              const rsiColor = (v: number | null) => v == null ? undefined : (v > 70 ? 'text-brand-red' : v < 30 ? 'text-brand-green' : undefined);
-              const kdjColor = (v: number | null, buyHigh: number, sellLow: number) => v == null ? undefined : (v > buyHigh ? 'text-brand-red' : v < sellLow ? 'text-brand-green' : undefined);
-              return (
-                <div>
-                  <div className="mb-1 space-y-1">
-                    <div className="grid grid-cols-2 gap-x-4">{cell2('开', fmt(d.open), priceColor(d.open))}{cell2('现', formatPrice(priceInfoStock.price, priceInfoStock.name), priceColor(priceInfoStock.price))}</div>
-                    <div className="grid grid-cols-2 gap-x-4">{cell2('低', fmt(d.low), priceColor(d.low))}{cell2('高', fmt(d.high), priceColor(d.high))}</div>
-                    <div className="grid grid-cols-2 gap-x-4">{cell2('额', changeAmount, pctColor)}{cell2('幅', fmtPct(d.changePct), pctColor)}</div>
-                    <div className="grid grid-cols-2 gap-x-4">{cell2('量', formatVolume(d.volume), volumeColor)}{cell2('量比', volumeRatioText, volumeColor)}</div>
-                  </div>
-                  <div className="border-t border-app-border my-1" />
-                  {subRows('KDJ (9, 3, 3)', [['K', numFmt(d.kdj.k), kdjColor(d.kdj.k, 80, 20)], ['D', numFmt(d.kdj.d), kdjColor(d.kdj.d, 80, 20)], ['J', numFmt(d.kdj.j), kdjColor(d.kdj.j, 100, 0)]])}
-                  {subRows('RSI (6, 12, 24)', [['6', numFmt(d.rsi.rsi6), rsiColor(d.rsi.rsi6)], ['12', numFmt(d.rsi.rsi12), rsiColor(d.rsi.rsi12)], ['24', numFmt(d.rsi.rsi24), rsiColor(d.rsi.rsi24)]])}
-                  {subRows('MACD (12, 26, 9)', [['DIF', numFmt(d.macd.dif, 3)], ['DEA', numFmt(d.macd.dea, 3)], ['MACD', numFmt(d.macd.macd, 3)]])}
-                </div>
-              );
-            })()}
-          </div>
-        </div>
+        />
       )}
 
       {/* 列表页持仓详情浮窗（朝左侧展示，数据来自本地持仓） */}
