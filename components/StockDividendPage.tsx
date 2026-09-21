@@ -3660,7 +3660,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 </div>
               </th>
                 {cols.includes('position') && <th
-                  colSpan={3}
+                  colSpan={4}
                   className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-r border-app-border"
                 >
                   持仓
