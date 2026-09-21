@@ -12,8 +12,8 @@ import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
 import { calcRealizedPnlForRange, calcPositionFromTrades } from '../services/realizedPnl';
-import { analyzeKlinePatterns, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, analyzeStabilize, buildLatestShrinkTags, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt } from '../services/tagAnalyzers';
-import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, StabilizeTag, PatternCombo } from '../services/tagAnalyzers';
+import { analyzeKlinePatterns, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, classifyPriceState, classifyPriceStateAt, volBucket, stabilizeComboReference, buildLatestShrinkTags, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, type KlineVolume5 } from '../services/tagAnalyzers';
+import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PriceStateTag, PatternCombo } from '../services/tagAnalyzers';
 import { InputGroup } from './InputGroup';
 import { BacktestModal } from './BacktestModal';
 
@@ -676,13 +676,6 @@ const ENV_REFERENCE: Record<string, string> = {
   '布林收口': '大变盘前的宁静（高价值信号）。盯紧方向：向上突破中轨做多，向下跌破中轨做空或离场。',
   '上轨扩张': '单边强趋势进行中，加速上涨标志。持仓者要拿住，但追高风险极大。',
   '下轨扩张': '单边下跌恐慌中，加速赶底。不要试图接飞刀，必须等价格重新站回下轨之上。',
-};
-
-// 底部企稳标签参考价值：key 为 StabilizeTag.kind
-const STABILIZE_REFERENCE: Record<string, string> = {
-  retrace: '低 —— 缩量回踩量能虽缩但价格仍弱、低点未抬高，更可能是下跌中继，不宜急于抄底。',
-  stable: '中等 —— 缩量企稳是初步止跌信号，短线可关注；需等放量确认或站稳 MA10 再行动。',
-  confirm: '较高 —— 有效企稳（放量收复 MA10 + 低点连抬）通常是可交易买点，是缩量企稳体系里最可靠的信号。',
 };
 
 // 每日量价/MACD 显著信号的参考价值（实战含义）：key 为 DailySignal.kind，
@@ -1480,7 +1473,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   type MktSel = { date: string; kind: 'event' | 'status' | 'repair' }
     | { date: string; kind: 'pattern'; ptype: KlinePattern['type'] }
     | { date: string; kind: 'env'; ekey: string }
-    | { date: string; kind: 'stabilize' }
+    | { date: string; kind: 'pricestate' }
     | { date: string; kind: 'volday' }
     | { date: string; kind: 'daily'; dkey: DailySignal['kind'] }
     | { date: string; kind: 'feng'; dir: 'add' | 'reduce' };
@@ -1966,12 +1959,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [nameSubMode, setNameSubMode] = useState<'tags' | 'code'>('tags');
   // 首次判定的统一数据源：对"同一组（实时价覆盖后的）K 线"只计算一遍 破位/形态/环境，
   // 列表缩略标签（buildLatestShrinkTags）与行情浮窗详细展示共用这份结果，杜绝两套判定喂不同数据。
-  const LATEST_TAG_VERSION = 14; // 判定/展示逻辑变更时 +1，避免 HMR 保留旧缓存导致缩略与弹窗不一致
-  const analyzedCache = useRef(new Map<string, { v: number; key: string; data: { klines: BollKline[] | null; events: MarketEvent[] | null; allowVol: boolean; patterns: KlinePattern[] | null; combos: PatternCombo[]; env: EnvResult | null; stabilize: StabilizeTag | null } }>());
-  const computeAnalyzed = (stock: StockEntry): { klines: BollKline[] | null; events: MarketEvent[] | null; allowVol: boolean; patterns: KlinePattern[] | null; combos: PatternCombo[]; env: EnvResult | null; stabilize: StabilizeTag | null } => {
+  const LATEST_TAG_VERSION = 18; // 判定/展示逻辑变更时 +1，避免 HMR 保留旧缓存导致缩略与弹窗不一致
+  const analyzedCache = useRef(new Map<string, { v: number; key: string; data: { klines: BollKline[] | null; events: MarketEvent[] | null; allowVol: boolean; patterns: KlinePattern[] | null; combos: PatternCombo[]; env: EnvResult | null; priceState: PriceStateTag | null; latestVol: KlineVolume5 | null } }>());
+  const computeAnalyzed = (stock: StockEntry): { klines: BollKline[] | null; events: MarketEvent[] | null; allowVol: boolean; patterns: KlinePattern[] | null; combos: PatternCombo[]; env: EnvResult | null; priceState: PriceStateTag | null; latestVol: KlineVolume5 | null } => {
     const daily = stockBollMap.get(stock.id)?.daily;
     const raw = daily?.klines;
-    if (!raw || raw.length === 0) return { klines: null, events: null, allowVol: false, patterns: null, combos: [], env: null, stabilize: null };
+    if (!raw || raw.length === 0) return { klines: null, events: null, allowVol: false, patterns: null, combos: [], env: null, priceState: null, latestVol: null };
     const price = stock.price;
     // 缓存键必须包含实时价与"今日/live bar 的内容指纹"——盘中价格原地更新时数组引用不变，
     // 仅用数组引用会导致判定结果（如来去匆匆的十字星）缓存过期、与实时价不一致。
@@ -1992,7 +1985,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       patterns,
       combos: analyzeKlineCombo(klines, patterns, tagParams),
       env: analyzeEnvironment(klines, v => formatPrice(v, stock.name), allowVol, tagParams),
-      stabilize: analyzeStabilize(klines, v => formatPrice(v, stock.name), allowVol, tagParams),
+      priceState: classifyPriceState(klines, v => formatPrice(v, stock.name), tagParams),
+      latestVol: classifyVolumeAt(klines, klines.length - 1, tagParams),
     };
     analyzedCache.current.set(stock.id, { v: LATEST_TAG_VERSION, key, data });
     return data;
@@ -2002,7 +1996,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const getLatestDayTags = (stock: StockEntry): { key: string; text: string; cls: string }[] => {
     const a = computeAnalyzed(stock);
     if (!a.klines) return [];
-    return buildLatestShrinkTags(a.events, a.patterns, a.env, a.klines[a.klines.length - 1].date, a.stabilize);
+    return buildLatestShrinkTags(a.events, a.patterns, a.env, a.klines[a.klines.length - 1].date, a.priceState, a.latestVol);
   };
 
   // 列表当前显示顺序（按排序规则重排；默认顺序即 stocks 原序）
@@ -5854,12 +5848,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const analyzed = computeAnalyzed(mktInfoStock);
         const klines = analyzed.klines;
         const events = analyzed.events;
-        const allowVol = analyzed.allowVol;
         // const dailySignals = klines && klines.length > 0 ? analyzeDailySignals(klines, allowVol) : []; // 暂时注释，后续可能重新启用
         const patterns = analyzed.patterns;
         const combos = analyzed.combos;
         const env = analyzed.env;
-        const stabilize = analyzed.stabilize;
         // const feng = klines && klines.length > 0 ? analyzeFengSignals(klines, v => formatPrice(v, mktInfoStock.name), allowVol, tagParams) : null; // 暂时注释，后续可能重新启用
         const fmtDay = (d: string) => {
           const p = d.split('-');
@@ -5923,9 +5915,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         } else if (selKey && selKey.kind === 'env') {
           const t = env?.tags.find(x => x.key === selKey.ekey);
           if (t) explainLines.push(...t.detail);
-        } else if (selKey && selKey.kind === 'stabilize') {
-          // 底部企稳：判定依据 + 参考价值见 detail
-          if (stabilize) explainLines.push(...stabilize.detail);
+        } else if (selKey && selKey.kind === 'pricestate') {
+          // 价格态原子：判定依据见 detail（量能由独立 volday chip 展示，参考价值区给组合映射）
+          const psi = klines ? klines.findIndex(k => k.date === selKey.date) : -1;
+          if (psi >= 0 && klines) {
+            const ps = classifyPriceStateAt(klines, psi, fp, tagParams);
+            if (ps) explainLines.push(...ps.detail);
+          }
         } else if (selKey && selKey.kind === 'volday') {
           // 每日量能标签：判定依据（当日量 vs 前5日均量 + 量比）
           const di = klines ? klines.findIndex(k => k.date === selKey.date) : -1;
@@ -5937,7 +5933,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             if (di >= 5) { let s = 0; for (let j = di - 5; j <= di - 1; j++) s += klines[j].volume; ratio = s > 0 ? kd.volume / (s / 5) : 0; }
             explainLines.push(`${fmtDay(selKey.date)} 量能 ${v}`);
             explainLines.push(`当日量 ${fix(kd.volume)}，前5日均量 ${fix(ratio > 0 ? kd.volume / ratio : 0)}`);
-            if (ratio > 0) explainLines.push(`量比 ${ratio.toFixed(2)}，收${kd.close < klines[di - 1]?.close ? '跌' : '涨'}，${v === '放量' ? '资金活跃' : v === '缩量' ? '动能减弱' : '势均力敌'}`);
+            if (ratio > 0) { const vb = volBucket(v); explainLines.push(`量比 ${ratio.toFixed(2)}，收${kd.close < klines[di - 1]?.close ? '跌' : '涨'}，${vb === '放量' ? '资金活跃' : vb === '缩量' ? '动能减弱' : '势均力敌'}`); }
           }
         /* 每日信号判定依据暂时注释
         } else if (selKey && selKey.kind === 'daily') {
@@ -6032,11 +6028,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 arr.push({ key: `${date}-${arr.length}`, node });
                 byDate.set(date, arr);
               };
-              // 每日量能标签（放量/缩量/平量）：近10个交易日起，每天一行一个；点击查看判定依据
-              const VOLDAY_CLS: Record<'放量' | '缩量' | '平量', { cls: string; sel: string }> = {
-                放量: { cls: 'bg-red-500/10 text-red-500 border-red-500/20', sel: ' border-red-500/60' },
-                缩量: { cls: 'bg-green-500/10 text-green-500 border-green-500/20', sel: ' border-green-500/60' },
+              // 每日量能标签（量能5档原词）：近10个交易日起，每天一行一个；点击查看判定依据
+              const VOLDAY_CLS: Record<'明显放量' | '温和放量' | '平量' | '温和缩量' | '明显缩量', { cls: string; sel: string }> = {
+                明显放量: { cls: 'bg-red-600/10 text-red-500 border-red-500/30', sel: ' border-red-500/70' },
+                温和放量: { cls: 'bg-red-500/10 text-red-500 border-red-500/20', sel: ' border-red-500/60' },
                 平量: { cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30', sel: ' border-slate-400/60' },
+                温和缩量: { cls: 'bg-green-500/10 text-green-500 border-green-500/20', sel: ' border-green-500/60' },
+                明显缩量: { cls: 'bg-green-600/10 text-green-500 border-green-500/30', sel: ' border-green-500/70' },
               };
               const isSelVolday = (date: string) => !!selKey && selKey.kind === 'volday' && selKey.date === date;
               const volChip = (date: string, i: number) => {
@@ -6049,8 +6047,30 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   >{v}</span>
                 );
               };
+              // 价格态原子（反弹/企稳/回踩）chip：与量能 chip 并列展示；无态（null）则不显示，避免普通日子刷屏
+              const PRICESTATE_CLS: Record<'red' | 'green', { cls: string; sel: string }> = {
+                red: { cls: 'bg-red-500/10 text-red-500 border-red-500/20', sel: ' border-red-500/60' },
+                green: { cls: 'bg-green-500/10 text-green-500 border-green-500/20', sel: ' border-green-500/60' },
+              };
+              const isSelPriceState = (date: string) => !!selKey && selKey.kind === 'pricestate' && selKey.date === date;
+              const priceStateChip = (date: string, i: number) => {
+                const ps = classifyPriceStateAt(klines, i, fp, tagParams);
+                if (!ps || !ps.name) return null;
+                const pc = PRICESTATE_CLS[ps.color === 'green' ? 'green' : 'red'];
+                return (
+                  <span
+                    className={`${chipBase} ${pc.cls}${isSelPriceState(date) ? pc.sel : ''}`}
+                    onMouseEnter={() => handleMktTagEnter({ date, kind: 'pricestate' })}
+                    onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date, kind: 'pricestate' }); }}
+                  >{ps.name}</span>
+                );
+              };
               const vStart = Math.max(0, klines.length - 10);
-              for (let vi = vStart; vi < klines.length; vi++) addChip(klines[vi].date, volChip(klines[vi].date, vi));
+              for (let vi = vStart; vi < klines.length; vi++) {
+                addChip(klines[vi].date, volChip(klines[vi].date, vi));
+                const pc = priceStateChip(klines[vi].date, vi);
+                if (pc) addChip(klines[vi].date, pc);
+              }
               const repairChip = (ev: MarketEvent) => (
                 <span
                   className={`${chipBase} bg-indigo-500/10 text-indigo-400 border-indigo-500/30${isSel(ev, 'repair') ? ' border-indigo-400/60' : ''}`}
@@ -6144,17 +6164,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   >{p.label}</span>
                 ));
               }
-              // 底部企稳（缩量回踩/缩量企稳/有效企稳）：最新日期那一行追加一个 chip
-              if (stabilize) {
-                const isStabSel = !!selKey && selKey.kind === 'stabilize' && selKey.date === stabilize.date;
-                addChip(stabilize.date, (
-                  <span
-                    className={`${chipBase} ${patChipCls[stabilize.color].cls}${isStabSel ? patChipCls[stabilize.color].sel : ''}`}
-                    onMouseEnter={() => handleMktTagEnter({ date: stabilize.date, kind: 'stabilize' })}
-                    onClick={(e) => { e.stopPropagation(); handleMktTagClick({ date: stabilize.date, kind: 'stabilize' }); }}
-                  >{stabilize.label}</span>
-                ));
-              }
+              // 底部企稳已拆成 量能5档 + 价格态 两个原子 chip，在逐日循环中展示，无需追加独立企稳 chip
               // 最新收盘日：价格列显示缓存现价（红涨绿跌），其余日期显示当日收盘
               const latestDate = klines && klines.length ? klines[klines.length - 1].date : '';
               const dates = [...byDate.keys()].sort();
@@ -6188,9 +6198,24 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 ) : (
                   <div className="text-[9px] text-app-rowtext">-</div>
                 );
-              })() : selKey && selKey.kind === 'stabilize' ? (
-                <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{STABILIZE_REFERENCE[stabilize?.kind ?? ''] ?? '-'}</div>
-              ) : selKey && selKey.kind === 'pattern' ? (() => {
+              })() : selKey && selKey.kind === 'pricestate' ? (() => {
+                // 参考价值：当日同时有 量能与价格态 两个原子 → 展示组合参考价值（价格态×量能）
+                // 回踩按 sub 分档展示（健康回踩/弱势回踩），底部确认走"放量底部确认"高价值文案
+                const pi = klines ? klines.findIndex(k => k.date === selKey.date) : -1;
+                if (pi >= 0 && klines) {
+                  const ps = classifyPriceStateAt(klines, pi, fp, tagParams);
+                  if (ps && ps.name) {
+                    const vol = classifyVolumeAt(klines, pi, tagParams);
+                    const psName = ps.kind === 'pullback' ? (ps.sub === 'weak' ? '弱势回踩' : '健康回踩') : ps.name;
+                    return (
+                      <div className="text-[9px] leading-relaxed text-app-rowtext break-all">
+                        <span className="text-app-subtext">{volBucket(vol)}{psName}：</span>{stabilizeComboReference(ps.name, vol, ps.sub)}
+                      </div>
+                    );
+                  }
+                }
+                return <div className="text-[9px] text-app-rowtext">-</div>;
+              })() : selKey && selKey.kind === 'pattern' ? (() => {
                 const combo = combos.find(x => x.type === selKey.ptype);
                 return combo && combo.reference ? (
                   <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{combo.reference}</div>
