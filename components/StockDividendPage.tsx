@@ -3603,10 +3603,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   const handleDeleteStock = useCallback((id: string) => {
     onStocksChange(stocks.filter(s => s.id !== id));
+    // 同步删本地流水账（IndexedDB）：否则刷新时启动回填会从流水账读到该股旧交易、把股票"复活"
+    onLedgerMapChange?.(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     if (editingId === id) {
       setEditingId(null);
     }
-  }, [stocks, onStocksChange, editingId]);
+  }, [stocks, onStocksChange, onLedgerMapChange, editingId]);
 
   const handleUpdateField = useCallback((id: string, field: keyof StockEntry, value: string | number) => {
     onStocksChange(stocks.map(s => {
