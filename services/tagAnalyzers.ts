@@ -162,6 +162,42 @@ export function volBucket(v5: KlineVolume5): '放量' | '缩量' | '平量' {
   return '平量';
 }
 
+// ── 每日信号 chip 配色【单一数据源】──────────────────────────────
+// 标签弹窗（StockDividendPage 每日信号区）与 底部信号栏（SignalTagsFooter）共用，
+// 语义：红=偏多/放量/看多，绿=偏空/缩量/看空，蓝=中性，slate=平量/中性弱。
+// 任何一侧改色只改此处，两侧自动一致。
+type ChipCls = { cls: string; sel: string };
+export const CHIP_CLS_RED = 'bg-red-500/10 text-red-500 border-red-500/20';
+export const CHIP_CLS_GREEN = 'bg-green-500/10 text-green-500 border-green-500/20';
+export const CHIP_CLS_BLUE = 'bg-blue-500/10 text-blue-400 border-blue-500/30';
+export const CHIP_CLS_SLATE = 'bg-slate-500/10 text-slate-400 border-slate-500/30';
+export const CHIP_SEL_RED = ' border-red-500/60';
+export const CHIP_SEL_GREEN = ' border-green-500/60';
+export const CHIP_SEL_BLUE = ' border-blue-400/60';
+export const CHIP_SEL_SLATE = ' border-slate-400/60';
+// K 线形态 chip：按 KlinePattern.color（red/green/blue/slate）
+export const PATTERN_CHIP_CLS: Record<KlinePattern['color'], ChipCls> = {
+  red: { cls: CHIP_CLS_RED, sel: CHIP_SEL_RED },
+  green: { cls: CHIP_CLS_GREEN, sel: CHIP_SEL_GREEN },
+  blue: { cls: CHIP_CLS_BLUE, sel: CHIP_SEL_BLUE },
+  slate: { cls: CHIP_CLS_SLATE, sel: CHIP_SEL_SLATE },
+};
+// 每日量能 5 档 chip：放量红、缩量绿、平量 slate（明显级加深底色）
+export const VOLUME5_CHIP_CLS: Record<KlineVolume5, ChipCls> = {
+  明显放量: { cls: 'bg-red-600/10 text-red-500 border-red-500/30', sel: ' border-red-500/70' },
+  温和放量: { cls: CHIP_CLS_RED, sel: CHIP_SEL_RED },
+  平量: { cls: CHIP_CLS_SLATE, sel: CHIP_SEL_SLATE },
+  温和缩量: { cls: CHIP_CLS_GREEN, sel: CHIP_SEL_GREEN },
+  明显缩量: { cls: 'bg-green-600/10 text-green-500 border-green-500/30', sel: ' border-green-500/70' },
+};
+// 价格态 chip：偏多红、看空绿（clean 按 ps.color 取）
+export const PRICESTATE_CHIP_CLS: Record<'red' | 'green', ChipCls> = {
+  red: { cls: CHIP_CLS_RED, sel: CHIP_SEL_RED },
+  green: { cls: CHIP_CLS_GREEN, sel: CHIP_SEL_GREEN },
+};
+// 破位事件 chip：看空 → 绿色
+export const BREAK_CHIP_CLS: ChipCls = { cls: CHIP_CLS_GREEN, sel: CHIP_SEL_GREEN };
+
 // 十字星形态 token 着色：结合位置×量能的整体多空倾向（理财 AI 语义）
 export function dojiColorByDim(position: KlinePosition, volume: KlineVolume): 'red' | 'green' | 'blue' {
   if (position === '低位' && volume === '缩量') return 'red';  // 抛压衰竭/底部信号

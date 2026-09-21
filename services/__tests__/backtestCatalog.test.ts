@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { BollKline } from '../bollService';
 import { BACKTEST_TAG_CATALOG, runBacktest, scanTagOccurrences, getDaySignalLabels } from '../backtestEngine';
 import { getSignalTagDetail } from '../signalTagDetail';
-import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPriceStateAt, volBucket, stabilizeComboReference, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags } from '../tagAnalyzers';
+import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPriceStateAt, volBucket, stabilizeComboReference, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags, PATTERN_CHIP_CLS, VOLUME5_CHIP_CLS, BREAK_CHIP_CLS } from '../tagAnalyzers';
 import type { EnvTag } from '../tagAnalyzers';
 import type { BacktestStrategy, TagParams } from '../../types';
 import { DEFAULT_TAG_PARAMS } from '../../types';
@@ -386,7 +386,10 @@ describe('getSignalTagDetail（信号栏判定依据+参考价值，与标签弹
     expect(star).toBeTruthy();
     expect(star!.detail.length).toBeGreaterThan(0);   // 判定依据非空
     expect(star!.reference.length).toBeGreaterThan(0); // 组合参考价值非空
-    expect(star!.color).toBeTruthy();
+    // chip 配色 = 标签弹窗 PATTERN_CHIP_CLS（语义色：此处中位平量十字星 → 蓝）
+    expect(star!.cls).toContain('text-blue-400');
+    expect(star!.cls).toBe(PATTERN_CHIP_CLS['blue'].cls);
+    expect(star!.sel).toBe(PATTERN_CHIP_CLS['blue'].sel);
   });
 
   it('明显放量：detail 为量能判定（含量能词与量比）、reference 为 volday 静态文案', () => {
@@ -397,6 +400,9 @@ describe('getSignalTagDetail（信号栏判定依据+参考价值，与标签弹
     expect(vol!.detail.some(l => l.includes('量能 明显放量'))).toBe(true);
     expect(vol!.detail.some(l => l.includes('量比'))).toBe(true);
     expect(vol!.reference).toContain('量增价升有持续性'); // 与弹窗 volday 参考价值同一静态文案
+    // chip 配色 = 标签弹窗 VOLUME5_CHIP_CLS（放量 → 红）
+    expect(vol!.cls).toBe(VOLUME5_CHIP_CLS['明显放量'].cls);
+    expect(vol!.sel).toBe(VOLUME5_CHIP_CLS['明显放量'].sel);
   });
 
   it('缩量弱势回踩：detail 为价格态判定依据、reference == stabilizeComboReference（与弹窗参考价值区一致）', () => {
@@ -424,6 +430,9 @@ describe('getSignalTagDetail（信号栏判定依据+参考价值，与标签弹
     if (brk) {
       expect(brk.detail.length).toBeGreaterThan(0);
       expect(brk.reference).toBe('');
+      // chip 配色 = 标签弹窗破位绿（看空）
+      expect(brk.cls).toBe(BREAK_CHIP_CLS.cls);
+      expect(brk.sel).toBe(BREAK_CHIP_CLS.sel);
     }
   });
 });

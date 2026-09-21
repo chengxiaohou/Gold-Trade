@@ -12,7 +12,7 @@ import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
 import { calcRealizedPnlForRange, calcPositionFromTrades } from '../services/realizedPnl';
-import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, classifyPriceState, classifyPriceStateAt, volBucket, stabilizeComboReference, buildLatestShrinkTags, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, type KlineVolume5 } from '../services/tagAnalyzers';
+import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, classifyPriceState, classifyPriceStateAt, volBucket, stabilizeComboReference, buildLatestShrinkTags, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, PRICESTATE_CHIP_CLS as PRICESTATE_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5 } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PriceStateTag, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
 import { InputGroup } from './InputGroup';
@@ -5708,8 +5708,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         };
         const fmtShort = (d: string) => d.slice(5).replace('-', '/');
         const chipBase = 'inline-flex items-center justify-center rounded text-[9px] font-medium border px-1 py-px cursor-pointer transition-colors';
-        const greenCls = 'bg-green-500/10 text-green-500 border-green-500/20';
-        const greenSelCls = ' border-green-500/60';
         const statusChip = (ev: MarketEvent) => {
           if (ev.status === 'trueBreak') return { cls: greenCls, selCls: greenSelCls, label: '真破位' };
           if (ev.status === 'falseBreak') return { cls: 'bg-red-500/10 text-red-500 border-red-500/20', selCls: ' border-red-500/60', label: '假破位' };
@@ -5741,12 +5739,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           slate: { cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30', sel: ' border-slate-400/60' },
         };
         const envDate = klines && klines.length > 0 ? klines[klines.length - 1].date : '';
-        const patChipCls: Record<KlinePattern['color'], { cls: string; sel: string }> = {
-          red: { cls: 'bg-red-500/10 text-red-500 border-red-500/20', sel: ' border-red-500/60' },
-          green: { cls: 'bg-green-500/10 text-green-500 border-green-500/20', sel: ' border-green-500/60' },
-          blue: { cls: 'bg-blue-500/10 text-blue-400 border-blue-500/30', sel: ' border-blue-400/60' },
-          slate: { cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30', sel: ' border-slate-400/60' },
-        };
         const fp = (v: number) => formatPrice(v, mktInfoStock.name);
         const selEv = selKey && selKey.kind !== 'pattern' && selKey.kind !== 'env' && events ? events.find(e => e.date === selKey.date) : null;
         // 判定依据文案：普通字符串行；或 {t,cls} 定制样式的行；或 {seg} 同一行内多个不同样式的片段
@@ -5880,14 +5872,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 arr.push({ key: `${date}-${arr.length}`, node });
                 byDate.set(date, arr);
               };
-              // 每日量能标签（量能5档原词）：近10个交易日起，每天一行一个；点击查看判定依据
-              const VOLDAY_CLS: Record<'明显放量' | '温和放量' | '平量' | '温和缩量' | '明显缩量', { cls: string; sel: string }> = {
-                明显放量: { cls: 'bg-red-600/10 text-red-500 border-red-500/30', sel: ' border-red-500/70' },
-                温和放量: { cls: 'bg-red-500/10 text-red-500 border-red-500/20', sel: ' border-red-500/60' },
-                平量: { cls: 'bg-slate-500/10 text-slate-400 border-slate-500/30', sel: ' border-slate-400/60' },
-                温和缩量: { cls: 'bg-green-500/10 text-green-500 border-green-500/20', sel: ' border-green-500/60' },
-                明显缩量: { cls: 'bg-green-600/10 text-green-500 border-green-500/30', sel: ' border-green-500/70' },
-              };
+              // 每日量能标签（量能5档原词）：近10个交易日起，每天一行一个；点击查看判定依据（配色=共享 VOLDAY_CLS）
               const isSelVolday = (date: string) => !!selKey && selKey.kind === 'volday' && selKey.date === date;
               const volChip = (date: string, i: number) => {
                 const v = classifyVolumeAt(klines, i, tagParams);
@@ -5900,10 +5885,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 );
               };
               // 价格态原子（反弹/企稳/回踩）chip：与量能 chip 并列展示；无态（null）则不显示，避免普通日子刷屏
-              const PRICESTATE_CLS: Record<'red' | 'green', { cls: string; sel: string }> = {
-                red: { cls: 'bg-red-500/10 text-red-500 border-red-500/20', sel: ' border-red-500/60' },
-                green: { cls: 'bg-green-500/10 text-green-500 border-green-500/20', sel: ' border-green-500/60' },
-              };
               const isSelPriceState = (date: string) => !!selKey && selKey.kind === 'pricestate' && selKey.date === date;
               const priceStateChip = (date: string, i: number) => {
                 const ps = classifyPriceStateAt(klines, i, fp, tagParams);

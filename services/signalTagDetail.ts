@@ -13,44 +13,41 @@ import { getDaySignalLabels } from './backtestEngine';
 import {
   analyzeKlinePatternsAt, analyzeKlineCombo, classifyVolumeAt, classifyPriceStateAt,
   volBucket, analyzeMarketConditions, buildBreakExplainLines, DAILY_SIGNAL_CATALOG, stabilizeComboReference,
-  type BacktestTagDef,
+  PATTERN_CHIP_CLS, VOLUME5_CHIP_CLS, PRICESTATE_CHIP_CLS, BREAK_CHIP_CLS,
+  type KlinePattern, type KlineVolume5,
 } from './tagAnalyzers';
 
-export interface SignalTagDetail { label: string; color: string; detail: string[]; reference: string; }
+// cls/sel = 标签弹窗同款语义 chip 配色（单一数据源：tagAnalyzers），与弹窗逐字一致。
+export interface SignalTagDetail { label: string; cls: string; sel: string; detail: string[]; reference: string; }
 
 export const fmtDay = (d: string) => d;
 export const fmtShort = (d: string) => d.slice(5).replace('-', '/');
 const fmtP = (v: number) => v.toFixed(2);
 
 // volday 参考价值：与标签弹窗参考价值区（L6074）逐字一致，务必保持同一文案。
-const VOL_REFERENCE = '量能标签：放量=资金活跃/量增价升有持续性；缩量=动能减弱，高位缩量防滞涨、低位缩量常为见底前兆；平量=势均力敌的信息量低。需结合价格方向与所处位置综合判断。';
-
-// 找到标签对应的目录条目（供取主题色）。signalName 与命中标签串匹配；破位 token 也登记在目录里。
-function findCatalog(label: string): BacktestTagDef | undefined {
-  return DAILY_SIGNAL_CATALOG.find(d => d.signalName === label);
-}
+const VOL_REFERENCE = '量能标签：放量=资金活跃/量增价升有持续性；缩量=动能减弱，高位缩量防滞涨、低位缩量常为见底前兆；平量=势均力敌的信息量低。需结合价格方向与所处位置综合判断。'
 
 // ── 各 source 的判定依据/参考价值：全部复用 tagAnalyzers 输出，禁止复制判定逻辑 ──
 
-// pattern：形态判定依据 + 组合参考价值（位置×量能×形态）
-function buildPattern(label: string, win: BollKline[], i: number, cfg: TagParams, fmt: (v: number) => string): { detail: string[]; reference: string } | null {
+// pattern：形态判定依据 + 组合参考价值（位置×量能×形态）；chip 色 = KlinePattern.color
+function buildPattern(label: string, win: BollKline[], i: number, cfg: TagParams, fmt: (v: number) => string): { detail: string[]; reference: string; chip: (typeof PATTERN_CHIP_CLS)[KlinePattern['color']] } | null {
   const patterns = analyzeKlinePatternsAt(win, i, fmt, cfg);
   const p = patterns.find(x => x.label === label);
   if (!p) return null;
   const combo = analyzeKlineCombo(win, patterns, cfg).find(c => c.type === p.type && c.date === p.date);
-  return { detail: p.detail, reference: combo?.reference ?? '' };
+  return { detail: p.detail, reference: combo?.reference ?? '', chip: PATTERN_CHIP_CLS[p.color] };
 }
 
-// break：判定位 event 的判定依据；弹窗参考价值区对破位无映射 → 参考为空
-function buildBreak(win: BollKline[], i: number, fmt: (v: number) => string): { detail: string[]; reference: string } | null {
+// break：判定位 event 的判定依据；弹窗参考价值区对破位无映射 → 参考为空；chip 色 = 破位绿
+function buildBreak(win: BollKline[], i: number, fmt: (v: number) => string): { detail: string[]; reference: string; chip: typeof BREAK_CHIP_CLS } | null {
   const last = win[win.length - 1];
   const ev = analyzeMarketConditions(win, 1).find(x => x.date === last.date && x.brokenCount > 0);
   if (!ev) return null;
-  return { detail: buildBreakExplainLines(ev, 'event', fmt, fmtDay, fmtShort), reference: '' };
+  return { detail: buildBreakExplainLines(ev, 'event', fmt, fmtDay, fmtShort), reference: '', chip: BREAK_CHIP_CLS };
 }
 
-// volume：量能5档判定依据（当日量/前5日均量/量比）+ volday 静态参考，与弹窗逐字一致
-function buildVolume(label: string, win: BollKline[], i: number, cfg: TagParams): { detail: string[]; reference: string } | null {
+// volume：量能5档判定依据（当日量/前5日均量/量比）+ volday 静态参考；chip 色 = VOLUME5_CHIP_CLS
+function buildVolume(label: string, win: BollKline[], i: number, cfg: TagParams): { detail: string[]; reference: string; chip: (typeof VOLUME5_CHIP_CLS)[KlineVolume5] } | null {
   const v = classifyVolumeAt(win, i, cfg);
   if (v !== label) return null;
   const kd = win[i];
@@ -64,21 +61,21 @@ function buildVolume(label: string, win: BollKline[], i: number, cfg: TagParams)
     const vb = volBucket(v);
     detail.push(`量比 ${ratio.toFixed(2)}，收${kd.close < win[i - 1].close ? '跌' : '涨'}，${vb === '放量' ? '资金活跃' : vb === '缩量' ? '动能减弱' : '势均力敌'}`);
   }
-  return { detail, reference: VOL_REFERENCE };
+  return { detail, reference: VOL_REFERENCE, chip: VOLUME5_CHIP_CLS[v] };
 }
 
-// stabilize：价格态×量能组合（价态判定依据 + 组合参考价值），sub 分档与弹窗一致
-function buildStabilize(label: string, win: BollKline[], i: number, cfg: TagParams, fmt: (v: number) => string): { detail: string[]; reference: string } | null {
+// stabilize：价格态×量能组合（价态判定依据 + 组合参考价值）；chip 色 = ps.color
+function buildStabilize(label: string, win: BollKline[], i: number, cfg: TagParams, fmt: (v: number) => string): { detail: string[]; reference: string; chip: (typeof PRICESTATE_CHIP_CLS)['red' | 'green'] } | null {
   const ps = classifyPriceStateAt(win, i, fmt, cfg);
   if (!ps || !ps.name) return null;
   const vol = classifyVolumeAt(win, i, cfg);
   const psName = ps.kind === 'pullback' ? (ps.sub === 'weak' ? '弱势回踩' : '健康回踩') : ps.name;
   if (`${volBucket(vol)}${psName}` !== label) return null;
-  return { detail: ps.detail, reference: stabilizeComboReference(ps.name, vol, ps.sub) };
+  return { detail: ps.detail, reference: stabilizeComboReference(ps.name, vol, ps.sub), chip: PRICESTATE_CHIP_CLS[ps.color === 'green' ? 'green' : 'red'] };
 }
 
 // 主入口：对某交易日（win=klines[0..i] 末根=当日）提取全部命中信号标签的
-// {label, color, detail, reference}。信号集合与回测悬浮一致（getDaySignalLabels）。
+// {label, cls, sel, detail, reference}。信号集合与回测悬浮一致（getDaySignalLabels）。
 export function getSignalTagDetail(
   win: BollKline[],
   i: number,
@@ -89,25 +86,29 @@ export function getSignalTagDetail(
   const labels = getDaySignalLabels(win, i, cfg);
   const out: SignalTagDetail[] = [];
   for (const label of labels) {
-    const catalog = findCatalog(label);
     let detail: string[] = [];
     let reference = '';
+    let chip: { cls: string; sel: string } = BREAK_CHIP_CLS;
     if (label === 'break-event') {
       const b = buildBreak(win, i, fmt);
-      if (b) { detail = b.detail; reference = b.reference; }
-    } else if (catalog?.source === 'pattern') {
-      const b = buildPattern(label, win, i, cfg, fmt);
-      if (b) { detail = b.detail; reference = b.reference; }
-    } else if (catalog?.source === 'volume') {
-      const b = buildVolume(label, win, i, cfg);
-      if (b) { detail = b.detail; reference = b.reference; }
-    } else if (catalog?.source === 'stabilize') {
-      const b = buildStabilize(label, win, i, cfg, fmt);
-      if (b) { detail = b.detail; reference = b.reference; }
+      if (b) { detail = b.detail; reference = b.reference; chip = b.chip; }
+    } else {
+      const catalog = DAILY_SIGNAL_CATALOG.find(d => d.signalName === label);
+      if (catalog?.source === 'pattern') {
+        const b = buildPattern(label, win, i, cfg, fmt);
+        if (b) { detail = b.detail; reference = b.reference; chip = b.chip; }
+      } else if (catalog?.source === 'volume') {
+        const b = buildVolume(label, win, i, cfg);
+        if (b) { detail = b.detail; reference = b.reference; chip = b.chip; }
+      } else if (catalog?.source === 'stabilize') {
+        const b = buildStabilize(label, win, i, cfg, fmt);
+        if (b) { detail = b.detail; reference = b.reference; chip = b.chip; }
+      }
     }
     out.push({
       label: label === 'break-event' ? '破位' : label,
-      color: catalog?.color ?? '',
+      cls: chip.cls,
+      sel: chip.sel,
       detail,
       reference,
     });
