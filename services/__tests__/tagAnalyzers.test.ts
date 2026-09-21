@@ -1,16 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import type { BollKline } from '../bollService';
-import type { EnvTag, MarketEvent, StabilizeTag } from '../tagAnalyzers';
+import type { EnvTag, MarketEvent, PriceStateTag } from '../tagAnalyzers';
 import {
   analyzeKlinePatterns,
   analyzeKlineCombo,
   classifyPosition,
   classifyVolumeAt,
   classifyVolume,
+  volBucket,
   dojiColorByDim,
   analyzeMarketConditions,
   analyzeEnvironment,
-  analyzeStabilize,
+  classifyPriceState,
+  classifyPriceStateAt,
+  stabilizeComboReference,
   buildLatestDayTags,
   buildLatestShrinkTags,
   selectEnvDisplayTags,
@@ -170,25 +173,56 @@ describe('classifyPosition / classifyVolume / dojiColorByDim（K线形态原子�
   it('K线不足6根 → 量能 平量', () => {
     expect(classifyVolume(mkKlines(3))).toBe('平量');
   });
-  it('末根量/前5日均量 ≥1.2 → 放量', () => {
-    const k = mkKlines(40, { overrides: { 39: { volume: 2_000_000 } } });
-    expect(classifyVolume(k)).toBe('放量');
+  it('末根量比 ≥1.4 → 明显放量', () => {
+    const k = mkKlines(40, { overrides: { 39: { volume: 2_000_000 } } }); // 2e6 / [(4*1e6+2e6)/5]=1.2e6 → ratio≈1.67
+    expect(classifyVolume(k)).toBe('明显放量');
   });
-  it('末根量/前5日均量 ≤0.8 → 缩量', () => {
-    const k = mkKlines(40, { overrides: { 39: { volume: 100_000 } } });
-    expect(classifyVolume(k)).toBe('缩量');
-  });
-  it('末根量与均量相当 → 平量', () => {
+  it('末根量与均量相当、ratio≈1.0 → 平量（普通交易日不刷量档）', () => {
     expect(classifyVolume(mkKlines(40))).toBe('平量');
   });
-  it('老缓存缺新增字段（classicVolUp/classicVolDown）不崩溃，回落默认值', () => {
+  it('末根量比 ≤0.55 → 明显缩量', () => {
+    const k = mkKlines(40, { overrides: { 39: { volume: 100_000 } } }); // ratio≈0.12
+    expect(classifyVolume(k)).toBe('明显缩量');
+  });
+  it('量能5档·边界：明显放量/温和放量交界 ratio=1.4（含）与恰低于', () => {
+    const at_40 = mkKlines(40, { overrides: { 39: { volume: 1_555_556 } } }); // ratio≈1.40 → 明显放量
+    expect(classifyVolume(at_40)).toBe('明显放量');
+    const below_40 = mkKlines(40, { overrides: { 39: { volume: 1_500_000 } } }); // ratio≈1.36
+    expect(classifyVolume(below_40)).toBe('温和放量');
+  });
+  it('量能5档·边界：温和放量/平量交界 ratio=1.15（含）与恰低于', () => {
+    const k = mkKlines(40, { overrides: { 39: { volume: 1_200_000 } } }); // ratio≈1.1538 → 温和放量
+    expect(classifyVolume(k)).toBe('温和放量');
+    const below = mkKlines(40, { overrides: { 39: { volume: 1_100_000 } } }); // ratio≈1.048 → 平量
+    expect(classifyVolume(below)).toBe('平量');
+  });
+  it('量能5档·边界：平量/温和缩量交界 ratio=0.8（含平量）与恰低于', () => {
+    const at_80 = mkKlines(40, { overrides: { 39: { volume: 762_000 } } }); // ratio≈0.8001 → 平量
+    expect(classifyVolume(at_80)).toBe('平量');
+    const below_80 = mkKlines(40, { overrides: { 39: { volume: 700_000 } } }); // ratio≈0.745 → 温和缩量
+    expect(classifyVolume(below_80)).toBe('温和缩量');
+  });
+  it('量能5档·边界：温和缩量/明显缩量交界 ratio=0.55（含明显缩量）', () => {
+    const k = mkKlines(40, { overrides: { 39: { volume: 490_000 } } }); // ratio≈0.535 → 明显缩量
+    expect(classifyVolume(k)).toBe('明显缩量');
+    const above = mkKlines(40, { overrides: { 39: { volume: 520_000 } } }); // ratio≈0.565 → 温和缩量
+    expect(classifyVolume(above)).toBe('温和缩量');
+  });
+  it('老缓存缺新增字段（classicVolHighStrong 等）不崩溃，回落默认阈值', () => {
     const oldCfg = {
       feng: { fengLowBuy: { enabled: true, value: 1.05 }, fengPullback: { enabled: true, value: 1.01 }, fengVolBreak: { enabled: true, value: 1.2 } },
       classic: { classicDojiBody: { enabled: true, value: 0.05 }, classicSmallBody: { enabled: true, value: 0.3 }, classicNearHigh: { enabled: true, value: 0.95 }, classicNearLow: { enabled: true, value: 1.05 }, classicMaSqueeze: { enabled: true, value: 0.04 } },
-    } as any; // 模拟云端/本地旧结构：classic 缺少 classicVolUp/classicVolDown
+    } as any; // 模拟云端/本地旧结构：classic 缺少量能5档字段
     const k = mkKlines(40, { overrides: { 39: { volume: 100_000 } } });
-    expect(classifyVolume(k, oldCfg)).toBe('缩量'); // 回落默认 classicVolDown=0.8
+    expect(classifyVolume(k, oldCfg)).toBe('明显缩量'); // 回落默认 classicVolLowStrong=0.55
     expect(classifyPosition(k, oldCfg)).toBe('高位'); // 不崩溃，正常归一后按默认阈值判定
+  });
+  it('volBucket：5档粗分折叠为 放量/缩量/平量', () => {
+    expect(volBucket('明显放量')).toBe('放量');
+    expect(volBucket('温和放量')).toBe('放量');
+    expect(volBucket('平量')).toBe('平量');
+    expect(volBucket('温和缩量')).toBe('缩量');
+    expect(volBucket('明显缩量')).toBe('缩量');
   });
 
   it('dojiColorByDim：低位+缩量 → 红（底部信号）', () => {
@@ -204,15 +238,15 @@ describe('classifyPosition / classifyVolume / dojiColorByDim（K线形态原子�
   });
 });
 
-describe('classifyVolumeAt（按日期索引的量能判定，供“近10交易日”每日一行量能标签）', () => {
-  it('中间某日放量（≥1.2）→ 该日为放量，且其前 1 日不受影响仍为平量', () => {
+describe('classifyVolumeAt（按日期索引的量能5档判定，供“近10交易日”每日一行量能标签）', () => {
+  it('中间某日明显放量 → 该日为 明显放量，且其前 1 日不受影响仍为 平量', () => {
     const k = mkKlines(40, { overrides: { 20: { volume: 3_000_000 } } });
-    expect(classifyVolumeAt(k, 20)).toBe('放量');
+    expect(classifyVolumeAt(k, 20)).toBe('明显放量');
     expect(classifyVolumeAt(k, 19)).toBe('平量'); // 19 日的前5日均量取 14~18，未含放量日，仍是平量
   });
-  it('中间某日缩量（≤0.8）→ 该日为 缩量', () => {
+  it('中间某日明显缩量 → 该日为 明显缩量', () => {
     const k = mkKlines(40, { overrides: { 15: { volume: 100_000 } } });
-    expect(classifyVolumeAt(k, 15)).toBe('缩量');
+    expect(classifyVolumeAt(k, 15)).toBe('明显缩量');
   });
   it('索引 <5 时无 5 日均量 → 平量（不越界崩溃）', () => {
     const k = mkKlines(40);
@@ -220,8 +254,8 @@ describe('classifyVolumeAt（按日期索引的量能判定，供“近10交易�
   });
   it('最新索引与 classifyVolume 结果一致', () => {
     const k = mkKlines(40, { overrides: { 39: { volume: 2_000_000 } } });
-    expect(classifyVolume(k)).toBe('放量');
-    expect(classifyVolumeAt(k, 39)).toBe('放量');
+    expect(classifyVolume(k)).toBe('明显放量');
+    expect(classifyVolumeAt(k, 39)).toBe('明显放量');
   });
 });
 
@@ -476,25 +510,33 @@ describe('buildLatestShrinkTags（判定结果 → 缩略单字，纯映射不�
   const lastDate = k[k.length - 1].date;
 
   it('喂入的判定结果直接决定缩略单字（十字星"十" + 环境单字）', () => {
-    const texts = buildLatestShrinkTags(events, patterns, env, lastDate, null).map(t => t.text);
+    const texts = buildLatestShrinkTags(events, patterns, env, lastDate, null, null).map(t => t.text);
     expect(texts).toContain('十');
   });
 
   it('不会在内部重新判定：篡改传入的 events 即反映为对应单字', () => {
     // 传 null → 破位/形态/环境单字全部消失，绝不可能因"内部重新判定"又变出来
-    const texts = buildLatestShrinkTags(null, null, null, lastDate, null).map(t => t.text);
+    const texts = buildLatestShrinkTags(null, null, null, lastDate, null, null).map(t => t.text);
     expect(texts).toHaveLength(0);
   });
 
   it('综合周期单字绝不进入缩略（依赖 selectEnvDisplayTags 已在其套餐过滤）', () => {
-    const texts = buildLatestShrinkTags(events, patterns, env, lastDate, null).map(t => t.text);
+    const texts = buildLatestShrinkTags(events, patterns, env, lastDate, null, null).map(t => t.text);
     for (const s of CYCLE_SINGLES) expect(texts).not.toContain(s);
   });
 
-  it('传入 stabilize → 缩略单字含"稳"', () => {
-    const stab: StabilizeTag = { date: lastDate, kind: 'stable', label: '缩量企稳', single: '稳', color: 'red', detail: ['x'] };
-    const texts = buildLatestShrinkTags(events, patterns, env, lastDate, stab).map(t => t.text);
+  it('传入价格态 → 缩略单字含对应态单字（企稳="稳"）', () => {
+    const ps: PriceStateTag = { date: lastDate, kind: 'stable', name: '企稳', single: '稳', color: 'red', detail: ['x'], reference: 'r' };
+    const texts = buildLatestShrinkTags(events, patterns, env, lastDate, ps, null).map(t => t.text);
     expect(texts).toContain('稳');
+  });
+
+  it('传入底部确认（single="底"）→ 缩略单字"底"，颜色红（偏多强化态）', () => {
+    const ps: PriceStateTag = { date: lastDate, kind: 'bottom-confirm', name: '底部确认', single: '底', color: 'red', detail: ['x'], reference: 'r' };
+    const tags = buildLatestShrinkTags(events, patterns, env, lastDate, ps, null);
+    const t = tags.find(x => x.key === 'ps-bottom-confirm');
+    expect(t?.text).toBe('底');
+    expect(t?.cls).toBe('bg-red-500/10 text-red-500 border-red-500/20'); // 红=偏多强化态
   });
 });
 
@@ -553,55 +595,182 @@ describe('buildBreakExplainLines（破位判断依据）', () => {
   });
 });
 
-describe('analyzeStabilize（底部企稳：缩量回踩/缩量企稳/有效企稳，当日互斥）', () => {
-  it('量缩+收弱+低点下移 → 缩量回踩（单字"回"，绿/非买点）', () => {
-    const k = mkKlines(19, {
-      overrides: {
-        17: { open: 92, close: 90, high: 93, low: 89, volume: 500_000 },
-        18: { open: 89, close: 88, high: 90, low: 87, volume: 400_000 },
-      },
-    });
-    const tag = analyzeStabilize(k, fmt, true);
-    expect(tag?.kind).toBe('retrace');
-    expect(tag?.single).toBe('回');
-    expect(tag?.color).toBe('green');
+describe('classifyPriceState（价格态原子：反弹/企稳/回踩，3互斥+无态，按强度优先）', () => {
+  // 价格态只读 close/MA 结构，量能是独立原子；此处仅用 close 数组驱动
+  const byCloses = (closes: number[], volAt?: [number, number]) => {
+    const n = closes.length;
+    const k = mkKlines(n, { close: i => closes[i] });
+    if (volAt) k[volAt[0]] = { ...k[volAt[0]], volume: volAt[1] };
+    return k;
+  };
+  const UP100 = Array.from({ length: 40 }, () => 100);
+
+  it('反弹：收>MA10 且 ≥昨收 → 单字"反"、红（偏多）', () => {
+    const closes = [...UP100]; closes[39] = 108;
+    const tag = classifyPriceState(byCloses(closes), fmt);
+    expect(tag?.kind).toBe('bounce');
+    expect(tag?.name).toBe('反弹');
+    expect(tag?.single).toBe('反');
+    expect(tag?.color).toBe('red');
     expect(tag!.detail.length).toBeGreaterThan(0);
+    expect(tag!.reference.length).toBeGreaterThan(0);
   });
 
-  it('量缩+低点不创新低+价止跌+MA5走平 → 缩量企稳（单字"稳"，红）', () => {
-    const k = mkKlines(19, {
-      overrides: {
-        17: { open: 100.2, close: 99.5, high: 100.5, low: 98, volume: 600_000 },
-        18: { open: 100.5, close: 100.1, high: 100.8, low: 98.5, volume: 500_000 },
-      },
-    });
-    const tag = analyzeStabilize(k, fmt, true);
+  it('企稳：低点不创新低+收≥昨收+收≥MA5，且前段有下跌背景 → 单字"稳"、红', () => {
+    // 冲高(110)后回落(96)再企稳横盘，C=98 介于 MA5(97) 与 MA10(101.9) 之间
+    const closes = [
+      100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,
+      102,104,106,108,110,108,105,102,99,96,96.5,97,97.5,98,
+    ];
+    const tag = classifyPriceState(byCloses(closes), fmt);
     expect(tag?.kind).toBe('stable');
+    expect(tag?.name).toBe('企稳');
     expect(tag?.single).toBe('稳');
     expect(tag?.color).toBe('red');
+    expect(tag!.detail.some(d => d.includes('下跌背景'))).toBe(true);
   });
 
-  it('连续3日低点抬高 + 放量收复MA10 → 有效企稳（单字"效"，可交易买点）', () => {
-    const k = mkKlines(19, {
-      close: (i) => (i <= 12 ? 100 : [99.5, 99, 98.7, 98.6, 98.7, 100][i - 13] ?? 100),
-      overrides: {
-        15: { low: 98.5, volume: 300_000 },
-        16: { low: 98.6, volume: 300_000 },
-        17: { low: 98.7, volume: 300_000 },
-        18: { open: 100.2, close: 100, high: 100.6, low: 99.0, volume: 2_000_000 },
-      },
-    });
-    const tag = analyzeStabilize(k, fmt, true);
-    expect(tag?.kind).toBe('confirm');
-    expect(tag?.single).toBe('效');
+  it('回踩：收<MA5 → 单字"回"、绿（偏空）；低点未抬高 → 弱势回踩 sub="weak"', () => {
+    const closes = [...UP100]; closes[39] = 95;
+    const tag = classifyPriceState(byCloses(closes), fmt);
+    expect(tag?.kind).toBe('pullback');
+    expect(tag?.name).toBe('回踩');
+    expect(tag?.single).toBe('回');
+    expect(tag?.color).toBe('green');
+    expect(tag?.sub).toBe('weak'); // 末根低点 94.9 ≤ 昨低 99.9 → 弱势
+    expect(tag!.detail.some(d => d.includes('弱势回踩'))).toBe(true);
+  });
+
+  it('回踩健康分档：收<MA5 但低点抬高（L>昨低）→ sub="health"，detail 强调低点抬高/正常回踩', () => {
+    // 前日先跌到 95（低点 94.9），当日 97（低点 96.9 > 94.9）；MA5≈98.4 > C=97 → 回踩健康档
+    const closes = [...UP100]; closes[38] = 95; closes[39] = 97;
+    const tag = classifyPriceState(byCloses(closes), fmt);
+    expect(tag?.kind).toBe('pullback');
+    expect(tag?.sub).toBe('health');
+    expect(tag?.color).toBe('green');
+    expect(tag!.detail.some(d => d.includes('健康回踩'))).toBe(true);
+    expect(tag!.detail.some(d => d.includes('正常回踩'))).toBe(true);
+  });
+
+  it('企稳在站上MA10时不再触发（互斥）：同下跌背景但 C>MA10 → 反弹而非企稳', () => {
+    // 与企稳用例同款冲高回落走势，仅末根收 103 > MA10(≈102.4) → 归反弹
+    const closes = [
+      100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,
+      102,104,106,108,110,108,105,102,99,96,96.5,97,97.5,103,
+    ];
+    const tag = classifyPriceState(byCloses(closes), fmt);
+    expect(tag?.kind).toBe('bounce');
+    expect(tag?.name).toBe('反弹');
+  });
+
+  it('反弹/企稳互斥边界：C 介于 MA5 与 MA10 之间 → 企稳；同一走势 C 上破 MA10 → 反弹', () => {
+    const base = [
+      100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,
+      102,104,106,108,110,108,105,102,99,96,96.5,97,97.5,
+    ];
+    expect(classifyPriceState(byCloses([...base, 98]), fmt)?.name).toBe('企稳');  // C=98 < MA10
+    expect(classifyPriceState(byCloses([...base, 104]), fmt)?.name).toBe('反弹'); // C=104 > MA10
+  });
+
+  it('底部确认：放量+收复MA10+近3日低点至少2日抬高+MA5走平 → name"底部确认"、single"底"、红', () => {
+    const closes = [...UP100];
+    closes[36] = 96; closes[37] = 94; closes[38] = 95.5; closes[39] = 101; // 低点 95.9→93.9→95.4→100.9 连抬
+    const k = byCloses(closes, [39, 2_000_000]); // ratio≈1.67 → 明显放量 → 放量
+    const tag = classifyPriceState(k, fmt);
+    expect(tag?.kind).toBe('bottom-confirm');
+    expect(tag?.name).toBe('底部确认');
+    expect(tag?.single).toBe('底');
     expect(tag?.color).toBe('red');
-    expect(tag!.detail.length).toBeGreaterThan(0);
+    expect(tag!.detail.some(d => d.includes('MA10'))).toBe(true);
+    expect(tag!.detail.some(d => d.includes('低点连抬'))).toBe(true);
+    expect(tag!.detail.some(d => d.includes('MA5'))).toBe(true);
+    // 与回测/弹窗注册的组合信号同构
+    const vol = classifyVolume(k);
+    expect(volBucket(vol)).toBe('放量');
+    expect(`${volBucket(vol)}${tag!.name}`).toBe('放量底部确认');
+    expect(stabilizeComboReference(tag!.name!, vol)).toContain('可交易');
   });
 
-  it('allowVol=false（今日量能未定型）→ null，不误判', () => {
-    const k = mkKlines(20, {
-      overrides: { 18: { open: 89, close: 88, high: 90, low: 87, volume: 400_000 } },
-    });
-    expect(analyzeStabilize(k, fmt, false)).toBeNull();
+  it('底部确认未命中：近3日低点不足2日抬高 → 回落为 反弹', () => {
+    const closes = [...UP100];
+    closes[36] = 97; closes[37] = 94; closes[38] = 93; closes[39] = 103; // L-2(93.9)≥L-3(96.9)? 否 → 低点未连抬
+    const k = byCloses(closes, [39, 2_000_000]);
+    const tag = classifyPriceState(k, fmt);
+    expect(tag?.kind).toBe('bounce'); // C=103 > MA10(≈98.7)，但低点连抬不满足
+    expect(tag?.name).toBe('反弹');
+  });
+
+  it('底部确认未命中：未放量（平量）→ 回落为 反弹', () => {
+    const closes = [...UP100];
+    closes[36] = 96; closes[37] = 94; closes[38] = 95.5; closes[39] = 101;
+    const k = byCloses(closes); // 默认平量
+    const tag = classifyPriceState(k, fmt);
+    expect(tag?.kind).toBe('bounce');
+    expect(tag?.name).toBe('反弹');
+  });
+
+  it('底部确认未命中：MA5 下行 → 回落为 反弹', () => {
+    const closes = [...UP100];
+    closes[36] = 96; closes[37] = 94; closes[38] = 97; closes[39] = 99; // MA5_39≈97.2 < MA5_38≈97.4
+    const k = byCloses(closes, [39, 2_000_000]);
+    const tag = classifyPriceState(k, fmt);
+    expect(tag?.kind).toBe('bounce'); // 低点连抬与放量均满足，但 MA5 走低 → 不升级
+    expect(tag?.name).toBe('反弹');
+  });
+
+  it('无态：平走且无下跌背景、价在均线附近 → null（普通日子不刷价态 chip）', () => {
+    expect(classifyPriceState(byCloses(UP100), fmt)).toBeNull();
+  });
+
+  it('上涨趋势中不给企稳（前段下跌背景失效，不刷屏）：单调上行态为 反弹而非 企稳', () => {
+    const k = byCloses(Array.from({ length: 40 }, (_, i) => i * 0.5));
+    const tag = classifyPriceState(k, fmt);
+    expect(tag?.kind).toEqual('bounce'); // hasDown=false，企稳永不触发，强度优先命中 反弹
+    expect(tag?.kind).not.toBe('stable');
+  });
+
+  it('五粮液式放量企稳：企稳态 + 明显放量 → 产出组合信号"放量企稳"，参考价值为 中高', () => {
+    const closes = [
+      100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,
+      102,104,106,108,110,108,105,102,99,96,96.5,97,97.5,98,
+    ];
+    const k = byCloses(closes, [39, 2_000_000]); // ratio≈1.67 → 明显放量 → 粗分 放量
+    const ps = classifyPriceState(k, fmt);
+    const vol = classifyVolume(k);
+    expect(ps?.name).toBe('企稳');
+    expect(vol).toBe('明显放量');
+    expect(volBucket(vol)).toBe('放量');
+    expect(`${volBucket(vol)}${ps!.name}`).toBe('放量企稳'); // 与回测/弹窗注册的组合信号同构
+    expect(stabilizeComboReference(ps!.name!, vol)).toContain('资金进场');
+  });
+
+  it('按日期索引判定与最新日一致：classifyPriceState == classifyPriceStateAt(len-1)', () => {
+    const closes = [...UP100]; closes[39] = 108;
+    const k = byCloses(closes);
+    expect(classifyPriceStateAt(k, k.length - 1, fmt)?.kind).toBe(classifyPriceState(k, fmt)?.kind);
+  });
+});
+
+describe('STABILIZE_COMBO_REFERENCE（价格态×量能组合参考价值映射）', () => {
+  it('企稳-缩量（温和/明显）→ 中·止跌观察非买点', () => {
+    const ref = stabilizeComboReference('企稳', '温和缩量');
+    expect(ref).toContain('止跌观察');
+    expect(stabilizeComboReference('企稳', '明显缩量')).toBe(ref); // 粗分折叠，同一文案
+  });
+  it('反弹-放量 → 高·追势；弱势回踩-缩量 → 低·下跌中继', () => {
+    expect(stabilizeComboReference('反弹', '明显放量')).toContain('追势信号');
+    expect(stabilizeComboReference('回踩', '明显缩量', 'weak')).toContain('下跌中继');
+  });
+  it('回踩 sub 分档：健康/弱势 参考价值不同（同量能下健康更高、强调等企稳）', () => {
+    const health = stabilizeComboReference('回踩', '明显缩量', 'health');
+    const weak = stabilizeComboReference('回踩', '明显缩量', 'weak');
+    expect(health).toContain('正常回踩');
+    expect(weak).toContain('下跌中继');
+    expect(health).not.toBe(weak);
+  });
+  it('底部确认-放量 → 高·可交易确认信号（最高价值组合）', () => {
+    const ref = stabilizeComboReference('底部确认', '明显放量');
+    expect(ref).toContain('可交易');
+    expect(ref).toContain('底部结构确认');
   });
 });

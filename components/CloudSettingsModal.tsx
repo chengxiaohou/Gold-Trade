@@ -46,8 +46,10 @@ const CLASSIC_PARAM_LABELS: Record<keyof TagParams['classic'], { label: string; 
   classicNearHigh: { label: '接近近20日新高', desc: '收 ≥ 近20日高 × 该值，判为接近新高' },
   classicNearLow: { label: '接近近20日新低', desc: '收 ≤ 近20日低 × 该值，判为接近新低' },
   classicMaSqueeze: { label: '均线粘合比例', desc: '相邻均线最大偏差 ≤ 该值，判为均线粘合' },
-  classicVolUp: { label: '放量倍数', desc: '当日量 ≥ 前5日均量 × 该值，判为放量' },
-  classicVolDown: { label: '缩量比例', desc: '当日量 ≤ 前5日均量 × 该值，判为缩量' },
+  classicVolHighStrong: { label: '明显放量阈值', desc: '当日量 ≥ 前5日均量 × 该值（默认1.4），判为“明显放量”' },
+  classicVolHighMid: { label: '温和放量阈值', desc: '当日量 ≥ 前5日均量 × 该值（默认1.15）且 < 明显放量阈值，判为“温和放量”' },
+  classicVolLowMid: { label: '温和缩量阈值', desc: '当日量 < 前5日均量 × 该值（默认0.8）进入缩量区间，判为“温和缩量”' },
+  classicVolLowStrong: { label: '明显缩量阈值', desc: '当日量 ≤ 前5日均量 × 该值（默认0.55），判为“明显缩量”' },
 };
 
 // 用保存值覆盖默认值，返回完整可用的 TagParams（处理老用户缺字段）

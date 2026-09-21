@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { BollKline } from '../bollService';
 import { BACKTEST_TAG_CATALOG, runBacktest, scanTagOccurrences } from '../backtestEngine';
-import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, analyzeStabilizeAt, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags } from '../tagAnalyzers';
+import { analyzeKlinePatterns, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPriceStateAt, volBucket, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags } from '../tagAnalyzers';
 import type { EnvTag } from '../tagAnalyzers';
 import type { BacktestStrategy, TagParams } from '../../types';
 import { DEFAULT_TAG_PARAMS } from '../../types';
@@ -99,8 +99,8 @@ describe('BACKTEST_TAG_CATALOG 与标签弹窗展示集同步', () => {
     const POPUP_SIGNALS = [
       '十字星', '金针探底', '放量金针', '吊颈线', '射击之星', '倒锤子线', // pattern
       '破位',                                                          // break
-      '放量', '缩量', '平量',                                          // volume
-      '有效企稳', '缩量企稳', '缩量回踩',                              // stabilize
+      '明显放量', '温和放量', '平量', '温和缩量', '明显缩量',            // volume（量能5档）
+      '放量企稳', '缩量企稳', '平量企稳', '放量反弹', '缩量反弹', '放量底部确认', '缩量健康回踩', '缩量弱势回踩', // stabilize（价格态×量能组合信号，回踩按 sub 分档）
     ];
     expect(BACKTEST_TAG_CATALOG.map(d => d.label).sort()).toEqual([...POPUP_SIGNALS].sort());
     expect(DAILY_SIGNAL_CATALOG.map(d => d.label).sort()).toEqual([...POPUP_SIGNALS].sort());
@@ -116,13 +116,26 @@ describe('BACKTEST_TAG_CATALOG 与标签弹窗展示集同步', () => {
   });
 
   it('新 signal source 都能被对应 tagAnalyzers 判定函数真实产出（不悬空、复用同一判断）', () => {
-    // 量能：末根放量（高量）/缩量（低量）
-    expect(classifyVolumeAt(mkKlines(140, undefined, { 139: { volume: 5_000_000 } }), 139)).toBe('放量');
-    expect(classifyVolumeAt(mkKlines(140, undefined, { 139: { volume: 100_000 } }), 139)).toBe('缩量');
+    // 量能5档：明显放量 / 明显缩量 / 平量
+    expect(classifyVolumeAt(mkKlines(140, undefined, { 139: { volume: 5_000_000 } }), 139)).toBe('明显放量');
+    expect(classifyVolumeAt(mkKlines(140, undefined, { 139: { volume: 100_000 } }), 139)).toBe('明显缩量');
     expect(classifyVolumeAt(mkKlines(140), 139)).toBe('平量');
-    // 企稳：缩量回踩（下跌序列 + 末根缩量）
-    const stz = analyzeStabilizeAt(mkKlines(40, i => 100 - i * 0.1, { 39: { volume: 200_000 } }), 39, fmt, true);
-    expect(stz?.label).toBe('缩量回踩');
+    // 组合信号：放量反弹（反弹态 + 放量粗分）/ 缩量弱势回踩（回踩态+sub=weak + 缩量粗分）
+    // 反弹数据构造：近3日低点不足2日抬高（38/37/36 低点连降，低点需显式给出——本文件 override 不联动 low），避免误升级为底部确认
+    const up = mkKlines(40, i => 100, { 36: { close: 102, low: 101.9 }, 37: { close: 101, low: 100.9 }, 38: { close: 100.9, low: 100.8 }, 39: { close: 108, low: 107.9, volume: 2_000_000 } });
+    const psUp = classifyPriceStateAt(up, 39, fmt);
+    expect(psUp?.name).toBe('反弹');
+    expect(`${volBucket(classifyVolumeAt(up, 39))}${psUp!.name}`).toBe('放量反弹');
+    const dn = mkKlines(40, i => 100, { 39: { close: 95, volume: 500_000 } });
+    const psDn = classifyPriceStateAt(dn, 39, fmt);
+    expect(psDn?.name).toBe('回踩');
+    expect(psDn?.sub).toBe('weak'); // 末根低点 94.9 ≤ 昨低 99.9 → 弱势
+    expect(`${volBucket(classifyVolumeAt(dn, 39))}${psDn!.sub === 'weak' ? '弱势回踩' : '健康回踩'}`).toBe('缩量弱势回踩');
+    // 底部确认信号：放量+收复MA10+低点连抬+MA5走平 → 放量底部确认
+    const bc = mkKlines(40, i => 100, { 36: { close: 96 }, 37: { close: 94 }, 38: { close: 95.5 }, 39: { close: 101, volume: 2_000_000 } });
+    const psBc = classifyPriceStateAt(bc, 39, fmt);
+    expect(psBc?.name).toBe('底部确认');
+    expect(`${volBucket(classifyVolumeAt(bc, 39))}${psBc!.name}`).toBe('放量底部确认');
   });
 });
 
@@ -154,9 +167,9 @@ describe('scanTagOccurrences（预览扫描，复用弹窗判定）', () => {
     expect(scanTagOccurrences(ks, 'no-such-key')).toEqual([]);
   });
 
-  it('量能信号命中：末根放量 → volume-up 命中；末根缩量 → volume-down 命中', () => {
-    expect(scanTagOccurrences(mkKlines(140, undefined, { 139: { volume: 5_000_000 } }), 'volume-up').length).toBeGreaterThan(0);
-    expect(scanTagOccurrences(mkKlines(140, undefined, { 139: { volume: 100_000 } }), 'volume-down').length).toBeGreaterThan(0);
+  it('量能信号命中：末根明显放量 → volume-up-strong 命中；末根明显缩量 → volume-down-strong 命中', () => {
+    expect(scanTagOccurrences(mkKlines(140, undefined, { 139: { volume: 5_000_000 } }), 'volume-up-strong').length).toBeGreaterThan(0);
+    expect(scanTagOccurrences(mkKlines(140, undefined, { 139: { volume: 100_000 } }), 'volume-down-strong').length).toBeGreaterThan(0);
   });
 
   it('位置不属于信号：回测信号目录无位置条目 → scanTagOccurrences(位置key) 为空', () => {
@@ -164,8 +177,17 @@ describe('scanTagOccurrences（预览扫描，复用弹窗判定）', () => {
     expect(scanTagOccurrences(mkKlines(140, i => 200 - i * 0.5), 'position-low')).toEqual([]);
   });
 
-  it('企稳信号命中：下跌序列 + 末根缩量 → stabilize-retrace 命中', () => {
-    expect(scanTagOccurrences(mkKlines(40, i => 100 - i * 0.1, { 39: { volume: 200_000 } }), 'stabilize-retrace').length).toBeGreaterThan(0);
+  it('回踩组合信号命中（sub 分档）：弱势回踩+缩量 → stabilize-retrace-weak-voldn 命中；健康回踩+缩量 → stabilize-retrace-health-voldn 命中', () => {
+    expect(scanTagOccurrences(mkKlines(40, i => 100, { 39: { close: 95, volume: 500_000 } }), 'stabilize-retrace-weak-voldn').length).toBeGreaterThan(0);
+    // 注意本文件 mkKlines 的 override 是部分覆盖：低点需显式给出（low 不会随 close 联动）
+    expect(scanTagOccurrences(mkKlines(40, i => 100, { 38: { close: 95, low: 94.9 }, 39: { close: 97, low: 96.9, volume: 500_000 } }), 'stabilize-retrace-health-voldn').length).toBeGreaterThan(0);
+  });
+
+  it('底部确认信号命中：放量底部确认 → stabilize-bottom-confirm-volup 命中', () => {
+    const ks = mkKlines(40, i => 100, { 36: { close: 96 }, 37: { close: 94 }, 38: { close: 95.5 }, 39: { close: 101, volume: 2_000_000 } });
+    const hits = scanTagOccurrences(ks, 'stabilize-bottom-confirm-volup');
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].detail.some(d => d.includes('底部确认'))).toBe(true);
   });
 });
 
@@ -288,35 +310,35 @@ describe('环境前提（envCondition）', () => {
 // 若用户在设置里改了判定参数，回测不跟随 → 同一根 K 线两侧判定会漂移，此节杜绝。
 //
 describe('回测与弹窗采用同一套标签判定参数（参数一致性）', () => {
-  // 自定义参数：把"放量倍数"阈值调成 0.01，使任何正量均判为"放量"（默认 1.20 下平量）
+  // 自定义参数：把"明显放量"阈值调成 0.01，使任何正量均判为"明显放量"（默认 1.40 下平量）
   const customCfg: TagParams = JSON.parse(JSON.stringify(DEFAULT_TAG_PARAMS));
-  customCfg.classic.classicVolUp.value = 0.01;
+  customCfg.classic.classicVolHighStrong.value = 0.01;
 
   // 平量序列（每日 volume 相同 → 量比恒为 1.0）
   const flatKlines = mkKlines(140, undefined, { 50: { volume: 1_000_000 } });
 
-  it('默认参数下扫描不命中"放量" → 自定义参数下同一段 K 线命中"放量"（回测确实遵循传入 cfg）', () => {
-    const byDefault = scanTagOccurrences(flatKlines, 'volume-up', undefined, DEFAULT_TAG_PARAMS);
-    const byCustom = scanTagOccurrences(flatKlines, 'volume-up', undefined, customCfg);
-    expect(byDefault.length).toBe(0);                 // 默认 1.20：量比 1.0 平量 → 无"放量"
-    expect(byCustom.length).toBeGreaterThan(0);        // 0.01：量比 1.0 ≥ 0.01 → 每根都"放量"
+  it('默认参数下扫描不命中"明显放量" → 自定义参数下同一段 K 线命中"明显放量"（回测确实遵循传入 cfg）', () => {
+    const byDefault = scanTagOccurrences(flatKlines, 'volume-up-strong', undefined, DEFAULT_TAG_PARAMS);
+    const byCustom = scanTagOccurrences(flatKlines, 'volume-up-strong', undefined, customCfg);
+    expect(byDefault.length).toBe(0);                 // 默认 1.40：量比 1.0 平量 → 无"明显放量"
+    expect(byCustom.length).toBeGreaterThan(0);        // 0.01：量比 1.0 ≥ 0.01 → 每根都"明显放量"
   });
 
-  it('回测扫描命中的"放量"集合 == 弹窗 classifyVolumeAt(同一 cfg) 的判集（同函数同参数 → 同判定）', () => {
-    const scanHits = scanTagOccurrences(flatKlines, 'volume-up', undefined, customCfg).map(o => o.date);
+  it('回测扫描命中的"明显放量"集合 == 弹窗 classifyVolumeAt(同一 cfg) 的判集（同函数同参数 → 同判定）', () => {
+    const scanHits = scanTagOccurrences(flatKlines, 'volume-up-strong', undefined, customCfg).map(o => o.date);
     const windowStart = 30; // scanTagOccurrences 从 i=30 起扫
     const analyzerHits: string[] = [];
     for (let i = windowStart; i < flatKlines.length; i++) {
-      if (classifyVolumeAt(flatKlines.slice(0, i + 1), i, customCfg) === '放量') analyzerHits.push(flatKlines[i].date);
+      if (classifyVolumeAt(flatKlines.slice(0, i + 1), i, customCfg) === '明显放量') analyzerHits.push(flatKlines[i].date);
     }
     expect(scanHits).toEqual(analyzerHits); // 逐日严格一致：回测复用弹窗同参判定，无任何改判
   });
 
-  it('runBacktest 遵循传入 cfg：默认参数平量不触发"放量"买 → 自定义参数触发"放量"买', () => {
-    const rule = { id: 'r', tagKey: 'volume-up', label: '放量', action: 'buy' as const, pct: 10, enabled: true };
+  it('runBacktest 遵循传入 cfg：默认参数平量不触发"明显放量"买 → 自定义参数触发"明显放量"买', () => {
+    const rule = { id: 'r', tagKey: 'volume-up-strong', label: '明显放量', action: 'buy' as const, pct: 10, enabled: true };
     const strat = (cfg: TagParams | undefined) =>
       runBacktest(flatKlines, { rules: [{ ...rule }], initialCapital: 100000 } as BacktestStrategy, { cfg });
-    expect(strat(undefined).trades.length).toBe(0);   // 不传 cfg → 默认 1.20：平量 → 全程不触发
-    expect(strat(customCfg).trades.length).toBeGreaterThan(0); // 0.01：放量 → 触发买入
+    expect(strat(undefined).trades.length).toBe(0);   // 不传 cfg → 默认 1.40：平量 → 全程不触发
+    expect(strat(customCfg).trades.length).toBeGreaterThan(0); // 0.01：明显放量 → 触发买入
   });
 });

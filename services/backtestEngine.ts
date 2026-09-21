@@ -1,7 +1,7 @@
 import type { BollKline } from './bollService';
 import { DEFAULT_TAG_PARAMS } from '../types';
 import type { TagParams, BacktestRule, BacktestStrategy, BacktestTrade, BacktestResult, BacktestTagGroup } from '../types';
-import { analyzeKlinePatterns, analyzeMarketConditions, analyzeEnvironment, envHasCondition, buildBreakExplainLines, classifyVolumeAt, analyzeStabilizeAt, DAILY_SIGNAL_CATALOG } from './tagAnalyzers';
+import { analyzeKlinePatterns, analyzeMarketConditions, analyzeEnvironment, envHasCondition, buildBreakExplainLines, classifyVolumeAt, classifyPriceStateAt, volBucket, DAILY_SIGNAL_CATALOG } from './tagAnalyzers';
 import type { EnvResult, BacktestTagDef } from './tagAnalyzers';
 
 // ─────────────────────────────────────────────────────────────
@@ -24,7 +24,7 @@ export type { BacktestTagDef } from './tagAnalyzers';
 
 // 策略编辑器下拉的分组中文名（<optgroup> 标签）
 export const BT_GROUP_LABEL: Record<BacktestTagGroup, string> = {
-  'pattern': 'K线形态', 'break': '破位', 'volume': '量能', 'position': '位置', 'stabilize': '企稳',
+  'pattern': 'K线形态', 'break': '破位', 'volume': '量能', 'position': '位置', 'stabilize': '底态·价量组合',
   'feng-add': '风系·加仓', 'feng-reduce': '风系·减仓', 'env': '环境', 'daily': '每日信号',
 };
 
@@ -41,11 +41,17 @@ function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams): { hit
   for (const p of analyzeKlinePatterns(win, fmtP, cfg)) if (p.date === last.date) hits.add(p.label);
   // 破位事件：复用弹窗 analyzeMarketConditions，只看当日（lastDays=1）
   for (const ev of analyzeMarketConditions(win, 1)) if (ev.date === last.date && ev.brokenCount > 0) hits.add('break-event');
-  // 每日量能：classifyVolumeAt 当日（弹窗 volday chip 同源）
+  // 每日量能（source=volume，signalName = classifyVolumeAt 5档返回值；弹窗量能 chip 同源）
   hits.add(classifyVolumeAt(win, win.length - 1, cfg));
-  // 底部企稳：analyzeStabilizeAt 当日（弹窗企稳 chip 同源）；历史已收盘 → allowVol=true
-  const st = analyzeStabilizeAt(win, win.length - 1, fmtP, true, cfg);
-  if (st) hits.add(st.label);
+  // 价格态×量能 组合信号（source=stabilize，signalName = `${volBucket(量能)}${价格态}`，如 放量企稳）
+  // 由量能原子 + 价格态原子组合派生，弹窗参考价值区同源；历史已收盘 → 直接判定
+  // 回踩按 sub 分档（健康/弱势）拼入信号名；底部确认作为反弹的强化态直接命中（放量底部确认）
+  const ps = classifyPriceStateAt(win, win.length - 1, fmtP, cfg);
+  if (ps && ps.name) {
+    const vol = classifyVolumeAt(win, win.length - 1, cfg);
+    const psName = ps.kind === 'pullback' ? (ps.sub === 'weak' ? '弱势回踩' : '健康回踩') : ps.name;
+    hits.add(`${volBucket(vol)}${psName}`);
+  }
   // 环境状态：仅当 K 线足够长（≥130，环境判断需要 120 日均线）才计算，供规则 envCondition 门控判定
   const env = win.length >= 130 ? analyzeEnvironment(win, fmtP, true, cfg) : null;
   void i;
@@ -187,9 +193,14 @@ export function scanTagOccurrences(k: BollKline[], tagKey: string, envKey?: stri
         detail = [`${fmtShort(last.date)} 平量：当日量/前5日均量处于放量与缩量阈值之间`];
       }
     } else if (def.source === 'stabilize') {
-      // 底部企稳：与弹窗企稳 chip 同源（analyzeStabilizeAt）；detail 复用其判定依据
-      const st = analyzeStabilizeAt(win, win.length - 1, fmtP, true, cfg);
-      if (st && st.label === def.signalName) detail = st.detail;
+      // 价格态×量能 组合信号：与弹窗参考价值区同源（classifyPriceStateAt + volBucket）；detail 复用价格态判定依据
+      // 回踩按 sub 分档（健康/弱势）拼入信号名匹配；底部确认（放量底部确认）同样由该分支命中
+      const vol = classifyVolumeAt(win, win.length - 1, cfg);
+      const st = classifyPriceStateAt(win, win.length - 1, fmtP, cfg);
+      if (st && st.name) {
+        const stName = st.kind === 'pullback' ? (st.sub === 'weak' ? '弱势回踩' : '健康回踩') : st.name;
+        if (`${volBucket(vol)}${stName}` === def.signalName) detail = st.detail;
+      }
     }
     if (!detail) continue;
     // 环境前提：指定了 envKey 时，当日环境状态必须命中该 key 才算命中位置（与 runBacktest 门控一致）
