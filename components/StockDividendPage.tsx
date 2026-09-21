@@ -3605,7 +3605,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <col style={{ width: '65px' }} />
               <col style={{ width: '65px' }} />
               <col style={{ width: '65px' }} />
-              {cols.includes('position') && <col style={{ width: '70px' }} />}
+              {cols.includes('position') && <col style={{ width: '56px' }} />}
+              {cols.includes('position') && <col style={{ width: '64px' }} />}
+              {cols.includes('position') && <col style={{ width: '64px' }} />}
               {cols.includes('position') && <col style={{ width: '56px' }} />}
               {dividendYearCols.map(yearCol => <col key={yearCol} style={{ width: '50px' }} />)}
               <col style={{ width: '60px' }} />
