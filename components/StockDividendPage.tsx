@@ -3719,7 +3719,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('monthly')}>月线</th>
                 {cols.includes('position') && <>
                   <th
-                    className="w-[64px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border select-none"
+                    className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border select-none"
                   >
                     股息率
                   </th>
@@ -3994,7 +3994,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     // 子列1：恒常展示股息率
                     const col1 = (
                       <td
-                        className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
+                        className="w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
                         onMouseLeave={handlePositionInfoLeave}
                         onTouchStart={handlePositionInfoTouchStart}
