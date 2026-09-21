@@ -4030,8 +4030,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       >
                         {hasPosition ? (
                           <div className="flex flex-col items-center leading-tight gap-px">
-                            <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">{totalAmount}</span>
-                            <span className="font-mono text-[10px] text-app-rowtext">{sharesText}</span>
+                            <span className="font-mono text-[10px] whitespace-nowrap text-app-rowtext">{totalAmount}</span>
+                            <span className="font-mono text-[9px] text-app-rowtext">{sharesText}</span>
                             <span className="font-mono text-[8px] font-semibold whitespace-nowrap text-app-rowtext">{positionRatioStr || '\u00A0'}</span>
                           </div>
                         ) : (
