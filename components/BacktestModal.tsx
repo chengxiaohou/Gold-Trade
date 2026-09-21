@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, Trash2, GripHorizontal, Play, Eye, EyeOff, PinOff } from 'lucide-react';
+import { X, Plus, Trash2, GripHorizontal, Play, Eye, EyeOff, Pin } from 'lucide-react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, MouseEventParams, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams } from '../types';
@@ -525,7 +525,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
     // 点击图表 → 钉住当前悬停那根 K 线的弹窗（进入固定模式）。
     // 固定模式下弹窗不再跟随鼠标移动，方便用户点击弹窗内标签查看「判定依据」「参考价值」。
     const onChartClick = (param: MouseEventParams) => {
-      if (pinnedRef.current) return; // 已固定中忽略（避免连点导致覆盖）
+      if (pinnedRef.current) { togglePin(); return; } // 已固定：点击图表任意处=取消固定并隐藏，恢复指哪显示哪
       const q = tryBuildQuote(param);
       if (!q) return;
       pinnedRef.current = q;
@@ -891,7 +891,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
                   title="取消固定，恢复随鼠标显示"
                   className="flex items-center justify-center rounded p-0.5 text-app-subtext hover:text-app-subtext transition-colors"
                 >
-                  <PinOff size={11} />
+                  <Pin size={11} />
                 </button>
               ) : undefined
             )}
