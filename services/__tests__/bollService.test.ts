@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { mergeTodayBarToKlines } from '../bollService';
-import type { BollKline } from '../bollService';
+import { mergeTodayBarToKlines, pickDegradedBoll } from '../bollService';
+import type { BollData, BollKline } from '../bollService';
 
 function date(offset: number, base = new Date(Date.UTC(2026, 0, 1))): string {
   const d = new Date(base);
@@ -79,5 +79,38 @@ describe('mergeTodayBarToKlines（今日实时行情 merge 到 K 线）', () => 
 
   it('空数组：原样返回', () => {
     expect(mergeTodayBarToKlines([], { open: 100, price: 100 }, 'closed', NOW)).toEqual([]);
+  });
+});
+
+describe('pickDegradedBoll（网络失败时降级到过期缓存）', () => {
+  // 最小完整 BOLL（含 ma.ma30 与 klines）
+  function mkCached(complete: boolean, ts = 1_000): { data: BollData; timestamp: number } {
+    const data: BollData = {
+      upper: 101, mid: 100, lower: 99, close: 100,
+      ma: { ma5: 100, ma10: 100, ma20: 100, ma30: 100, ma60: 100, ma120: 100, ma250: 100, ma500: 100 },
+      date: '2026-01-01', fetchedAt: ts, rangeCount: 1,
+      rangePriceHigh: 101, rangePriceHighDate: '2026-01-01', rangePriceLow: 99, rangePriceLowDate: '2026-01-01',
+      klines: complete ? [{ date: '2026-01-01', open: 99, high: 101, low: 99, close: 100, volume: 1000 }] : undefined,
+    };
+    return { data, timestamp: ts };
+  }
+
+  it('缓存完整（ma.ma30 + klines）：可降级，返回缓存数据', () => {
+    const cached = mkCached(true);
+    expect(pickDegradedBoll(cached)).toBe(cached.data);
+  });
+
+  it('缓存缺 klines（旧版/不完整）：不可降级 → null', () => {
+    expect(pickDegradedBoll(mkCached(false))).toBeNull();
+  });
+
+  it('缓存缺 ma.ma30：不可降级 → null', () => {
+    const cached = mkCached(true);
+    cached.data.ma = { ...cached.data.ma!, ma30: null as unknown as number };
+    expect(pickDegradedBoll(cached)).toBeNull();
+  });
+
+  it('无缓存 entry：不可降级 → null', () => {
+    expect(pickDegradedBoll(undefined)).toBeNull();
   });
 });

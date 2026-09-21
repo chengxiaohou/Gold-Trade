@@ -2,7 +2,7 @@ import { ApiSource } from '../types';
 import { getDynamicBollCacheTTL, getLastTradingOpen, getMarketStatus, setLastFetchTime } from './cacheService';
 import { requestLogService, type LogBatchContext } from './requestLogService';
 import { getBollCacheFromStore, saveBollCacheToStore, clearBollCacheFromStore } from './bollCacheStore';
-import { planBollCacheUse, type BollCacheEntry, type BollStockInput } from './bollSync';
+import { planBollCacheUse, isBollFresh, type BollCacheEntry, type BollStockInput } from './bollSync';
 
 // 生产环境配置
 const isDev = import.meta.env.DEV;
@@ -564,6 +564,35 @@ export function setTencentDomain(domain: string): void {
   }
 }
 
+// 单条 BOLL 缓存新鲜度判定（统一数据部门）
+// 与全量加载 planBollCache → planBollCacheUse 同源，全部走 bollSync.isBollFresh：
+//   - 盘中：缓存年龄 < TTL 为新鲜；
+//   - 午休/盘后/盘前/全天休市：只要缓存是在"最近一次数据基准开盘时间"之后拉取的即新鲜
+//     （有效期到下次开盘），不能用 getDynamicBollCacheTTL 的"距下次开盘剩余时长"比对年龄，
+//     否则越接近下次开盘/午休越易被误判过期（如 12:21 拉取的缓存 12:44 就被误判），
+//     导致浮窗反复发请求、在数据源故障时产生失败日志而非使用本可用的缓存。
+function isBollEntryFresh(timestamp: number, data: BollData | undefined): boolean {
+  const now = new Date();
+  const marketStatus = getMarketStatus(now);
+  const isTrading = marketStatus === 'morning_session' || marketStatus === 'afternoon_session';
+  return isBollFresh({
+    marketStatus,
+    cachedAt: timestamp,
+    nowMs: now.getTime(),
+    tradingTTL: getDynamicBollCacheTTL(),
+    lastOpenMs: isTrading ? null : getLastTradingOpen(now).getTime(),
+    hasCompleteData: Boolean(data?.ma?.ma30 && data?.klines),
+  });
+}
+
+// 网络获取失败时降级到（哪怕过期）缓存的判定（纯函数，供单元测试）
+export function pickDegradedBoll(
+  cached: { data: BollData; timestamp: number } | undefined
+): BollData | null {
+  if (cached && cached.data?.ma?.ma30 && cached.data?.klines) return cached.data;
+  return null;
+}
+
 export async function fetchBollData(
   stockCode: string,
   period: BollPeriod = 'daily',
@@ -577,11 +606,11 @@ export async function fetchBollData(
   
   const cacheKey = getCacheKey(fullCode, period, adjust, apiSource);
   const cached = cache.get(cacheKey);
-  const dynamicTTL = getDynamicBollCacheTTL();
-  
-  // 旧版缓存可能没有 klines 字段（用于股息率曲线），缺少时视为过期重拉
-  if (cached && cached.data?.ma?.ma30 && cached.data?.klines && Date.now() - cached.timestamp < dynamicTTL) {
-    // 缓存命中：直接返回，不发网络请求，也不记录日志（只有真正发生的请求才记入日志）
+  // 降级候选：网络失败且存在(哪怕过期)缓存时用其兜底，保证浮窗/图表不至于空白
+  const degraded = pickDegradedBoll(cached);
+
+  // 缓存命中（与全量加载同一口径 isBollFresh）：直接返回，不发网络请求，也不记录日志（只有真正发生的请求才记入日志）
+  if (cached && isBollEntryFresh(cached.timestamp, cached.data)) {
     return { data: cached.data };
   }
 
@@ -596,13 +625,19 @@ export async function fetchBollData(
   }
 
   try {
-    if (apiSource === 'tencent') {
-      return fetchBollFromTencent(fullCode, period, adjust, batchTimestamp, logCtx);
-    } else {
-      return fetchBollFromSina(market, code, period, adjust, apiSource, batchTimestamp, logCtx);
+    const result = apiSource === 'tencent'
+      ? await fetchBollFromTencent(fullCode, period, adjust, batchTimestamp, logCtx)
+      : await fetchBollFromSina(market, code, period, adjust, apiSource, batchTimestamp, logCtx);
+    // 网络层失败但存在缓存 → 降级到缓存（数据可能旧，但胜过空白）
+    if (!result.data && degraded) {
+      return { data: degraded };
     }
+    return result;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (degraded) {
+      return { data: degraded };
+    }
     return { data: null, error: `获取失败: ${msg}` };
   }
 }
