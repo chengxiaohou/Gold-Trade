@@ -1889,6 +1889,53 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return priceBureau.subscribe(sync);
   }, [stocks]);
 
+  // ─────────────────────────────────────────────────────────────
+  // 查询式真实数据源测试模式：访问 ?test=signals&code=<代码>
+  // 用价格数据部权威 canonical 日K线（真实运行实例 + 有效缓存）跑出
+  // 价格浮窗底栏（SignalTagsFooter）与标签弹窗"近10交易日"当日行两套信号集，
+  // 连同源指纹以原始文本写到 document.body，供外部脚本拉取比对，页面自身不做自判。
+  // 两控件均取自同一 getDayTagSet SSOT，此处唯一任务是把"尾巴到底接了哪个源"暴露出来。
+  // ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search);
+    if (qs.get('test') !== 'signals') return;
+    const code = (qs.get('code') ?? '').replace(/^(sz|sh)/i, '').replace(/[.\s]/g, '').slice(0, 6);
+    if (!code) return;
+    const norm = (c: string) => c.replace(/^(sz|sh)/i, '').replace(/[.\s]/g, '').slice(0, 6);
+    let stop = false;
+    let wrote = false;
+    const run = () => {
+      if (stop || wrote) return;
+      const stock = stocks.find(s => norm(s.code) === code);
+      const klines = stock ? priceBureau.getTodayKlines(stock.code) : null;
+      if (!stock || !klines || klines.length === 0) return;
+      const fp = (v: number) => formatPrice(v, stock.name);
+      // footer 与标签弹窗默认 events 完全一致（analyzeMarketConditions(win, min(10, len-1))）
+      const footerTags = getDayTagSet(klines, tagParams, fp);
+      const events = analyzeMarketConditions(klines, Math.min(10, klines.length - 1));
+      const popupToday = getDayTagSet(klines, tagParams, fp, { events });
+      const last = klines[klines.length - 1];
+      const srcFp = `${last.date}:${last.volume}`;
+      const text = [
+        `PRICE_FOOTER=${footerTags.map(t => t.label).join('|')}`,
+        `TAG_POPUP_TODAY=${popupToday.map(t => t.label).join('|')}`,
+        `SOURCE_FP=${srcFp}`,
+      ].join('\n');
+      wrote = true;
+      document.body.setAttribute('data-test-signals', text);
+      const el = document.createElement('pre');
+      el.id = 'test-signals-output';
+      el.style.cssText = 'position:fixed;left:0;bottom:0;z-index:99999;white-space:pre;font-family:monospace;font-size:12px;color:#0f0;background:rgba(0,0,0,0.85);padding:8px;margin:0;max-height:40vh;overflow:auto';
+      el.textContent = text;
+      document.body.appendChild(el);
+      console.log('[test-signals]\n' + text);
+    };
+    run();
+    const off = priceBureau.subscribe(run);
+    const iv = setInterval(run, 1500);
+    return () => { stop = true; off(); clearInterval(iv); };
+  }, [stocks, tagParams]);
+
   // 名称列第二行展示模式：默认“状态标签”，点击“代码”表头切换为展示代码
   const [nameSubMode, setNameSubMode] = useState<'tags' | 'code'>('tags');
   // 首次判定的统一数据源：对"同一组（实时价覆盖后的）K 线"只计算一遍 破位/形态/环境，
