@@ -3607,7 +3607,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <col style={{ width: '65px' }} />
               {cols.includes('position') && <col style={{ width: '56px' }} />}
               {cols.includes('position') && <col style={{ width: '64px' }} />}
-              {cols.includes('position') && <col style={{ width: '64px' }} />}
+              {cols.includes('position') && <col style={{ width: '56px' }} />}
               {cols.includes('position') && <col style={{ width: '56px' }} />}
               {dividendYearCols.map(yearCol => <col key={yearCol} style={{ width: '50px' }} />)}
               <col style={{ width: '60px' }} />
@@ -3731,7 +3731,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     持仓
                   </th>
                   <th
-                    className="w-[64px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
+                    className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
                     onClick={handleCostPctSortClick}
                     title="点击切换排序：成本下方盈亏%高→低 / 低→高"
                   >
@@ -4034,7 +4034,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     // 子列3：固定展示成本
                     const col2 = (
                       <td
-                        className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
+                        className="w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
                         onMouseLeave={handlePositionInfoLeave}
                         onTouchStart={handlePositionInfoTouchStart}
