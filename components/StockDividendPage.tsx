@@ -392,14 +392,27 @@ const calcRealizedPnlMap = (trades: StockTrade[]) => {
 
 // 交易历史记录条目（两行布局：公式+盈亏+状态徽标 / 时间+撤单+编辑+备注），撤单带确认
 interface TradeRecordRowProps {
-  t: StockTrade; stockName: string; pnlMap: Record<string, number>;
+  t: StockTrade; stockName: string; currentPrice?: number; pnlMap: Record<string, number>;
   onToggle: (t: StockTrade) => void; onEdit: (t: StockTrade) => void; onDelete: (t: StockTrade) => void;
 }
-const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stockName, pnlMap, onToggle, onEdit, onDelete }) => {
+const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stockName, currentPrice = 0, pnlMap, onToggle, onEdit, onDelete }) => {
   const [confirming, setConfirming] = useState(false);
   const fmtP = (v: number) => formatPrice(v, stockName);
   const shares = t.shares ?? 0;
   const price = t.price ?? 0;
+  // 对照列表页「交易」列的百分比：成交价与现价的差值百分比，着色逻辑一致
+  const diffNum = currentPrice > 0 && price > 0 ? ((currentPrice - price) / price) * 100 : null;
+  const isSellFilled = t.side === 'sell' && t.status === 'filled';
+  const isBuyFilled = t.side === 'buy' && t.status === 'filled';
+  const isPending = t.status === 'pending';
+  let likelyFill = false;
+  if (isPending && currentPrice > 0 && price > 0) {
+    likelyFill = t.side === 'buy' ? currentPrice <= price : currentPrice >= price;
+  }
+  const pctColor = diffNum != null && isSellFilled && diffNum < 0 ? 'text-brand-green'
+    : diffNum != null && isBuyFilled && diffNum > 0 ? 'text-brand-red'
+    : diffNum != null && isPending && likelyFill ? 'text-orange-400'
+    : 'text-app-rowtext';
   const timeStr = (ts: number) => {
     const d = new Date(ts);
     return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -431,6 +444,11 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stockName, pnlMap, o
             {t.status === 'pending' && (
               <span className="font-mono text-[8px] text-orange-400 whitespace-nowrap">
                 {pendingRemainingDays(t, Date.now())}天
+              </span>
+            )}
+            {diffNum != null && (
+              <span className={`font-mono text-[8px] font-semibold whitespace-nowrap ${pctColor}`}>
+                {`${diffNum >= 0 ? '+' : ''}${diffNum.toFixed(2)}%`}
               </span>
             )}
             <button
@@ -5777,6 +5795,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       key={t.id}
                       t={t}
                       stockName={s.name}
+                      currentPrice={s.price}
                       pnlMap={recalcPnL.map}
                       onToggle={(x) => handleToggleTrade(s.id, x.id)}
                       onDelete={(x) => handleRemoveTrade(s.id, x.id)}
@@ -5790,11 +5809,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         );
       })()}
 
-      {/* 交易列简易浮窗：鼠标移入时展示最新一笔成交/挂单（交易弹窗优先，两者不同时显示） */}
+      {/* 交易列简易浮窗：鼠标移入时展示最近多笔交易（交易弹窗优先，两者不同时显示） */}
       {tradeSimpleStock && tradeInfoStock == null && tradeInfoPinned === false && (() => {
         const s = stocks.find(x => x.id === tradeSimpleStock.id) || tradeSimpleStock;
-        const t = latestTrade(s);
-        if (!t) return null;
+        const trades = getTrades(s).filter(x => !x.isMerged).sort((a, b) => b.createdAt - a.createdAt);
+        if (trades.length === 0) return null;
         return (
           <div
             ref={tradeSimpleRef}
@@ -5803,19 +5822,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             onMouseEnter={cancelTradeSimpleClose}
             onMouseLeave={scheduleTradeSimpleClose}
           >
-            <TradeRecordRow
-              t={t}
-              stockName={s.name}
-              pnlMap={calcRealizedPnlMap(getTrades(s)).map}
-              onToggle={(x) => handleToggleTrade(s.id, x.id)}
-              onDelete={(x) => handleRemoveTrade(s.id, x.id)}
-              onEdit={(x) => { // 点击编辑：切换到交易窗口的编辑模式
-                startEditTrade(s, x);
-                if (tradeSimpleBtnRef.current) openTradeInfo(tradeSimpleBtnRef.current, s);
-                setTradeInfoPinned(true);
-                setTradeSimpleStock(null);
-              }}
-            />
+            <div className="max-h-[212px] overflow-y-auto space-y-1 pr-0.5">
+              {trades.map(t => (
+                <TradeRecordRow
+                  key={t.id}
+                  t={t}
+                  stockName={s.name}
+                  currentPrice={s.price}
+                  pnlMap={calcRealizedPnlMap(getTrades(s)).map}
+                  onToggle={(x) => handleToggleTrade(s.id, x.id)}
+                  onDelete={(x) => handleRemoveTrade(s.id, x.id)}
+                  onEdit={(x) => { // 点击编辑：切换到交易窗口的编辑模式
+                    startEditTrade(s, x);
+                    if (tradeSimpleBtnRef.current) openTradeInfo(tradeSimpleBtnRef.current, s);
+                    setTradeInfoPinned(true);
+                    setTradeSimpleStock(null);
+                  }}
+                />
+              ))}
+            </div>
           </div>
         );
       })()}
