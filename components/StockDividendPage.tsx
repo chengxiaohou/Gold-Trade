@@ -1341,7 +1341,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 价格技术指标浮窗（复用现有K线数据，不额外请求）
   const [priceInfoData, setPriceInfoData] = useState<IndicatorResult | null>(null);
-  const [priceInfoKlines, setPriceInfoKlines] = useState<BollKline[] | null>(null); // 供底部信号栏(末根=今日)复用标签弹窗同源判定
   const [priceInfoStock, setPriceInfoStock] = useState<StockEntry | null>(null);
   const [priceInfoPos, setPriceInfoPos] = useState({ left: 0, top: 0 });
   const [priceInfoLoading, setPriceInfoLoading] = useState(false);
@@ -1591,7 +1590,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setPriceInfoStock(stock);
     setPriceInfoLoading(true);
     setPriceInfoData(null);
-    setPriceInfoKlines(null);
     // 定位：参考名称弹窗，出现在价格右侧并垂直居中
     const popupW = 195;
     const estH = 330;
@@ -1612,7 +1610,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       // 用实时行情(开/高/低/量/现价)覆盖或追加今日K线，保证浮窗显示今日数据
       const merged = mergeTodayBarToKlines(result.data?.klines || [], stock, getMarketStatus());
       const ind = calcIndicators(merged);
-      setPriceInfoKlines(merged);
       setPriceInfoData(ind);
       setPriceInfoLoading(false);
       // 自适应高度：数据渲染后用浮窗实际高度重算垂直居中
@@ -1652,7 +1649,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     priceInfoActiveIdRef.current = undefined;
     setPriceInfoStock(null);
     setPriceInfoData(null);
-    setPriceInfoKlines(null);
     setPriceInfoLoading(false);
   };
 
@@ -1674,7 +1670,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     priceInfoActiveIdRef.current = undefined;
     setPriceInfoStock(null);
     setPriceInfoData(null);
-    setPriceInfoKlines(null);
     setPriceInfoLoading(false);
   };
 
@@ -1895,6 +1890,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 价格浮窗底栏（SignalTagsFooter）与标签弹窗"近10交易日"当日行两套信号集，
   // 连同源指纹以原始文本写到 document.body，供外部脚本拉取比对，页面自身不做自判。
   // 两控件均取自同一 getDayTagSet SSOT，此处唯一任务是把"尾巴到底接了哪个源"暴露出来。
+  // 复刻浏览器环境：真实挂载价格浮窗底栏 + 标签弹窗当日行，直接读它们渲染出的 DOM chip 文本，
+  // 而不是在脚本里用 getDayTagSet 手工重算（避免重算数据源与浏览器实际喂入的数组不一致而掩盖分叉）。
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search);
@@ -1903,32 +1900,51 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (!code) return;
     const norm = (c: string) => c.replace(/^(sz|sh)/i, '').replace(/[.\s]/g, '').slice(0, 6);
     let stop = false;
-    let wrote = false;
+    let armed = false;
     const run = () => {
-      if (stop || wrote) return;
+      if (stop || armed) return;
       const stock = stocks.find(s => norm(s.code) === code);
       const klines = stock ? priceBureau.getTodayKlines(stock.code) : null;
       if (!stock || !klines || klines.length === 0) return;
-      const fp = (v: number) => formatPrice(v, stock.name);
-      // footer 与标签弹窗默认 events 完全一致（analyzeMarketConditions(win, min(10, len-1))）
-      const footerTags = getDayTagSet(klines, tagParams, fp);
-      const events = analyzeMarketConditions(klines, Math.min(10, klines.length - 1));
-      const popupToday = getDayTagSet(klines, tagParams, fp, { events });
-      const last = klines[klines.length - 1];
-      const srcFp = `${last.date}:${last.volume}`;
-      const text = [
-        `PRICE_FOOTER=${footerTags.map(t => t.label).join('|')}`,
-        `TAG_POPUP_TODAY=${popupToday.map(t => t.label).join('|')}`,
-        `SOURCE_FP=${srcFp}`,
-      ].join('\n');
-      wrote = true;
-      document.body.setAttribute('data-test-signals', text);
-      const el = document.createElement('pre');
-      el.id = 'test-signals-output';
-      el.style.cssText = 'position:fixed;left:0;bottom:0;z-index:99999;white-space:pre;font-family:monospace;font-size:12px;color:#0f0;background:rgba(0,0,0,0.85);padding:8px;margin:0;max-height:40vh;overflow:auto';
-      el.textContent = text;
-      document.body.appendChild(el);
-      console.log('[test-signals]\n' + text);
+      armed = true; // 只武装一次：等 React 把两个真实弹窗 commit 进 DOM 后再读
+      // 真实挂载价格浮窗 + 标签弹窗（底栏/当日行都由真实组件渲染，直接读 DOM）
+      // 价格弹窗的底栏只在 data 非空时渲染，故同样喂入指标数据（同 openPriceInfo 同源）
+      setPriceInfoStock(stock);
+      setPriceInfoPos({ left: 0, top: 0 });
+      setPriceInfoData(calcIndicators(klines));
+      setPriceInfoLoading(false);
+      setMktInfoStock(stock);
+      setMktInfoPos({ left: 0, top: 0 });
+      const harvest = () => {
+        if (stop) return;
+        const footerChips = Array.from(document.querySelectorAll('[data-test="price-footer"] button')).map(b => b.textContent?.trim() ?? '');
+        const todayChips = Array.from(document.querySelectorAll('[data-test="tag-popup-today"] span')).map(b => b.textContent?.trim() ?? '');
+        const last = klines[klines.length - 1];
+        const srcFp = `${last.date}:${last.volume}`;
+        const text = [
+          `PRICE_FOOTER=${footerChips.join('|')}`,
+          `TAG_POPUP_TODAY=${todayChips.join('|')}`,
+          `SOURCE_FP=${srcFp}`,
+        ].join('\n');
+        document.body.setAttribute('data-test-signals', text);
+        const el = document.createElement('pre');
+        el.id = 'test-signals-output';
+        el.style.cssText = 'position:fixed;left:0;bottom:0;z-index:99999;white-space:pre;font-family:monospace;font-size:12px;color:#0f0;background:rgba(0,0,0,0.85);padding:8px;margin:0;max-height:40vh;overflow:auto';
+        el.textContent = text;
+        document.body.appendChild(el);
+        console.log('[test-signals]\n' + text);
+      };
+      // 给 React commit + 弹窗内部状态就绪留时间；重试直至两个锚点都出现
+      let tries = 0;
+      const tick = () => {
+        if (stop) return;
+        if (document.querySelector('[data-test="price-footer"]') && document.querySelector('[data-test="tag-popup-today"]')) {
+          harvest();
+          return;
+        }
+        if (++tries < 40) setTimeout(tick, 200);
+      };
+      setTimeout(tick, 300);
     };
     run();
     const off = priceBureau.subscribe(run);
@@ -5338,14 +5354,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           width={210}
           onMouseEnter={() => { priceInfoHoveredRef.current = true; }}
           onMouseLeave={handlePriceInfoFloatLeave}
-          footer={priceInfoKlines && priceInfoKlines.length > 0 ? (
-            <SignalTagsFooter
-              win={priceInfoKlines}
-              i={priceInfoKlines.length - 1}
-              cfg={tagParams}
-              onPin={() => setPriceInfoPinned(true)}
-            />
-          ) : undefined}
+          footer={(() => {
+            // 底栏与标签弹窗共用同一 computeAnalyzed canonical K线，杜绝"尾巴接错源"；
+            // 之前这里独立走 mergeTodayBarToKlines 的实时合并数组，导致同日量能漂移(明显放量/明显缩量)。
+            const a = computeAnalyzed(priceInfoStock);
+            return a.klines && a.klines.length > 0 ? (
+              <SignalTagsFooter
+                win={a.klines}
+                i={a.klines.length - 1}
+                cfg={tagParams}
+                onPin={() => setPriceInfoPinned(true)}
+              />
+            ) : undefined;
+          })()}
         />
       )}
 
@@ -5796,7 +5817,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   {date === latestDate && mktInfoStock.price > 0 ? (
                     <span className={`text-[9px] font-mono shrink-0 w-[30px] text-right ${mktInfoStock.changePercent >= 0 ? 'text-red-500' : 'text-green-500'}`}>{fp(mktInfoStock.price)}</span>
                   ) : closeSpan(date)}
-                  <div className="flex flex-wrap gap-1 min-w-0">
+                  <div className="flex flex-wrap gap-1 min-w-0" data-test={date === latestDate ? 'tag-popup-today' : undefined}>
                     {byDate.get(date)!.map(e => <React.Fragment key={e.key}>{e.node}</React.Fragment>)}
                   </div>
                 </div>
