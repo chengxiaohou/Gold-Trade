@@ -3728,7 +3728,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   <th
                     className="w-[64px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border select-none"
                   >
-                    持仓
+                    仓位
                   </th>
                   <th
                     className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
@@ -3993,6 +3993,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const showCostPct = cost > 0 && stock.price > 0;
                     const totalAmount = shares > 0 && cost > 0 ? `¥${Math.round(shares * cost).toLocaleString()}` : '-';
                     const hasPosition = shares > 0 || cost > 0;
+                    // 仓位占比：本股票金额 / 全部持仓总金额
+                    const positionTotal = sortedStocks.reduce((sum, s) => {
+                      const amt = (s.positionShares || 0) * (s.positionCost || 0);
+                      return sum + (amt > 0 ? amt : 0);
+                    }, 0);
+                    const myAmt = shares > 0 && cost > 0 ? shares * cost : 0;
+                    const positionRatioStr = myAmt > 0 && positionTotal > 0 ? `${((myAmt / positionTotal) * 100).toFixed(1)}%` : '';
                     // 子列1：恒常展示股息率
                     const col1 = (
                       <td
@@ -4012,7 +4019,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         )}
                       </td>
                     );
-                    // 子列2：恒常展示持仓（总金额 + 份额）
+                    // 子列2：恒常展示仓位（总金额 + 份额 + 仓位占比）
                     const colHold = (
                       <td
                         className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
@@ -4025,6 +4032,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           <div className="flex flex-col items-center leading-tight gap-px">
                             <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">{totalAmount}</span>
                             <span className="font-mono text-[10px] text-app-rowtext">{sharesText}</span>
+                            <span className="font-mono text-[10px] whitespace-nowrap text-app-subtext">{positionRatioStr || '\u00A0'}</span>
                           </div>
                         ) : (
                           <span className="font-mono text-[11px] whitespace-nowrap text-app-rowtext">-</span>
