@@ -12,12 +12,14 @@ import {
   emitBollCacheHits,
   getBollCacheTimestamps,
   ensureBollCacheRestored,
+  mergeTodayBarToKlines,
   type BollData,
   type BollPeriod,
   type BollAdjust,
   type BollKline,
+  type TodayBarInput,
 } from './bollService';
-import { getDynamicBollCacheTTL, isTradingHours, formatCacheTime } from './cacheService';
+import { getDynamicBollCacheTTL, isTradingHours, formatCacheTime, getMarketStatus } from './cacheService';
 import { requestLogService } from './requestLogService';
 
 export interface PriceEntry {
@@ -76,6 +78,15 @@ export const priceBureau = {
   /** 唯一"今日合并日K线"权威：返回该股票的 canonical 日 K 线（bollService 已做盘中 volume 保护）。 */
   getTodayKlines(code: string): BollKline[] | null {
     return store.get(code)?.daily?.klines ?? null;
+  },
+
+  /** 数据部的统一"今日日K线"出口：把实时行情的最新一根 K 线并入缓存的日线，
+   *  最新一根 close 由 mergeTodayBarToKlines 统一收敛（未收盘=实时现价，已收盘=以实时行情为准≈收盘价）。
+   *  所有需要"含最新一根收盘价"的消费方（股息率曲线/价格浮窗）一律走这里，杜绝各组件自行 merge 造成漂移。
+   *  无有效实时行情(price/open<=0)时原样返回缓存日线。 */
+  getTodayDailyKlines(code: string, rt: TodayBarInput): BollKline[] {
+    const base = store.get(code)?.daily?.klines ?? [];
+    return mergeTodayBarToKlines(base, rt, getMarketStatus());
   },
 
   /** 覆盖式写入单只条目（返回 false 表示写的是一个空条目，供调用方决定是否保留） */

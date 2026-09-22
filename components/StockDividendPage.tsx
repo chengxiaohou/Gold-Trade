@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
-import { fetchBollData, BollData, BollPeriod, BollAdjust, BollKline, mergeTodayBarToKlines } from '../services/bollService';
-import { isStockPriceFresh, isTradingHours, getMarketStatus, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime } from '../services/cacheService';
+import { fetchBollData, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
+import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime } from '../services/cacheService';
 import { priceBureau } from '../services/priceBureau';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import { toTencentCode, parseTencentQuoteText, type TencentQuote } from '../services/tencentQuote';
@@ -1612,8 +1612,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       // 仅在仍是当前目标股票时应用结果（避免悬停切换/移开后残留旧数据）
       if (priceInfoActiveIdRef.current !== stock.id) return;
       priceBureau.absorb(stock.code, 'daily', result);
-      // 用实时行情(开/高/低/量/现价)覆盖或追加今日K线，保证浮窗显示今日数据
-      const merged = mergeTodayBarToKlines(result.data?.klines || [], stock, getMarketStatus());
+      // 用价格数据部的"今日合并日K线"（最新一根统一收敛为现价/收盘价），与股息率曲线同源，不再各自 merge
+      const merged = priceBureau.getTodayDailyKlines(stock.code, stock);
       const ind = calcIndicators(merged);
       setPriceInfoData(ind);
       setPriceInfoLoading(false);
@@ -1734,7 +1734,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const applyDivRateDaily = () => {
       // 仅在仍是当前目标股票时应用结果（避免悬停切换/移开后残留旧数据）
       if (divRateInfoActiveIdRef.current !== stock.id) return;
-      const klines = priceBureau.getDaily(stock.code)?.klines || [];
+      // 向价格数据部索要"含今日实时bar"的权威日K线（最新一根由数据部统一收敛成现价/收盘价）
+      const klines = priceBureau.getTodayDailyKlines(stock.code, stock);
       setDivRateInfoKlines(klines);
       setDivRateInfoLoading(false);
       // 自适应高度：数据渲染后用浮窗实际高度重算垂直居中
@@ -4988,13 +4989,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 </div>
                 <DividendRateCurve
                   klines={(() => {
-                    // 直接向价格数据部索要权威K线（最新一根由 bollService 统一处理），
-                    // bollData 仅作尚未同步时的兜底（其本身同样是吸收自 priceBureau 的同一份数据）。
+                    // 直接向价格数据部索要权威K线：日线含“今日实时bar”（最新一根由数据部统一收敛成现价/收盘价），
+                    // 周/月线用原始周期K线（无实时合并）。bollData 仅作尚未同步时的兜底（同为吸收自 priceBureau 的同源数据）。
+                    if (bollPeriod === 'daily') {
+                      return priceBureau.getTodayDailyKlines(stock.code, stock) || bollData?.klines || [];
+                    }
                     const bk = bollPeriod === 'weekly'
                       ? priceBureau.getWeekly(stock.code)
-                      : bollPeriod === 'monthly'
-                        ? priceBureau.getMonthly(stock.code)
-                        : priceBureau.getDaily(stock.code);
+                      : priceBureau.getMonthly(stock.code);
                     return bk?.klines || bollData?.klines || [];
                   })()}
                   stock={stock}
