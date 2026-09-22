@@ -69,7 +69,7 @@ const SOURCE_STEP: Record<SignalDataSource, number> = {
   price: 1, volume: 1000, changePct: 0.1, volumeRatio: 0.1, kdj: 1, rsi: 1, dividendRate: 0.1,
 };
 const SOURCE_PRECISION: Record<SignalDataSource, number> = {
-  price: 2, volume: 0, changePct: 1, volumeRatio: 1, kdj: 0, rsi: 0, dividendRate: 1,
+  price: 2, volume: 0, changePct: 2, volumeRatio: 1, kdj: 0, rsi: 0, dividendRate: 2,
 };
 const TARGET_INDICATOR_LABELS: Record<SignalTargetIndicator, string> = {
   ma5: 'MA5', ma10: 'MA10', ma20: 'MA20', ma60: 'MA60', ma120: 'MA120',

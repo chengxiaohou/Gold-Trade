@@ -37,7 +37,7 @@ export const fmtShort = (d: string) => d.slice(5).replace('-', '/');
 // 收集某交易日（win=klines[0..i] 末根=当日）命中的标签名 + 当日环境状态。
 // 逐日因果：win 已是"当日及之前"的前缀，不含未来数据 → 无未来泄漏。
 // dividendByYear：供 dividendRate 数据点自定义标签（与弹窗同源，按 K 线所属年份折算）。
-function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams, customTags: UserTagRule[] = [], dividendByYear?: Record<number, number>): { hits: Set<string>; env: EnvResult | null } {
+function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams, customTags: UserTagRule[] = [], dividendByYear?: Record<number, number>, currentYear?: number): { hits: Set<string>; env: EnvResult | null } {
   const hits = new Set<string>();
   const last = win[win.length - 1];
   // K 线形态：直接用 analyzeKlinePatterns 的 label（弹窗同一套）
@@ -59,7 +59,7 @@ function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams, custom
   // 与弹窗 getDayTagSet 的 collectUserTags 同一判定源 analyzeUserTagRule，保证回测与弹窗一致）
   for (const r of customTags) {
     if (!r.enabled) continue;
-    if (analyzeUserTagRule(win, i, r, dividendByYear)) hits.add(r.name);
+    if (analyzeUserTagRule(win, i, r, dividendByYear, currentYear)) hits.add(r.name);
   }
   // 环境状态：仅当 K 线足够长（≥130，环境判断需要 120 日均线）才计算，供规则 envCondition 门控判定
   const env = win.length >= 130 ? analyzeEnvironment(win, fmtP, true, cfg) : null;
@@ -69,7 +69,13 @@ function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams, custom
 
 // 供回测图"十字线悬浮栏"展示某日命中的信号标签 —— 与 collectSignalsOnDay 同一来源，绝不另算一套。
 export function getDaySignalLabels(win: BollKline[], i: number, cfg?: TagParams, customTags?: UserTagRule[], dividendByYear?: Record<number, number>): string[] {
-  return [...collectSignalsOnDay(win, i, cfg ?? DEFAULT_TAG_PARAMS, customTags ?? [], dividendByYear).hits].sort();
+  return [...collectSignalsOnDay(win, i, cfg ?? DEFAULT_TAG_PARAMS, customTags ?? [], dividendByYear, latestBacktestYear(win)).hits].sort();
+}
+
+// 取回测数据末根年份（股息率按年份折算的 currentYear；win 若为全量切片即为全量最新年份）
+function latestBacktestYear(win: BollKline[] | undefined): number {
+  if (!win || win.length === 0) return NaN;
+  return parseInt(String((win[win.length - 1]?.date || '').slice(0, 4)), 10);
 }
 
 // 引擎主函数：支持加仓/减仓、初始资金基准仓位、先卖后买、每日收盘后结算
@@ -83,6 +89,8 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
   const customTags = p.customTags ?? []; // 用户自定义动态标签：与弹窗同一份，保证回测与弹窗信号判定严格一致
   const klines = [...k].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const n = klines.length;
+  // 股息率按年份折算所需的"最新交易年份"：必须取自全量数据末根，而非逐日 win（否则历史日被误判为当年→全 fallback）
+  const currentYear = parseInt(String((klines[n - 1]?.date || '').slice(0, 4)), 10);
   const enabledRules = (s.rules || []).filter(r => r.enabled);
   const initCap = s.initialCapital;
 
@@ -96,7 +104,7 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
 
   for (let i = 30; i < n; i++) {
     const win = klines.slice(0, i + 1);
-    const { hits, env } = collectSignalsOnDay(win, i, cfg, customTags, p.dividendByYear);
+    const { hits, env } = collectSignalsOnDay(win, i, cfg, customTags, p.dividendByYear, currentYear);
 
     // 命中标签里，选已启用规则中仓位最高的一条（且环境前提成立）
     let chosen: BacktestRule | null = null;
@@ -194,10 +202,12 @@ export function scanTagOccurrences(k: BollKline[], tagKey: string, envKey?: stri
     if (!rule) return [];
     const klines = [...k].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
     const n = klines.length;
+    // 股息率按年份折算的"最新交易年份"取自全量末根（勿用逐日 win，否则历史日被误判为当年→全 fallback）
+    const currentYear = parseInt(String((klines[n - 1]?.date || '').slice(0, 4)), 10);
     const out: { date: string; barIndex: number; detail: string[] }[] = [];
     for (let i = 30; i < n; i++) {
       const win = klines.slice(0, i + 1);
-      const detail = analyzeUserTagRule(win, i, rule, dividendByYear);
+      const detail = analyzeUserTagRule(win, i, rule, dividendByYear, currentYear);
       if (!detail) continue;
       // 环境前提门控：指定了 envKey 时仅保留当日环境命中的位置
       if (envKey) {

@@ -163,11 +163,11 @@ export function classifyVolume(klines: BollKline[], cfg: TagParams = DEFAULT_TAG
 
 // 每股股息率（%）唯一实现：按 K 线所属年份取分红，当年份用 fallback（预估分红）兜底。
 // 与列表页股息率曲线 rateForKline 同源（单一事实来源），避免"同一口径写两份实现"。
-// byYear: 年份 → 每股税前派息（元）；dateStr/close 为该日 K 线；klines 用于取"当前交易年份"。
-export function dividendRateForDay(byYear: Record<number, number> | undefined, dateStr: string | undefined, close: number, klines: BollKline[] | undefined, fallback: number): number | null {
+// byYear: 年份 → 每股税前派息（元）；dateStr/close 为该日 K 线；currentYear 应为"整个数据集最新交易年份"，
+// 不可用单日窗口的末根年份（否则每个历史日都会被误判为当年，全部落到 fallback，导致股息率偏离真实历史值）。
+export function dividendRateForDay(byYear: Record<number, number> | undefined, dateStr: string | undefined, close: number, currentYear: number, fallback: number): number | null {
   if (!byYear || !dateStr || !(close > 0)) return null;
   const y = parseInt(dateStr.slice(0, 4), 10);
-  const currentYear = klines && klines.length > 0 ? parseInt(String((klines[klines.length - 1]?.date || '').slice(0, 4)), 10) : NaN;
   // 今年分红未完成 → 用选中年份预估分红 fallback；历史年份优先取当年，缺失回退前一年
   let pointDividend = fallback;
   if (!isNaN(y) && Number.isFinite(currentYear) && y === currentYear) pointDividend = fallback;
@@ -176,6 +176,12 @@ export function dividendRateForDay(byYear: Record<number, number> | undefined, d
   else pointDividend = fallback;
   if (pointDividend <= 0) return null;
   return (pointDividend / close) * 100;
+}
+
+// 取"整个数据集最新交易年份"，用于股息率按年份折算的 currentYear（须用全量数据，勿用单日窗口）
+function latestKlineYear(klines: BollKline[] | undefined): number {
+  if (!klines || klines.length === 0) return NaN;
+  return parseInt(String((klines[klines.length - 1]?.date || '').slice(0, 4)), 10);
 }
 
 // 最新有分红的年份的每股派息：作为当年份的预估分红 fallback（默认选中即最新分红年）
@@ -191,7 +197,8 @@ function latestYearDividend(byYear: Record<number, number>): number {
 
 // 触发数据点实际值（i 越界或数据不足返回 null）
 // dividendByYear：<年份, 每股税前派息>，来自股票该字段；股息率按 K 线所属年份折算（与列表股息率曲线同源）
-export function resolveSignalValue(klines: BollKline[], i: number, source: SignalDataSource, dividendByYear?: Record<number, number>): number | null {
+// currentYear：整个数据集最新交易年份（供股息率按年份折算，缺省时退化为以传入 klines 末根推导，须传全量数据才正确）
+export function resolveSignalValue(klines: BollKline[], i: number, source: SignalDataSource, dividendByYear?: Record<number, number>, currentYear?: number): number | null {
   if (!klines || klines.length === 0 || i < 0 || i >= klines.length) return null;
   const k = klines[i];
   switch (source) {
@@ -215,7 +222,8 @@ export function resolveSignalValue(klines: BollKline[], i: number, source: Signa
       return ind.rsi.rsi6;
     }
     case 'dividendRate':
-      return dividendByYear ? dividendRateForDay(dividendByYear, k.date, k.close, klines, latestYearDividend(dividendByYear)) : null;
+      if (!dividendByYear) return null;
+      return dividendRateForDay(dividendByYear, k.date, k.close, currentYear !== undefined ? currentYear : latestKlineYear(klines), latestYearDividend(dividendByYear));
   }
 }
 
@@ -250,9 +258,9 @@ export function resolveTargetValue(klines: BollKline[], i: number, target: Signa
 // 单条规则判定：命中返回依据文案数组，未命中返回 null
 // dividendByYear：<年份, 每股税前派息>，供 dividendRate 数据点判定（按 K 线所属年份折算，同列表股息率曲线口径）
 export const DEFAULT_TOUCH_TOL = 0.5; // 触达默认容差（%目标值），可在规则 tolerance 覆盖
-export function analyzeUserTagRule(klines: BollKline[], i: number, rule: UserTagRule, dividendByYear?: Record<number, number>): string[] | null {
+export function analyzeUserTagRule(klines: BollKline[], i: number, rule: UserTagRule, dividendByYear?: Record<number, number>, currentYear?: number): string[] | null {
   if (!rule || !rule.enabled) return null;
-  const v = resolveSignalValue(klines, i, rule.source, dividendByYear);
+  const v = resolveSignalValue(klines, i, rule.source, dividendByYear, currentYear);
   if (v === null || v === undefined || Number.isNaN(v)) return null;
   const t = rule.targetType === 'fixed' ? rule.targetValue : resolveTargetValue(klines, i, rule.targetIndicator as SignalTargetIndicator);
   if (t === null || t === undefined || Number.isNaN(t)) return null;

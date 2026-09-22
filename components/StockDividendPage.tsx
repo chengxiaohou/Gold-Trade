@@ -1023,7 +1023,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
   // 股票列表股息率区间内每日股息率：与 DividendRateCurve 的速率算法共用 dividendRateForDay（单一事实来源）
   const rateForKline = (stock: StockEntry, k: BollKline, fallback: number, klines: BollKline[]): number => {
-    return dividendRateForDay(stock.dividendByYear, k.date, k.close, klines, fallback) ?? 0;
+    // 股息率按年份折算的"最新交易年份"取自全量末尾 K 线（klines 为全量，勿用单日窗口）
+    const currentYear = klines.length ? parseInt(String((klines[klines.length - 1]?.date || '').slice(0, 4)), 10) : NaN;
+    return dividendRateForDay(stock.dividendByYear, k.date, k.close, currentYear, fallback) ?? 0;
   };
   // 计算当前股息率相对区间内历史最高/次高股息率的比例（%）；无数据返回 null
   const calcDivRateHistoryRatio = (stock: StockEntry, klines: BollKline[] | undefined, currentRate: number): number | null => {
