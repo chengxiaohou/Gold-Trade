@@ -101,8 +101,10 @@ const CustomTagCard: React.FC<{ tag: UserTagRule; onEdit: () => void; onToggle: 
       onMouseLeave={() => setHovered(false)}
       onClick={() => setPinned(p => !p)}
     >
-      {show ? (
-        <div className="flex items-center gap-0.5">
+      {/* 文字始终渲染用于撑开卡片固定尺寸；按钮以绝对定位覆盖其上居中，不影响卡片宽高 */}
+      <span className="text-[10px] text-app-subtext leading-snug whitespace-nowrap">{desc}</span>
+      {show && (
+        <div className="absolute inset-0 flex items-center justify-center gap-0.5">
           <button type="button" aria-label="编辑" title="编辑" onClick={e => { e.stopPropagation(); onEdit(); }}
             className="p-0.5 rounded text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"><Pencil size={12}/></button>
           <button type="button" aria-label="启用开关" title={tag.enabled ? '已启用（点击停用）' : '已停用（点击启用）'} onClick={e => { e.stopPropagation(); onToggle(); }}
@@ -112,8 +114,6 @@ const CustomTagCard: React.FC<{ tag: UserTagRule; onEdit: () => void; onToggle: 
           <button type="button" aria-label="删除" title="删除" onClick={e => { e.stopPropagation(); onDelete(); }}
             className="p-0.5 rounded text-app-subtext hover:text-red-400 hover:bg-red-500/10 transition-colors"><Trash2 size={12}/></button>
         </div>
-      ) : (
-        <span className="text-[10px] text-app-subtext leading-snug whitespace-nowrap">{desc}</span>
       )}
     </div>
   );
