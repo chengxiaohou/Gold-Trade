@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, Trash2, GripHorizontal, Play, Eye, EyeOff, Pin, CheckCircle2, Circle, Palette } from 'lucide-react';
+import { X, Plus, GripHorizontal, Play, Pin, Tag, Eye, EyeOff } from 'lucide-react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, MouseEventParams, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams, UserTagRule } from '../types';
@@ -410,7 +410,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
         setScale(true); // 交给 lightweight 原生在光标处缩放
       } else {
         setScale(false);
-        panByWheel(-e.deltaY); // deltaX 由 handleScroll 原生平移，这里只补纵向 deltaY
+        panByWheel(e.deltaY); // deltaX 由 handleScroll 原生平移，这里只补纵向 deltaY（取正号以反转滚动方向）
       }
     };
     el.addEventListener('wheel', onWheel, { capture: true, passive: false });
@@ -1346,46 +1346,25 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
   return (
     <div className="rounded-lg border border-app-border bg-app-input/30 p-2 space-y-2">
       <div className="flex items-center justify-between gap-2">
-        {/* 策略名：最左左对齐；序号紧随其后小号灰字 */}
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="truncate text-xs font-medium text-app-text">{value.label || '未命名策略'}</span>
-          <span className="shrink-0 text-[10px] text-app-rowtext">#{index + 1}</span>
-        </div>
-        {/* 右侧按钮组：启用(圆形勾) / 预览 / 颜色 / 删除 */}
-        <div className="relative flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={() => onChange({ enabled: !value.enabled })}
-            className={`p-0.5 rounded transition-all active:scale-90 ${value.enabled ? 'text-emerald-400' : 'text-app-subtext hover:text-emerald-400'}`}
-            title={value.enabled ? '已启用（点击停用）' : '已停用（点击启用）'}
-          >
-            {value.enabled ? <CheckCircle2 size={14} /> : <Circle size={14} />}
-          </button>
-          <button
-            type="button"
-            onClick={onTogglePreview}
-            className={`p-0.5 rounded transition-all active:scale-90 ${previewing ? 'text-indigo-300' : 'text-app-subtext hover:text-indigo-300'}`}
-            title={previewing ? '取消预览该标签在 K 线上的命中位置' : '预览该标签在 K 线上的命中位置'}
-          >
-            {previewing ? <Eye size={14} /> : <EyeOff size={14} />}
-          </button>
-          {/* 颜色调节：图标自身用所选颜色着色，点击展开调色板选色 */}
+        {/* 左侧：标签颜色按钮(最左) + 策略名 */}
+        <div className="relative flex items-center gap-1.5 min-w-0">
+          {/* 标签颜色：标签图标(Tag)居最左，以当前所选颜色着色；点击展开调色板选色 */}
           <button
             type="button"
             onClick={() => setColorOpen(o => !o)}
-            className="p-0.5 rounded transition-all active:scale-90 text-app-subtext hover:opacity-90"
+            className={`shrink-0 p-0.5 rounded transition-all active:scale-90 text-app-subtext hover:opacity-90 ${colorOpen ? 'ring-1 ring-indigo-400/40' : ''}`}
             style={{ color: curHex }}
             title={`标记颜色：${curColor}（点击选择）`}
           >
-            <Palette size={14} />
+            <Tag size={14} />
           </button>
-          <button type="button" onClick={onRemove} className="text-app-subtext hover:text-brand-red transition-colors p-0.5" title="删除策略">
-            <Trash2 size={13} />
-          </button>
-          {/* 调色板：点颜色图标后弹出，选中即着色并收起 */}
+          <span className={`truncate text-xs font-medium select-none text-app-text ${previewing ? 'underline underline-offset-4 decoration-indigo-400' : ''}`}>
+            {value.label || '未命名策略'}
+          </span>
+          {/* 调色板：点 Tag 后紧贴其下方弹出，选中即着色并收起 */}
           {colorOpen && (
             <div
-              className="absolute right-0 top-full mt-1 z-20 flex items-center gap-1 bg-app-bg border border-app-border rounded-lg px-1.5 py-1 shadow-[0_8px_30px_rgba(0,0,0,0.5)]"
+              className="absolute left-0 top-full mt-1 z-20 flex items-center gap-1 bg-app-bg border border-app-border rounded-lg px-1.5 py-1 shadow-[0_8px_30px_rgba(0,0,0,0.5)]"
               onClick={e => e.stopPropagation()}
             >
               {TAG_PALETTE.map(c => (
@@ -1398,11 +1377,27 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
             </div>
           )}
         </div>
+        {/* 右侧按钮组：预览 / 删除 */}
+        <div className="relative flex items-center gap-1 shrink-0">
+          {/* 预览开关：小眼睛按钮（固定浅灰色，与删除叉默认状态同色） */}
+          <button
+            type="button"
+            onClick={onTogglePreview}
+            className="p-0.5 rounded transition-all active:scale-90 text-app-subtext"
+            title={previewing ? '取消预览该标签在 K 线上的命中位置' : '预览该标签在 K 线上的命中位置'}
+          >
+            {previewing ? <Eye size={14} /> : <EyeOff size={14} />}
+          </button>
+          {/* 删除：叉图标 */}
+          <button type="button" onClick={onRemove} className="text-app-subtext hover:text-brand-red transition-colors p-0.5" title="删除策略">
+            <X size={14} />
+          </button>
+        </div>
       </div>
       <div className="flex items-center gap-1.5">
         <span className="shrink-0 text-[11px] text-app-subtext">信号</span>
         <select
-          className="flex-1 min-w-0 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight text-app-text outline-none"
+          className="flex-1 min-w-0 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight text-app-subtext outline-none"
           value={value.tagKey}
           onChange={e => {
             const key = e.target.value;
@@ -1430,7 +1425,7 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
       <div className="flex items-center gap-1.5">
         <span className="shrink-0 text-[11px] text-app-subtext">环境</span>
         <select
-          className="flex-1 min-w-0 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight outline-none text-app-text"
+          className="flex-1 min-w-0 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight outline-none text-app-subtext"
           value={value.envCondition?.key ?? ''}
           onChange={e => {
             const key = e.target.value;
@@ -1454,7 +1449,7 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
       <div className="flex items-center gap-1.5">
         <span className="shrink-0 text-[11px] text-app-subtext">操作</span>
         <select
-          className="flex-1 min-w-0 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight font-semibold outline-none"
+          className="flex-1 min-w-0 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight font-semibold outline-none text-app-subtext"
           value={value.action}
           onChange={e => onChange({ action: e.target.value as BacktestRule['action'] })}
         >
@@ -1471,7 +1466,7 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
             precision={0}
             touchMode
             hideControls
-            className="!py-1 !pl-2 !pr-2 !text-xs !text-right"
+            className="!py-1 !pl-2 !pr-2 !text-xs !text-right !text-app-subtext"
           />
         </div>
         <span className="text-xs text-app-subtext">%</span>
