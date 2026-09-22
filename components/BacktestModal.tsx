@@ -848,6 +848,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       {displayQuote && (
         <PriceInfoPopover
           name={displayQuote.name}
+          date={displayQuote.win?.[displayQuote.idx]?.date}
           price={displayQuote.price}
           changePercent={displayQuote.changePercent}
           data={displayQuote.data}

@@ -5349,6 +5349,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         <PriceInfoPopover
           innerRef={priceInfoRef}
           name={priceInfoStock.name}
+          date={(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })()}
           price={priceInfoStock.price}
           changePercent={priceInfoStock.changePercent}
           data={priceInfoData}

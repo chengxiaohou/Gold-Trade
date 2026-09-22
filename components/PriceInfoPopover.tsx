@@ -6,6 +6,7 @@ import { formatPrice, formatVolume } from '../services/indicators';
 
 export interface PriceInfoPopoverProps {
   name: string;
+  date?: string | null;              // 该行情对应的交易日（如 '2026-09-22'）；标题股票名后展示
   price: number | null;              // 现价：列表页=实时价；回测=悬停那根的收盘价
   changePercent: number | null;      // 涨跌幅（%）：列表页=实时；回测=该根相对昨收
   data: IndicatorResult | null;
@@ -22,7 +23,7 @@ export interface PriceInfoPopoverProps {
 }
 
 export default function PriceInfoPopover({
-  name, price, changePercent, data, loading, left, top, width = 210,
+  name, date, price, changePercent, data, loading, left, top, width = 210,
   innerRef, onMouseEnter, onMouseLeave, footer, headerLeft, dividendRate,
 }: PriceInfoPopoverProps) {
   return (
@@ -33,11 +34,10 @@ export default function PriceInfoPopover({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
-      <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center relative">
-        {headerLeft && (
-          <div className="absolute left-1 top-1/2 -translate-y-1/2 flex items-center">{headerLeft}</div>
-        )}
+      <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center relative">
+        {headerLeft && <div className="flex items-center mr-1.5">{headerLeft}</div>}
         <span className="text-[11px] font-bold text-app-subtext">{name}</span>
+        {date && <span className="ml-1 font-mono text-[10px] text-app-subtext font-normal leading-none">{date}</span>}
       </div>
       <div className="px-2.5 py-1.5 bg-app-card">
         {loading && <div className="text-[10px] text-app-subtext py-2 text-center">加载中…</div>}
@@ -103,9 +103,9 @@ export default function PriceInfoPopover({
               {subRows('RSI (6, 12, 24)', [['6', numFmt(d.rsi.rsi6), rsiColor(d.rsi.rsi6)], ['12', numFmt(d.rsi.rsi12), rsiColor(d.rsi.rsi12)], ['24', numFmt(d.rsi.rsi24), rsiColor(d.rsi.rsi24)]])}
               {subRows('MACD (12, 26, 9)', [['DIF', numFmt(d.macd.dif, 3)], ['DEA', numFmt(d.macd.dea, 3)], ['MACD', numFmt(d.macd.macd, 3)]])}
               {dividendRate != null && (
-                <div className="flex items-baseline justify-between gap-2 border-t border-app-border pt-1 mt-1">
-                  <span className="text-[10px] text-app-subtext whitespace-nowrap">当日股息率</span>
-                  <span className="font-mono text-[11px] text-app-rowtext">{dividendRate.toFixed(2)}%</span>
+                <div className="flex items-baseline justify-start gap-2 border-t border-app-border pt-1 mt-1">
+                  <span className="text-[10px] text-app-subtext whitespace-nowrap">股息率</span>
+                  <span className="font-mono text-[10px] text-app-rowtext">{dividendRate.toFixed(2)}%</span>
                 </div>
               )}
               {footer}
