@@ -188,6 +188,19 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [customTags, setCustomTags] = useState<UserTagRule[]>(stockSettings?.customTags || []);
   // 新增/编辑标签表单（null=表单关闭）
   const [tagForm, setTagForm] = useState<UserTagRule | null>(null);
+  // 保存新增/编辑的自定义标签（依据数据点自动判定的目标形式，清理多余字段）
+  const saveTag = () => {
+    if (!tagForm) return;
+    const clean: UserTagRule = tagForm.targetType === 'fixed'
+      ? { ...tagForm, targetIndicator: undefined }
+      : { ...tagForm, targetValue: undefined };
+    setCustomTags(prev => {
+      const idx = prev.findIndex(x => x.id === clean.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = clean; return next; }
+      return [...prev, clean];
+    });
+    setTagForm(null);
+  };
   // 挂单备注占位文字，买入和卖出分开设置（随云端同步）
   const [buyOrderPlaceholder, setBuyOrderPlaceholder] = useState<string>(stockSettings?.buyOrderPlaceholder || '');
   const [sellOrderPlaceholder, setSellOrderPlaceholder] = useState<string>(stockSettings?.sellOrderPlaceholder || '');
@@ -1522,11 +1535,19 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                 {/* 新增/编辑标签表单 */}
                 {tagForm && (
                   <div className="space-y-3 pt-2 border-t border-app-border">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-app-text flex items-center gap-2">
-                        <Pencil size={14} className="text-indigo-400"/> 编辑标签
-                      </span>
-                      <button type="button" onClick={() => setTagForm(null)} className="text-xs text-app-subtext hover:text-app-text transition-colors">取消</button>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <Pencil size={14} className="text-indigo-400 shrink-0"/>
+                        <input type="text" value={tagForm.name} placeholder="输入标签名称"
+                          onChange={e => setTagForm({ ...tagForm, name: e.target.value })}
+                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); saveTag(); } }}
+                          className="flex-1 min-w-0 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs font-medium text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button type="button" onClick={saveTag}
+                          className="px-3 py-1 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">保存</button>
+                        <button type="button" onClick={() => setTagForm(null)} className="text-xs text-app-subtext hover:text-app-text transition-colors">取消</button>
+                      </div>
                     </div>
                     <div className="space-y-3">
                       {/* 数据点：chip 组 */}
@@ -1585,12 +1606,6 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                         )}
                       </div>
 
-                      <label className="block">
-                        <span className="text-xs text-app-subtext mb-1 block">标签名称</span>
-                        <input type="text" value={tagForm.name} placeholder="如：放量突破MA20" onChange={e => setTagForm({ ...tagForm, name: e.target.value })}
-                          className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
-                      </label>
-
                       {/* 颜色：圆圈网格 + 选中中心圆点（照搬股票页编辑标签弹窗） */}
                       <div>
                         <span className="text-xs text-app-subtext mb-1.5 block">颜色</span>
@@ -1603,23 +1618,6 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                           ))}
                         </div>
                       </div>
-                    </div>
-                    <div className="flex items-center justify-between pt-1">
-                      <button type="button" onClick={() => setTagForm(null)}
-                        className="px-3 py-1.5 rounded-lg text-xs font-medium text-app-subtext border border-app-border hover:text-app-text transition-colors">取消</button>
-                      <button type="button"
-                        onClick={() => {
-                          const clean: UserTagRule = tagForm.targetType === 'fixed'
-                            ? { ...tagForm, targetIndicator: undefined }
-                            : { ...tagForm, targetValue: undefined };
-                          setCustomTags(prev => {
-                            const idx = prev.findIndex(x => x.id === clean.id);
-                            if (idx >= 0) { const next = [...prev]; next[idx] = clean; return next; }
-                            return [...prev, clean];
-                          });
-                          setTagForm(null);
-                        }}
-                        className="px-4 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">保存标签</button>
                     </div>
                   </div>
                 )}
