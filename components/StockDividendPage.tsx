@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS } from '../types';
-import { fetchBollData, getBollCacheTimestamps, BollData, BollPeriod, BollAdjust, BollKline, mergeTodayBarToKlines } from '../services/bollService';
-import { isStockPriceFresh, isTradingHours, getMarketStatus, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime } from '../services/cacheService';
+import { fetchBollData, BollData, BollPeriod, BollAdjust, BollKline, mergeTodayBarToKlines } from '../services/bollService';
+import { isStockPriceFresh, isTradingHours, getMarketStatus, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime } from '../services/cacheService';
 import { priceBureau } from '../services/priceBureau';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import { toTencentCode, parseTencentQuoteText, type TencentQuote } from '../services/tencentQuote';
@@ -2212,6 +2212,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       cancelCheck: () => fetchVersionRef.current !== currentVersion,
     });
 
+    // 全量（批量）刷新完成：记录"全量刷新时间戳"（表头与设置面板读取）。
+    // 仅此处写入，单只/单周期请求不触碰，避免该时间被个别请求频繁刷成"刚刚"。
+    setBollFullFetchTime(apiSource);
+
     setIsRefreshingBoll(false);
   }, [stocks, bollAdjust, apiSource, sortedStocks]);
 
@@ -3548,9 +3552,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <div className="flex items-center justify-center gap-1">
                   <span>BOLL</span>
                   {(() => {
-                    const ts = getBollCacheTimestamps(stocks, bollAdjust, apiSource);
-                    const t = ts.length > 0 ? Math.max(...ts) : 0;
-                    return t > 0 ? <span className="text-[9px] text-app-subtext">{formatRelativeTime(t)}</span> : null;
+                    const t = getBollFullFetchTime(apiSource);
+                    return t ? <span className="text-[9px] text-app-subtext">{formatRelativeTime(t)}</span> : null;
                   })()}
                   <button
                     onClick={(e) => {

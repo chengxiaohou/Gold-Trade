@@ -135,6 +135,22 @@ export function getLastTradingOpen(date: Date = new Date()): Date {
 const sourceLastFetch: Map<ApiSource, number> = new Map();
 const sourceCacheExpiry: Map<ApiSource, number> = new Map();
 
+// "全量刷新时间戳"：仅在全量（批量）BOLL 刷新结束时写入并持久化，
+// 单只/单周期请求不触碰——用于表头与设置面板展示"最后一次全量刷新时间"，
+// 避免因单独的个别请求而频繁变成"刚刚"。
+const FULL_FETCH_KEY_PREFIX = 'boll_full_fetch_';
+export function setBollFullFetchTime(source: ApiSource, timestamp: number = Date.now()): void {
+  try { localStorage.setItem(`${FULL_FETCH_KEY_PREFIX}${source}`, String(timestamp)); } catch { /* ignore */ }
+}
+export function getBollFullFetchTime(source: ApiSource): number | null {
+  try {
+    const raw = localStorage.getItem(`${FULL_FETCH_KEY_PREFIX}${source}`);
+    if (raw == null) return null;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? n : null;
+  } catch { return null; }
+}
+
 // 设置上次拉取时间
 export function setLastFetchTime(source: ApiSource, timestamp: number = Date.now()): void {
   sourceLastFetch.set(source, timestamp);
@@ -221,10 +237,12 @@ export function isCacheValid(source: ApiSource): boolean {
 export function getCacheInfo(source: ApiSource): CacheInfo {
   const marketStatus = getMarketStatus();
   const lastFetchAt = getLastFetchTime(source);
+  const lastFullFetchAt = getBollFullFetchTime(source);
   const expiresAt = getCacheExpiry(source);
 
   return {
     lastFetchAt,
+    lastFullFetchAt,
     expiresAt,
     marketStatus,
     isTradingHours: isTradingHours()

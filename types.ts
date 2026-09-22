@@ -75,6 +75,7 @@ export type MarketStatus = 'pre_open' | 'morning_session' | 'midday_break' | 'af
 
 export interface CacheInfo {
   lastFetchAt: number | null; // Timestamp of last full fetch for this source
+  lastFullFetchAt: number | null; // Timestamp of last full (batch) BOLL refresh for this source
   expiresAt: number | null; // When the cache expires
   marketStatus: MarketStatus; // Current market status
   isTradingHours: boolean; // Whether currently in trading hours

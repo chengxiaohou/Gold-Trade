@@ -801,15 +801,15 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                 </div>
                                 <div className="space-y-1 text-xs text-app-subtext">
                                  <div className="flex justify-between items-baseline flex-nowrap">
-                                   <span className="whitespace-nowrap shrink-0">上次拉取:</span>
+                                   <span className="whitespace-nowrap shrink-0">全量刷新:</span>
                                    <span className="font-mono text-right ml-2 whitespace-nowrap text-app-text/80">
-                                     {info.lastFetchAt ? formatDatePart(info.lastFetchAt) : '从未'}
+                                     {info.lastFullFetchAt ? formatDatePart(info.lastFullFetchAt) : '从未'}
                                    </span>
                                  </div>
-                                 {info.lastFetchAt && (
+                                 {info.lastFullFetchAt && (
                                    <div className="flex justify-between items-baseline">
-                                     <span className="text-[10px] text-app-text/80">{formatRelativeTime(info.lastFetchAt)}</span>
-                                     <span className="font-mono text-app-text/80">{formatTimePart(info.lastFetchAt)}</span>
+                                     <span className="text-[10px] text-app-text/80">{formatRelativeTime(info.lastFullFetchAt)}</span>
+                                     <span className="font-mono text-app-text/80">{formatTimePart(info.lastFullFetchAt)}</span>
                                    </div>
                                  )}
                                  <div className="flex justify-between items-baseline flex-nowrap mt-1">
