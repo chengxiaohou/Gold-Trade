@@ -495,14 +495,24 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
       ro.observe(el);
     }
     // 缩放/平移导致可视区变化时，重算覆盖层标签位置，保证跟随 K 线。
-    // 关键：合并到下一渲染帧(rAF)执行——lightweight 在可视区变化后是"下帧"才重算 y 轴
-    // 可见范围 autoScale 并重绘 canvas，若在此回调里同步读取 priceToCoordinate，拿到的还是
-    // 旧 y 刻度 → 标签在高度上偏离 K 线(需横滑触发下次 range change 才归位)。rAF 合并后以其
-    // 最新刻度换算，标签与 canvas 同帧，平移/缩放都贴合。
+    // 「无延迟跟随」的本质：让覆盖层标签的坐标重算与 lightweight 的 canvas 绘制收尾在同一时刻。
+    // 差异只在 y 轴 autoScale 的到位时机：位移不改可见 y 刻度(平移)，index 同步就位；缩放会重标 y 轴。
+    // 因而必须按手势分流、不能一刀切都同步或都 rAF——位移只动可视范围宽度不变(平移)，
+    // 标签与 K 线同帧、平移完全贴合(这是最初"平移无延迟"的来源)；缩放会改变可视范围宽度，
+    // lightweight 要到下一渲染帧才重算 y 轴 autoScale 并重绘 canvas，此刻同步读 priceToCoordinate
+    // 仍是旧 y 刻度 → 标签在高度上偏离 K 线。故缩放改为 rAF 合并到 canvas 同帧再算。
     let rafId = 0;
-    const onTimeScaleChange = () => {
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => computeTicksRef.current?.());
+    let lastSpan = -1;
+    const onTimeScaleChange = (range: { from: number; to: number } | null) => {
+      const span = range ? range.to - range.from : lastSpan;
+      const isZoom = Math.abs(span - lastSpan) > 1e-6; // 可视宽度变化 = 缩放；仅位移 = 平移
+      lastSpan = span;
+      if (!isZoom) {
+        computeTicksRef.current?.(); // 平移：同步，保持完全贴合
+      } else {
+        cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(() => computeTicksRef.current?.()); // 缩放：等 y 轴稳定
+      }
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(onTimeScaleChange);
     // —— 十字线悬浮行情面板（复用列表页"当日行情"浮窗 PriceInfoPopover）——
