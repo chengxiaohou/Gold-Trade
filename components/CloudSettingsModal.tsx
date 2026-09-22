@@ -75,13 +75,16 @@ const TARGET_INDICATOR_LABELS: Record<SignalTargetIndicator, string> = {
   ma5: 'MA5', ma10: 'MA10', ma20: 'MA20', ma60: 'MA60', ma120: 'MA120',
   bollUpper: '布林上轨', bollMid: '布林中轨', bollLower: '布林下轨',
 };
-const TAG_PALETTE: { key: string; label: string; cls: string }[] = [
-  { key: 'gray', label: '灰', cls: 'bg-gray-500' },
-  { key: 'indigo', label: '默认', cls: 'bg-indigo-500' },
-  { key: 'red', label: '红', cls: 'bg-red-500' },
-  { key: 'green', label: '绿', cls: 'bg-brand-green' },
-  { key: 'blue', label: '蓝', cls: 'bg-blue-500' },
-  { key: 'orange', label: '橙', cls: 'bg-orange-500' },
+// 标签颜色面板：与股票页「编辑标签」弹窗完全一致（8 色，半透明底 + 边框 + 选中中心色点）
+const TAG_PALETTE: { key: string; label: string; bg: string; text: string; border: string }[] = [
+  { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20' },
+  { key: 'indigo', label: '默认', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20' },
+  { key: 'red', label: '红色', bg: 'bg-red-500/10', text: 'text-red-500', border: 'border-red-500/20' },
+  { key: 'green', label: '绿色', bg: 'bg-brand-green/10', text: 'text-brand-green', border: 'border-brand-green/20' },
+  { key: 'yellow', label: '黄色', bg: 'bg-[var(--soft-yellow-bg)]', text: 'text-brand-softYellow', border: 'border-[var(--soft-yellow-border)]' },
+  { key: 'blue', label: '蓝色', bg: 'bg-blue-500/10', text: 'text-blue-500', border: 'border-blue-500/20' },
+  { key: 'orange', label: '橙色', bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/20' },
+  { key: 'pink', label: '粉色', bg: 'bg-pink-500/10', text: 'text-pink-500', border: 'border-pink-500/20' },
 ];
 const SIGNAL_GROUP_LABELS: Record<string, string> = {
   pattern: 'K线形态',
@@ -1510,7 +1513,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex-1 min-w-0">
                           <span className="flex items-center gap-1.5 text-xs font-medium text-app-text">
-                            <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${(TAG_PALETTE.find(p => p.key === t.color) || TAG_PALETTE[1]).cls}`} />
+                            <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${(TAG_PALETTE.find(p => p.key === t.color) || TAG_PALETTE[1]).bg}`} />
                             {t.name || '(未命名)'}
                           </span>
                           <span className="block text-[10px] text-app-subtext mt-0.5 leading-snug">
@@ -1593,10 +1596,12 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                           目标{SOURCE_TARGET_TYPE[tagForm.source] === 'fixed' ? '值' : '指标'}<span className="text-app-subtext/40 ml-1">（自动）</span>
                         </span>
                         {SOURCE_TARGET_TYPE[tagForm.source] === 'fixed' ? (
-                          <InputGroup value={tagForm.targetValue ?? 0}
-                            onChange={v => setTagForm({ ...tagForm, targetValue: parseFloat(v) || 0 })}
-                            step={SOURCE_STEP[tagForm.source]} unit={SOURCE_UNIT[tagForm.source]}
-                            precision={SOURCE_PRECISION[tagForm.source]} className="!py-1.5 !text-xs" />
+                          <div className="w-1/3 min-w-[150px]">
+                            <InputGroup value={tagForm.targetValue ?? 0}
+                              onChange={v => setTagForm({ ...tagForm, targetValue: parseFloat(v) || 0 })}
+                              step={SOURCE_STEP[tagForm.source]} unit={SOURCE_UNIT[tagForm.source]}
+                              precision={SOURCE_PRECISION[tagForm.source]} className="!py-1.5 !text-xs" />
+                          </div>
                         ) : (
                           <div className="flex flex-wrap gap-1.5">
                             {(Object.keys(TARGET_INDICATOR_LABELS) as SignalTargetIndicator[]).map(k => (
@@ -1615,8 +1620,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                         <div className="grid grid-cols-8 gap-2">
                           {TAG_PALETTE.map(c => (
                             <button key={c.key} type="button" aria-label={c.label} title={c.label} onClick={() => setTagForm({ ...tagForm, color: c.key })}
-                              className={`w-6 h-6 rounded-full border transition-all flex items-center justify-center ${c.cls} ${tagForm.color === c.key ? 'opacity-100 scale-100' : 'opacity-60 hover:opacity-100 hover:scale-105'}`}>
-                              {tagForm.color === c.key && <span className="w-2 h-2 rounded-full bg-white shadow-sm" />}
+                              className={`w-6 h-6 rounded-full border transition-all flex items-center justify-center ${c.bg} ${c.border} ${tagForm.color === c.key ? 'opacity-100 scale-100' : 'opacity-60 hover:opacity-100 hover:scale-105'}`}>
+                              {tagForm.color === c.key && <span className={`w-2 h-2 rounded-full ${c.text} bg-current shadow-sm`} />}
                             </button>
                           ))}
                         </div>
