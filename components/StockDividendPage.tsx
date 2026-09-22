@@ -5375,12 +5375,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const trades = getTrades(s);
         const sortedTrades = [...trades].sort((a, b) => b.createdAt - a.createdAt);
         const orderAmount = (parseFloat(addTradePrice) || 0) * (parseFloat(addTradeShares) || 0);
+        // 挂单金额展示：消除浮点误差后，小数为 0 则不显示小数，否则保留两位
+        const orderAmtClean = Math.round(orderAmount * 100) / 100;
+        const orderAmountText = Number.isInteger(orderAmtClean)
+          ? orderAmtClean.toLocaleString('zh-CN')
+          : orderAmtClean.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const fmtP = (v: number) => formatPrice(v, s.name);
         const noteCls = "no-spinners w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-[11px] text-app-text outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all placeholder:text-app-subtext/40";
         // 当前持仓概要：持仓只从交易记录重算，不再兜底旧的手动成本
         const posShares = s.positionShares || 0;
         const avgCost = s.positionCost || 0;
         const marketPrice = s.price || 0;
+        // 挂单预览：金额 / 距现价 / 股息率相对持仓成本的差异
+        const orderPriceNum = parseFloat(addTradePrice) || 0;
+        const orderDividend = getDividendForYear(s, getSelectedYear(s)) || 0;
+        const priceGapValid = orderPriceNum > 0 && marketPrice > 0;
+        const priceGapPct = priceGapValid ? ((orderPriceNum - marketPrice) / marketPrice) * 100 : 0;
+        const orderDivRate = orderPriceNum > 0 && orderDividend > 0 ? (orderDividend / orderPriceNum) * 100 : 0;
+        const costDivRate = avgCost > 0 && orderDividend > 0 ? (orderDividend / avgCost) * 100 : 0;
+        const divDiffValid = orderPriceNum > 0 && costDivRate > 0;
+        const divDiffPct = divDiffValid ? ((orderDivRate - costDivRate) / costDivRate) * 100 : 0;
         // 按成交顺序用移动加权成本重算每笔卖出的已实现盈亏（不依赖可能为 0 的存储 positionCost/realizedPnL）
         const recalcPnL = calcRealizedPnlMap(getTrades(s));
         const realizedPnl = recalcPnL.total;
@@ -5496,7 +5510,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
               {/* 挂单价 + 数量（复用黄金项目 InputGroup 步进输入，支持鼠标滚轮与触屏手势调节） */}
               <div className="grid grid-cols-2 gap-3">
-                <InputGroup label="挂单价格" value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 0.001 : 0.01} min={0} precision={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 3 : 2} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
+                <InputGroup label={<span className="inline-flex items-baseline gap-1">挂单价格{priceGapValid && <span className="text-app-subtext/60 font-normal">({priceGapPct > 0 ? '+' : ''}{priceGapPct.toFixed(2)}%)</span>}</span>} value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 0.001 : 0.01} min={0} precision={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 3 : 2} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
                 {/* 数量：卖出时以当前持仓为上限（静默截断） */}
                 <InputGroup
                   label="数量(股)"
@@ -5516,12 +5530,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 />
               </div>
 
-              {/* 挂单金额预览 */}
-              <div className="flex items-center justify-between px-0.5 pt-0.5">
-                <span className="text-[10px] font-medium text-app-subtext">挂单金额</span>
-                <span className="font-mono font-bold text-[12px] text-app-text">
-                  ¥{orderAmount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
+              {/* 挂单预览：挂单金额 / 股息率差（距现价移到挂单价格 label 内）并列一行 */}
+              <div className="grid grid-cols-2 gap-x-3 px-0.5 pt-0.5" style={{ marginTop: 2 }}>
+                <div className="flex items-center justify-start gap-1">
+                  <span className="text-[10px] font-medium text-app-subtext translate-y-px">挂单金额</span>
+                  <span className="font-mono font-bold text-[11px] text-app-subtext">
+                    ¥{orderAmountText}
+                  </span>
+                </div>
+                <div className="flex items-center justify-start gap-1">
+                  <span className="text-[10px] font-medium text-app-subtext translate-y-px">股息率差</span>
+                  <span className="font-mono font-bold text-[10px] text-app-subtext">
+                    {divDiffValid ? `${divDiffPct > 0 ? '+' : ''}${divDiffPct.toFixed(2)}%` : '-'}
+                  </span>
+                </div>
               </div>
 
               {/* 备注 */}
