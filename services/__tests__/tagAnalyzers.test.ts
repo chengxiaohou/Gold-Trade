@@ -910,13 +910,28 @@ describe('用户自定义动态信号标签 analyzeUserTagRule', () => {
     const k = mkKlines(5, { close: i => 100 + i });
     expect(analyzeUserTagRule(k, 4, { ...base, enabled: false })).toBeNull();
   });
-  it('股息率：传入每股派息后 = 每股派息/收盘价*100，增至命中', () => {
+  it('股息率：传入 dividendByYear 后按每股派息/收盘价*100 折算，增至命中（当年用预估分红），不传则无法判定', () => {
     const k = mkKlines(5, { close: () => 10 }); // 收盘 10 元
     const rule: UserTagRule = { ...base, name: '股息率达3%', source: 'dividendRate', direction: 'up', targetValue: 3 };
     // 每股派息 0.3 元 → 股息率 = 0.3/10*100 = 3%
-    expect(analyzeUserTagRule(k, 4, rule, 0.3)).not.toBeNull();
-    // 不传派息 → 无法判定 → null
+    expect(analyzeUserTagRule(k, 4, rule, { 2025: 0.3 })).not.toBeNull();
+    // 不传分红数据 → 无法判定 → null
     expect(analyzeUserTagRule(k, 4, rule)).toBeNull();
+  });
+  it('股息率历史年份按该 K 线所属年份分红折算（与列表股息率曲线 rateForKline 同源）', () => {
+    // 2024 年收盘 10，分红 0.25 → 2.5%；2025 为"当前交易年份"，用预估 fallback 0.35 → 3.5%
+    const k = mkKlines(3, {
+      overrides: {
+        0: { date: '2024-12-31', close: 10, open: 10, high: 10.1, low: 9.9 },
+        1: { date: '2025-01-02', close: 10, open: 10, high: 10.1, low: 9.9 },
+        2: { date: '2025-01-03', close: 10, open: 10, high: 10.1, low: 9.9 },
+      },
+    });
+    const rule: UserTagRule = { ...base, name: '股息率达2%', source: 'dividendRate', direction: 'up', targetValue: 2 };
+    // 2024 根：0.25/10*100=2.5% → 命中
+    expect(analyzeUserTagRule(k, 0, { ...rule, id: 'd1' }, { 2024: 0.25, 2025: 0.35 })).not.toBeNull();
+    // 2025 根（当前年份）用预估 fallback 0.35 → 3.5% 命中
+    expect(analyzeUserTagRule(k, 2, { ...rule, id: 'd2' }, { 2024: 0.25, 2025: 0.35 })).not.toBeNull();
   });
   it('触达(touch)：|值-目标| 在容差内任一边命中，超出容差未命中', () => {
     const k = mkKlines(5, { close: () => 100 });

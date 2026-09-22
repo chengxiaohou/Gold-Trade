@@ -16,7 +16,7 @@ export interface BacktestParams {
   lotSize?: number; // 每手股数（默认 100，整百股成交）
   cfg?: TagParams;  // 标签判定参数：必须与标签弹窗同一份（默认 DEFAULT_TAG_PARAMS），保证两侧信号判定严格一致
   customTags?: UserTagRule[]; // 用户自定义动态信号标签：与弹窗同一份，保证回测与弹窗信号判定严格一致
-  dividendPerShare?: number; // 该股每股税前派息（元）：供 dividendRate 数据点自定义标签使用
+  dividendByYear?: Record<number, number>; // <年份,每股派息>：供 dividendRate 数据点自定义标签（按 K 线所属年份折算）
 }
 
 // 回测触发标签目录 = 直接复用 tagAnalyzers 里的【单一数据源】DAILY_SIGNAL_CATALOG。
@@ -36,8 +36,8 @@ export const fmtShort = (d: string) => d.slice(5).replace('-', '/');
 
 // 收集某交易日（win=klines[0..i] 末根=当日）命中的标签名 + 当日环境状态。
 // 逐日因果：win 已是"当日及之前"的前缀，不含未来数据 → 无未来泄漏。
-// dividendPerShare：供 dividendRate 数据点自定义标签使用（该股每股派息），与弹窗同源。
-function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams, customTags: UserTagRule[] = [], dividendPerShare?: number): { hits: Set<string>; env: EnvResult | null } {
+// dividendByYear：供 dividendRate 数据点自定义标签（与弹窗同源，按 K 线所属年份折算）。
+function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams, customTags: UserTagRule[] = [], dividendByYear?: Record<number, number>): { hits: Set<string>; env: EnvResult | null } {
   const hits = new Set<string>();
   const last = win[win.length - 1];
   // K 线形态：直接用 analyzeKlinePatterns 的 label（弹窗同一套）
@@ -59,7 +59,7 @@ function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams, custom
   // 与弹窗 getDayTagSet 的 collectUserTags 同一判定源 analyzeUserTagRule，保证回测与弹窗一致）
   for (const r of customTags) {
     if (!r.enabled) continue;
-    if (analyzeUserTagRule(win, i, r, dividendPerShare)) hits.add(r.name);
+    if (analyzeUserTagRule(win, i, r, dividendByYear)) hits.add(r.name);
   }
   // 环境状态：仅当 K 线足够长（≥130，环境判断需要 120 日均线）才计算，供规则 envCondition 门控判定
   const env = win.length >= 130 ? analyzeEnvironment(win, fmtP, true, cfg) : null;
@@ -68,8 +68,8 @@ function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams, custom
 }
 
 // 供回测图"十字线悬浮栏"展示某日命中的信号标签 —— 与 collectSignalsOnDay 同一来源，绝不另算一套。
-export function getDaySignalLabels(win: BollKline[], i: number, cfg?: TagParams, customTags?: UserTagRule[], dividendPerShare?: number): string[] {
-  return [...collectSignalsOnDay(win, i, cfg ?? DEFAULT_TAG_PARAMS, customTags ?? [], dividendPerShare).hits].sort();
+export function getDaySignalLabels(win: BollKline[], i: number, cfg?: TagParams, customTags?: UserTagRule[], dividendByYear?: Record<number, number>): string[] {
+  return [...collectSignalsOnDay(win, i, cfg ?? DEFAULT_TAG_PARAMS, customTags ?? [], dividendByYear).hits].sort();
 }
 
 // 引擎主函数：支持加仓/减仓、初始资金基准仓位、先卖后买、每日收盘后结算
@@ -96,7 +96,7 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
 
   for (let i = 30; i < n; i++) {
     const win = klines.slice(0, i + 1);
-    const { hits, env } = collectSignalsOnDay(win, i, cfg, customTags, p.dividendPerShare);
+    const { hits, env } = collectSignalsOnDay(win, i, cfg, customTags, p.dividendByYear);
 
     // 命中标签里，选已启用规则中仓位最高的一条（且环境前提成立）
     let chosen: BacktestRule | null = null;
@@ -187,7 +187,7 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
 // 预览：扫描某标签在某段完整历史 K 线中命中位置（复用弹窗判定逻辑，不独立判断）。
 // envKey 可选：指定后仅保留"当日环境状态命中该 key"的位置（与回测门控一致）。
 // 用户自定义标签（tagKey='user-<id>'）同样支持预览：按该条规则逐日判定（同弹窗同源）。
-export function scanTagOccurrences(k: BollKline[], tagKey: string, envKey?: string, cfg: TagParams = DEFAULT_TAG_PARAMS, customTags: UserTagRule[] = [], dividendPerShare?: number): { date: string; barIndex: number; detail: string[] }[] {
+export function scanTagOccurrences(k: BollKline[], tagKey: string, envKey?: string, cfg: TagParams = DEFAULT_TAG_PARAMS, customTags: UserTagRule[] = [], dividendByYear?: Record<number, number>): { date: string; barIndex: number; detail: string[] }[] {
   // 用户自定义标签：按规则逐日判定，命中即记（与弹窗 collectUserTags 同源 analyzeUserTagRule）
   if (tagKey.startsWith('user-')) {
     const rule = customTags.find(r => r.id === tagKey.slice(5));
@@ -197,7 +197,7 @@ export function scanTagOccurrences(k: BollKline[], tagKey: string, envKey?: stri
     const out: { date: string; barIndex: number; detail: string[] }[] = [];
     for (let i = 30; i < n; i++) {
       const win = klines.slice(0, i + 1);
-      const detail = analyzeUserTagRule(win, i, rule, dividendPerShare);
+      const detail = analyzeUserTagRule(win, i, rule, dividendByYear);
       if (!detail) continue;
       // 环境前提门控：指定了 envKey 时仅保留当日环境命中的位置
       if (envKey) {

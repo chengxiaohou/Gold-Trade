@@ -233,7 +233,7 @@ export type SignalDataSource =
   | 'volumeRatio'    // 量比 = 当日量/前5日均量
   | 'kdj'            // KDJ.J 值
   | 'rsi'            // RSI6 值
-  | 'dividendRate';  // 股息率(%) = 每股派息 / 收盘价（随股价每日变化）
+  | 'dividendRate';  // 股息率(%)：按该日 K 线所属年份分红 / 收盘价折算；当年用预估分红（与列表股息率曲线同源）
 
 // 动态目标：均线 / BOLL 轨（每日动态变化，无法预先固定）
 export type SignalTargetIndicator = 'ma5' | 'ma10' | 'ma20' | 'ma60' | 'ma120' | 'bollUpper' | 'bollMid' | 'bollLower';

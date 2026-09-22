@@ -549,10 +549,10 @@ describe('用户自定义标签可作回测买卖触发', () => {
     const tags: UserTagRule[] = [
       { id: 'tt2', name: '股息率达3%', enabled: true, source: 'dividendRate', direction: 'up', targetType: 'fixed', targetValue: 3, color: 'green' },
     ];
-    // 每股派息 3.0 元：股息率 = 3/100*100 = 3%，恒命中；派息 0.1 → 0.1% 不命中
-    const hit = runBacktest(k, { initialCapital: 100000, rules: [{ id: 'r2', tagKey: 'user-tt2', label: '股息率达3%', action: 'buy', pct: 30, enabled: true }] }, { customTags: tags, dividendPerShare: 3.0 });
+    // 每股派息 3.0：股息率=3/100*100=3%，恒命中；派息 0.1 → 0.1% 不命中
+    const hit = runBacktest(k, { initialCapital: 100000, rules: [{ id: 'r2', tagKey: 'user-tt2', label: '股息率达3%', action: 'buy', pct: 30, enabled: true }] }, { customTags: tags, dividendByYear: { 2025: 3.0 } });
     expect(hit.trades.some(t => t.action === 'buy' && t.tagName === '股息率达3%')).toBe(true);
-    const miss = runBacktest(k, { initialCapital: 100000, rules: [{ id: 'r2', tagKey: 'user-tt2', label: '股息率达3%', action: 'buy', pct: 30, enabled: true }] }, { customTags: tags, dividendPerShare: 0.1 });
+    const miss = runBacktest(k, { initialCapital: 100000, rules: [{ id: 'r2', tagKey: 'user-tt2', label: '股息率达3%', action: 'buy', pct: 30, enabled: true }] }, { customTags: tags, dividendByYear: { 2025: 0.1 } });
     expect(miss.trades.length).toBe(0);
   });
 });

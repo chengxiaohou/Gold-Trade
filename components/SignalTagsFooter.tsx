@@ -12,7 +12,7 @@ export interface SignalTagsFooterProps {
   i: number;             // 当日索引 = win.length-1
   cfg?: TagParams;       // 标签判定参数（需与股票标签弹窗同一份）
   customTags?: UserTagRule[]; // 用户自定义动态信号标签
-  dividendPerShare?: number; // 每股税前派息（元）：供 dividendRate 自定义标签
+  dividendByYear?: Record<number, number>; // <年份,每股派息>：供 dividendRate 自定义标签（按 K 线所属年份折算）
   fmt?: (v: number) => string;
   onPin?: () => void;    // 点击 chip 将详情固定时通知宿主（如让父弹窗保持展开）
   envChips?: EnvChip[];  // 环境标签（渲染在"当日信号"上方）；chip 已带完整样式
@@ -24,11 +24,11 @@ export interface EnvChip { key: string; label: string; cls: string; }
 // chip 底座样式与标签弹窗一致（chipBase）
 const CHIP_BASE = 'inline-flex items-center justify-center rounded text-[9px] font-medium border px-1 py-px cursor-pointer transition-colors';
 
-export default function SignalTagsFooter({ win, i, cfg, customTags, dividendPerShare, fmt, onPin, envChips }: SignalTagsFooterProps) {
+export default function SignalTagsFooter({ win, i, cfg, customTags, dividendByYear, fmt, onPin, envChips }: SignalTagsFooterProps) {
   // 权威接口：与标签弹窗"当日行"同一套；i 恒与 win 末根一致
   const tags: DayTag[] = useMemo(
-    () => getDayTagSet(win, cfg, fmt, { customTags, dividendPerShare }),
-    [win, cfg, fmt, customTags, dividendPerShare],
+    () => getDayTagSet(win, cfg, fmt, { customTags, dividendByYear }),
+    [win, cfg, fmt, customTags, dividendByYear],
   );
   const [pinnedKey, setPinnedKey] = useState<string | null>(null);
   const [hoverKey, setHoverKey] = useState<string | null>(null);

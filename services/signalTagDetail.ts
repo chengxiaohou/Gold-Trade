@@ -64,15 +64,15 @@ const USER_REFERENCE = '用户自定义信号标签：依据设定数据点与�
 export type DayTagKind = 'volume' | 'pricestate' | 'pattern' | 'break' | 'break-obs' | 'break-status' | 'user';
 export interface DayTag extends SignalTagDetail { key: string; kind: DayTagKind; }
 
-export interface GetDayTagSetOptions { events?: MarketEvent[]; customTags?: UserTagRule[]; dividendPerShare?: number }
+export interface GetDayTagSetOptions { events?: MarketEvent[]; customTags?: UserTagRule[]; dividendByYear?: Record<number, number> }
 
 // 判定某日命中的用户自定义标签（复用 analyzeUserTagRule），逐条装配 chip
-function collectUserTags(win: BollKline[], i: number, rules: UserTagRule[] | undefined, dividendPerShare?: number): DayTag[] {
+function collectUserTags(win: BollKline[], i: number, rules: UserTagRule[] | undefined, dividendByYear?: Record<number, number>): DayTag[] {
   if (!rules || rules.length === 0) return [];
   const out: DayTag[] = [];
   for (const r of rules) {
     if (!r.enabled) continue;
-    const detail = analyzeUserTagRule(win, i, r, dividendPerShare);
+    const detail = analyzeUserTagRule(win, i, r, dividendByYear);
     if (!detail) continue;
     const chip = USER_CHIP_CLS[r.color] ?? USER_CHIP_CLS.indigo;
     out.push({ key: `user-${r.id}`, kind: 'user', label: r.name, cls: chip.cls, sel: chip.sel, detail, reference: USER_REFERENCE });
@@ -148,7 +148,7 @@ export function getDayTagSet(
   }
 
   // 用户自定义动态信号标签（追加在最后）
-  out.push(...collectUserTags(win, i, opts.customTags, opts.dividendPerShare));
+  out.push(...collectUserTags(win, i, opts.customTags, opts.dividendByYear));
 
   return out;
 }

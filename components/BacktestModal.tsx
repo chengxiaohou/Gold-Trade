@@ -157,13 +157,8 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   const tagParamsRef = useRef<TagParams | undefined>(tagParams);
   useEffect(() => { rawKlinesRef.current = rawKlines; }, [rawKlines]);
   useEffect(() => { tagParamsRef.current = tagParams; }, [tagParams]);
-  // 每股税前派息（元）：取 dividendByYear 里最新的非零年，供 dividendRate 自定义标签判定
-  const dividendPerShare = useMemo(() => {
-    const by = stock?.dividendByYear;
-    if (!by) return undefined;
-    const years = Object.keys(by).map(Number).filter(y => by[y] > 0).sort((a, b) => b - a);
-    return years.length > 0 ? by[years[0]] : undefined;
-  }, [stock]);
+  // <年份,每股派息>：供 dividendRate 自定义标签，按 K 线所属年份折算（与列表股息率曲线同源）
+  const dividendByYear = stock?.dividendByYear;
   const [result, setResult] = useState<BacktestResult | null>(null);    // 回测结果（买卖点+成交+统计）
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
   // —— 策略组合模板（全局，仅规则列表，localStorage 持久化 + 云端独立字段同步）——
@@ -647,10 +642,10 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     const out: { key: string; tagKey: string; date: string; barIndex: number; detail: string[] }[] = [];
     for (const id of previewKeys) {
       const [tagKey, envKey] = id.split('|');
-      for (const o of scanTagOccurrences(rawKlines, tagKey, envKey || undefined, tagParams, customTags, dividendPerShare)) out.push({ key: id, tagKey, ...o });
+      for (const o of scanTagOccurrences(rawKlines, tagKey, envKey || undefined, tagParams, customTags, dividendByYear)) out.push({ key: id, tagKey, ...o });
     }
     return out;
-  }, [previewKeys, rawKlines, tagParams, customTags, dividendPerShare]);
+  }, [previewKeys, rawKlines, tagParams, customTags, dividendByYear]);
 
   // 覆盖层定位：把对每个标签的 time→x、anchorPrice→y 换算成像素坐标；time/price 坐标不可得（K线滚出可视区）则隐藏
   const computeTickPositions = useCallback(() => {
@@ -896,7 +891,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
         src = rawKlines.filter(k => k.date >= cutoff);
       }
     }
-    setResult(runBacktest(src, { ...strategy }, { cfg: tagParams, customTags, dividendPerShare }));
+    setResult(runBacktest(src, { ...strategy }, { cfg: tagParams, customTags, dividendByYear }));
     setPreviewKeys([]); // 执行回测时取消预览态
     setPreviewPopup(null);
   };
@@ -946,6 +941,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
               i={displayQuote.idx}
               cfg={tagParamsRef.current}
               customTags={customTags}
+              dividendByYear={dividendByYear}
               onPin={() => { if (!pinnedRef.current && hoverQuote) { pinnedRef.current = hoverQuote; setPinnedQuote(hoverQuote); } }} // 点标签顺带固定，便于连续看各标签依据（幂等，不会误取消）
             />
           )}

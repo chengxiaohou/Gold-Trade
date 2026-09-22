@@ -13,7 +13,7 @@ import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
 import { calcRealizedPnlForRange, calcPositionFromTrades } from '../services/realizedPnl';
-import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, classifyPriceState, classifyPriceStateAt, volBucket, stabilizeComboReference, buildLatestShrinkTags, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, PRICESTATE_CHIP_CLS as PRICESTATE_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5 } from '../services/tagAnalyzers';
+import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, classifyPriceState, classifyPriceStateAt, volBucket, stabilizeComboReference, buildLatestShrinkTags, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, PRICESTATE_CHIP_CLS as PRICESTATE_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5 } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PriceStateTag, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
 import { InputGroup } from './InputGroup';
@@ -932,13 +932,6 @@ type SrRow =
   | { kind: 'plain'; text: string }
   | { kind: 'cell'; name: string; color?: string; rest: string };
 
-// 取每股税前派息（元）：dividendByYear 最新的非零年，供 dividendRate 自定义标签判定（股息率=每股派息/收盘价）
-function pickDividendPerShare(s?: { dividendByYear?: Record<number, number> }): number | undefined {
-  if (!s?.dividendByYear) return undefined;
-  const years = Object.keys(s.dividendByYear).map(Number).filter(y => s.dividendByYear![y] > 0).sort((a, b) => b - a);
-  return years.length > 0 ? s.dividendByYear[years[0]] : undefined;
-}
-
 export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, autoRefreshInterval = 60, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
   // 全量备份导入用的隐藏文件选择（放入盈利统计面板）
   const fullBackupInputRef = useRef<HTMLInputElement>(null);
@@ -1028,17 +1021,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setDailyChartOffset(v);
     try { localStorage.setItem('dividendChartOffset_daily', String(v)); } catch { /* ignore */ }
   };
-  // 股票列表股息率区间内每日股息率：与 DividendRateCurve 的速率算法保持一致
+  // 股票列表股息率区间内每日股息率：与 DividendRateCurve 的速率算法共用 dividendRateForDay（单一事实来源）
   const rateForKline = (stock: StockEntry, k: BollKline, fallback: number, klines: BollKline[]): number => {
-    const byYear = stock.dividendByYear || {};
-    const y = parseInt(k.date.slice(0, 4), 10);
-    // 最新一根K线所在的年份（当前交易年份）：今年分红未完成，统一用选中年份的预估分红（fallback）
-    const currentYear = klines.length > 0 ? parseInt((klines[klines.length - 1]?.date || '').slice(0, 4), 10) : NaN;
-    const pointDividend = (!isNaN(y) && y === currentYear) ? fallback
-      : (!isNaN(y) && byYear[y] && byYear[y] > 0) ? byYear[y]
-      : (!isNaN(y) && byYear[y - 1] && byYear[y - 1] > 0) ? byYear[y - 1]
-      : fallback;
-    return k.close > 0 ? (pointDividend / k.close) * 100 : 0;
+    return dividendRateForDay(stock.dividendByYear, k.date, k.close, klines, fallback) ?? 0;
   };
   // 计算当前股息率相对区间内历史最高/次高股息率的比例（%）；无数据返回 null
   const calcDivRateHistoryRatio = (stock: StockEntry, klines: BollKline[] | undefined, currentRate: number): number | null => {
@@ -5324,7 +5309,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 i={a.klines.length - 1}
                 cfg={tagParams}
                 customTags={customTags}
-                dividendPerShare={pickDividendPerShare(priceInfoStock)}
+                dividendByYear={priceInfoStock?.dividendByYear}
                 envChips={envChips}
                 onPin={() => setPriceInfoPinned(true)}
               />
@@ -5671,8 +5656,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const chipBase = 'inline-flex items-center justify-center rounded text-[9px] font-medium border px-1 py-px cursor-pointer transition-colors';
         // 统一价格格式化（量价均线/判定依据共用）
         const fp = (v: number) => formatPrice(v, mktInfoStock.name);
-        // 每股税前派息：供 dividendRate 自定义标签（股息率=每股派息/收盘价）
-        const dividendPerShare = pickDividendPerShare(mktInfoStock);
+        // 每股分红（按年份）：供 dividendRate 自定义标签，按 K 线所属年份折算（与列表股息率曲线同源）
+        const dividendByYear = mktInfoStock.dividendByYear;
         // 收盘价着色：对照前一交易日，当日收盘涨红、跌绿
         const kIdx = new Map<string, number>();
         if (klines) klines.forEach((k, i) => kIdx.set(k.date, i));
@@ -5687,7 +5672,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         };
         // 默认选中：无指向时展示最新交易日行首枚标签（由权威 getDayTagSet 产出）
         const lastK = klines && klines.length > 0 ? klines[klines.length - 1] : null;
-        const lastDayTags: DayTag[] = lastK ? getDayTagSet(klines!, tagParams, fp, { events: events ?? [], customTags, dividendPerShare }) : [];
+        const lastDayTags: DayTag[] = lastK ? getDayTagSet(klines!, tagParams, fp, { events: events ?? [], customTags, dividendByYear }) : [];
         const defaultSel = lastDayTags.length > 0
           ? { date: lastK!.date, kind: 'daytag' as const, tagKey: lastDayTags[0].key }
           : null;
@@ -5704,7 +5689,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           if (!klines || !selKey || selKey.kind !== 'daytag') return null;
           const pi = klines.findIndex(k => k.date === selKey.date);
           if (pi < 0) return null;
-          return getDayTagSet(klines.slice(0, pi + 1), tagParams, fp, { events: events ?? [], customTags, dividendPerShare }).find(t => t.key === selKey.tagKey) ?? null;
+          return getDayTagSet(klines.slice(0, pi + 1), tagParams, fp, { events: events ?? [], customTags, dividendByYear }).find(t => t.key === selKey.tagKey) ?? null;
         })();
         const explainLines: (string | { t: string; cls: string } | { seg: { t: string; cls: string }[] })[] = [];
         if (selKey && selKey.kind === 'env') {
@@ -5777,7 +5762,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               const vStart = Math.max(0, klines.length - 10);
               for (let vi = vStart; vi < klines.length; vi++) {
                 const d = klines[vi].date;
-                const dayTags = getDayTagSet(klines.slice(0, vi + 1), tagParams, fp, { events: events ?? [], customTags, dividendPerShare });
+                const dayTags = getDayTagSet(klines.slice(0, vi + 1), tagParams, fp, { events: events ?? [], customTags, dividendByYear });
                 for (const t of dayTags) {
                   addChip(d, (
                     <span
