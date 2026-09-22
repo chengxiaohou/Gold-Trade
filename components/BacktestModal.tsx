@@ -86,17 +86,12 @@ const BOLL_SPECS: Array<{ key: 'upper' | 'mid' | 'lower'; color: string; label: 
 const BOLL_PERIOD = 20;
 const BOLL_MULT = 2;
 
-// 覆盖层买卖点标签几何：圆角方块 + 白色字母 + 点划线 + 末端圆点（与参考图一致）
-const TICK_SIZE = 12;        // 方块宽高（较上一版 9 略微增大）
-const TICK_RADIUS = 2.5;     // 方块圆角
-const LINE_LEN = 15;         // 点状虚线（方块边缘→圆点）长度，约3-4个点
-const DOT_R = TICK_SIZE / 6; // 末端圆点半径 = 标签宽度 1/3 直径 / 2
-const DOT_DA = '2 3';        // 点状虚线 pattern（短点+较大间隔，形成独立小点）
-const SPACING = 6;           // 圆点距 K 线实体边缘（high/low）的固定间距，上下一致
-const SELL_BG = '#4A90D9';   // 卖出标签底色（蓝，对齐参考图）
-const BUY_BG = '#C44A3D';    // 买入标签底色（砖红，对齐参考图）
-const TICK_FG = '#ffffff';   // 字母色（白）
-const TICK_ACTIVE = '#94a3b8'; // 选中态描边色（浅灰，暗底醒目）
+// 覆盖层标签：纯圆点（不再显示方块/文字/点划线），仅靠颜色区分买卖/信号
+const DOT_R = 3;              // 圆点半径
+const SPACING = 4;            // 圆点距 K 线实体边缘（high/low）的固定间距
+const SELL_BG = '#4A90D9';   // 卖出圆点颜色（蓝）
+const BUY_BG = '#ef4444';    // 买入圆点颜色（红）
+const DOT_ACTIVE = '#94a3b8'; // 选中态描边色（浅灰）
 
 // 把 lightweight Time（字符串YYYY-MM-DD / BusinessDay / 时间戳）格式化为 YYYY-MM-DD
 function formatChartTime(time: Time): string {
@@ -573,8 +568,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     const ch = container?.clientHeight ?? 0;
     // 右侧标尺宽度：方块右缘若越过绘图区右边界（会被标尺遮住）则直接隐藏该标签
     const priceScaleW = chart.priceScale('right').width();
-    const half = TICK_SIZE / 2;
-    const rightLimit = cw - priceScaleW; // 绘图区右边界
+    const rightLimit = cw - priceScaleW; // 绘图区右边界（圆点右缘若越过标尺则隐藏）
     // 预览态：只计算预览标签（最多 2 个），B/S 买卖标签清空
     if (previewKeys.length > 0) {
       const prev: PreviewTick[] = [];
@@ -596,7 +590,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
         const x = ts.timeToCoordinate(o.date);
         const y = anchor != null ? series.priceToCoordinate(anchor) : null;
         if (x == null || y == null) continue;
-        if (x + half > rightLimit) continue;
+        if (x + DOT_R > rightLimit) continue;
         if (x < -24) continue;
         if (y < -40 || y > ch + 40) continue;
         prev.push({ keyOf: o.key, date: o.date, x, y, abbr: def.abbr, color: def.color, side, detail: o.detail });
@@ -610,9 +604,9 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       const x = ts.timeToCoordinate(m.time);
       const y = series.priceToCoordinate(m.anchorPrice);
       if (x == null || y == null) continue;
-      // 贴右缘/越界：方块右缘越过绘图区右边界即隐藏（K线回到展示区时坐标回落后自现）
-      if (x + half > rightLimit) continue;
-      // x 已在可视区但很贴边时也保留（方块相对较小），仅过滤出左缘/右缘完全在外的情况
+      // 贴右缘/越界：圆点右缘越过绘图区右边界即隐藏（K线回到展示区时坐标回落后自现）
+      if (x + DOT_R > rightLimit) continue;
+      // x 已在可视区但很贴边时也保留，仅过滤出左缘/右缘完全在外的情况
       if (x < -24) continue;
       if (y < -40 || y > ch + 40) continue;
       ticks.push({ id: m.id, x, y, action: m.action });
@@ -1108,7 +1102,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                 ref={chartRef}
                 className="absolute inset-0"
               />
-              {/* 覆盖层：B/S 买卖点标签（蓝框=卖/砖红框=买 + 点划线 + 圆点），锚定并跟随 K 线
+              {/* 覆盖层：买卖点纯圆点（红=买/蓝=卖），锚定并跟随 K 线
                   svg 容器 inline pointer-events:none 不拦截图表滑/捏手势；热区自身 inline all 恢复点击 */}
               <svg
                 className="absolute inset-0 z-10"
@@ -1117,21 +1111,14 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                 style={{ pointerEvents: 'none' }}
               >
                 {overlayTicks.map(t => {
-                  // 布局（从 K 线往外）：K线 →[SPACING]→ 圆点 →[LINE_LEN点划线]→ 方块
-                  // 默认 buy 在 K 线下方、sell 在上方；dir=1下 / -1上
-                  const half = TICK_SIZE / 2;
+                  // 布局：buy 在 K 线下方、sell 在上方；圆点贴 K 线外侧 SPACING 间距处
                   const dir: 1 | -1 = t.action === 'buy' ? 1 : -1;
                   const color = t.action === 'buy' ? BUY_BG : SELL_BG;
-                  // 方块中心相对 K 线的总偏移
-                  const offset = SPACING + LINE_LEN + half;
                   const ch = chartRef.current?.clientHeight ?? 300;
-                  let centerY = t.y + dir * offset;
-                  // 边界翻转：方块即将超出顶部/底部时翻转到 K 线另一侧
-                  if (centerY - half < 2) centerY = t.y - dir * offset;
-                  else if (centerY + half > ch - 2) centerY = t.y - dir * offset;
-                  // 局部坐标（以方块中心为原点）：圆点在方块靠 K 线一侧
-                  const dotLocal = -dir * (LINE_LEN + half);
-                  const edgeY = -dir * half; // 方块朝向圆点的边缘
+                  let centerY = t.y + dir * (SPACING + DOT_R);
+                  // 边界翻转：圆点即将超出顶部/底部时翻转到 K 线另一侧
+                  if (centerY - DOT_R < 2) centerY = t.y - dir * (SPACING + DOT_R);
+                  else if (centerY + DOT_R > ch - 2) centerY = t.y - dir * (SPACING + DOT_R);
                   const selected = selectedTradeId === t.id;
                   return (
                     <g
@@ -1140,94 +1127,40 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                       className="cursor-pointer"
                       onClick={() => goToTrade(t.id)}
                     >
-                      {/* 透明热区：扩展点击/手型命中面积（该批次图形在小方块外的点划线、圆点范围） */}
-                      <rect
-                        x={-12} y={dir * Math.min(edgeY, dotLocal) - 6}
-                        width={24}
-                        height={Math.abs(edgeY - dotLocal) + 12}
+                      {/* 透明热区：扩展点击/手型命中面积 */}
+                      <circle
+                        cx={0} cy={0} r={8}
                         fill="transparent"
                         style={{ pointerEvents: 'all', cursor: 'pointer' }}
                       />
-                      {/* 点状虚线：方块边缘 → 末端圆点 */}
-                      <line
-                        x1={0} y1={edgeY}
-                        x2={0} y2={dotLocal}
-                        stroke={color}
-                        strokeWidth={1.2}
-                        strokeDasharray={DOT_DA}
-                        pointerEvents="none"
-                      />
-                      {/* 末端圆点：停在 K 线外侧 SPACING 间距处，不插入 K 线内部 */}
+                      {/* 纯圆点：颜色区分买卖，选中态加描边 */}
                       <circle
-                        cx={0}
-                        cy={dotLocal}
-                        r={DOT_R}
+                        cx={0} cy={0} r={DOT_R}
                         fill={color}
-                        pointerEvents="none"
-                      />
-                      {/* 圆角方块：底色随买卖（蓝=卖/砖红=买），选中态用描边高亮 */}
-                      <rect
-                        x={-half} y={-half}
-                        width={TICK_SIZE} height={TICK_SIZE}
-                        rx={TICK_RADIUS}
-                        fill={color}
-                        stroke={selected ? TICK_ACTIVE : 'none'}
+                        stroke={selected ? DOT_ACTIVE : 'none'}
                         strokeWidth={selected ? 1.5 : 0}
-                        pointerEvents="all"
-                      />
-                      {/* 白色字母 */}
-                      <text
-                        x={0} y={0}
-                        textAnchor="middle"
-                        dominantBaseline="central"
-                        fontSize={8}
-                        fontWeight={700}
-                        fill={TICK_FG}
                         pointerEvents="none"
-                      >
-                        {t.action === 'buy' ? 'B' : 'S'}
-                      </text>
+                      />
                     </g>
                   );
                 })}
-                {/* 预览标签：缩写块，用标签本身主题色；key[0] 在 K 线上方、key[1] 下方；透明热区承载 hover/点击弹判定依据浮窗 */}
+                {/* 预览标签：纯圆点（颜色=标签主题色），key[0] 在 K 线上方、key[1] 下方；透明热区承载 hover/点击弹判定依据浮窗 */}
                 {previewTicks.map(t => {
-                  const isCol = t.abbr.length >= 2; // 两字缩写 → 竖排（避免横排超出标签/变宽）
-                  const bw = TICK_SIZE;             // 方块宽（单字/两字统一）
-                  const bh = isCol ? 22 : TICK_SIZE; // 两字竖排需更高背景以覆盖两行字
-                  const half = bw / 2;
-                  const bhHalf = bh / 2;
-                  const offset = SPACING + LINE_LEN + bhHalf;
-                  // top：方块中心在 high 之上 offset；bottom：在 low 之下 offset
                   const dir: 1 | -1 = t.side === 'top' ? -1 : 1;
-                  const centerY = t.y + dir * offset;
+                  const centerY = t.y + dir * (SPACING + DOT_R);
                   const popup = previewPopup?.date === t.date && previewPopup?.keyOf === t.keyOf;
                   return (
                     <g key={`${t.keyOf}-${t.date}`} transform={`translate(${t.x} ${centerY})`}>
-                      {/* 点状虚线：方块边缘 → 末端圆点 */}
-                      <line x1={0} y1={-dir * bhHalf} x2={0} y2={-dir * (LINE_LEN + bhHalf)} stroke={t.color} strokeWidth={1.2} strokeDasharray={DOT_DA} pointerEvents="none" />
-                      {/* 末端圆点 */}
-                      <circle cx={0} cy={-dir * (LINE_LEN + bhHalf)} r={DOT_R} fill={t.color} pointerEvents="none" />
-                      {/* 缩写方块：标签主题色；两字竖排时背景为竖长方形以覆盖两行字 */}
-                      <rect x={-half} y={-bhHalf} width={bw} height={bh} rx={TICK_RADIUS} fill={t.color} pointerEvents="none" />
-                      <text x={0} textAnchor="middle" fontSize={8} fontWeight={400} fill="#ffffff" pointerEvents="none">
-                        {isCol ? (
-                          <>
-                            <tspan x={0} y={-2}>{t.abbr[0]}</tspan>
-                            <tspan x={0} y={7}>{t.abbr[1]}</tspan>
-                          </>
-                        ) : (
-                          t.abbr
-                        )}
-                      </text>
-                      {/* 透明热区：覆盖方块，承载 hover/点击（容器 pointer-events:none，热区单独恢复） */}
-                      <rect
-                        x={-half} y={-bhHalf} width={bw} height={bh} rx={TICK_RADIUS}
+                      {/* 透明热区：扩展命中面积，承载 hover/点击（容器 pointer-events:none，热区单独恢复） */}
+                      <circle
+                        cx={0} cy={0} r={8}
                         fill="transparent" style={{ pointerEvents: 'all', cursor: 'pointer' }}
                         onMouseEnter={() => setPreviewPopup({ keyOf: t.keyOf, date: t.date, x: t.x, y: centerY, detail: t.detail })}
                         onMouseLeave={() => setPreviewPopup(p => (p?.keyOf === t.keyOf && p?.date === t.date ? null : p))}
                         onClick={() => setPreviewPopup(popup ? null : { keyOf: t.keyOf, date: t.date, x: t.x, y: centerY, detail: t.detail })}
                       />
+                      {/* 纯圆点：颜色取自标签自身主题色 */}
+                      <circle cx={0} cy={0} r={DOT_R} fill={t.color} pointerEvents="none" />
                     </g>
                   );
                 })}
