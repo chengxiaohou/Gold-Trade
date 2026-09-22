@@ -3894,13 +3894,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const showCostPct = cost > 0 && stock.price > 0;
                     const totalAmount = shares > 0 && cost > 0 ? `¥${Math.round(shares * cost).toLocaleString()}` : '-';
                     const hasPosition = shares > 0 || cost > 0;
-                    // 仓位占比：本股票金额 / 全部持仓总金额
-                    const positionTotal = sortedStocks.reduce((sum, s) => {
-                      const amt = (s.positionShares || 0) * (s.positionCost || 0);
-                      return sum + (amt > 0 ? amt : 0);
-                    }, 0);
+                    // 仓位占比：本股票金额 / 分红页账户总资金（dividendTotalCapital），而非已投入持仓总额
                     const myAmt = shares > 0 && cost > 0 ? shares * cost : 0;
-                    const positionRatioStr = myAmt > 0 && positionTotal > 0 ? `${((myAmt / positionTotal) * 100).toFixed(1)}%` : '';
+                    const positionRatioStr = myAmt > 0 && (dividendTotalCapital || 0) > 0 ? `${((myAmt / dividendTotalCapital) * 100).toFixed(1)}%` : '';
                     // 子列1：恒常展示股息率
                     const col1 = (
                       <td
