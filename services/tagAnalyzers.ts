@@ -257,7 +257,7 @@ export function resolveTargetValue(klines: BollKline[], i: number, target: Signa
 
 // 单条规则判定：命中返回依据文案数组，未命中返回 null
 // dividendByYear：<年份, 每股税前派息>，供 dividendRate 数据点判定（按 K 线所属年份折算，同列表股息率曲线口径）
-export const DEFAULT_TOUCH_TOL = 0.5; // 触达容差（%目标值）已从 UI 隐藏，判定不再使用容差（见下）
+export const DEFAULT_TOUCH_TOL = 0.5; // 触达容差已从 UI 隐藏，不再使用
 export function analyzeUserTagRule(klines: BollKline[], i: number, rule: UserTagRule, dividendByYear?: Record<number, number>, currentYear?: number): string[] | null {
   if (!rule || !rule.enabled) return null;
   const v = resolveSignalValue(klines, i, rule.source, dividendByYear, currentYear);
@@ -266,8 +266,10 @@ export function analyzeUserTagRule(klines: BollKline[], i: number, rule: UserTag
   if (t === null || t === undefined || Number.isNaN(t)) return null;
   let hit = false;
   if (rule.direction === 'touch') {
-    // 触达：与目标值相等即命中（任一边均可）；容差已隐藏，不再偷偷生效
-    hit = Math.abs(v - t) <= 1e-9;
+    // 触达：连续值（价格/股息率/指标等）跨越目标线即为"触达"（任一边均可）——
+    // 从下方上穿至 ≥目标，或从上方下穿至 ≤目标，命中发生"到达目标线"的那一天。
+    const pre = resolveSignalValue(klines, i - 1, rule.source, dividendByYear, currentYear);
+    hit = pre !== null && pre !== undefined && !Number.isNaN(pre) && ((pre < t && v >= t) || (pre > t && v <= t));
   } else {
     hit = rule.direction === 'up' ? v >= t : v <= t;
   }

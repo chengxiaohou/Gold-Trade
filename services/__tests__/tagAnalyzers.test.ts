@@ -933,17 +933,21 @@ describe('用户自定义动态信号标签 analyzeUserTagRule', () => {
     // 2025 根（当前年份）用预估 fallback 0.35 → 3.5% 命中
     expect(analyzeUserTagRule(k, 2, { ...rule, id: 'd2' }, { 2024: 0.25, 2025: 0.35 })).not.toBeNull();
   });
-  it('触达(touch)：与目标值相等即命中（任一边均可），偏离则不命中（容差已隐藏，不生效）', () => {
+  it('触达(touch)：连续值跨越目标线即命中（上下穿均可），未跨越不命中', () => {
     const k = mkKlines(5, { close: () => 100 });
-    const rule: UserTagRule = { ...base, direction: 'touch', targetValue: 100, tolerance: 0.5 };
-    // 值 100 = 目标 100 → 精确相等命中
+    const rule: UserTagRule = { ...base, direction: 'touch', targetValue: 100 };
+    // 前值与当日值均 <100（99→99），未跨越 → 不命中
+    k[0] = { ...k[0], close: 99 };
+    k[1] = { ...k[1], close: 99 };
+    expect(analyzeUserTagRule(k, 1, rule, undefined)).toBeNull();
+    // 从 99 上穿至 101（≥100）→ 到达目标线 → 命中
+    k[2] = { ...k[2], close: 101 };
+    expect(analyzeUserTagRule(k, 2, rule, undefined)).not.toBeNull();
+    // 保持 101→101（前值与当日值均 ≥100，无跨越）→ 不命中
+    k[3] = { ...k[3], close: 101 };
+    expect(analyzeUserTagRule(k, 3, rule, undefined)).toBeNull();
+    // 从 101 下穿至 99（≤100，自上穿下）→ 任一边也命中
+    k[4] = { ...k[4], close: 99 };
     expect(analyzeUserTagRule(k, 4, rule, undefined)).not.toBeNull();
-    // 值偏离目标 → 相等判定失败 → 未命中（容差不再生效）
-    k[4] = { ...k[4], close: 100.4 };
-    expect(analyzeUserTagRule(k, 4, rule, undefined)).toBeNull();
-    // 目标比值略低也命中（任一边均可）
-    const rule2: UserTagRule = { ...base, direction: 'touch', targetValue: 100, tolerance: 0.5 };
-    k[4] = { ...k[4], close: 100 };
-    expect(analyzeUserTagRule(k, 4, rule2, undefined)).not.toBeNull();
   });
 });
