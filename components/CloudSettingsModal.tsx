@@ -1511,27 +1511,21 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                   {customTags.length > 0 && (
                     <div className="grid grid-cols-3 gap-2">
                       {customTags.map((t, i) => (
-                        <div key={t.id} className={`group relative bg-app-input rounded-lg px-2.5 py-2 space-y-1 ${t.enabled ? '' : 'opacity-50'}`}>
-                          <div className="flex items-center justify-between gap-1.5">
-                            <span className="flex items-center gap-1.5 text-xs font-semibold text-app-text min-w-0">
-                              <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${(TAG_PALETTE.find(p => p.key === t.color) || TAG_PALETTE[1]).bg}`} />
-                              <span className="truncate">{t.name || '(未命名)'}</span>
-                            </span>
-                            <button type="button" aria-label="启用开关" title={t.enabled ? '已启用（点击停用）' : '已停用（点击启用）'}
-                              onClick={() => { const next = [...customTags]; next[i] = { ...t, enabled: !t.enabled }; setCustomTags(next); }}
-                              className={`shrink-0 p-1 rounded-md transition-colors ${t.enabled ? 'text-indigo-400 hover:bg-indigo-500/10' : 'text-app-subtext/40 hover:text-app-subtext hover:bg-app-text/5'}`}>
-                              {t.enabled ? <Eye size={15}/> : <EyeOff size={15}/>}
-                            </button>
-                          </div>
+                        <div key={t.id} className={`bg-app-input rounded-lg p-2.5 space-y-1.5 ${t.enabled ? '' : 'opacity-70'}`}>
                           <span className="block text-[10px] text-app-subtext leading-snug truncate">
                             {SOURCE_LABELS[t.source]} {t.direction === 'up' ? '增至' : t.direction === 'down' ? '降至' : '触达'}
                             {t.targetType === 'fixed' ? ` ${t.targetValue}` : ` ${t.targetIndicator ? TARGET_INDICATOR_LABELS[t.targetIndicator] : ''}`}
                           </span>
-                          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex items-center gap-0.5">
                             <button type="button" aria-label="编辑" title="编辑" onClick={() => { setTagForm({ ...t }); setEditingId(t.id); }}
-                              className="p-1 rounded-md text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"><Pencil size={13}/></button>
+                              className="p-1 rounded-md text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"><Pencil size={14}/></button>
+                            <button type="button" aria-label="启用开关" title={t.enabled ? '已启用（点击停用）' : '已停用（点击启用）'}
+                              onClick={() => { const next = [...customTags]; next[i] = { ...t, enabled: !t.enabled }; setCustomTags(next); }}
+                              className="p-1 rounded-md text-app-subtext hover:bg-app-text/5 transition-colors">
+                              {t.enabled ? <Eye size={14}/> : <EyeOff size={14}/>}
+                            </button>
                             <button type="button" aria-label="删除" title="删除" onClick={() => setCustomTags(customTags.filter((_, j) => j !== i))}
-                              className="p-1 rounded-md text-app-subtext hover:text-red-400 hover:bg-red-500/10 transition-colors"><Trash2 size={13}/></button>
+                              className="p-1 rounded-md text-app-subtext hover:text-red-400 hover:bg-red-500/10 transition-colors"><Trash2 size={14}/></button>
                           </div>
                         </div>
                       ))}
@@ -1541,13 +1535,10 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
 
                 {/* 新增/编辑标签表单（默认常驻显示为新增状态） */}
                 <div className="space-y-3 pt-2 border-t border-app-border">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <input type="text" value={tagForm.name} placeholder="输入标签名称，点击即可编辑"
-                          onChange={e => setTagForm({ ...tagForm, name: e.target.value })}
-                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); saveTag(); } }}
-                          className="flex-1 min-w-0 bg-transparent border-0 border-b border-transparent p-0 text-sm font-semibold text-app-text placeholder:text-app-subtext/40 outline-none hover:border-app-border transition-colors focus:border-indigo-400 cursor-text" />
-                      </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium text-app-text flex items-center gap-2">
+                        <Pencil size={14} className="text-indigo-400"/> {editingId != null ? '编辑标签' : '新增标签'}
+                      </span>
                       <div className="flex items-center gap-2 shrink-0">
                         <button type="button" onClick={saveTag}
                           className="px-3 py-1 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">保存</button>
@@ -1594,38 +1585,44 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       {/* 目标（自动判定，用户无需选择形式） */}
                       <div>
                         <span className="text-xs text-app-subtext mb-1.5 block">
-                          目标{SOURCE_TARGET_TYPE[tagForm.source] === 'fixed' ? '值' : '指标'}
+                          目标{SOURCE_TARGET_TYPE[tagForm.source] === 'fixed' ? '值' : '指标'}<span className="text-app-subtext/40 ml-1">（自动）</span>
                         </span>
                         {SOURCE_TARGET_TYPE[tagForm.source] === 'fixed' ? (
-                          <div className="w-1/6 min-w-[110px]">
-                            <InputGroup value={tagForm.targetValue ?? 0}
-                              onChange={v => setTagForm({ ...tagForm, targetValue: parseFloat(v) || 0 })}
-                              step={SOURCE_STEP[tagForm.source]} unit={SOURCE_UNIT[tagForm.source]}
-                              precision={SOURCE_PRECISION[tagForm.source]} className="!py-1.5 !text-xs" />
+                          <div className="flex items-center gap-4">
+                            <div className="w-1/6 min-w-[80px] max-w-[90px]">
+                              <InputGroup value={tagForm.targetValue ?? 0}
+                                onChange={v => setTagForm({ ...tagForm, targetValue: parseFloat(v) || 0 })}
+                                step={SOURCE_STEP[tagForm.source]} unit={SOURCE_UNIT[tagForm.source]}
+                                precision={SOURCE_PRECISION[tagForm.source]} className="!py-1.5 !text-xs" />
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {TAG_PALETTE.map(c => (
+                                <button key={c.key} type="button" aria-label={c.label} title={c.label} onClick={() => setTagForm({ ...tagForm, color: c.key })}
+                                  className={`w-5 h-5 rounded-full border transition-all flex items-center justify-center ${c.bg} ${c.border} ${tagForm.color === c.key ? 'opacity-100 scale-100' : 'opacity-60 hover:opacity-100 hover:scale-105'}`}>
+                                  {tagForm.color === c.key && <span className={`w-1.5 h-1.5 rounded-full ${c.text} bg-current shadow-sm`} />}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         ) : (
-                          <div className="flex flex-wrap gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             {(Object.keys(TARGET_INDICATOR_LABELS) as SignalTargetIndicator[]).map(k => (
                               <button key={k} type="button" onClick={() => setTagForm({ ...tagForm, targetIndicator: k })}
                                 className={`px-2.5 py-1 rounded-full text-xs border transition-all ${(tagForm.targetIndicator ?? 'ma5') === k ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400' : 'border-app-border text-app-subtext hover:text-app-text'}`}>
                                 {TARGET_INDICATOR_LABELS[k]}
                               </button>
                             ))}
+                            <span className="mx-1 w-px h-4 bg-app-border shrink-0" />
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {TAG_PALETTE.map(c => (
+                                <button key={c.key} type="button" aria-label={c.label} title={c.label} onClick={() => setTagForm({ ...tagForm, color: c.key })}
+                                  className={`w-5 h-5 rounded-full border transition-all flex items-center justify-center ${c.bg} ${c.border} ${tagForm.color === c.key ? 'opacity-100 scale-100' : 'opacity-60 hover:opacity-100 hover:scale-105'}`}>
+                                  {tagForm.color === c.key && <span className={`w-1.5 h-1.5 rounded-full ${c.text} bg-current shadow-sm`} />}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         )}
-                      </div>
-
-                      {/* 颜色：圆圈网格 + 选中中心圆点（照搬股票页编辑标签弹窗） */}
-                      <div>
-                        <span className="text-xs text-app-subtext mb-1.5 block">颜色</span>
-                        <div className="grid grid-cols-8 gap-2">
-                          {TAG_PALETTE.map(c => (
-                            <button key={c.key} type="button" aria-label={c.label} title={c.label} onClick={() => setTagForm({ ...tagForm, color: c.key })}
-                              className={`w-6 h-6 rounded-full border transition-all flex items-center justify-center ${c.bg} ${c.border} ${tagForm.color === c.key ? 'opacity-100 scale-100' : 'opacity-60 hover:opacity-100 hover:scale-105'}`}>
-                              {tagForm.color === c.key && <span className={`w-2 h-2 rounded-full ${c.text} bg-current shadow-sm`} />}
-                            </button>
-                          ))}
-                        </div>
                       </div>
                     </div>
                   </div>
