@@ -116,6 +116,15 @@ function formatChartTime(time: Time): string {
 }
 
 export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, customTags }: BacktestModalProps) {
+  // 按下 ESC 关闭回测弹窗（挂载期内全局监听）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   // 策略按股票持久化到 localStorage：刷新/重开页面后自动恢复上次设置
   const strategyStorageKey = `bt_strategy_${stock.code}`;
   const loadStrategy = (): BacktestStrategy => {
