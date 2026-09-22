@@ -233,7 +233,7 @@ export type SignalDataSource =
   | 'volumeRatio'    // 量比 = 当日量/前5日均量
   | 'kdj'            // KDJ.J 值
   | 'rsi'            // RSI6 值
-  | 'dividendRate';  // 股息率（需数据源，未来扩展）
+  | 'dividendRate';  // 股息率(%) = 每股派息 / 收盘价（随股价每日变化）
 
 // 动态目标：均线 / BOLL 轨（每日动态变化，无法预先固定）
 export type SignalTargetIndicator = 'ma5' | 'ma10' | 'ma20' | 'ma60' | 'ma120' | 'bollUpper' | 'bollMid' | 'bollLower';
@@ -243,10 +243,11 @@ export interface UserTagRule {
   name: string;            // 标签显示名
   enabled: boolean;        // 开关，false=暂不生效
   source: SignalDataSource;
-  direction: 'up' | 'down'; // up=增至(值≥目标)/down=降至(值≤目标)
+  direction: 'up' | 'down' | 'touch'; // up=增至(值≥目标)/down=降至(值≤目标)/touch=触达(|值-目标|在容差内，任一边均可)
   targetType: 'fixed' | 'indicator';
   targetValue?: number;            // targetType=fixed
   targetIndicator?: SignalTargetIndicator; // targetType=indicator
+  tolerance?: number;      // 触达容差（%目标值），仅 direction=touch 有效，默认 0.5
   color: string;           // chip 配色 key（复用 TAG_PALETTE）
 }
 

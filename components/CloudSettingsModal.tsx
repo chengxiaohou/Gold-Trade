@@ -1473,7 +1473,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                             {t.name || '(未命名)'}
                           </span>
                           <span className="block text-[10px] text-app-subtext mt-0.5 leading-snug">
-                            {SOURCE_LABELS[t.source]} {t.direction === 'up' ? '增至' : '降至'}
+                            {SOURCE_LABELS[t.source]} {t.direction === 'up' ? '增至' : t.direction === 'down' ? '降至' : '触达'}
                             {t.targetType === 'fixed' ? ` ${t.targetValue}` : ` ${t.targetIndicator ? TARGET_INDICATOR_LABELS[t.targetIndicator] : ''}`}
                           </span>
                         </div>
@@ -1512,12 +1512,22 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       </label>
                       <label className="block">
                         <span className="text-xs text-app-subtext mb-1 block">方向</span>
-                        <select value={tagForm.direction} onChange={e => setTagForm({ ...tagForm, direction: e.target.value as 'up' | 'down' })}
+                        <select value={tagForm.direction} onChange={e => setTagForm({ ...tagForm, direction: e.target.value as 'up' | 'down' | 'touch' })}
                           className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 transition-all">
                           <option value="up">增至</option>
                           <option value="down">降至</option>
+                          <option value="touch">触达</option>
                         </select>
                       </label>
+                      {tagForm.direction === 'touch' && (
+                        <label className="block">
+                          <span className="text-xs text-app-subtext mb-1 block">触达容差 (%)</span>
+                          <input type="number" step="0.1" min="0" value={tagForm.tolerance ?? 0.5}
+                            onChange={e => setTagForm({ ...tagForm, tolerance: parseFloat(e.target.value) || 0 })}
+                            className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
+                            title="|当日值-目标| 落在该比例（%目标值）内即视为触达" />
+                        </label>
+                      )}
                       <label className="block">
                         <span className="text-xs text-app-subtext mb-1 block">目标形式</span>
                         <select value={tagForm.targetType} onChange={e => setTagForm({ ...tagForm, targetType: e.target.value as 'fixed' | 'indicator' })}

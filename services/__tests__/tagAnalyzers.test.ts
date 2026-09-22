@@ -910,8 +910,25 @@ describe('用户自定义动态信号标签 analyzeUserTagRule', () => {
     const k = mkKlines(5, { close: i => 100 + i });
     expect(analyzeUserTagRule(k, 4, { ...base, enabled: false })).toBeNull();
   });
-  it('股息率数据源暂不支持 → null', () => {
-    const k = mkKlines(5);
-    expect(analyzeUserTagRule(k, 4, { ...base, source: 'dividendRate' })).toBeNull();
+  it('股息率：传入每股派息后 = 每股派息/收盘价*100，增至命中', () => {
+    const k = mkKlines(5, { close: () => 10 }); // 收盘 10 元
+    const rule: UserTagRule = { ...base, name: '股息率达3%', source: 'dividendRate', direction: 'up', targetValue: 3 };
+    // 每股派息 0.3 元 → 股息率 = 0.3/10*100 = 3%
+    expect(analyzeUserTagRule(k, 4, rule, 0.3)).not.toBeNull();
+    // 不传派息 → 无法判定 → null
+    expect(analyzeUserTagRule(k, 4, rule)).toBeNull();
+  });
+  it('触达(touch)：|值-目标| 在容差内任一边命中，超出容差未命中', () => {
+    const k = mkKlines(5, { close: () => 100 });
+    const rule: UserTagRule = { ...base, direction: 'touch', targetValue: 100.4, tolerance: 0.5 };
+    // 值 100，目标 100.4，容差 0.5%*100.4≈0.502 → |100-100.4|=0.4 ≤0.502 命中
+    expect(analyzeUserTagRule(k, 4, rule, undefined)).not.toBeNull();
+    // 拉大差距到越界：目标 100.4，值改为 110 → |差|=9.6>容差 → 未命中
+    k[4] = { ...k[4], close: 110 };
+    expect(analyzeUserTagRule(k, 4, rule, undefined)).toBeNull();
+    // 目标比值略低也命中（任一边均可）
+    const rule2: UserTagRule = { ...base, direction: 'touch', targetValue: 99.7, tolerance: 0.5 };
+    k[4] = { ...k[4], close: 100 };
+    expect(analyzeUserTagRule(k, 4, rule2, undefined)).not.toBeNull();
   });
 });

@@ -516,3 +516,43 @@ describe('getDayTagSet（信号标签部唯一权威，当日行 = 底栏 = 标�
     expect(falseChip!.cls).toBe(CHIP_CLS_RED);          // 假破位 → 红
   });
 });
+
+// ────────────────── 用户自定义标签参与回测 ──────────────────
+import type { UserTagRule } from '../../types';
+
+describe('用户自定义标签可作回测买卖触发', () => {
+  // 恒定收盘 100，第 40 天起收盘跳到 120 并维持 → 触发器"收盘增至110"在第 40 天起恒命中
+  const k = mkKlines(60, i => (i >= 40 ? 120 : 100));
+  const customTags: UserTagRule[] = [
+    { id: 'tt1', name: '长期站上110', enabled: true, source: 'price', direction: 'up', targetType: 'fixed', targetValue: 110, color: 'indigo' },
+  ];
+  const strategy: BacktestStrategy = {
+    initialCapital: 100000,
+    rules: [{ id: 'r1', tagKey: 'user-tt1', label: '长期站上110', action: 'buy', pct: 50, enabled: true }],
+  };
+
+  it('命中自定义标签后产生买入成交、触发标签名与标签一致', () => {
+    const r = runBacktest(k, strategy, { customTags });
+    expect(r.trades.length).toBeGreaterThan(0);
+    const buy = r.trades.find(t => t.action === 'buy' && t.tagName === '长期站上110');
+    expect(buy).toBeTruthy();
+    expect(buy!.barIndex).toBeGreaterThanOrEqual(40); // 命中日起触发
+  });
+
+  it('自定义标签仍可被 scanTagOccurrences 预览到', () => {
+    const occ = scanTagOccurrences(k, 'user-tt1', undefined, DEFAULT_TAG_PARAMS, customTags);
+    expect(occ.length).toBeGreaterThan(0);
+    expect(occ[0].barIndex).toBeGreaterThanOrEqual(40);
+  });
+
+  it('股息率自定义标签在回测中按派息折算命中', () => {
+    const tags: UserTagRule[] = [
+      { id: 'tt2', name: '股息率达3%', enabled: true, source: 'dividendRate', direction: 'up', targetType: 'fixed', targetValue: 3, color: 'green' },
+    ];
+    // 每股派息 3.0 元：股息率 = 3/100*100 = 3%，恒命中；派息 0.1 → 0.1% 不命中
+    const hit = runBacktest(k, { initialCapital: 100000, rules: [{ id: 'r2', tagKey: 'user-tt2', label: '股息率达3%', action: 'buy', pct: 30, enabled: true }] }, { customTags: tags, dividendPerShare: 3.0 });
+    expect(hit.trades.some(t => t.action === 'buy' && t.tagName === '股息率达3%')).toBe(true);
+    const miss = runBacktest(k, { initialCapital: 100000, rules: [{ id: 'r2', tagKey: 'user-tt2', label: '股息率达3%', action: 'buy', pct: 30, enabled: true }] }, { customTags: tags, dividendPerShare: 0.1 });
+    expect(miss.trades.length).toBe(0);
+  });
+});

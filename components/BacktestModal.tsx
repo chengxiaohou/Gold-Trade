@@ -40,6 +40,7 @@ interface RuleEditorProps {
   onRemove: () => void;
   previewing: boolean;
   onTogglePreview: () => void;
+  customTags?: UserTagRule[]; // 用户自定义动态信号标签：注入到下拉「自定义」分组，可选作买卖触发
 }
 
 interface StatProps {
@@ -156,6 +157,13 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   const tagParamsRef = useRef<TagParams | undefined>(tagParams);
   useEffect(() => { rawKlinesRef.current = rawKlines; }, [rawKlines]);
   useEffect(() => { tagParamsRef.current = tagParams; }, [tagParams]);
+  // 每股税前派息（元）：取 dividendByYear 里最新的非零年，供 dividendRate 自定义标签判定
+  const dividendPerShare = useMemo(() => {
+    const by = stock?.dividendByYear;
+    if (!by) return undefined;
+    const years = Object.keys(by).map(Number).filter(y => by[y] > 0).sort((a, b) => b - a);
+    return years.length > 0 ? by[years[0]] : undefined;
+  }, [stock]);
   const [result, setResult] = useState<BacktestResult | null>(null);    // 回测结果（买卖点+成交+统计）
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
   // —— 策略组合模板（全局，仅规则列表，localStorage 持久化 + 云端独立字段同步）——
@@ -639,10 +647,10 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     const out: { key: string; tagKey: string; date: string; barIndex: number; detail: string[] }[] = [];
     for (const id of previewKeys) {
       const [tagKey, envKey] = id.split('|');
-      for (const o of scanTagOccurrences(rawKlines, tagKey, envKey || undefined, tagParams)) out.push({ key: id, tagKey, ...o });
+      for (const o of scanTagOccurrences(rawKlines, tagKey, envKey || undefined, tagParams, customTags, dividendPerShare)) out.push({ key: id, tagKey, ...o });
     }
     return out;
-  }, [previewKeys, rawKlines, tagParams]);
+  }, [previewKeys, rawKlines, tagParams, customTags, dividendPerShare]);
 
   // 覆盖层定位：把对每个标签的 time→x、anchorPrice→y 换算成像素坐标；time/price 坐标不可得（K线滚出可视区）则隐藏
   const computeTickPositions = useCallback(() => {
@@ -661,6 +669,11 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     if (previewKeys.length > 0) {
       const prev: PreviewTick[] = [];
       const defOf = new Map(BACKTEST_TAG_CATALOG.map(d => [d.key, d]));
+      // 用户自定义标签预览：abbr 取名称前 2 字；颜色按标签配色 key 映射为十六进制（标签名称渲染不进图斑）
+      const customHex: Record<string, string> = { red: '#ef4444', green: '#22c55e', blue: '#60a5fa', indigo: '#818cf8', slate: '#94a3b8', orange: '#fb923c', pink: '#fb7299' };
+      for (const r of (customTags || [])) {
+        defOf.set(`user-${r.id}`, { key: `user-${r.id}`, abbr: r.name.slice(0, 2), color: customHex[r.color] ?? '#94a3b8' } as never);
+      }
       const highOf = new Map<string, number>(rawKlines?.map(k => [k.date, k.high]) ?? []);
       const lowOf = new Map<string, number>(rawKlines?.map(k => [k.date, k.low]) ?? []);
       const sideOf = new Map(previewKeys.map((k, i) => [k, i === 0 ? 'top' : 'bottom']));
@@ -696,7 +709,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     }
     setOverlayTicks(ticks);
     setPreviewTicks([]);
-  }, [demoMarkers, previewKeys, previewOccurrences]);
+  }, [demoMarkers, previewKeys, previewOccurrences, customTags]);
 
   // 成交记录：直接取真实回测结果，图的标签与表的行共用同一批 id，实现双向往返定位
   const tradeRows = useMemo(() => {
@@ -883,7 +896,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
         src = rawKlines.filter(k => k.date >= cutoff);
       }
     }
-    setResult(runBacktest(src, { ...strategy }, { cfg: tagParams, customTags }));
+    setResult(runBacktest(src, { ...strategy }, { cfg: tagParams, customTags, dividendPerShare }));
     setPreviewKeys([]); // 执行回测时取消预览态
     setPreviewPopup(null);
   };
@@ -1022,7 +1035,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
             </div>
             <div className="flex-1 overflow-y-auto custom-scrollbar px-2 py-1.5 space-y-1.5">
               {rulesForRender.map((r, idx) => (
-                  <RuleEditor key={r.id} index={idx} value={r} onChange={patch => updateRule(r.id, patch)} onRemove={() => removeRule(r.id)} previewing={previewKeys.includes(`${r.tagKey}|${r.envCondition?.key ?? ''}`)} onTogglePreview={() => togglePreview(r.tagKey, r.envCondition?.key)} />
+                  <RuleEditor key={r.id} index={idx} value={r} onChange={patch => updateRule(r.id, patch)} onRemove={() => removeRule(r.id)} previewing={previewKeys.includes(`${r.tagKey}|${r.envCondition?.key ?? ''}`)} onTogglePreview={() => togglePreview(r.tagKey, r.envCondition?.key)} customTags={customTags} />
                 ))}
               {selectedPreset ? (
                 <span className="block text-[11px] text-app-subtext/70 px-1">{selectedPreset.name}</span>
@@ -1382,19 +1395,23 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
 }
 
 // 策略规则编辑行（受控：value + onChange 由父级 strategy 状态驱动）
-const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemove, previewing, onTogglePreview }) => {
+const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemove, previewing, onTogglePreview, customTags }) => {
   // 按 stable key 从目录取当前标签定义（用于分组显示）
   const current = BACKTEST_TAG_CATALOG.find(t => t.key === value.tagKey);
+  // 自定义标签伪定义：tagKey='user-<id>'，label=名称，归入 'custom' 分组（复用目录下拉结构）
+  const customDefs = useMemo(() => (customTags || [])
+    .filter(t => t.enabled)
+    .map(t => ({ key: `user-${t.id}`, group: 'custom', label: t.name, signalName: t.name, action: value.action, abbr: t.name.slice(0, 2), color: '#818cf8' })), [customTags, value.action]);
   // 目录按 group 聚合，用于 <optgroup> 分组
   const groups = useMemo(() => {
     const m = new Map<string, typeof BACKTEST_TAG_CATALOG>();
-    for (const t of BACKTEST_TAG_CATALOG) {
+    for (const t of [...BACKTEST_TAG_CATALOG, ...customDefs]) {
       const arr = m.get(t.group) || [];
       arr.push(t);
       m.set(t.group, arr);
     }
     return Array.from(m.entries());
-  }, []);
+  }, [customDefs]);
 
   return (
     <div className="rounded-lg border border-app-border bg-app-input/30 p-2 space-y-2">
@@ -1424,8 +1441,12 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
           className="flex-1 min-w-0 bg-app-input border border-app-border rounded-lg px-2 py-1 text-xs leading-tight text-app-text outline-none"
           value={value.tagKey}
           onChange={e => {
-            const t = BACKTEST_TAG_CATALOG.find(x => x.key === e.target.value);
-            onChange(t ? { tagKey: t.key, label: t.label, action: t.action as BacktestRule['action'] } : { tagKey: e.target.value });
+            const key = e.target.value;
+            const t = BACKTEST_TAG_CATALOG.find(x => x.key === key);
+            if (t) { onChange({ tagKey: t.key, label: t.label, action: t.action as BacktestRule['action'] }); return; }
+            // 用户自定义标签：tagKey='user-<id>'，label=名称；动作保留当前选择（自定义标签无内置买卖方向）
+            const ct = customDefs.find(x => x.key === key);
+            onChange(ct ? { tagKey: ct.key, label: ct.label } : { tagKey: key });
           }}
         >
           <option value="" disabled>选择标签…</option>

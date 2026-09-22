@@ -932,6 +932,13 @@ type SrRow =
   | { kind: 'plain'; text: string }
   | { kind: 'cell'; name: string; color?: string; rest: string };
 
+// 取每股税前派息（元）：dividendByYear 最新的非零年，供 dividendRate 自定义标签判定（股息率=每股派息/收盘价）
+function pickDividendPerShare(s?: { dividendByYear?: Record<number, number> }): number | undefined {
+  if (!s?.dividendByYear) return undefined;
+  const years = Object.keys(s.dividendByYear).map(Number).filter(y => s.dividendByYear![y] > 0).sort((a, b) => b - a);
+  return years.length > 0 ? s.dividendByYear[years[0]] : undefined;
+}
+
 export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, autoRefreshInterval = 60, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
   // 全量备份导入用的隐藏文件选择（放入盈利统计面板）
   const fullBackupInputRef = useRef<HTMLInputElement>(null);
@@ -5317,6 +5324,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 i={a.klines.length - 1}
                 cfg={tagParams}
                 customTags={customTags}
+                dividendPerShare={pickDividendPerShare(priceInfoStock)}
                 envChips={envChips}
                 onPin={() => setPriceInfoPinned(true)}
               />
@@ -5663,6 +5671,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const chipBase = 'inline-flex items-center justify-center rounded text-[9px] font-medium border px-1 py-px cursor-pointer transition-colors';
         // 统一价格格式化（量价均线/判定依据共用）
         const fp = (v: number) => formatPrice(v, mktInfoStock.name);
+        // 每股税前派息：供 dividendRate 自定义标签（股息率=每股派息/收盘价）
+        const dividendPerShare = pickDividendPerShare(mktInfoStock);
         // 收盘价着色：对照前一交易日，当日收盘涨红、跌绿
         const kIdx = new Map<string, number>();
         if (klines) klines.forEach((k, i) => kIdx.set(k.date, i));
@@ -5677,7 +5687,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         };
         // 默认选中：无指向时展示最新交易日行首枚标签（由权威 getDayTagSet 产出）
         const lastK = klines && klines.length > 0 ? klines[klines.length - 1] : null;
-        const lastDayTags: DayTag[] = lastK ? getDayTagSet(klines!, tagParams, fp, { events: events ?? [], customTags }) : [];
+        const lastDayTags: DayTag[] = lastK ? getDayTagSet(klines!, tagParams, fp, { events: events ?? [], customTags, dividendPerShare }) : [];
         const defaultSel = lastDayTags.length > 0
           ? { date: lastK!.date, kind: 'daytag' as const, tagKey: lastDayTags[0].key }
           : null;
@@ -5694,7 +5704,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           if (!klines || !selKey || selKey.kind !== 'daytag') return null;
           const pi = klines.findIndex(k => k.date === selKey.date);
           if (pi < 0) return null;
-          return getDayTagSet(klines.slice(0, pi + 1), tagParams, fp, { events: events ?? [], customTags }).find(t => t.key === selKey.tagKey) ?? null;
+          return getDayTagSet(klines.slice(0, pi + 1), tagParams, fp, { events: events ?? [], customTags, dividendPerShare }).find(t => t.key === selKey.tagKey) ?? null;
         })();
         const explainLines: (string | { t: string; cls: string } | { seg: { t: string; cls: string }[] })[] = [];
         if (selKey && selKey.kind === 'env') {
@@ -5767,7 +5777,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               const vStart = Math.max(0, klines.length - 10);
               for (let vi = vStart; vi < klines.length; vi++) {
                 const d = klines[vi].date;
-                const dayTags = getDayTagSet(klines.slice(0, vi + 1), tagParams, fp, { events: events ?? [], customTags });
+                const dayTags = getDayTagSet(klines.slice(0, vi + 1), tagParams, fp, { events: events ?? [], customTags, dividendPerShare });
                 for (const t of dayTags) {
                   addChip(d, (
                     <span

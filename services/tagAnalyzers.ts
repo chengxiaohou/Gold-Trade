@@ -162,7 +162,8 @@ export function classifyVolume(klines: BollKline[], cfg: TagParams = DEFAULT_TAG
 // 与回测热悬浮、弹窗指标保持同源口径。判定封装在 analyzeUserTagRule 供各展示面共用。
 
 // 触发数据点实际值（i 越界或数据不足返回 null）
-export function resolveSignalValue(klines: BollKline[], i: number, source: SignalDataSource): number | null {
+// dividendPerShare：每股税前派息（元），来自股票 dividendByYear；股息率 = 每股派息 / 收盘价 * 100
+export function resolveSignalValue(klines: BollKline[], i: number, source: SignalDataSource, dividendPerShare?: number): number | null {
   if (!klines || klines.length === 0 || i < 0 || i >= klines.length) return null;
   const k = klines[i];
   switch (source) {
@@ -186,7 +187,7 @@ export function resolveSignalValue(klines: BollKline[], i: number, source: Signa
       return ind.rsi.rsi6;
     }
     case 'dividendRate':
-      return null; // 股息率来自独立数据源，非日K可得，暂不支持（未来扩展）
+      return dividendPerShare && dividendPerShare > 0 && k.close > 0 ? (dividendPerShare / k.close) * 100 : null;
   }
 }
 
@@ -219,16 +220,26 @@ export function resolveTargetValue(klines: BollKline[], i: number, target: Signa
 }
 
 // 单条规则判定：命中返回依据文案数组，未命中返回 null
-export function analyzeUserTagRule(klines: BollKline[], i: number, rule: UserTagRule): string[] | null {
+// dividendPerShare：每股税前派息（元），供 dividendRate 数据点计算（需随调用方传入该股派息）
+export const DEFAULT_TOUCH_TOL = 0.5; // 触达默认容差（%目标值），可在规则 tolerance 覆盖
+export function analyzeUserTagRule(klines: BollKline[], i: number, rule: UserTagRule, dividendPerShare?: number): string[] | null {
   if (!rule || !rule.enabled) return null;
-  const v = resolveSignalValue(klines, i, rule.source);
+  const v = resolveSignalValue(klines, i, rule.source, dividendPerShare);
   if (v === null || v === undefined || Number.isNaN(v)) return null;
   const t = rule.targetType === 'fixed' ? rule.targetValue : resolveTargetValue(klines, i, rule.targetIndicator as SignalTargetIndicator);
   if (t === null || t === undefined || Number.isNaN(t)) return null;
-  const hit = rule.direction === 'up' ? v >= t : v <= t;
+  let hit = false;
+  if (rule.direction === 'touch') {
+    // 触达：|值-目标| 落在容差内（%目标值），任一边均可
+    const tol = (rule.tolerance ?? DEFAULT_TOUCH_TOL) / 100 * Math.max(Math.abs(t), 1e-9);
+    hit = Math.abs(v - t) <= tol;
+  } else {
+    hit = rule.direction === 'up' ? v >= t : v <= t;
+  }
   if (!hit) return null;
   const fmt = (x: number) => (Math.abs(x) >= 1000 ? x.toFixed(0) : x.toFixed(2));
-  return [`${rule.name}：${rule.direction === 'up' ? '增至' : '降至'} ${rule.targetType === 'fixed' ? fmt(t) : t.toFixed(2)}，当日值 ${fmt(v)} 达到目标`, `触发：${rule.targetType === 'fixed' ? '固定目标' : `${rule.targetIndicator as string} 动态目标`}`];
+  const dirLabel = rule.direction === 'up' ? '增至' : rule.direction === 'down' ? '降至' : '触达';
+  return [`${rule.name}：${dirLabel} ${rule.targetType === 'fixed' ? fmt(t) : t.toFixed(2)}，当日值 ${fmt(v)} 达到目标`, `触发：${rule.targetType === 'fixed' ? '固定目标' : `${rule.targetIndicator as string} 动态目标`}`];
 }
 
 // 内部粗分辅助：5档 → 3档（温和/明显 折叠），供 dojiColorByDim、PATTERN_COMBO_REFERENCE 的 key、
