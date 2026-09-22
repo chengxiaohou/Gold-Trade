@@ -1,7 +1,7 @@
 
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, TrendingUp, Database, RefreshCw, ChevronUp, ChevronDown, Pencil, Trash2, Plus } from 'lucide-react';
+import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, TrendingUp, Database, RefreshCw, ChevronUp, ChevronDown, Pencil, Trash2 } from 'lucide-react';
 import { GithubConfig, AppSettings, StockSettings, DividendRateColorRange, ApiSource, CacheInfo, TagParams, TagParamEntry, DEFAULT_TAG_PARAMS, UserTagRule, SignalDataSource, SignalTargetIndicator } from '../types';
 import { DAILY_SIGNAL_CATALOG } from '../services/tagAnalyzers';
 import { validateConnection } from '../services/githubService';
@@ -186,11 +186,15 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [tagParams, setTagParams] = useState<TagParams>(() => mergeTagParams(stockSettings?.tagParams));
   // 用户自定义动态信号标签（随云端同步）
   const [customTags, setCustomTags] = useState<UserTagRule[]>(stockSettings?.customTags || []);
-  // 新增/编辑标签表单（null=表单关闭）
-  const [tagForm, setTagForm] = useState<UserTagRule | null>(null);
+  // 新增/编辑标签表单（默认常驻显示，始终为新增状态；editingId 非空时处于编辑某标签状态）
+  const newTagForm = (): UserTagRule => ({
+    id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `tag-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: '', enabled: true, source: 'changePct', direction: 'up', targetType: 'fixed', targetValue: 0, color: 'indigo',
+  });
+  const [tagForm, setTagForm] = useState<UserTagRule>(newTagForm);
+  const [editingId, setEditingId] = useState<string | null>(null);
   // 保存新增/编辑的自定义标签（依据数据点自动判定的目标形式，清理多余字段）
   const saveTag = () => {
-    if (!tagForm) return;
     const clean: UserTagRule = tagForm.targetType === 'fixed'
       ? { ...tagForm, targetIndicator: undefined }
       : { ...tagForm, targetValue: undefined };
@@ -199,7 +203,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       if (idx >= 0) { const next = [...prev]; next[idx] = clean; return next; }
       return [...prev, clean];
     });
-    setTagForm(null);
+    // 保存后回到新增状态
+    setTagForm(newTagForm());
+    setEditingId(null);
   };
   // 挂单备注占位文字，买入和卖出分开设置（随云端同步）
   const [buyOrderPlaceholder, setBuyOrderPlaceholder] = useState<string>(stockSettings?.buyOrderPlaceholder || '');
@@ -305,7 +311,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       setEditingRangeIndex(null);
       setNewRange({ min: '', max: '', color: 'gray' });
       setCustomTags(stockSettings?.customTags || []);
-      setTagForm(null);
+      setTagForm(newTagForm());
+      setEditingId(null);
       setActiveTab(initialTab);
     }
     wasOpenRef.current = isOpen;
@@ -1492,15 +1499,10 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       </span>
                       <p className="text-xs text-app-subtext mt-1">按“数据点 增至/降至 目标值”定义信号，命中即显示；随设置上云同步。</p>
                     </div>
-                    <button type="button"
-                      onClick={() => setTagForm({ id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `tag-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: '', enabled: true, source: 'changePct', direction: 'up', targetType: 'fixed', targetValue: 0, color: 'indigo' })}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors shrink-0">
-                      <Plus size={13}/> 新增
-                    </button>
                   </div>
 
                   {customTags.length === 0 && (
-                    <div className="text-xs text-app-subtext py-3 text-center bg-app-input rounded-lg">暂无自定义标签，点击右上角“新增”创建。</div>
+                    <div className="text-xs text-app-subtext py-3 text-center bg-app-input rounded-lg">暂无自定义标签，直接在下方的表单填写即可创建。</div>
                   )}
 
                   {customTags.map((t, i) => (
@@ -1517,7 +1519,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <button type="button" aria-label="编辑" title="编辑" onClick={() => setTagForm({ ...t })}
+                          <button type="button" aria-label="编辑" title="编辑" onClick={() => { setTagForm({ ...t }); setEditingId(t.id); }}
                             className="p-1.5 rounded-md text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"><Pencil size={14}/></button>
                           <button type="button" aria-label="删除" title="删除" onClick={() => setCustomTags(customTags.filter((_, j) => j !== i))}
                             className="p-1.5 rounded-md text-app-subtext hover:text-red-400 hover:bg-red-500/10 transition-colors"><Trash2 size={14}/></button>
@@ -1532,9 +1534,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                   ))}
                 </div>
 
-                {/* 新增/编辑标签表单 */}
-                {tagForm && (
-                  <div className="space-y-3 pt-2 border-t border-app-border">
+                {/* 新增/编辑标签表单（默认常驻显示为新增状态） */}
+                <div className="space-y-3 pt-2 border-t border-app-border">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 flex-1 min-w-0">
                         <Pencil size={14} className="text-indigo-400 shrink-0"/>
@@ -1546,7 +1547,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       <div className="flex items-center gap-2 shrink-0">
                         <button type="button" onClick={saveTag}
                           className="px-3 py-1 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">保存</button>
-                        <button type="button" onClick={() => setTagForm(null)} className="text-xs text-app-subtext hover:text-app-text transition-colors">取消</button>
+                        {editingId != null && (
+                          <button type="button" onClick={() => { setTagForm(newTagForm()); setEditingId(null); }} className="text-xs text-app-subtext hover:text-app-text transition-colors">取消</button>
+                        )}
                       </div>
                     </div>
                     <div className="space-y-3">
@@ -1620,7 +1623,6 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       </div>
                     </div>
                   </div>
-                )}
               </div>
             )}
 
