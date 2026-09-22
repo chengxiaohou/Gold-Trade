@@ -108,7 +108,7 @@ const CustomTagCard: React.FC<{ tag: UserTagRule; onEdit: () => void; onToggle: 
           <button type="button" aria-label="编辑" title="编辑" onClick={e => { e.stopPropagation(); onEdit(); }}
             className="p-0.5 rounded text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"><Pencil size={12}/></button>
           <button type="button" aria-label="启用开关" title={tag.enabled ? '已启用（点击停用）' : '已停用（点击启用）'} onClick={e => { e.stopPropagation(); onToggle(); }}
-            className="p-0.5 rounded text-app-subtext hover:text-app-text hover:bg-app-text/10 transition-colors">
+            className="p-0.5 rounded text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors">
             {tag.enabled ? <Eye size={12}/> : <EyeOff size={12}/>}
           </button>
           <button type="button" aria-label="删除" title="删除" onClick={e => { e.stopPropagation(); onDelete(); }}
@@ -230,9 +230,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   // 保存新增/编辑的自定义标签（依据数据点自动判定的目标形式，清理多余字段）
   const saveTag = () => {
-    const clean: UserTagRule = tagForm.targetType === 'fixed'
-      ? { ...tagForm, targetIndicator: undefined }
-      : { ...tagForm, targetValue: undefined };
+    // 用标签描述作为展示名，便于其他页面（回测/预览等）展示
+    const desc = `${SOURCE_LABELS[tagForm.source]} ${tagForm.direction === 'up' ? '增至' : tagForm.direction === 'down' ? '降至' : '触达'}${tagForm.targetType === 'fixed' ? ` ${tagForm.targetValue}` : ` ${tagForm.targetIndicator ? TARGET_INDICATOR_LABELS[tagForm.targetIndicator] : ''}`}`;
+    const clean: UserTagRule = { ...tagForm, name: desc, ...(tagForm.targetType === 'fixed' ? { targetIndicator: undefined } : { targetValue: undefined }) };
     setCustomTags(prev => {
       const idx = prev.findIndex(x => x.id === clean.id);
       if (idx >= 0) { const next = [...prev]; next[idx] = clean; return next; }
@@ -1594,21 +1594,26 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                         </div>
                       </div>
 
-                      {/* 触达容差 */}
-                      {tagForm.direction === 'touch' && (
-                        <InputGroup label="触达容差 (%)" value={tagForm.tolerance ?? 0.5}
-                          onChange={v => setTagForm({ ...tagForm, tolerance: parseFloat(v) || 0 })}
-                          step={0.1} precision={1} min={0} unit="%" className="!py-1.5 !text-xs" />
+                      {/* 触达容差（暂隐藏，用户暂不需要） */}
+                      {false && tagForm.direction === 'touch' && (
+                        <div>
+                          <span className="text-xs text-app-subtext mb-1.5 block">触达容差（%）</span>
+                          <div className="w-[100px] shrink-0">
+                            <InputGroup value={tagForm.tolerance ?? 0.5}
+                              onChange={v => setTagForm({ ...tagForm, tolerance: parseFloat(v) || 0 })}
+                              step={0.1} precision={1} min={0} unit="%" className="!py-1.5 !text-xs" />
+                          </div>
+                        </div>
                       )}
 
                       {/* 目标（自动判定，用户无需选择形式） */}
                       <div>
                         <span className="text-xs text-app-subtext mb-1.5 block">
-                          目标{SOURCE_TARGET_TYPE[tagForm.source] === 'fixed' ? '值' : '指标'}<span className="text-app-subtext/40 ml-1">（自动）</span>
+                          目标{SOURCE_TARGET_TYPE[tagForm.source] === 'fixed' ? '值' : '指标'}
                         </span>
                         {SOURCE_TARGET_TYPE[tagForm.source] === 'fixed' ? (
                           <div className="flex items-center gap-4">
-                            <div className="w-[120px] shrink-0">
+                            <div className="w-[100px] shrink-0">
                               <InputGroup value={tagForm.targetValue ?? 0}
                                 onChange={v => setTagForm({ ...tagForm, targetValue: parseFloat(v) || 0 })}
                                 step={SOURCE_STEP[tagForm.source]} unit={SOURCE_UNIT[tagForm.source]}
