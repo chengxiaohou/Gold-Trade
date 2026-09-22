@@ -1,7 +1,7 @@
 
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, TrendingUp, Database, RefreshCw, ChevronUp, ChevronDown, Pencil, Trash2 } from 'lucide-react';
+import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, TrendingUp, Database, RefreshCw, ChevronUp, ChevronDown, Pencil, Trash2, Eye, EyeOff } from 'lucide-react';
 import { GithubConfig, AppSettings, StockSettings, DividendRateColorRange, ApiSource, CacheInfo, TagParams, TagParamEntry, DEFAULT_TAG_PARAMS, UserTagRule, SignalDataSource, SignalTargetIndicator } from '../types';
 import { DAILY_SIGNAL_CATALOG } from '../services/tagAnalyzers';
 import { validateConnection } from '../services/githubService';
@@ -1511,27 +1511,27 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                   {customTags.length > 0 && (
                     <div className="grid grid-cols-3 gap-2">
                       {customTags.map((t, i) => (
-                        <div key={t.id} className="bg-app-input rounded-lg p-2.5 space-y-1.5">
-                          <div className="min-w-0">
-                            <span className="flex items-center gap-1.5 text-xs font-medium text-app-text">
+                        <div key={t.id} className={`bg-app-input rounded-lg p-2.5 space-y-1.5 ${t.enabled ? '' : 'opacity-70'}`}>
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span className="flex items-center gap-1.5 text-xs font-medium text-app-text min-w-0">
                               <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${(TAG_PALETTE.find(p => p.key === t.color) || TAG_PALETTE[1]).bg}`} />
                               <span className="truncate">{t.name || '(未命名)'}</span>
                             </span>
-                            <span className="block text-[10px] text-app-subtext mt-0.5 leading-snug truncate">
-                              {SOURCE_LABELS[t.source]} {t.direction === 'up' ? '增至' : t.direction === 'down' ? '降至' : '触达'}
-                              {t.targetType === 'fixed' ? ` ${t.targetValue}` : ` ${t.targetIndicator ? TARGET_INDICATOR_LABELS[t.targetIndicator] : ''}`}
-                            </span>
+                            <button type="button" aria-label="启用开关" title={t.enabled ? '已启用（点击停用）' : '已停用（点击启用）'}
+                              onClick={() => { const next = [...customTags]; next[i] = { ...t, enabled: !t.enabled }; setCustomTags(next); }}
+                              className={`shrink-0 p-1 rounded-md transition-colors ${t.enabled ? 'text-indigo-400 hover:bg-indigo-500/10' : 'text-app-subtext/40 hover:text-app-subtext hover:bg-app-text/5'}`}>
+                              {t.enabled ? <Eye size={15}/> : <EyeOff size={15}/>}
+                            </button>
                           </div>
-                          <div className="flex items-center justify-end gap-1">
+                          <span className="block text-[10px] text-app-subtext leading-snug truncate">
+                            {SOURCE_LABELS[t.source]} {t.direction === 'up' ? '增至' : t.direction === 'down' ? '降至' : '触达'}
+                            {t.targetType === 'fixed' ? ` ${t.targetValue}` : ` ${t.targetIndicator ? TARGET_INDICATOR_LABELS[t.targetIndicator] : ''}`}
+                          </span>
+                          <div className="flex items-center gap-0.5">
                             <button type="button" aria-label="编辑" title="编辑" onClick={() => { setTagForm({ ...t }); setEditingId(t.id); }}
                               className="p-1 rounded-md text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"><Pencil size={14}/></button>
                             <button type="button" aria-label="删除" title="删除" onClick={() => setCustomTags(customTags.filter((_, j) => j !== i))}
                               className="p-1 rounded-md text-app-subtext hover:text-red-400 hover:bg-red-500/10 transition-colors"><Trash2 size={14}/></button>
-                            <button type="button" aria-label="开关" title={t.enabled ? '已启用' : '已停用'}
-                              onClick={() => { const next = [...customTags]; next[i] = { ...t, enabled: !t.enabled }; setCustomTags(next); }}
-                              className={`relative inline-flex h-5 w-8 items-center rounded-full transition-colors ${t.enabled ? 'bg-indigo-600' : 'bg-app-bg border border-app-border'}`}>
-                              <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${t.enabled ? 'translate-x-[15px]' : 'translate-x-0.5'}`} />
-                            </button>
                           </div>
                         </div>
                       ))}
