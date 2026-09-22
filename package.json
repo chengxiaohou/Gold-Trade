@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
+    "postinstall": "patch-package",
     "test": "vitest run",
     "test:ci": "(vitest run --reporter=dot > /tmp/test-output.txt 2>&1; tail -12 /tmp/test-output.txt; echo; if [ -s /tmp/test-output.txt ] && ! grep -q 'failed' /tmp/test-output.txt; then echo 'TESTS_PASS'; else echo 'TESTS_FAIL'; fi)"
   },
@@ -27,6 +28,7 @@
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.5.4",
+    "patch-package": "^8.0.1",
     "postcss": "^8.5.25",
     "tailwindcss": "^3.4.19",
     "typescript": "~5.8.2",

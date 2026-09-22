@@ -286,12 +286,12 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
   }, [zoomMode]);
   // cursor 模式：触屏 pinch 放行框架原生（中心锚定）；wheel 由上面 onWheel 统一接管（灵敏度可调）。
   // latest 模式：触屏 pinch 走自接管右缘锚（关闭原生 pinch）。
-  // mouseWheel 全程置 false：捏合(ctrlKey)缩放已由 onWheel 按模式接管，非捏合平移走 handleScroll。
+  // mouseWheel：指向模式开启原生 wheel 缩放（与 canvas 同帧→标签贴合），非捏合平移仍走 handleScroll。
   useEffect(() => {
     const chart = chartInstance.current;
     if (!chart) return;
     const isCursor = zoomModeRef.current === 'cursor';
-    chart.applyOptions({ handleScale: { mouseWheel: false, pinch: isCursor } });
+    chart.applyOptions({ handleScale: { mouseWheel: isCursor, pinch: isCursor } });
     if (chartRef.current) chartRef.current.style.touchAction = isCursor ? 'none' : 'pan-y';
   }, [zoomMode]);
   // 各指标体系当前最新值：ma={5:x,...} boll={upper,mid,lower}
@@ -394,11 +394,24 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
     // 双指捏合缩放（浏览器以 ctrlKey 标记）→ 右缘锚定缩放；其余交给 lightweight 原生 mouseWheel 平移
 
     const tsSet = () => chart.timeScale();
+    // 指向模式下 handleScale.mouseWheel 按手势切换（捏合=开缩放，双指平移=关缩放只平移），
+    // 记录上值避免每帧重复 applyOptions。
+    let lastMouseWheelScale: boolean | null = null;
 
     // 双指捏合(wheel 以 ctrlKey 标记)：捕获阶段拦截，阻断事件到达 lightweight 的原生 mouseWheel
     // 以免两套逻辑同时作用导致缩放几乎无效。灵敏度系数 1.004，比 1.0015 灵敏约 2.7 倍。
     const onWheel = (e: WheelEvent) => {
-      // 非捏合：放行，交给 lightweight 原生 mouseWheel 平移
+      // 指向模式：缩放/平移都放行原生，仅按手势动态开关 handleScale.mouseWheel——
+      // 捏合(ctrlKey)开缩放、双指平移(非ctrlKey)关缩放只平移，二者互不影响。
+      if (zoomModeRef.current === 'cursor') {
+        const wantScale = !!e.ctrlKey;
+        if (wantScale !== lastMouseWheelScale) {
+          lastMouseWheelScale = wantScale;
+          chart.applyOptions({ handleScale: { mouseWheel: wantScale, pinch: true } });
+        }
+        return;
+      }
+      // 右缘锚：原生缩放恒关，非捏合走原生平移，捏合(ctrlKey)走下方自定义右缘锚缩放
       if (!e.ctrlKey) return;
       if (e.defaultPrevented) return;
       e.preventDefault();
@@ -481,8 +494,16 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
       });
       ro.observe(el);
     }
-    // 缩放/平移导致可视区变化时，重算覆盖层标签位置，保证跟随 K 线
-    const onTimeScaleChange = () => computeTicksRef.current?.();
+    // 缩放/平移导致可视区变化时，重算覆盖层标签位置，保证跟随 K 线。
+    // 关键：合并到下一渲染帧(rAF)执行——lightweight 在可视区变化后是"下帧"才重算 y 轴
+    // 可见范围 autoScale 并重绘 canvas，若在此回调里同步读取 priceToCoordinate，拿到的还是
+    // 旧 y 刻度 → 标签在高度上偏离 K 线(需横滑触发下次 range change 才归位)。rAF 合并后以其
+    // 最新刻度换算，标签与 canvas 同帧，平移/缩放都贴合。
+    let rafId = 0;
+    const onTimeScaleChange = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => computeTicksRef.current?.());
+    };
     chart.timeScale().subscribeVisibleLogicalRangeChange(onTimeScaleChange);
     // —— 十字线悬浮行情面板（复用列表页"当日行情"浮窗 PriceInfoPopover）——
     // 仅当悬停在 K 线实体所在横带上才展示；热区外(空白/边缘)→ 隐藏。按日缓存指标，避免每像素重算。
@@ -539,7 +560,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
     //  chart ready 后不会因 zoomMode 没变再触发——所以这里兜底一次，确保刷新页面 pinch 也能立即生效）
     {
       const isCursor = zoomModeRef.current === 'cursor';
-      chart.applyOptions({ handleScale: { mouseWheel: false, pinch: isCursor } });
+      chart.applyOptions({ handleScale: { mouseWheel: isCursor, pinch: isCursor } });
       el.style.touchAction = isCursor ? 'none' : 'pan-y';
     }
     return () => {
@@ -1216,8 +1237,12 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
                 })}
                 {/* 预览标签：缩写块，用标签本身主题色；key[0] 在 K 线上方、key[1] 下方；透明热区承载 hover/点击弹判定依据浮窗 */}
                 {previewTicks.map(t => {
-                  const half = TICK_SIZE / 2;
-                  const offset = SPACING + LINE_LEN + half;
+                  const isCol = t.abbr.length >= 2; // 两字缩写 → 竖排（避免横排超出标签/变宽）
+                  const bw = TICK_SIZE;             // 方块宽（单字/两字统一）
+                  const bh = isCol ? 22 : TICK_SIZE; // 两字竖排需更高背景以覆盖两行字
+                  const half = bw / 2;
+                  const bhHalf = bh / 2;
+                  const offset = SPACING + LINE_LEN + bhHalf;
                   // top：方块中心在 high 之上 offset；bottom：在 low 之下 offset
                   const dir: 1 | -1 = t.side === 'top' ? -1 : 1;
                   const centerY = t.y + dir * offset;
@@ -1225,17 +1250,24 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
                   return (
                     <g key={`${t.keyOf}-${t.date}`} transform={`translate(${t.x} ${centerY})`}>
                       {/* 点状虚线：方块边缘 → 末端圆点 */}
-                      <line x1={0} y1={-dir * half} x2={0} y2={-dir * (LINE_LEN + half)} stroke={t.color} strokeWidth={1.2} strokeDasharray={DOT_DA} pointerEvents="none" />
+                      <line x1={0} y1={-dir * bhHalf} x2={0} y2={-dir * (LINE_LEN + bhHalf)} stroke={t.color} strokeWidth={1.2} strokeDasharray={DOT_DA} pointerEvents="none" />
                       {/* 末端圆点 */}
-                      <circle cx={0} cy={-dir * (LINE_LEN + half)} r={DOT_R} fill={t.color} pointerEvents="none" />
-                      {/* 缩写方块：标签主题色 */}
-                      <rect x={-half} y={-half} width={TICK_SIZE} height={TICK_SIZE} rx={TICK_RADIUS} fill={t.color} pointerEvents="none" />
-                      <text x={0} y={0} textAnchor="middle" dominantBaseline="central" fontSize={9} fontWeight={400} fill="#ffffff" pointerEvents="none">
-                        {t.abbr}
+                      <circle cx={0} cy={-dir * (LINE_LEN + bhHalf)} r={DOT_R} fill={t.color} pointerEvents="none" />
+                      {/* 缩写方块：标签主题色；两字竖排时背景为竖长方形以覆盖两行字 */}
+                      <rect x={-half} y={-bhHalf} width={bw} height={bh} rx={TICK_RADIUS} fill={t.color} pointerEvents="none" />
+                      <text x={0} textAnchor="middle" fontSize={8} fontWeight={400} fill="#ffffff" pointerEvents="none">
+                        {isCol ? (
+                          <>
+                            <tspan x={0} y={-2}>{t.abbr[0]}</tspan>
+                            <tspan x={0} y={7}>{t.abbr[1]}</tspan>
+                          </>
+                        ) : (
+                          t.abbr
+                        )}
                       </text>
                       {/* 透明热区：覆盖方块，承载 hover/点击（容器 pointer-events:none，热区单独恢复） */}
                       <rect
-                        x={-half} y={-half} width={TICK_SIZE} height={TICK_SIZE} rx={TICK_RADIUS}
+                        x={-half} y={-bhHalf} width={bw} height={bh} rx={TICK_RADIUS}
                         fill="transparent" style={{ pointerEvents: 'all', cursor: 'pointer' }}
                         onMouseEnter={() => setPreviewPopup({ keyOf: t.keyOf, date: t.date, x: t.x, y: centerY, detail: t.detail })}
                         onMouseLeave={() => setPreviewPopup(p => (p?.keyOf === t.keyOf && p?.date === t.date ? null : p))}
