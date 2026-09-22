@@ -46,6 +46,31 @@ const SOURCE_LABELS: Record<SignalDataSource, string> = {
   rsi: 'RSI6',
   dividendRate: '股息率',
 };
+
+// 数据点 → 目标形式自动判定（无需用户选择）：
+// 仅"价格"天然适合动态指标（触达均线/布林上下轨），其余信号量纲固定用固定值
+const SOURCE_TARGET_TYPE: Record<SignalDataSource, 'fixed' | 'indicator'> = {
+  price: 'indicator',
+  volume: 'fixed',
+  changePct: 'fixed',
+  volumeRatio: 'fixed',
+  kdj: 'fixed',
+  rsi: 'fixed',
+  dividendRate: 'fixed',
+};
+
+// 数据点 → 目标值单位（InputGroup 后缀展示）
+const SOURCE_UNIT: Record<SignalDataSource, string> = {
+  price: '元', volume: '手', changePct: '%', volumeRatio: '倍', kdj: '', rsi: '', dividendRate: '%',
+};
+
+// 数据点 → 滚轮/触控板步进（每步增量）与数值小数位
+const SOURCE_STEP: Record<SignalDataSource, number> = {
+  price: 1, volume: 1000, changePct: 0.1, volumeRatio: 0.1, kdj: 1, rsi: 1, dividendRate: 0.1,
+};
+const SOURCE_PRECISION: Record<SignalDataSource, number> = {
+  price: 2, volume: 0, changePct: 1, volumeRatio: 1, kdj: 0, rsi: 0, dividendRate: 1,
+};
 const TARGET_INDICATOR_LABELS: Record<SignalTargetIndicator, string> = {
   ma5: 'MA5', ma10: 'MA10', ma20: 'MA20', ma60: 'MA60', ma120: 'MA120',
   bollUpper: '布林上轨', bollMid: '布林中轨', bollLower: '布林下轨',
@@ -1503,69 +1528,80 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       </span>
                       <button type="button" onClick={() => setTagForm(null)} className="text-xs text-app-subtext hover:text-app-text transition-colors">取消</button>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <label className="block">
-                        <span className="text-xs text-app-subtext mb-1 block">数据点</span>
-                        <select value={tagForm.source} onChange={e => setTagForm({ ...tagForm, source: e.target.value as SignalDataSource })}
-                          className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 transition-all">
-                          {(Object.keys(SOURCE_LABELS) as SignalDataSource[]).map(k => <option key={k} value={k}>{SOURCE_LABELS[k]}</option>)}
-                        </select>
-                      </label>
-                      <label className="block">
-                        <span className="text-xs text-app-subtext mb-1 block">方向</span>
-                        <select value={tagForm.direction} onChange={e => setTagForm({ ...tagForm, direction: e.target.value as 'up' | 'down' | 'touch' })}
-                          className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 transition-all">
-                          <option value="up">增至</option>
-                          <option value="down">降至</option>
-                          <option value="touch">触达</option>
-                        </select>
-                      </label>
+                    <div className="space-y-3">
+                      {/* 数据点：chip 组 */}
+                      <div>
+                        <span className="text-xs text-app-subtext mb-1.5 block">数据点</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {(Object.keys(SOURCE_LABELS) as SignalDataSource[]).map(k => (
+                            <button key={k} type="button"
+                              onClick={() => setTagForm({ ...tagForm, source: k, targetType: SOURCE_TARGET_TYPE[k] })}
+                              className={`px-2.5 py-1 rounded-full text-xs border transition-all ${tagForm.source === k ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400' : 'border-app-border text-app-subtext hover:text-app-text'}`}>
+                              {SOURCE_LABELS[k]}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* 方向：chip 组 */}
+                      <div>
+                        <span className="text-xs text-app-subtext mb-1.5 block">方向</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {([['up', '增至'], ['down', '降至'], ['touch', '触达']] as const).map(([v, label]) => (
+                            <button key={v} type="button" onClick={() => setTagForm({ ...tagForm, direction: v })}
+                              className={`px-2.5 py-1 rounded-full text-xs border transition-all ${tagForm.direction === v ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400' : 'border-app-border text-app-subtext hover:text-app-text'}`}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* 触达容差 */}
                       {tagForm.direction === 'touch' && (
-                        <label className="block">
-                          <span className="text-xs text-app-subtext mb-1 block">触达容差 (%)</span>
-                          <input type="number" step="0.1" min="0" value={tagForm.tolerance ?? 0.5}
-                            onChange={e => setTagForm({ ...tagForm, tolerance: parseFloat(e.target.value) || 0 })}
-                            className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
-                            title="|当日值-目标| 落在该比例（%目标值）内即视为触达" />
-                        </label>
+                        <InputGroup label="触达容差 (%)" value={tagForm.tolerance ?? 0.5}
+                          onChange={v => setTagForm({ ...tagForm, tolerance: parseFloat(v) || 0 })}
+                          step={0.1} precision={1} min={0} unit="%" className="!py-1.5 !text-xs" />
                       )}
+
+                      {/* 目标（自动判定，用户无需选择形式） */}
+                      <div>
+                        <span className="text-xs text-app-subtext mb-1.5 block">
+                          目标{SOURCE_TARGET_TYPE[tagForm.source] === 'fixed' ? '值' : '指标'}<span className="text-app-subtext/40 ml-1">（自动）</span>
+                        </span>
+                        {SOURCE_TARGET_TYPE[tagForm.source] === 'fixed' ? (
+                          <InputGroup value={tagForm.targetValue ?? 0}
+                            onChange={v => setTagForm({ ...tagForm, targetValue: parseFloat(v) || 0 })}
+                            step={SOURCE_STEP[tagForm.source]} unit={SOURCE_UNIT[tagForm.source]}
+                            precision={SOURCE_PRECISION[tagForm.source]} className="!py-1.5 !text-xs" />
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {(Object.keys(TARGET_INDICATOR_LABELS) as SignalTargetIndicator[]).map(k => (
+                              <button key={k} type="button" onClick={() => setTagForm({ ...tagForm, targetIndicator: k })}
+                                className={`px-2.5 py-1 rounded-full text-xs border transition-all ${(tagForm.targetIndicator ?? 'ma5') === k ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400' : 'border-app-border text-app-subtext hover:text-app-text'}`}>
+                                {TARGET_INDICATOR_LABELS[k]}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
                       <label className="block">
-                        <span className="text-xs text-app-subtext mb-1 block">目标形式</span>
-                        <select value={tagForm.targetType} onChange={e => setTagForm({ ...tagForm, targetType: e.target.value as 'fixed' | 'indicator' })}
-                          className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 transition-all">
-                          <option value="fixed">固定值</option>
-                          <option value="indicator">动态指标</option>
-                        </select>
+                        <span className="text-xs text-app-subtext mb-1 block">标签名称</span>
+                        <input type="text" value={tagForm.name} placeholder="如：放量突破MA20" onChange={e => setTagForm({ ...tagForm, name: e.target.value })}
+                          className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
                       </label>
-                      {tagForm.targetType === 'fixed' ? (
-                        <label className="block">
-                          <span className="text-xs text-app-subtext mb-1 block">目标值</span>
-                          <input type="number" step="0.01" value={tagForm.targetValue ?? 0}
-                            onChange={e => setTagForm({ ...tagForm, targetValue: parseFloat(e.target.value) || 0 })}
-                            className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono" />
-                        </label>
-                      ) : (
-                        <label className="block">
-                          <span className="text-xs text-app-subtext mb-1 block">目标指标</span>
-                          <select value={tagForm.targetIndicator ?? 'ma5'} onChange={e => setTagForm({ ...tagForm, targetIndicator: e.target.value as SignalTargetIndicator })}
-                            className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 transition-all">
-                            {(Object.keys(TARGET_INDICATOR_LABELS) as SignalTargetIndicator[]).map(k => <option key={k} value={k}>{TARGET_INDICATOR_LABELS[k]}</option>)}
-                          </select>
-                        </label>
-                      )}
-                    </div>
-                    <label className="block">
-                      <span className="text-xs text-app-subtext mb-1 block">标签名称</span>
-                      <input type="text" value={tagForm.name} placeholder="如：放量突破MA20" onChange={e => setTagForm({ ...tagForm, name: e.target.value })}
-                        className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
-                    </label>
-                    <div>
-                      <span className="text-xs text-app-subtext mb-1 block">颜色</span>
-                      <div className="flex flex-wrap gap-2">
-                        {TAG_PALETTE.map(c => (
-                          <button key={c.key} type="button" aria-label={c.label} title={c.label} onClick={() => setTagForm({ ...tagForm, color: c.key })}
-                            className={`w-6 h-6 rounded-full ${c.cls} transition-transform ${tagForm.color === c.key ? 'ring-2 ring-offset-2 ring-indigo-500 scale-110' : 'opacity-70 hover:opacity-100'}`} />
-                        ))}
+
+                      {/* 颜色：圆圈网格 + 选中中心圆点（照搬股票页编辑标签弹窗） */}
+                      <div>
+                        <span className="text-xs text-app-subtext mb-1.5 block">颜色</span>
+                        <div className="grid grid-cols-8 gap-2">
+                          {TAG_PALETTE.map(c => (
+                            <button key={c.key} type="button" aria-label={c.label} title={c.label} onClick={() => setTagForm({ ...tagForm, color: c.key })}
+                              className={`w-6 h-6 rounded-full border transition-all flex items-center justify-center ${c.cls} ${tagForm.color === c.key ? 'opacity-100 scale-100' : 'opacity-60 hover:opacity-100 hover:scale-105'}`}>
+                              {tagForm.color === c.key && <span className="w-2 h-2 rounded-full bg-white shadow-sm" />}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center justify-between pt-1">
