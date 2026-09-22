@@ -381,12 +381,35 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     el.style.touchAction = 'none';
     // 记录上一次 mouseWheel 缩放开关，避免每帧重复 applyOptions
     const lastScaleState = { mouseWheel: false };
-    // 前置capture阶段按修饰键/捏合动态切换原生缩放开关，让同一 wheel 事件流里“捏合缩放、纯滚轮平移”都能工作
+    const setScale = (on: boolean) => {
+      if (on !== lastScaleState.mouseWheel) {
+        lastScaleState.mouseWheel = on;
+        chart.applyOptions({ handleScale: { mouseWheel: on, pinch: true } });
+      }
+    };
+    // 纯纵向滚轮 → 横向平移：lightweight 原生平移只认 deltaX(横向滚轮)、对 deltaY 只缩放；
+    // 故关掉原生缩放后用 deltaY 自行水平平移，避免"纯滚轮无反应"。
+    const panByWheel = (px: number) => {
+      const ts = chart.timeScale();
+      const r = ts.getVisibleLogicalRange();
+      if (!r) return;
+      const span = r.to - r.from;
+      const width = ts.width();
+      if (!width || width <= 0 || span <= 0 || px === 0) return;
+      const logical = px * (span / width); // 像素 → 逻辑单位（缩放越大每逻辑单位像素越多）
+      let from = r.from + logical;
+      let to = r.to + logical;
+      if (from < 0) { const shift = -from; from = 0; to += shift; } // 左缘钳制
+      ts.setVisibleLogicalRange({ from, to });
+    };
+    // 前置capture阶段接管 wheel：捏合(ctrlKey)/⌘+滚轮 → 开原生缩放；纯滚轮/双指平移 → 关缩放、按 deltaY 自行平移
     const onWheel = (e: WheelEvent) => {
-      const wantScale = !!e.ctrlKey || !!e.metaKey; // 捏合(ctrlKey) 或 ⌘/Ctrl+滚轮 → 缩放；否则平移
-      if (wantScale !== (lastScaleState.mouseWheel ?? false)) {
-        lastScaleState.mouseWheel = wantScale;
-        chart.applyOptions({ handleScale: { mouseWheel: wantScale, pinch: true } });
+      e.preventDefault(); // 图表接管滚轮，阻止页面随之滚动/缩放
+      if (e.ctrlKey || e.metaKey) {
+        setScale(true); // 交给 lightweight 原生在光标处缩放
+      } else {
+        setScale(false);
+        panByWheel(-e.deltaY); // deltaX 由 handleScroll 原生平移，这里只补纵向 deltaY
       }
     };
     el.addEventListener('wheel', onWheel, { capture: true, passive: false });
