@@ -36,6 +36,7 @@ const getStockColumns = (leftYear: number, rightYear: number) => [
 ];
 
 // 标签管理：数据点 / 动态目标 / 色板 / 目录分组的中文映射
+// 触发数据点下拉文案（股息率已支持，按 K 线所属年份折算）
 const SOURCE_LABELS: Record<SignalDataSource, string> = {
   price: '收盘价',
   volume: '成交量',
@@ -43,7 +44,7 @@ const SOURCE_LABELS: Record<SignalDataSource, string> = {
   volumeRatio: '量比',
   kdj: 'KDJ.J',
   rsi: 'RSI6',
-  dividendRate: '股息率(暂不可用)',
+  dividendRate: '股息率',
 };
 const TARGET_INDICATOR_LABELS: Record<SignalTargetIndicator, string> = {
   ma5: 'MA5', ma10: 'MA10', ma20: 'MA20', ma60: 'MA60', ma120: 'MA120',
