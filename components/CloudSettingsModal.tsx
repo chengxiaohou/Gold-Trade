@@ -1508,39 +1508,41 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                     <div className="text-xs text-app-subtext py-3 text-center bg-app-input rounded-lg">暂无自定义标签，直接在下方的表单填写即可创建。</div>
                   )}
 
-                  {customTags.map((t, i) => (
-                    <div key={t.id} className="bg-app-input rounded-lg p-2.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <span className="flex items-center gap-1.5 text-xs font-medium text-app-text">
-                            <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${(TAG_PALETTE.find(p => p.key === t.color) || TAG_PALETTE[1]).bg}`} />
-                            {t.name || '(未命名)'}
-                          </span>
-                          <span className="block text-[10px] text-app-subtext mt-0.5 leading-snug">
-                            {SOURCE_LABELS[t.source]} {t.direction === 'up' ? '增至' : t.direction === 'down' ? '降至' : '触达'}
-                            {t.targetType === 'fixed' ? ` ${t.targetValue}` : ` ${t.targetIndicator ? TARGET_INDICATOR_LABELS[t.targetIndicator] : ''}`}
-                          </span>
+                  {customTags.length > 0 && (
+                    <div className="grid grid-cols-3 gap-2">
+                      {customTags.map((t, i) => (
+                        <div key={t.id} className="bg-app-input rounded-lg p-2.5 space-y-1.5">
+                          <div className="min-w-0">
+                            <span className="flex items-center gap-1.5 text-xs font-medium text-app-text">
+                              <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${(TAG_PALETTE.find(p => p.key === t.color) || TAG_PALETTE[1]).bg}`} />
+                              <span className="truncate">{t.name || '(未命名)'}</span>
+                            </span>
+                            <span className="block text-[10px] text-app-subtext mt-0.5 leading-snug truncate">
+                              {SOURCE_LABELS[t.source]} {t.direction === 'up' ? '增至' : t.direction === 'down' ? '降至' : '触达'}
+                              {t.targetType === 'fixed' ? ` ${t.targetValue}` : ` ${t.targetIndicator ? TARGET_INDICATOR_LABELS[t.targetIndicator] : ''}`}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-end gap-1">
+                            <button type="button" aria-label="编辑" title="编辑" onClick={() => { setTagForm({ ...t }); setEditingId(t.id); }}
+                              className="p-1 rounded-md text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"><Pencil size={14}/></button>
+                            <button type="button" aria-label="删除" title="删除" onClick={() => setCustomTags(customTags.filter((_, j) => j !== i))}
+                              className="p-1 rounded-md text-app-subtext hover:text-red-400 hover:bg-red-500/10 transition-colors"><Trash2 size={14}/></button>
+                            <button type="button" aria-label="开关" title={t.enabled ? '已启用' : '已停用'}
+                              onClick={() => { const next = [...customTags]; next[i] = { ...t, enabled: !t.enabled }; setCustomTags(next); }}
+                              className={`relative inline-flex h-5 w-8 items-center rounded-full transition-colors ${t.enabled ? 'bg-indigo-600' : 'bg-app-bg border border-app-border'}`}>
+                              <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${t.enabled ? 'translate-x-[15px]' : 'translate-x-0.5'}`} />
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button type="button" aria-label="编辑" title="编辑" onClick={() => { setTagForm({ ...t }); setEditingId(t.id); }}
-                            className="p-1.5 rounded-md text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"><Pencil size={14}/></button>
-                          <button type="button" aria-label="删除" title="删除" onClick={() => setCustomTags(customTags.filter((_, j) => j !== i))}
-                            className="p-1.5 rounded-md text-app-subtext hover:text-red-400 hover:bg-red-500/10 transition-colors"><Trash2 size={14}/></button>
-                          <button type="button" aria-label="开关" title={t.enabled ? '已启用' : '已停用'}
-                            onClick={() => { const next = [...customTags]; next[i] = { ...t, enabled: !t.enabled }; setCustomTags(next); }}
-                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${t.enabled ? 'bg-indigo-600' : 'bg-app-input border border-app-border'}`}>
-                            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${t.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
-                          </button>
-                        </div>
-                      </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
 
                 {/* 新增/编辑标签表单（默认常驻显示为新增状态） */}
                 <div className="space-y-3 pt-2 border-t border-app-border">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <div className="flex items-center gap-2 w-1/2 min-w-0">
                         <Pencil size={14} className="text-indigo-400 shrink-0"/>
                         <input type="text" value={tagForm.name} placeholder="输入标签名称"
                           onChange={e => setTagForm({ ...tagForm, name: e.target.value })}
@@ -1596,7 +1598,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                           目标{SOURCE_TARGET_TYPE[tagForm.source] === 'fixed' ? '值' : '指标'}<span className="text-app-subtext/40 ml-1">（自动）</span>
                         </span>
                         {SOURCE_TARGET_TYPE[tagForm.source] === 'fixed' ? (
-                          <div className="w-1/3 min-w-[150px]">
+                          <div className="w-1/6 min-w-[110px]">
                             <InputGroup value={tagForm.targetValue ?? 0}
                               onChange={v => setTagForm({ ...tagForm, targetValue: parseFloat(v) || 0 })}
                               step={SOURCE_STEP[tagForm.source]} unit={SOURCE_UNIT[tagForm.source]}
