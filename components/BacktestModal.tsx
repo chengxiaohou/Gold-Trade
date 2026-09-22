@@ -285,28 +285,6 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   const [chartError, setChartError] = useState<string | null>(null);
   // 图表指标模式：均线(默认) / 布林线
   const [indicatorMode, setIndicatorMode] = useState<'ma' | 'boll'>('ma');
-  // 缩放模式：latest=锁定最新价(右缘锚定) / cursor=鼠标指向的日期为中心
-  const [zoomMode, setZoomMode] = useState<'latest' | 'cursor'>(() => {
-    // 从本地记忆初始缩放模式（指向锚 / 右缘锚），无记录默认右缘锚
-    try { return localStorage.getItem('bt_zoom_mode') === 'cursor' ? 'cursor' : 'latest'; }
-    catch { return 'latest'; }
-  });
-  const zoomModeRef = useRef<'latest' | 'cursor'>('latest');
-  useEffect(() => { zoomModeRef.current = zoomMode; }, [zoomMode]);
-  // 缩放模式选择本地持久化，刷新/重开弹窗后保留
-  useEffect(() => {
-    try { localStorage.setItem('bt_zoom_mode', zoomMode); } catch { /* 忽略存储异常 */ }
-  }, [zoomMode]);
-  // cursor 模式：触屏 pinch 放行框架原生（中心锚定）；wheel 由上面 onWheel 统一接管（灵敏度可调）。
-  // latest 模式：触屏 pinch 走自接管右缘锚（关闭原生 pinch）。
-  // mouseWheel：指向模式开启原生 wheel 缩放（与 canvas 同帧→标签贴合），非捏合平移仍走 handleScroll。
-  useEffect(() => {
-    const chart = chartInstance.current;
-    if (!chart) return;
-    const isCursor = zoomModeRef.current === 'cursor';
-    chart.applyOptions({ handleScale: { mouseWheel: isCursor, pinch: isCursor } });
-    if (chartRef.current) chartRef.current.style.touchAction = isCursor ? 'none' : 'pan-y';
-  }, [zoomMode]);
   // 各指标体系当前最新值：ma={5:x,...} boll={upper,mid,lower}
   const [latestInd, setLatestInd] = useState<{ ma: number[]; boll: { upper: number; mid: number; lower: number } | null }>({ ma: [], boll: null });
 
@@ -390,112 +368,16 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     // 真实数据到达后由下方 effect 直接定位为 120 日。
     series.setData([]);
 
-    // —— 接管缩放手势，实现 B 方案：右缘就近锚定，缩放只朝左侧扩展/收缩 ——
-    // 禁用内置围绕中心/鼠标的缩放，改为右缘锚定的自定义缩放
-    // 关掉鼠标滚轮缩放与捏合缩放（内置围绕中心），保留 handleScroll.mouseWheel
-    // 让 lightweight 原生处理双指左/右滑的平移（换算精确），我们只接管捏合缩放。
+    // —— 统一开放原生手势 ——
+    // 纯滚轮/触控板双指 = 原生平移(handleScroll.mouseWheel，Shift+滚轮同为核心原生横向平移)；
+    // Ctrl/⌘+滚轮 或 触控板捏合 = 原生缩放(handleScale.mouseWheel/pinch)。
+    // 已废弃缩放手势自接管（右缘锚/指向锚），缩放回归框架原生（指针/中心锚），不再有“最新价右缘钉死”。
     chart.applyOptions({
       handleScroll: { mouseWheel: true, pressedMouseMove: false, horzTouchDrag: true, vertTouchDrag: false },
-      handleScale: { axisPressedMouseMove: false, axisDoubleClickReset: false, mouseWheel: false, pinch: false },
+      handleScale: { axisPressedMouseMove: false, axisDoubleClickReset: false, mouseWheel: true, pinch: true },
     });
-    // 图表区触摸交给本组件与 lightweight 平移处理：允许页面竖向滚动，pinch 由 onTouchMove 接管
-    el.style.touchAction = 'pan-y';
-
-    const clampBars = (n: number) => Math.max(8, Math.min(300, n));
-
-    // —— 桌面/触控板手势（wheel 事件统一承载）——
-    // 双指捏合缩放（浏览器以 ctrlKey 标记）→ 右缘锚定缩放；其余交给 lightweight 原生 mouseWheel 平移
-
-    const tsSet = () => chart.timeScale();
-    // 指向模式下 handleScale.mouseWheel 按手势切换（捏合=开缩放，双指平移=关缩放只平移），
-    // 记录上值避免每帧重复 applyOptions。
-    let lastMouseWheelScale: boolean | null = null;
-
-    // 双指捏合(wheel 以 ctrlKey 标记)：捕获阶段拦截，阻断事件到达 lightweight 的原生 mouseWheel
-    // 以免两套逻辑同时作用导致缩放几乎无效。灵敏度系数 1.004，比 1.0015 灵敏约 2.7 倍。
-    const onWheel = (e: WheelEvent) => {
-      // 指向模式：缩放/平移都放行原生，仅按手势动态开关 handleScale.mouseWheel——
-      // 捏合(ctrlKey)开缩放、双指平移(非ctrlKey)关缩放只平移，二者互不影响。
-      if (zoomModeRef.current === 'cursor') {
-        const wantScale = !!e.ctrlKey;
-        if (wantScale !== lastMouseWheelScale) {
-          lastMouseWheelScale = wantScale;
-          chart.applyOptions({ handleScale: { mouseWheel: wantScale, pinch: true } });
-        }
-        return;
-      }
-      // 右缘锚：原生缩放恒关，非捏合走原生平移，捏合(ctrlKey)走下方自定义右缘锚缩放
-      if (!e.ctrlKey) return;
-      if (e.defaultPrevented) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const ts = tsSet();
-      const r = ts.getVisibleLogicalRange();
-      if (!r) return;
-      const span = r.to - r.from;
-      if (span <= 0) return;
-      const factor = Math.pow(1.1, e.deltaY); // 灵敏度对齐右缘锚（1.1^deltaY）
-      const newSpan = span * factor;
-      const newWidth = clampBars(newSpan);
-      let from: number;
-      if (zoomModeRef.current === 'cursor') {
-        // 指向锚：指针锚定缩放。与原生一致——按像素把"指针下方那一根 K 线"保持在原位、向两边缩放。
-        // 关键：全程浮点不取整，锚点按指针像素逐级重锚 → 指针不动则该 K 线分毫不动（无取整漂移）。
-        const rect = el.getBoundingClientRect();
-        const px = e.clientX - rect.left;
-        const L = ts.coordinateToLogical(px);
-        if (L == null) {
-          // 指针落在图表区外（如右侧标尺）：退化为右缘锚
-          from = Math.max(0, r.to - newWidth);
-        } else {
-          const spacing = (ts.width() / span) || 1; // 每逻辑单位像素
-          // 目标 barSpacing' 与当前比：newWidth / span 倍；为让 L 像素不变：from = L - (L - r.from) * (spacing/spacing')
-          from = L - (L - r.from) * (newSpan / span);
-          // 左缘越界保护：整体右移，尽量保留锚定（右移量越小锚定损失越小）
-          if (from < 0) { const shift = -from; from = 0; }
-        }
-        ts.setVisibleLogicalRange({ from, to: from + newWidth });
-      } else {
-        // 右缘锚：最新价锚定
-        ts.setVisibleLogicalRange({ from: Math.max(0, r.to - newWidth), to: r.to });
-      }
-    };
-
-    // 触屏 pinch：latest 模式右缘锚定；cursor 模式放行给原生 pinch
-    let pinchStart: { dist: number; range: { from: number; to: number } } | null = null;
-    let pinchDist = 1;
-    const distOf = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-    const onTouchStart = (e: TouchEvent) => {
-      if (zoomModeRef.current === 'cursor') return; // 原生 pinch 接管
-      if (e.touches.length === 2) {
-        const ts = chart.timeScale();
-        const r = ts.getVisibleLogicalRange();
-        if (!r) return;
-        pinchDist = distOf(e.touches);
-        pinchStart = { dist: pinchDist, range: { from: r.from, to: r.to } };
-      } else if (e.touches.length < 2) {
-        pinchStart = null;
-      }
-    };
-    const onTouchMove = (e: TouchEvent) => {
-      if (e.touches.length === 2 && pinchStart) {
-        e.preventDefault();
-        const ts = chart.timeScale();
-        const d = distOf(e.touches);
-        if (d <= 0 || pinchStart.dist <= 0) return;
-        const width = (pinchStart.range.to - pinchStart.range.from) * (pinchDist / d);
-        const newWidth = clampBars(width);
-        // latest 模式：右缘（最新价）锚定（cursor 模式走原生 pinch，不进入此处）
-        ts.setVisibleLogicalRange({ from: Math.max(0, pinchStart.range.to - newWidth), to: pinchStart.range.to });
-      }
-    };
-    const onTouchEnd = () => { pinchStart = null; };
-
-    // 用捕获阶段接管 wheel：先于 lightweight 的 canvas 监听，避免捏合事件被原生平移截获
-    el.addEventListener('wheel', onWheel, { capture: true, passive: false });
-    el.addEventListener('touchstart', onTouchStart, { passive: true });
-    el.addEventListener('touchmove', onTouchMove, { passive: false });
-    el.addEventListener('touchend', onTouchEnd);
+    // 图表原生接管全部手势（滚轮/捏合/触屏单指横滑），容器不自行拦截、不注册自定义 wheel/touch 事件
+    el.style.touchAction = 'none';
 
     // 兜底：容器尺寸变化（flex 拉伸/弹窗缩放）时强制重绘一次，并重算覆盖层标签
     let ro: ResizeObserver | null = null;
@@ -578,24 +460,12 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     };
     chart.subscribeCrosshairMove(onCrosshairMove);
     chart.subscribeClick(onChartClick);
-    // 初始化时立即把当前 zoomMode 的缩放/触屏配置应用到新创建的 chart
-    // （zoomMode 的 useEffect 依赖的是 state，chart 没 ready 时跑过一次 return 就跳过了；
-    //  chart ready 后不会因 zoomMode 没变再触发——所以这里兜底一次，确保刷新页面 pinch 也能立即生效）
-    {
-      const isCursor = zoomModeRef.current === 'cursor';
-      chart.applyOptions({ handleScale: { mouseWheel: isCursor, pinch: isCursor } });
-      el.style.touchAction = isCursor ? 'none' : 'pan-y';
-    }
     return () => {
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onTimeScaleChange);
       chart.unsubscribeCrosshairMove(onCrosshairMove);
       chart.unsubscribeClick(onChartClick);
       setHoverQuote(null);
       ro?.disconnect();
-      el.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
-      el.removeEventListener('touchstart', onTouchStart);
-      el.removeEventListener('touchmove', onTouchMove);
-      el.removeEventListener('touchend', onTouchEnd);
       el.style.touchAction = '';
       if (chartInstance.current) { chartInstance.current.remove(); chartInstance.current = null; }
       seriesRef.current = null;
@@ -1339,15 +1209,6 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                   </div>
                 </div>
               )}
-              {/* 缩放模式切换（单个按钮，点击在两种形态间切换）：置于左下角标尺空位 */}
-              <button
-                type="button"
-                onClick={() => setZoomMode(prev => (prev === 'latest' ? 'cursor' : 'latest'))}
-                className="absolute right-1 bottom-1 z-20 flex items-center gap-1 rounded-md border border-app-border bg-app-bg/80 px-1.5 py-0.5 text-[11px] font-medium text-app-subtext hover:text-app-text transition-colors"
-                title={`缩放模式：${zoomMode === 'latest' ? '右缘锚（锚定最新价，缩放时最新K线不动）' : '指向锚（以指针指向的日期为中心）'}（点击切换）`}
-              >
-                {zoomMode === 'latest' ? '右缘锚' : '指向锚'}
-              </button>
               {chartLoading && (
                 <div className="absolute inset-0 flex items-center justify-center text-xs text-app-subtext pointer-events-none">正在加载K线…</div>
               )}
