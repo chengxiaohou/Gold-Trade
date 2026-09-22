@@ -86,6 +86,38 @@ const TAG_PALETTE: { key: string; label: string; bg: string; text: string; borde
   { key: 'orange', label: '橙色', bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/20' },
   { key: 'pink', label: '粉色', bg: 'bg-pink-500/10', text: 'text-pink-500', border: 'border-pink-500/20' },
 ];
+
+// 自定义标签卡片：默认仅显示描述文字；悬停或点击时在文字上方显示 编辑/启用/删除 三个按钮。
+// 悬停移出自动隐藏；点击固定显示，再次点击卡片空白处才隐藏。
+const CustomTagCard: React.FC<{ tag: UserTagRule; onEdit: () => void; onToggle: () => void; onDelete: () => void }> = ({ tag, onEdit, onToggle, onDelete }) => {
+  const [hovered, setHovered] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const show = hovered || pinned;
+  const desc = `${SOURCE_LABELS[tag.source]} ${tag.direction === 'up' ? '增至' : tag.direction === 'down' ? '降至' : '触达'}${tag.targetType === 'fixed' ? ` ${tag.targetValue}` : ` ${tag.targetIndicator ? TARGET_INDICATOR_LABELS[tag.targetIndicator] : ''}`}`;
+  return (
+    <div
+      className={`relative inline-block bg-app-input border border-app-border rounded-lg px-2.5 py-1.5 cursor-pointer ${tag.enabled ? '' : 'opacity-70'}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onClick={() => setPinned(p => !p)}
+    >
+      {show ? (
+        <div className="flex items-center gap-0.5">
+          <button type="button" aria-label="编辑" title="编辑" onClick={e => { e.stopPropagation(); onEdit(); }}
+            className="p-0.5 rounded text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"><Pencil size={12}/></button>
+          <button type="button" aria-label="启用开关" title={tag.enabled ? '已启用（点击停用）' : '已停用（点击启用）'} onClick={e => { e.stopPropagation(); onToggle(); }}
+            className="p-0.5 rounded text-app-subtext hover:text-app-text hover:bg-app-text/10 transition-colors">
+            {tag.enabled ? <Eye size={12}/> : <EyeOff size={12}/>}
+          </button>
+          <button type="button" aria-label="删除" title="删除" onClick={e => { e.stopPropagation(); onDelete(); }}
+            className="p-0.5 rounded text-app-subtext hover:text-red-400 hover:bg-red-500/10 transition-colors"><Trash2 size={12}/></button>
+        </div>
+      ) : (
+        <span className="text-[10px] text-app-subtext leading-snug whitespace-nowrap">{desc}</span>
+      )}
+    </div>
+  );
+};
 const SIGNAL_GROUP_LABELS: Record<string, string> = {
   pattern: 'K线形态',
   break: '破位事件',
@@ -1511,23 +1543,10 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                   {customTags.length > 0 && (
                     <div className="flex flex-wrap gap-2">
                       {customTags.map((t, i) => (
-                        <div key={t.id} className={`inline-flex flex-col items-center gap-1 bg-app-input border border-app-border rounded-lg px-2.5 py-1.5 ${t.enabled ? '' : 'opacity-70'}`}>
-                          <span className="text-[10px] text-app-subtext leading-snug">
-                            {SOURCE_LABELS[t.source]} {t.direction === 'up' ? '增至' : t.direction === 'down' ? '降至' : '触达'}
-                            {t.targetType === 'fixed' ? ` ${t.targetValue}` : ` ${t.targetIndicator ? TARGET_INDICATOR_LABELS[t.targetIndicator] : ''}`}
-                          </span>
-                          <div className="flex items-center gap-0.5">
-                            <button type="button" aria-label="编辑" title="编辑" onClick={() => { setTagForm({ ...t }); setEditingId(t.id); }}
-                              className="p-0.5 rounded text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"><Pencil size={12}/></button>
-                            <button type="button" aria-label="启用开关" title={t.enabled ? '已启用（点击停用）' : '已停用（点击启用）'}
-                              onClick={() => { const next = [...customTags]; next[i] = { ...t, enabled: !t.enabled }; setCustomTags(next); }}
-                              className="p-0.5 rounded text-app-subtext hover:bg-app-text/5 transition-colors">
-                              {t.enabled ? <Eye size={12}/> : <EyeOff size={12}/>}
-                            </button>
-                            <button type="button" aria-label="删除" title="删除" onClick={() => setCustomTags(customTags.filter((_, j) => j !== i))}
-                              className="p-0.5 rounded text-app-subtext hover:text-red-400 hover:bg-red-500/10 transition-colors"><Trash2 size={12}/></button>
-                          </div>
-                        </div>
+                        <CustomTagCard key={t.id} tag={t}
+                            onEdit={() => { setTagForm({ ...t }); setEditingId(t.id); }}
+                            onToggle={() => { const next = [...customTags]; next[i] = { ...t, enabled: !t.enabled }; setCustomTags(next); }}
+                            onDelete={() => setCustomTags(customTags.filter((_, j) => j !== i))} />
                       ))}
                     </div>
                   )}
@@ -1540,11 +1559,11 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                         <Pencil size={14} className="text-indigo-400"/> {editingId != null ? '编辑标签' : '新增标签'}
                       </span>
                       <div className="flex items-center gap-2 shrink-0">
-                        <button type="button" onClick={saveTag}
-                          className="px-3 py-1 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">保存</button>
                         {editingId != null && (
                           <button type="button" onClick={() => { setTagForm(newTagForm()); setEditingId(null); }} className="text-xs text-app-subtext hover:text-app-text transition-colors">取消</button>
                         )}
+                        <button type="button" onClick={saveTag}
+                          className="px-3 py-1 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">保存</button>
                       </div>
                     </div>
                     <div className="space-y-3">
