@@ -221,7 +221,34 @@ export interface BacktestResult {
   tradeCount: number;
 }
 // 标签目录分组（策略编辑器的下拉选项结构）
-export type BacktestTagGroup = 'feng-add' | 'feng-reduce' | 'pattern' | 'env' | 'break' | 'daily' | 'volume' | 'position' | 'stabilize';
+export type BacktestTagGroup = 'feng-add' | 'feng-reduce' | 'pattern' | 'env' | 'break' | 'daily' | 'volume' | 'position' | 'stabilize' | 'custom';
+
+// ===== 用户自定义动态信号标签 =====
+// 用户以"某个数据点 增至/降至 某个值（固定值 或 动态目标如均线/BOLL）"为规则定义信号标签，
+// 命中当日即像固定标签一样在标签弹窗/价格浮窗/回测中显示。配置随 stockSettings 云端同步。
+export type SignalDataSource =
+  | 'price'          // 收盘价
+  | 'volume'         // 成交量
+  | 'changePct'      // 当日涨跌幅(%)
+  | 'volumeRatio'    // 量比 = 当日量/前5日均量
+  | 'kdj'            // KDJ.J 值
+  | 'rsi'            // RSI6 值
+  | 'dividendRate';  // 股息率（需数据源，未来扩展）
+
+// 动态目标：均线 / BOLL 轨（每日动态变化，无法预先固定）
+export type SignalTargetIndicator = 'ma5' | 'ma10' | 'ma20' | 'ma60' | 'ma120' | 'bollUpper' | 'bollMid' | 'bollLower';
+
+export interface UserTagRule {
+  id: string;
+  name: string;            // 标签显示名
+  enabled: boolean;        // 开关，false=暂不生效
+  source: SignalDataSource;
+  direction: 'up' | 'down'; // up=增至(值≥目标)/down=降至(值≤目标)
+  targetType: 'fixed' | 'indicator';
+  targetValue?: number;            // targetType=fixed
+  targetIndicator?: SignalTargetIndicator; // targetType=indicator
+  color: string;           // chip 配色 key（复用 TAG_PALETTE）
+}
 
 export interface StockSettings {
   visibleColumns?: string[];
@@ -234,6 +261,7 @@ export interface StockSettings {
   memo?: string; // 股息率列表下方备忘录文字（随云端同步）
   memoUpdatedAt?: number; // 备忘录最后编辑时间戳（ms）
   tagParams?: TagParams; // 标签判定比例/容差参数（风系 + 原有），随云端同步
+  customTags?: UserTagRule[]; // 用户自定义动态信号标签，随云端同步
   buyOrderPlaceholder?: string; // 买入挂单备注占位文字（随云端同步）
   sellOrderPlaceholder?: string; // 卖出挂单备注占位文字（随云端同步）
   autoRefreshInterval?: number; // 股价自动刷新间隔（秒），0=关闭；设备本地设置，不随云端同步

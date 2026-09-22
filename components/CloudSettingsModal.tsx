@@ -1,8 +1,9 @@
 
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, TrendingUp, Database, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
-import { GithubConfig, AppSettings, StockSettings, DividendRateColorRange, ApiSource, CacheInfo, TagParams, TagParamEntry, DEFAULT_TAG_PARAMS } from '../types';
+import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, TrendingUp, Database, RefreshCw, ChevronUp, ChevronDown, Pencil, Trash2, Plus } from 'lucide-react';
+import { GithubConfig, AppSettings, StockSettings, DividendRateColorRange, ApiSource, CacheInfo, TagParams, TagParamEntry, DEFAULT_TAG_PARAMS, UserTagRule, SignalDataSource, SignalTargetIndicator } from '../types';
+import { DAILY_SIGNAL_CATALOG } from '../services/tagAnalyzers';
 import { validateConnection } from '../services/githubService';
 import { getCacheInfo, getMarketStatusText, formatDatePart, formatTimePart, formatRelativeTime, clearCacheRecord } from '../services/cacheService';
 import { getBollCacheSizeBytes, getStorageQuotaBytes } from '../services/bollCacheStore';
@@ -33,6 +34,35 @@ const getStockColumns = (leftYear: number, rightYear: number) => [
   { key: 'dividendRate', label: `股息率(${rightYear})` },
   { key: 'dividendRates', label: '股息率对应股价' },
 ];
+
+// 标签管理：数据点 / 动态目标 / 色板 / 目录分组的中文映射
+const SOURCE_LABELS: Record<SignalDataSource, string> = {
+  price: '收盘价',
+  volume: '成交量',
+  changePct: '涨跌幅',
+  volumeRatio: '量比',
+  kdj: 'KDJ.J',
+  rsi: 'RSI6',
+  dividendRate: '股息率(暂不可用)',
+};
+const TARGET_INDICATOR_LABELS: Record<SignalTargetIndicator, string> = {
+  ma5: 'MA5', ma10: 'MA10', ma20: 'MA20', ma60: 'MA60', ma120: 'MA120',
+  bollUpper: '布林上轨', bollMid: '布林中轨', bollLower: '布林下轨',
+};
+const TAG_PALETTE: { key: string; label: string; cls: string }[] = [
+  { key: 'gray', label: '灰', cls: 'bg-gray-500' },
+  { key: 'indigo', label: '默认', cls: 'bg-indigo-500' },
+  { key: 'red', label: '红', cls: 'bg-red-500' },
+  { key: 'green', label: '绿', cls: 'bg-brand-green' },
+  { key: 'blue', label: '蓝', cls: 'bg-blue-500' },
+  { key: 'orange', label: '橙', cls: 'bg-orange-500' },
+];
+const SIGNAL_GROUP_LABELS: Record<string, string> = {
+  pattern: 'K线形态',
+  break: '破位事件',
+  volume: '量能信号',
+  stabilize: '底部企稳',
+};
 
 // 标签判定参数：各参数的中文名与说明（用于设置 UI）
 const FENG_PARAM_LABELS: Record<keyof TagParams['feng'], { label: string; desc: string }> = {
@@ -73,7 +103,7 @@ interface CloudSettingsModalProps {
   stockSettings?: StockSettings;
   currentPage: 'gold' | 'stock';
   onSave: (githubConfig: GithubConfig, appSettings: AppSettings, stockSettings?: StockSettings) => void;
-  initialTab?: 'general' | 'cloud';
+  initialTab?: 'general' | 'cloud' | 'tagmanage';
 }
 
 export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
@@ -128,6 +158,10 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   });
   // 标签判定参数（风系 + 原有），需深合并默认值
   const [tagParams, setTagParams] = useState<TagParams>(() => mergeTagParams(stockSettings?.tagParams));
+  // 用户自定义动态信号标签（随云端同步）
+  const [customTags, setCustomTags] = useState<UserTagRule[]>(stockSettings?.customTags || []);
+  // 新增/编辑标签表单（null=表单关闭）
+  const [tagForm, setTagForm] = useState<UserTagRule | null>(null);
   // 挂单备注占位文字，买入和卖出分开设置（随云端同步）
   const [buyOrderPlaceholder, setBuyOrderPlaceholder] = useState<string>(stockSettings?.buyOrderPlaceholder || '');
   const [sellOrderPlaceholder, setSellOrderPlaceholder] = useState<string>(stockSettings?.sellOrderPlaceholder || '');
@@ -187,7 +221,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     { key: 'pink', label: '粉色', bg: 'bg-pink-500/10', text: 'text-pink-500', border: 'border-pink-500/20' },
   ];
 
-  const [activeTab, setActiveTab] = useState<'general' | 'tagparams' | 'cloud'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'general' | 'tagparams' | 'cloud' | 'tagmanage'>(initialTab);
   const [isVerifying, setIsVerifying] = useState(false);
   const [logState, setLogState] = useState<{ type: 'success' | 'error', lines: string[] } | null>(null);
   
@@ -231,6 +265,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       setLogState(null);
       setEditingRangeIndex(null);
       setNewRange({ min: '', max: '', color: 'gray' });
+      setCustomTags(stockSettings?.customTags || []);
+      setTagForm(null);
       setActiveTab(initialTab);
     }
     wasOpenRef.current = isOpen;
@@ -306,6 +342,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       buyOrderPlaceholder: currentPage === 'stock' ? buyOrderPlaceholder : stockSettings?.buyOrderPlaceholder,
       sellOrderPlaceholder: currentPage === 'stock' ? sellOrderPlaceholder : stockSettings?.sellOrderPlaceholder,
       tagParams,
+      customTags,
     };
 
     // If Cloud tab is not active and no changes to cloud config, just save app settings
@@ -413,6 +450,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       sellOrderPlaceholder: currentPage === 'stock' ? sellOrderPlaceholder : stockSettings?.sellOrderPlaceholder,
       autoRefreshInterval: currentPage === 'stock' ? autoRefreshInterval : stockSettings?.autoRefreshInterval,
       tagParams,
+      customTags,
     };
     
     // 保留现有云端配置，避免关闭弹窗时意外清空 GitHub token/gistId
@@ -476,6 +514,15 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                <Cloud size={14} /> 云端同步
              </span>
              {activeTab === 'cloud' && (
+              <div className="absolute inset-x-0 -bottom-[1px] h-0.5 bg-indigo-500 animate-in fade-in duration-200" />
+            )}
+          </button>
+          <button 
+             onClick={() => setActiveTab('tagmanage')}
+             className={`flex-1 py-3 text-sm font-bold transition-colors relative ${activeTab === 'tagmanage' ? 'text-indigo-400 bg-indigo-500/5' : 'text-app-subtext hover:text-app-text'}`}
+          >
+             标签管理
+            {activeTab === 'tagmanage' && (
               <div className="absolute inset-x-0 -bottom-[1px] h-0.5 bg-indigo-500 animate-in fade-in duration-200" />
             )}
           </button>
@@ -1357,6 +1404,178 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                        </label>
                     ))}
                  </div>
+              </div>
+            )}
+
+            {/* Tab: 标签管理 */}
+            {activeTab === 'tagmanage' && (
+              <div className="space-y-4 animate-in fade-in initial:opacity-0 slide-in-from-left-4 duration-200">
+                {/* 上半区：系统固定标签目录（只读展示，供查阅判断依据） */}
+                <div>
+                  <span className="text-sm font-medium text-app-text flex items-center gap-2">
+                    <TrendingUp size={16} className="text-indigo-400"/> 系统固定标签目录
+                  </span>
+                  <p className="text-xs text-app-subtext mt-1">
+                    系统内置的每日信号标签，与回测/标签弹窗共用同一份清单，此处仅供查看。
+                  </p>
+                </div>
+                <div className="space-y-3">
+                  {(['pattern', 'break', 'volume', 'stabilize'] as string[]).map(group => {
+                    const defs = DAILY_SIGNAL_CATALOG.filter(d => d.group === group);
+                    if (defs.length === 0) return null;
+                    return (
+                      <div key={group}>
+                        <span className="text-xs font-medium text-indigo-400">{SIGNAL_GROUP_LABELS[group] || group}</span>
+                        <div className="grid grid-cols-2 gap-2 mt-1.5">
+                          {defs.map(d => (
+                            <div key={d.key} className="bg-app-input rounded-lg px-2.5 py-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-medium text-app-text">{d.label}</span>
+                                <span className={`text-[10px] font-bold rounded px-1.5 py-0.5 shrink-0 ${d.action === 'buy' ? 'text-brand-green bg-brand-green/10' : 'text-blue-400 bg-blue-500/10'}`}>
+                                  {d.action === 'buy' ? '买' : '卖'}
+                                </span>
+                              </div>
+                              <span className="block text-[10px] text-app-subtext mt-1 truncate" title={d.signalName}>判定依据：{d.signalName}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* 下半区：用户自定义标签 */}
+                <div className="space-y-3 pt-2 border-t border-app-border">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <span className="text-sm font-medium text-app-text flex items-center gap-2">
+                        <Database size={16} className="text-indigo-400"/> 用户自定义标签
+                      </span>
+                      <p className="text-xs text-app-subtext mt-1">按“数据点 增至/降至 目标值”定义信号，命中即显示；随设置上云同步。</p>
+                    </div>
+                    <button type="button"
+                      onClick={() => setTagForm({ id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `tag-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: '', enabled: true, source: 'changePct', direction: 'up', targetType: 'fixed', targetValue: 0, color: 'indigo' })}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors shrink-0">
+                      <Plus size={13}/> 新增
+                    </button>
+                  </div>
+
+                  {customTags.length === 0 && (
+                    <div className="text-xs text-app-subtext py-3 text-center bg-app-input rounded-lg">暂无自定义标签，点击右上角“新增”创建。</div>
+                  )}
+
+                  {customTags.map((t, i) => (
+                    <div key={t.id} className="bg-app-input rounded-lg p-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <span className="flex items-center gap-1.5 text-xs font-medium text-app-text">
+                            <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${(TAG_PALETTE.find(p => p.key === t.color) || TAG_PALETTE[1]).cls}`} />
+                            {t.name || '(未命名)'}
+                          </span>
+                          <span className="block text-[10px] text-app-subtext mt-0.5 leading-snug">
+                            {SOURCE_LABELS[t.source]} {t.direction === 'up' ? '增至' : '降至'}
+                            {t.targetType === 'fixed' ? ` ${t.targetValue}` : ` ${t.targetIndicator ? TARGET_INDICATOR_LABELS[t.targetIndicator] : ''}`}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button type="button" aria-label="编辑" title="编辑" onClick={() => setTagForm({ ...t })}
+                            className="p-1.5 rounded-md text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"><Pencil size={14}/></button>
+                          <button type="button" aria-label="删除" title="删除" onClick={() => setCustomTags(customTags.filter((_, j) => j !== i))}
+                            className="p-1.5 rounded-md text-app-subtext hover:text-red-400 hover:bg-red-500/10 transition-colors"><Trash2 size={14}/></button>
+                          <button type="button" aria-label="开关" title={t.enabled ? '已启用' : '已停用'}
+                            onClick={() => { const next = [...customTags]; next[i] = { ...t, enabled: !t.enabled }; setCustomTags(next); }}
+                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${t.enabled ? 'bg-indigo-600' : 'bg-app-input border border-app-border'}`}>
+                            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${t.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* 新增/编辑标签表单 */}
+                {tagForm && (
+                  <div className="space-y-3 pt-2 border-t border-app-border">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-app-text flex items-center gap-2">
+                        <Pencil size={14} className="text-indigo-400"/> 编辑标签
+                      </span>
+                      <button type="button" onClick={() => setTagForm(null)} className="text-xs text-app-subtext hover:text-app-text transition-colors">取消</button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="block">
+                        <span className="text-xs text-app-subtext mb-1 block">数据点</span>
+                        <select value={tagForm.source} onChange={e => setTagForm({ ...tagForm, source: e.target.value as SignalDataSource })}
+                          className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 transition-all">
+                          {(Object.keys(SOURCE_LABELS) as SignalDataSource[]).map(k => <option key={k} value={k}>{SOURCE_LABELS[k]}</option>)}
+                        </select>
+                      </label>
+                      <label className="block">
+                        <span className="text-xs text-app-subtext mb-1 block">方向</span>
+                        <select value={tagForm.direction} onChange={e => setTagForm({ ...tagForm, direction: e.target.value as 'up' | 'down' })}
+                          className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 transition-all">
+                          <option value="up">增至</option>
+                          <option value="down">降至</option>
+                        </select>
+                      </label>
+                      <label className="block">
+                        <span className="text-xs text-app-subtext mb-1 block">目标形式</span>
+                        <select value={tagForm.targetType} onChange={e => setTagForm({ ...tagForm, targetType: e.target.value as 'fixed' | 'indicator' })}
+                          className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 transition-all">
+                          <option value="fixed">固定值</option>
+                          <option value="indicator">动态指标</option>
+                        </select>
+                      </label>
+                      {tagForm.targetType === 'fixed' ? (
+                        <label className="block">
+                          <span className="text-xs text-app-subtext mb-1 block">目标值</span>
+                          <input type="number" step="0.01" value={tagForm.targetValue ?? 0}
+                            onChange={e => setTagForm({ ...tagForm, targetValue: parseFloat(e.target.value) || 0 })}
+                            className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono" />
+                        </label>
+                      ) : (
+                        <label className="block">
+                          <span className="text-xs text-app-subtext mb-1 block">目标指标</span>
+                          <select value={tagForm.targetIndicator ?? 'ma5'} onChange={e => setTagForm({ ...tagForm, targetIndicator: e.target.value as SignalTargetIndicator })}
+                            className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 transition-all">
+                            {(Object.keys(TARGET_INDICATOR_LABELS) as SignalTargetIndicator[]).map(k => <option key={k} value={k}>{TARGET_INDICATOR_LABELS[k]}</option>)}
+                          </select>
+                        </label>
+                      )}
+                    </div>
+                    <label className="block">
+                      <span className="text-xs text-app-subtext mb-1 block">标签名称</span>
+                      <input type="text" value={tagForm.name} placeholder="如：放量突破MA20" onChange={e => setTagForm({ ...tagForm, name: e.target.value })}
+                        className="w-full bg-app-input border border-app-border rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
+                    </label>
+                    <div>
+                      <span className="text-xs text-app-subtext mb-1 block">颜色</span>
+                      <div className="flex flex-wrap gap-2">
+                        {TAG_PALETTE.map(c => (
+                          <button key={c.key} type="button" aria-label={c.label} title={c.label} onClick={() => setTagForm({ ...tagForm, color: c.key })}
+                            className={`w-6 h-6 rounded-full ${c.cls} transition-transform ${tagForm.color === c.key ? 'ring-2 ring-offset-2 ring-indigo-500 scale-110' : 'opacity-70 hover:opacity-100'}`} />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between pt-1">
+                      <button type="button" onClick={() => setTagForm(null)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium text-app-subtext border border-app-border hover:text-app-text transition-colors">取消</button>
+                      <button type="button"
+                        onClick={() => {
+                          const clean: UserTagRule = tagForm.targetType === 'fixed'
+                            ? { ...tagForm, targetIndicator: undefined }
+                            : { ...tagForm, targetValue: undefined };
+                          setCustomTags(prev => {
+                            const idx = prev.findIndex(x => x.id === clean.id);
+                            if (idx >= 0) { const next = [...prev]; next[idx] = clean; return next; }
+                            return [...prev, clean];
+                          });
+                          setTagForm(null);
+                        }}
+                        className="px-4 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">保存标签</button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

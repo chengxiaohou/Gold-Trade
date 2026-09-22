@@ -1,7 +1,7 @@
 import type { BollKline } from './bollService';
 import { DEFAULT_TAG_PARAMS } from '../types';
-import type { TagParams, BacktestRule, BacktestStrategy, BacktestTrade, BacktestResult, BacktestTagGroup } from '../types';
-import { analyzeKlinePatterns, analyzeMarketConditions, analyzeEnvironment, envHasCondition, buildBreakExplainLines, classifyVolumeAt, classifyPriceStateAt, volBucket, DAILY_SIGNAL_CATALOG } from './tagAnalyzers';
+import type { TagParams, UserTagRule, BacktestRule, BacktestStrategy, BacktestTrade, BacktestResult, BacktestTagGroup } from '../types';
+import { analyzeKlinePatterns, analyzeMarketConditions, analyzeEnvironment, envHasCondition, buildBreakExplainLines, classifyVolumeAt, classifyPriceStateAt, volBucket, analyzeUserTagRule, DAILY_SIGNAL_CATALOG } from './tagAnalyzers';
 import type { EnvResult, BacktestTagDef } from './tagAnalyzers';
 
 // ─────────────────────────────────────────────────────────────
@@ -15,6 +15,7 @@ export interface BacktestParams {
   feeRate?: number; // 单边手续费比例（默认 0）
   lotSize?: number; // 每手股数（默认 100，整百股成交）
   cfg?: TagParams;  // 标签判定参数：必须与标签弹窗同一份（默认 DEFAULT_TAG_PARAMS），保证两侧信号判定严格一致
+  customTags?: UserTagRule[]; // 用户自定义动态信号标签：与弹窗同一份，保证回测与弹窗信号判定严格一致
 }
 
 // 回测触发标签目录 = 直接复用 tagAnalyzers 里的【单一数据源】DAILY_SIGNAL_CATALOG。
@@ -25,7 +26,7 @@ export type { BacktestTagDef } from './tagAnalyzers';
 // 策略编辑器下拉的分组中文名（<optgroup> 标签）
 export const BT_GROUP_LABEL: Record<BacktestTagGroup, string> = {
   'pattern': 'K线形态', 'break': '破位', 'volume': '量能', 'position': '位置', 'stabilize': '底态·价量组合',
-  'feng-add': '风系·加仓', 'feng-reduce': '风系·减仓', 'env': '环境', 'daily': '每日信号',
+  'feng-add': '风系·加仓', 'feng-reduce': '风系·减仓', 'env': '环境', 'daily': '每日信号', 'custom': '自定义',
 };
 
 const fmtP = (v: number) => v.toFixed(2);
@@ -34,7 +35,7 @@ export const fmtShort = (d: string) => d.slice(5).replace('-', '/');
 
 // 收集某交易日（win=klines[0..i] 末根=当日）命中的标签名 + 当日环境状态。
 // 逐日因果：win 已是"当日及之前"的前缀，不含未来数据 → 无未来泄漏。
-function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams): { hits: Set<string>; env: EnvResult | null } {
+function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams, customTags: UserTagRule[] = []): { hits: Set<string>; env: EnvResult | null } {
   const hits = new Set<string>();
   const last = win[win.length - 1];
   // K 线形态：直接用 analyzeKlinePatterns 的 label（弹窗同一套）
@@ -52,6 +53,12 @@ function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams): { hit
     const psName = ps.kind === 'pullback' ? (ps.sub === 'weak' ? '弱势回踩' : '健康回踩') : ps.name;
     hits.add(`${volBucket(vol)}${psName}`);
   }
+  // 用户自定义动态信号标签：命中当日即作为可判定信号（label 直接并入 hits；
+  // 与弹窗 getDayTagSet 的 collectUserTags 同一判定源 analyzeUserTagRule，保证回测与弹窗一致）
+  for (const r of customTags) {
+    if (!r.enabled) continue;
+    if (analyzeUserTagRule(win, i, r)) hits.add(r.name);
+  }
   // 环境状态：仅当 K 线足够长（≥130，环境判断需要 120 日均线）才计算，供规则 envCondition 门控判定
   const env = win.length >= 130 ? analyzeEnvironment(win, fmtP, true, cfg) : null;
   void i;
@@ -59,8 +66,8 @@ function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams): { hit
 }
 
 // 供回测图"十字线悬浮栏"展示某日命中的信号标签 —— 与 collectSignalsOnDay 同一来源，绝不另算一套。
-export function getDaySignalLabels(win: BollKline[], i: number, cfg?: TagParams): string[] {
-  return [...collectSignalsOnDay(win, i, cfg ?? DEFAULT_TAG_PARAMS).hits].sort();
+export function getDaySignalLabels(win: BollKline[], i: number, cfg?: TagParams, customTags?: UserTagRule[]): string[] {
+  return [...collectSignalsOnDay(win, i, cfg ?? DEFAULT_TAG_PARAMS, customTags ?? []).hits].sort();
 }
 
 // 引擎主函数：支持加仓/减仓、初始资金基准仓位、先卖后买、每日收盘后结算
@@ -71,6 +78,7 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
   const sellFee = (amt: number) => commissionMin;
   const lotSize = p.lotSize ?? 100;
   const cfg = p.cfg ?? DEFAULT_TAG_PARAMS; // ⚠️ 必须与弹窗 tagParams 一致，否则同 K 线两侧判定会漂移
+  const customTags = p.customTags ?? []; // 用户自定义动态标签：与弹窗同一份，保证回测与弹窗信号判定严格一致
   const klines = [...k].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const n = klines.length;
   const enabledRules = (s.rules || []).filter(r => r.enabled);
@@ -86,7 +94,7 @@ export function runBacktest(k: BollKline[], s: BacktestStrategy, p: BacktestPara
 
   for (let i = 30; i < n; i++) {
     const win = klines.slice(0, i + 1);
-    const { hits, env } = collectSignalsOnDay(win, i, cfg);
+    const { hits, env } = collectSignalsOnDay(win, i, cfg, customTags);
 
     // 命中标签里，选已启用规则中仓位最高的一条（且环境前提成立）
     let chosen: BacktestRule | null = null;

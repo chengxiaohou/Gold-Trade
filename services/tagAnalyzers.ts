@@ -1,7 +1,8 @@
 import type { TagParams, BacktestTagGroup } from '../types';
-import { DEFAULT_TAG_PARAMS } from '../types';
+import { DEFAULT_TAG_PARAMS, type UserTagRule, type SignalDataSource, type SignalTargetIndicator } from '../types';
 import type { BollKline } from './bollService';
 import { getMarketStatus } from './cacheService';
+import { calcIndicators } from './indicators';
 
 // ─────────────────────────────────────────────────────────────
 // 标签/信号判定分析器（共享模块）
@@ -152,6 +153,82 @@ export function classifyVolumeAt(klines: BollKline[], i: number, cfg: TagParams 
 // 量能维度（最新一根K线）：委托分类到最近索引
 export function classifyVolume(klines: BollKline[], cfg: TagParams = DEFAULT_TAG_PARAMS): KlineVolume5 {
   return classifyVolumeAt(klines, (klines?.length ?? 1) - 1, cfg);
+}
+
+// ── 用户自定义动态信号标签：快照判定 ────────────────────────────
+// 对"某交易日 i"解析：① 触发数据点实际值 resolveSignalValue；② 目标值 resolveTargetValue
+// （targetType=fixed 直接用固定值；indicator 则取当日均线 / BOLL 轨，每日动态变化）。
+// 均线 / BOLL 均在此由 K 线直接计算（自包含，不依赖 bollService 的周期/前复校设置），
+// 与回测热悬浮、弹窗指标保持同源口径。判定封装在 analyzeUserTagRule 供各展示面共用。
+
+// 触发数据点实际值（i 越界或数据不足返回 null）
+export function resolveSignalValue(klines: BollKline[], i: number, source: SignalDataSource): number | null {
+  if (!klines || klines.length === 0 || i < 0 || i >= klines.length) return null;
+  const k = klines[i];
+  switch (source) {
+    case 'price': return k.close;
+    case 'volume': return k.volume;
+    case 'changePct': {
+      if (i < 1 || !klines[i - 1].close) return null;
+      return ((k.close - klines[i - 1].close) / klines[i - 1].close) * 100;
+    }
+    case 'volumeRatio': {
+      if (i < 5) return null;
+      let sum = 0;
+      for (let j = i - 5; j <= i - 1; j++) sum += klines[j].volume;
+      return sum > 0 ? k.volume / (sum / 5) : null;
+    }
+    case 'kdj':
+    case 'rsi': {
+      const ind = calcIndicators(klines.slice(0, i + 1));
+      if (!ind) return null;
+      if (source === 'kdj') return ind.kdj.j;
+      return ind.rsi.rsi6;
+    }
+    case 'dividendRate':
+      return null; // 股息率来自独立数据源，非日K可得，暂不支持（未来扩展）
+  }
+}
+
+// 动态目标值：均线滑动均值 / BOLL 轨（upper/mid/lower，mid=MA20，±2σ）
+export function resolveTargetValue(klines: BollKline[], i: number, target: SignalTargetIndicator): number | null {
+  if (!klines || klines.length === 0 || i < 0 || i >= klines.length) return null;
+  const ma = (n: number): number | null => {
+    if (i < n - 1) return null;
+    let sum = 0;
+    for (let j = i - n + 1; j <= i; j++) sum += klines[j].close;
+    return sum / n;
+  };
+  switch (target) {
+    case 'ma5': return ma(5);
+    case 'ma10': return ma(10);
+    case 'ma20': return ma(20);
+    case 'ma60': return ma(60);
+    case 'ma120': return ma(120);
+    case 'bollMid': return ma(20);
+    case 'bollUpper':
+    case 'bollLower': {
+      const mid = ma(20);
+      if (mid === null) return null;
+      let variance = 0;
+      for (let j = i - 19; j <= i; j++) variance += Math.pow(klines[j].close - mid, 2);
+      const std = Math.sqrt(variance / 20);
+      return target === 'bollUpper' ? mid + 2 * std : mid - 2 * std;
+    }
+  }
+}
+
+// 单条规则判定：命中返回依据文案数组，未命中返回 null
+export function analyzeUserTagRule(klines: BollKline[], i: number, rule: UserTagRule): string[] | null {
+  if (!rule || !rule.enabled) return null;
+  const v = resolveSignalValue(klines, i, rule.source);
+  if (v === null || v === undefined || Number.isNaN(v)) return null;
+  const t = rule.targetType === 'fixed' ? rule.targetValue : resolveTargetValue(klines, i, rule.targetIndicator as SignalTargetIndicator);
+  if (t === null || t === undefined || Number.isNaN(t)) return null;
+  const hit = rule.direction === 'up' ? v >= t : v <= t;
+  if (!hit) return null;
+  const fmt = (x: number) => (Math.abs(x) >= 1000 ? x.toFixed(0) : x.toFixed(2));
+  return [`${rule.name}：${rule.direction === 'up' ? '增至' : '降至'} ${rule.targetType === 'fixed' ? fmt(t) : t.toFixed(2)}，当日值 ${fmt(v)} 达到目标`, `触发：${rule.targetType === 'fixed' ? '固定目标' : `${rule.targetIndicator as string} 动态目标`}`];
 }
 
 // 内部粗分辅助：5档 → 3档（温和/明显 折叠），供 dojiColorByDim、PATTERN_COMBO_REFERENCE 的 key、

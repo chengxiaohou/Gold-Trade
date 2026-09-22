@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffe
 import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
-import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS } from '../types';
+import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
 import { fetchBollData, BollData, BollPeriod, BollAdjust, BollKline, mergeTodayBarToKlines } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getMarketStatus, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime } from '../services/cacheService';
 import { priceBureau } from '../services/priceBureau';
@@ -248,6 +248,7 @@ interface StockDividendPageProps {
   onTogglePage?: () => void;
   apiSource?: ApiSource;
   tagParams?: TagParams;
+  customTags?: UserTagRule[]; // 用户自定义动态信号标签（随 stockSettings 云端同步）
   onResetStocks?: () => void;
   resetSignal?: number;
   dividendYearLeft?: number;
@@ -931,7 +932,7 @@ type SrRow =
   | { kind: 'plain'; text: string }
   | { kind: 'cell'; name: string; color?: string; rest: string };
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, autoRefreshInterval = 60, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, autoRefreshInterval = 60, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
   // 全量备份导入用的隐藏文件选择（放入盈利统计面板）
   const fullBackupInputRef = useRef<HTMLInputElement>(null);
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
@@ -5315,6 +5316,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 win={a.klines}
                 i={a.klines.length - 1}
                 cfg={tagParams}
+                customTags={customTags}
                 envChips={envChips}
                 onPin={() => setPriceInfoPinned(true)}
               />
@@ -5675,7 +5677,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         };
         // 默认选中：无指向时展示最新交易日行首枚标签（由权威 getDayTagSet 产出）
         const lastK = klines && klines.length > 0 ? klines[klines.length - 1] : null;
-        const lastDayTags: DayTag[] = lastK ? getDayTagSet(klines!, tagParams, fp, { events: events ?? [] }) : [];
+        const lastDayTags: DayTag[] = lastK ? getDayTagSet(klines!, tagParams, fp, { events: events ?? [], customTags }) : [];
         const defaultSel = lastDayTags.length > 0
           ? { date: lastK!.date, kind: 'daytag' as const, tagKey: lastDayTags[0].key }
           : null;
@@ -5692,7 +5694,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           if (!klines || !selKey || selKey.kind !== 'daytag') return null;
           const pi = klines.findIndex(k => k.date === selKey.date);
           if (pi < 0) return null;
-          return getDayTagSet(klines.slice(0, pi + 1), tagParams, fp, { events: events ?? [] }).find(t => t.key === selKey.tagKey) ?? null;
+          return getDayTagSet(klines.slice(0, pi + 1), tagParams, fp, { events: events ?? [], customTags }).find(t => t.key === selKey.tagKey) ?? null;
         })();
         const explainLines: (string | { t: string; cls: string } | { seg: { t: string; cls: string }[] })[] = [];
         if (selKey && selKey.kind === 'env') {
@@ -5765,7 +5767,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               const vStart = Math.max(0, klines.length - 10);
               for (let vi = vStart; vi < klines.length; vi++) {
                 const d = klines[vi].date;
-                const dayTags = getDayTagSet(klines.slice(0, vi + 1), tagParams, fp, { events: events ?? [] });
+                const dayTags = getDayTagSet(klines.slice(0, vi + 1), tagParams, fp, { events: events ?? [], customTags });
                 for (const t of dayTags) {
                   addChip(d, (
                     <span
@@ -6269,7 +6271,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       </div>
       )}
       {backtestStock && (
-        <BacktestModal stock={backtestStock} onClose={() => setBacktestStock(null)} onPresetsDirty={onBacktestPresetsDirty} tagParams={tagParams} />
+        <BacktestModal stock={backtestStock} onClose={() => setBacktestStock(null)} onPresetsDirty={onBacktestPresetsDirty} tagParams={tagParams} customTags={customTags} />
       )}
     </div>
   );

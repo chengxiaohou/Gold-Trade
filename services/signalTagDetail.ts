@@ -5,13 +5,15 @@
 // 一律从本接口取数，禁止在别处重复拼装。判定复用 tagAnalyzers，配色复用共享 CHIP_CLS，本文件不写判定。
 // ─────────────────────────────────────────────────────────────
 import type { BollKline } from './bollService';
-import type { TagParams } from '../types';
+import type { TagParams, UserTagRule } from '../types';
 import { DEFAULT_TAG_PARAMS } from '../types';
 import {
   analyzeKlinePatternsAt, analyzeKlineCombo, classifyVolumeAt, classifyPriceStateAt,
   analyzeMarketConditions, buildBreakExplainLines, stabilizeComboReference, volBucket,
+  analyzeUserTagRule,
   PATTERN_CHIP_CLS, VOLUME5_CHIP_CLS, PRICESTATE_CHIP_CLS, BREAK_CHIP_CLS,
-  CHIP_CLS_RED, CHIP_SEL_RED, CHIP_CLS_INDIGO, CHIP_SEL_INDIGO,
+  CHIP_CLS_RED, CHIP_SEL_RED, CHIP_CLS_INDIGO, CHIP_SEL_INDIGO, CHIP_CLS_BLUE, CHIP_SEL_BLUE,
+  CHIP_CLS_GREEN, CHIP_SEL_GREEN, CHIP_CLS_SLATE, CHIP_SEL_SLATE,
   type KlineVolume5, type MarketEvent,
 } from './tagAnalyzers';
 
@@ -45,11 +47,38 @@ function volumeDetail(win: BollKline[], i: number, v: KlineVolume5): string[] {
   return detail;
 }
 
-// chip 种类：volume/pricestate/pattern = 原子信号；break = 破位触发；break-obs = 观察；break-status = 真/假破位定论
-export type DayTagKind = 'volume' | 'pricestate' | 'pattern' | 'break' | 'break-obs' | 'break-status';
+// 用户自定义标签配色：color key → 共享 chip 配色（与设置页 TAG_PALETTE 的 key 对齐）
+const USER_CHIP_CLS: Record<string, { cls: string; sel: string }> = {
+  gray: { cls: CHIP_CLS_SLATE, sel: CHIP_SEL_SLATE },
+  indigo: { cls: CHIP_CLS_INDIGO, sel: CHIP_SEL_INDIGO },
+  red: { cls: CHIP_CLS_RED, sel: CHIP_SEL_RED },
+  green: { cls: CHIP_CLS_GREEN, sel: CHIP_SEL_GREEN },
+  blue: { cls: CHIP_CLS_BLUE, sel: CHIP_SEL_BLUE },
+  orange: { cls: CHIP_CLS_RED, sel: CHIP_SEL_RED }, // 橙归并到红系（无独立橙色 chip）
+};
+
+// 自定义标签参考价值：由规则字段拼出通用文案
+const USER_REFERENCE = '用户自定义信号标签：依据设定数据点与目标（固定值或均线/BOLL动态值）判定触发，作观察信号辅助判断，结合仓位与市场环境综合决策。'
+
+// chip 种类：volume/pricestate/pattern = 原子信号；break = 破位触发；break-obs = 观察；break-status = 真/假破位定论；user = 用户自定义
+export type DayTagKind = 'volume' | 'pricestate' | 'pattern' | 'break' | 'break-obs' | 'break-status' | 'user';
 export interface DayTag extends SignalTagDetail { key: string; kind: DayTagKind; }
 
-export interface GetDayTagSetOptions { events?: MarketEvent[] }
+export interface GetDayTagSetOptions { events?: MarketEvent[]; customTags?: UserTagRule[] }
+
+// 判定某日命中的用户自定义标签（复用 analyzeUserTagRule），逐条装配 chip
+function collectUserTags(win: BollKline[], i: number, rules: UserTagRule[] | undefined): DayTag[] {
+  if (!rules || rules.length === 0) return [];
+  const out: DayTag[] = [];
+  for (const r of rules) {
+    if (!r.enabled) continue;
+    const detail = analyzeUserTagRule(win, i, r);
+    if (!detail) continue;
+    const chip = USER_CHIP_CLS[r.color] ?? USER_CHIP_CLS.indigo;
+    out.push({ key: `user-${r.id}`, kind: 'user', label: r.name, cls: chip.cls, sel: chip.sel, detail, reference: USER_REFERENCE });
+  }
+  return out;
+}
 
 // 主入口：对某交易日（win=klines[0..i] 且末根=当日）提取完整信号 chip 集，
 // 顺序与标签弹窗"近10交易日"当日行一致：量能 → 价格态 → 形态 → 破位观测。
@@ -117,6 +146,9 @@ export function getDayTagSet(
       }
     }
   }
+
+  // 用户自定义动态信号标签（追加在最后）
+  out.push(...collectUserTags(win, i, opts.customTags));
 
   return out;
 }

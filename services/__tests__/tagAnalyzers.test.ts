@@ -829,3 +829,89 @@ describe('STABILIZE_COMBO_REFERENCE（价格态×量能组合参考价值映射�
     expect(ref).toContain('底部结构确认');
   });
 });
+
+// ────────────────── 用户自定义动态信号标签 ──────────────────
+import {
+  resolveSignalValue,
+  resolveTargetValue,
+  analyzeUserTagRule,
+} from '../tagAnalyzers';
+import type { UserTagRule } from '../../types';
+
+describe('用户自定义动态信号标签 resolveSignalValue', () => {
+  it('price 返回收盘价、volume 返回成交量', () => {
+    const k = mkKlines(10, { close: i => 100 + i });
+    expect(resolveSignalValue(k, 4, 'price')).toBe(104);
+    expect(resolveSignalValue(k, 4, 'volume')).toBe(1_000_000);
+  });
+  it('changePct 返回相对昨收涨跌幅%', () => {
+    // close: 100,102,102.04(=102*1.01)
+    const k = mkKlines(3, { close: i => (i === 0 ? 100 : i === 1 ? 102 : 102 * 1.01) });
+    expect(resolveSignalValue(k, 2, 'changePct')).toBeCloseTo(1, 5);
+  });
+  it('volumeRatio 当日量/前5日均量；数据不足(第0~4天)返回 null', () => {
+    const k = mkKlines(10, { overrides: { 6: { volume: 2_000_000 } } });
+    // 前5天(1..5)均量 1e6，第6天量 2e6
+    expect(resolveSignalValue(k, 6, 'volumeRatio')).toBeCloseTo(2, 5);
+    expect(resolveSignalValue(k, 3, 'volumeRatio')).toBeNull();
+  });
+  it('price 越界返回 null', () => {
+    const k = mkKlines(5);
+    expect(resolveSignalValue(k, 99, 'price')).toBeNull();
+    expect(resolveSignalValue([], 0, 'price')).toBeNull();
+  });
+});
+
+describe('用户自定义动态信号标签 resolveTargetValue', () => {
+  it('MA5 为最近5日收盘均值', () => {
+    const k = mkKlines(8, { close: i => 100 + i });
+    // i=7 时最近5日 close: 103,104,105,106,107 → 均 105
+    expect(resolveTargetValue(k, 7, 'ma5')).toBe(105);
+  });
+  it('booth upper 高于 mid，lower 低于 mid（对称 ±2σ）', () => {
+    const k = mkKlines(25, { close: i => (i >= 20 ? 120 : 100) });
+    const mid = resolveTargetValue(k, 24, 'bollMid')!;
+    const upper = resolveTargetValue(k, 24, 'bollUpper')!;
+    const lower = resolveTargetValue(k, 24, 'bollLower')!;
+    expect(upper).toBeGreaterThan(mid);
+    expect(lower).toBeLessThan(mid);
+    expect(upper - mid).toBeCloseTo(mid - lower, 5);
+  });
+  it('长度不足(未满周期)返回 null', () => {
+    const k = mkKlines(3);
+    expect(resolveTargetValue(k, 2, 'ma5')).toBeNull();
+    expect(resolveTargetValue(k, 2, 'ma20')).toBeNull();
+  });
+});
+
+describe('用户自定义动态信号标签 analyzeUserTagRule', () => {
+  const base: UserTagRule = {
+    id: 't1', name: '收盘达100', enabled: true,
+    source: 'price', direction: 'up', targetType: 'fixed', targetValue: 100, color: 'indigo',
+  };
+  it('增至 固定值：值≥目标命中，否则未命中', () => {
+    const k = mkKlines(5, { close: i => 100 + i });
+    expect(analyzeUserTagRule(k, 4, base)).not.toBeNull();   // 104≥100
+    k[4] = { ...k[4], close: 99 };
+    expect(analyzeUserTagRule(k, 4, base)).toBeNull();       // 99<100
+  });
+  it('降至 动态MA5：值≤均线命中', () => {
+    const k = mkKlines(8, { close: i => 100 + i });
+    const rule: UserTagRule = { ...base, name: '价格触及MA5', direction: 'down', targetType: 'indicator', targetIndicator: 'ma5', targetValue: undefined };
+    const v = resolveSignalValue(k, 7, 'price')!;
+    const t = resolveTargetValue(k, 7, 'ma5')!;
+    // 上证收盘 107 > MA5 105 → 未命中；把收盘压到 105 之下可命中
+    expect(analyzeUserTagRule(k, 7, rule)).toBeNull();
+    k[7] = { ...k[7], close: t - 1 };
+    expect(analyzeUserTagRule(k, 7, rule)).not.toBeNull();
+    void v;
+  });
+  it('disabled 标签直接返回 null（暂不生效）', () => {
+    const k = mkKlines(5, { close: i => 100 + i });
+    expect(analyzeUserTagRule(k, 4, { ...base, enabled: false })).toBeNull();
+  });
+  it('股息率数据源暂不支持 → null', () => {
+    const k = mkKlines(5);
+    expect(analyzeUserTagRule(k, 4, { ...base, source: 'dividendRate' })).toBeNull();
+  });
+});

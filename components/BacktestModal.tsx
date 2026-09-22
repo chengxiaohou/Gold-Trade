@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, Plus, Trash2, GripHorizontal, Play, Eye, EyeOff, Pin } from 'lucide-react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, MouseEventParams, Time } from 'lightweight-charts';
-import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams } from '../types';
+import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams, UserTagRule } from '../types';
 import { fetchBollData } from '../services/bollService';
 import type { BollKline } from '../services/bollService';
 import { mergeTodayBarToKlines } from '../services/bollService';
@@ -30,6 +30,7 @@ export interface BacktestModalProps {
   onClose: () => void;
   onPresetsDirty?: () => void; // 策略组有增删改时调用，用于告知上层"有改动需上传"
   tagParams?: TagParams; // 标签判定参数：与弹窗同一份，保证回测与弹窗信号判定严格一致
+  customTags?: UserTagRule[]; // 用户自定义动态信号标签（随云端同步）
 }
 
 interface RuleEditorProps {
@@ -113,7 +114,7 @@ function formatChartTime(time: Time): string {
   return `${y}-${pad(m)}-${pad(d)}`;
 }
 
-export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: BacktestModalProps) {
+export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, customTags }: BacktestModalProps) {
   // 策略按股票持久化到 localStorage：刷新/重开页面后自动恢复上次设置
   const strategyStorageKey = `bt_strategy_${stock.code}`;
   const loadStrategy = (): BacktestStrategy => {
@@ -882,7 +883,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
         src = rawKlines.filter(k => k.date >= cutoff);
       }
     }
-    setResult(runBacktest(src, { ...strategy }, { cfg: tagParams }));
+    setResult(runBacktest(src, { ...strategy }, { cfg: tagParams, customTags }));
     setPreviewKeys([]); // 执行回测时取消预览态
     setPreviewPopup(null);
   };
@@ -931,6 +932,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams }: Bac
               win={displayQuote.win}
               i={displayQuote.idx}
               cfg={tagParamsRef.current}
+              customTags={customTags}
               onPin={() => { if (!pinnedRef.current && hoverQuote) { pinnedRef.current = hoverQuote; setPinnedQuote(hoverQuote); } }} // 点标签顺带固定，便于连续看各标签依据（幂等，不会误取消）
             />
           )}

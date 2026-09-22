@@ -131,6 +131,17 @@ describe('buildStockCloudFingerprint', () => {
     };
     expect(buildStockCloudFingerprint(input)).toBe(buildStockCloudFingerprint(input));
   });
+
+  it('用户自定义信号标签 customTags 变化改变指纹（随云同步）', () => {
+    const mk = (customTags: any) => buildStockCloudFingerprint({
+      stocks: [mkStock('600000', '浦发')],
+      stockSettings: { visibleColumns: ['code'], customTags } as StockSettings,
+    });
+    const tag = { id: 't1', name: '收盘达MA20', enabled: true, source: 'price', direction: 'up', targetType: 'indicator', targetIndicator: 'ma20', color: 'indigo' };
+    expect(mk([tag])).not.toBe(mk(null));
+    expect(mk([tag])).not.toBe(mk([{ ...tag, enabled: false }])); // 开关状态也随云同步
+    expect(mk([tag])).not.toBe(mk([{ ...tag, targetValue: 99 }])); // 参数变化也随云同步
+  });
 });
 
 // ---- 差异判定 isStockCloudDirty ----
