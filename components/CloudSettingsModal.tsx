@@ -1509,23 +1509,23 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                   )}
 
                   {customTags.length > 0 && (
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="flex flex-wrap gap-2">
                       {customTags.map((t, i) => (
-                        <div key={t.id} className={`bg-app-input rounded-lg p-2.5 space-y-1.5 ${t.enabled ? '' : 'opacity-70'}`}>
-                          <span className="block text-[10px] text-app-subtext leading-snug truncate">
+                        <div key={t.id} className={`inline-flex flex-col items-center gap-1 bg-app-input border border-app-border rounded-lg px-2.5 py-1.5 ${t.enabled ? '' : 'opacity-70'}`}>
+                          <span className="text-[10px] text-app-subtext leading-snug">
                             {SOURCE_LABELS[t.source]} {t.direction === 'up' ? '增至' : t.direction === 'down' ? '降至' : '触达'}
                             {t.targetType === 'fixed' ? ` ${t.targetValue}` : ` ${t.targetIndicator ? TARGET_INDICATOR_LABELS[t.targetIndicator] : ''}`}
                           </span>
                           <div className="flex items-center gap-0.5">
                             <button type="button" aria-label="编辑" title="编辑" onClick={() => { setTagForm({ ...t }); setEditingId(t.id); }}
-                              className="p-1 rounded-md text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"><Pencil size={14}/></button>
+                              className="p-0.5 rounded text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"><Pencil size={12}/></button>
                             <button type="button" aria-label="启用开关" title={t.enabled ? '已启用（点击停用）' : '已停用（点击启用）'}
                               onClick={() => { const next = [...customTags]; next[i] = { ...t, enabled: !t.enabled }; setCustomTags(next); }}
-                              className="p-1 rounded-md text-app-subtext hover:bg-app-text/5 transition-colors">
-                              {t.enabled ? <Eye size={14}/> : <EyeOff size={14}/>}
+                              className="p-0.5 rounded text-app-subtext hover:bg-app-text/5 transition-colors">
+                              {t.enabled ? <Eye size={12}/> : <EyeOff size={12}/>}
                             </button>
                             <button type="button" aria-label="删除" title="删除" onClick={() => setCustomTags(customTags.filter((_, j) => j !== i))}
-                              className="p-1 rounded-md text-app-subtext hover:text-red-400 hover:bg-red-500/10 transition-colors"><Trash2 size={14}/></button>
+                              className="p-0.5 rounded text-app-subtext hover:text-red-400 hover:bg-red-500/10 transition-colors"><Trash2 size={12}/></button>
                           </div>
                         </div>
                       ))}
@@ -1589,7 +1589,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                         </span>
                         {SOURCE_TARGET_TYPE[tagForm.source] === 'fixed' ? (
                           <div className="flex items-center gap-4">
-                            <div className="w-1/6 min-w-[80px] max-w-[90px]">
+                            <div className="w-[120px] shrink-0">
                               <InputGroup value={tagForm.targetValue ?? 0}
                                 onChange={v => setTagForm({ ...tagForm, targetValue: parseFloat(v) || 0 })}
                                 step={SOURCE_STEP[tagForm.source]} unit={SOURCE_UNIT[tagForm.source]}
