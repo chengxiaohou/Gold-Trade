@@ -2996,6 +2996,56 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setTradeBodyMaxH(null);
   }, []);
 
+  // 统一 ESC 关闭：无论临时(hover)还是固定(click)悬浮窗，按 ESC 一律关闭
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // 价格技术指标浮窗
+      priceInfoHoveredRef.current = false;
+      priceInfoActiveIdRef.current = undefined;
+      setPriceInfoPinned(false);
+      setPriceInfoStock(null);
+      setPriceInfoData(null);
+      setPriceInfoLoading(false);
+      // 持仓详情浮窗
+      positionInfoHoveredRef.current = false;
+      positionInfoActiveIdRef.current = undefined;
+      setPositionInfoPinned(false);
+      setPositionInfoStock(null);
+      // 股息率曲线浮窗
+      divRateInfoHoveredRef.current = false;
+      divRateInfoActiveIdRef.current = undefined;
+      setDivRateInfoPinned(false);
+      setDivRateInfoStock(null);
+      setDivRateInfoKlines(null);
+      setDivRateInfoLoading(false);
+      // 行情状态浮窗（含底部判定依据区 mktSel）
+      mktInfoHoveredRef.current = false;
+      mktInfoActiveIdRef.current = undefined;
+      setMktInfoPinned(false);
+      setMktInfoStock(null);
+      setMktSel(null);
+      setMktSelPinned(false);
+      // 列表页支撑/压力位浮窗
+      listSrHoveredRef.current = false;
+      listSrActiveIdRef.current = undefined;
+      setListSrTooltipPinned(false);
+      setListSrPreviewText(null);
+      setListSrPreviewRows(null);
+      setListSrStock(null);
+      // 股息率/BOLL 曲线浮窗
+      setShowRatesId(null);
+      // 复制预览浮窗
+      listCopyHoveredRef.current = false;
+      setListCopyPreviewText(null);
+      // 交易浮窗
+      closeTradeInfo();
+      setTradeSimpleStock(null);
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, []);
+
   // 交易浮窗可拖拽（拖画画头部）——参考黄金项目 EditBubble，改用 window 级指针监听，
   // 不依赖 pointer capture，避免捕获残留导致拖拽后点击空白无法关闭
   const tradeDragOffset = useRef({ x: 0, y: 0 });
