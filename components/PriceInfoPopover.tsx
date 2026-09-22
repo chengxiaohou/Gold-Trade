@@ -18,11 +18,12 @@ export interface PriceInfoPopoverProps {
   onMouseLeave?: (e: React.MouseEvent<HTMLDivElement>) => void;
   footer?: React.ReactNode;          // 可选底部追加区（回测叠"当日信号标签"行）
   headerLeft?: React.ReactNode;      // 可选标题行左侧操作区（回测放"取消固定"按钮）
+  dividendRate?: number | null;      // 当日股息率（%）；null/undefined 时不显示该行（仅回测十字线悬浮传）
 }
 
 export default function PriceInfoPopover({
   name, price, changePercent, data, loading, left, top, width = 210,
-  innerRef, onMouseEnter, onMouseLeave, footer, headerLeft,
+  innerRef, onMouseEnter, onMouseLeave, footer, headerLeft, dividendRate,
 }: PriceInfoPopoverProps) {
   return (
     <div
@@ -101,6 +102,12 @@ export default function PriceInfoPopover({
               {subRows('KDJ (9, 3, 3)', [['K', numFmt(d.kdj.k), kdjColor(d.kdj.k, 80, 20)], ['D', numFmt(d.kdj.d), kdjColor(d.kdj.d, 80, 20)], ['J', numFmt(d.kdj.j), kdjColor(d.kdj.j, 100, 0)]])}
               {subRows('RSI (6, 12, 24)', [['6', numFmt(d.rsi.rsi6), rsiColor(d.rsi.rsi6)], ['12', numFmt(d.rsi.rsi12), rsiColor(d.rsi.rsi12)], ['24', numFmt(d.rsi.rsi24), rsiColor(d.rsi.rsi24)]])}
               {subRows('MACD (12, 26, 9)', [['DIF', numFmt(d.macd.dif, 3)], ['DEA', numFmt(d.macd.dea, 3)], ['MACD', numFmt(d.macd.macd, 3)]])}
+              {dividendRate != null && (
+                <div className="flex items-baseline justify-between gap-2 border-t border-app-border pt-1 mt-1">
+                  <span className="text-[10px] text-app-subtext whitespace-nowrap">当日股息率</span>
+                  <span className="font-mono text-[11px] text-app-rowtext">{dividendRate.toFixed(2)}%</span>
+                </div>
+              )}
               {footer}
             </div>
           );

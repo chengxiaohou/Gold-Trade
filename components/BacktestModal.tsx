@@ -10,7 +10,7 @@ import { mergeTodayBarToKlines } from '../services/bollService';
 import { priceBureau } from '../services/priceBureau';
 import { getMarketStatus } from '../services/cacheService';
 import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL } from '../services/backtestEngine';
-import { ENV_TAG_CATALOG } from '../services/tagAnalyzers';
+import { ENV_TAG_CATALOG, dividendRateForDay } from '../services/tagAnalyzers';
 import { calcIndicators, type IndicatorResult } from '../services/indicators';
 import PriceInfoPopover from './PriceInfoPopover';
 import SignalTagsFooter from './SignalTagsFooter';
@@ -377,7 +377,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     // 布林线三条带（上/中/下），默认隐藏，切到布林模式时显示
     const bollSeries = BOLL_SPECS.map(spec => chart.addSeries(LineSeries, {
       color: spec.color,
-      lineWidth: spec.key === 'mid' ? 1 : 2,
+      lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
@@ -919,6 +919,23 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
 
   const rulesForRender = useMemo(() => rules.filter(() => true), [rules]);
 
+  // 当日股息率（回测十字线浮窗用）：口径与列表股息率曲线一致（单一事实来源 dividendRateForDay）
+  const dayDividendRate = (() => {
+    const qk = displayQuote ? displayQuote.win[displayQuote.idx] : null;
+    if (!qk) return null;
+    // 最新交易年份取自全量 K 线末根（与曲线 rateForKline 口径一致，勿用单日窗口末根）
+    const currentYear = rawKlines?.length
+      ? parseInt(String((rawKlines[rawKlines.length - 1]?.date || '').slice(0, 4)), 10)
+      : NaN;
+    // fallback（当年分红预估）：优先取当前年份已录分红，其次最新已知年份，否则 0
+    const byYear = dividendByYear;
+    const yearKeys = Object.keys(byYear || {}).map(Number);
+    const fallback = byYear && !Number.isNaN(currentYear) && byYear[currentYear] != null
+      ? byYear[currentYear]
+      : (byYear && yearKeys.length ? byYear[[...yearKeys].sort((a, b) => b - a)[0]] : 0);
+    return dividendRateForDay(byYear, qk.date, qk.close, currentYear, fallback ?? 0);
+  })();
+
   return createPortal(
     <div className="fixed inset-0 z-[9999] bg-app-bg">
       {/* 十字线悬浮：复用列表页"当日行情"浮窗，底部叠加当日命中信号 */}
@@ -932,6 +949,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
           left={displayQuote.left}
           top={displayQuote.top}
           width={210}
+          dividendRate={dayDividendRate}
           headerLeft={(
               pinnedQuote ? (
                 <button
@@ -1407,15 +1425,21 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
   const customDefs = useMemo(() => (customTags || [])
     .filter(t => t.enabled)
     .map(t => ({ key: `user-${t.id}`, group: 'custom', label: t.name, signalName: t.name, action: value.action, abbr: t.name.slice(0, 2), color: '#818cf8' })), [customTags, value.action]);
-  // 目录按 group 聚合，用于 <optgroup> 分组
+  // 目录按 group 聚合，用于 <optgroup> 分组；自定义信号恒排最前（优先展示用户自定义标签）
   const groups = useMemo(() => {
     const m = new Map<string, typeof BACKTEST_TAG_CATALOG>();
-    for (const t of [...BACKTEST_TAG_CATALOG, ...customDefs]) {
+    for (const t of [...customDefs, ...BACKTEST_TAG_CATALOG]) {
       const arr = m.get(t.group) || [];
       arr.push(t);
       m.set(t.group, arr);
     }
-    return Array.from(m.entries());
+    const entries = Array.from(m.entries());
+    const customIdx = entries.findIndex(([g]) => g === 'custom');
+    if (customIdx > 0) {
+      const [cust] = entries.splice(customIdx, 1);
+      entries.unshift(cust);
+    }
+    return entries;
   }, [customDefs]);
 
   return (

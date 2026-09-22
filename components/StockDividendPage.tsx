@@ -1714,31 +1714,38 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (top < 10) top = 10;
     setDivRateInfoPos({ left, top });
 
-    const popupLogCtx = requestLogService.beginBatch(`股息率曲线预览 ${stock.name}(${getDisplayCode(stock.code)})：1 只股票 · 1 条请求`);
-    fetchBollData(stock.code, 'daily', bollAdjust, apiSource, undefined, popupLogCtx).then(result => {
+    // 股息率曲线不再由组件自行拉取/替换最新一根K线：直接向价格数据部索要权威日K线
+    // （最新一根已由 bollService 按现价/收盘价统一处理）。价格部门无缓存时由它内部补齐，组件只读。
+    const repositionDivRate = () => {
+      if (divRateInfoActiveIdRef.current !== stock.id || !divRateInfoBtnRef.current) return;
+      const popupH = divRateInfoRef.current?.offsetHeight || 0;
+      if (!popupH) return;
+      const popupW = 330;
+      const gap = 8;
+      const btnRect = (divRateInfoBtnRef.current as HTMLElement).getBoundingClientRect();
+      let left = btnRect.right + gap;
+      let top = btnRect.top + btnRect.height / 2 - popupH / 2;
+      if (left + popupW > window.innerWidth - 10) left = btnRect.left - popupW - gap;
+      if (left < 10) left = (window.innerWidth - popupW) / 2;
+      if (top + popupH > window.innerHeight - 10) top = window.innerHeight - popupH - 10;
+      if (top < 10) top = 10;
+      setDivRateInfoPos({ left, top });
+    };
+    const applyDivRateDaily = () => {
       // 仅在仍是当前目标股票时应用结果（避免悬停切换/移开后残留旧数据）
       if (divRateInfoActiveIdRef.current !== stock.id) return;
-      priceBureau.absorb(stock.code, 'daily', result);
-      const klines = result.data?.klines || [];
+      const klines = priceBureau.getDaily(stock.code)?.klines || [];
       setDivRateInfoKlines(klines);
       setDivRateInfoLoading(false);
       // 自适应高度：数据渲染后用浮窗实际高度重算垂直居中
-      requestAnimationFrame(() => {
-        if (divRateInfoActiveIdRef.current !== stock.id || !divRateInfoBtnRef.current) return;
-        const popupH = divRateInfoRef.current?.offsetHeight || 0;
-        if (!popupH) return;
-        const popupW = 330;
-        const gap = 8;
-        const btnRect = (divRateInfoBtnRef.current as HTMLElement).getBoundingClientRect();
-        let left = btnRect.right + gap;
-        let top = btnRect.top + btnRect.height / 2 - popupH / 2;
-        if (left + popupW > window.innerWidth - 10) left = btnRect.left - popupW - gap;
-        if (left < 10) left = (window.innerWidth - popupW) / 2;
-        if (top + popupH > window.innerHeight - 10) top = window.innerHeight - popupH - 10;
-        if (top < 10) top = 10;
-        setDivRateInfoPos({ left, top });
-      });
-    });
+      requestAnimationFrame(repositionDivRate);
+    };
+    const daily = priceBureau.getDaily(stock.code);
+    if (daily?.klines && daily.klines.length > 0) {
+      applyDivRateDaily();
+      return;
+    }
+    priceBureau.ensure(stock.code, 'daily', apiSource, bollAdjust).then(applyDivRateDaily);
   };
 
   // 悬停股息率列显示
@@ -4980,7 +4987,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     })()}
                 </div>
                 <DividendRateCurve
-                  klines={bollData?.klines || []}
+                  klines={(() => {
+                    // 直接向价格数据部索要权威K线（最新一根由 bollService 统一处理），
+                    // bollData 仅作尚未同步时的兜底（其本身同样是吸收自 priceBureau 的同一份数据）。
+                    const bk = bollPeriod === 'weekly'
+                      ? priceBureau.getWeekly(stock.code)
+                      : bollPeriod === 'monthly'
+                        ? priceBureau.getMonthly(stock.code)
+                        : priceBureau.getDaily(stock.code);
+                    return bk?.klines || bollData?.klines || [];
+                  })()}
                   stock={stock}
                   fallbackDividend={getDividendForYear(stock, getSelectedYear(stock))}
                   title={`股息率曲线（${bollPeriod === 'daily' ? '日' : bollPeriod === 'weekly' ? '周' : '月'}线）`}
