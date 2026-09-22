@@ -369,15 +369,27 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     series.setData([]);
 
     // —— 统一开放原生手势 ——
-    // 纯滚轮/触控板双指 = 原生平移(handleScroll.mouseWheel，Shift+滚轮同为核心原生横向平移)；
-    // Ctrl/⌘+滚轮 或 触控板捏合 = 原生缩放(handleScale.mouseWheel/pinch)。
-    // 已废弃缩放手势自接管（右缘锚/指向锚），缩放回归框架原生（指针/中心锚），不再有“最新价右缘钉死”。
+    // 平移：handleScroll.mouseWheel —— 纯滚轮/触控板双指 = 原生横向平移；
+    // 缩放：handleScale.{mouseWheel,pinch} —— Ctrl/⌘+滚轮 或 触控板捏合 = 原生缩放(指针/中心锚)。
+    // ⚠️ lightweight 只要开启 mouseWheel 缩放，就会把"任意滚轮事件"都当缩放(不看 ctrl)，
+    //    纯滚轮/双指平移会同时缩放、且无处平移。故必须在事件前置阶段按 ctrlKey(捏合/⌘滚轮) 动态开关
+    //    mouseWheel：捏合→开缩放，纯双指/纯滚轮→开平移。仅切配置，不拦截、不做自定义缩放数学。
     chart.applyOptions({
       handleScroll: { mouseWheel: true, pressedMouseMove: false, horzTouchDrag: true, vertTouchDrag: false },
-      handleScale: { axisPressedMouseMove: false, axisDoubleClickReset: false, mouseWheel: true, pinch: true },
+      handleScale: { axisPressedMouseMove: false, axisDoubleClickReset: false, mouseWheel: false, pinch: true },
     });
-    // 图表原生接管全部手势（滚轮/捏合/触屏单指横滑），容器不自行拦截、不注册自定义 wheel/touch 事件
     el.style.touchAction = 'none';
+    // 记录上一次 mouseWheel 缩放开关，避免每帧重复 applyOptions
+    const lastScaleState = { mouseWheel: false };
+    // 前置capture阶段按修饰键/捏合动态切换原生缩放开关，让同一 wheel 事件流里“捏合缩放、纯滚轮平移”都能工作
+    const onWheel = (e: WheelEvent) => {
+      const wantScale = !!e.ctrlKey || !!e.metaKey; // 捏合(ctrlKey) 或 ⌘/Ctrl+滚轮 → 缩放；否则平移
+      if (wantScale !== (lastScaleState.mouseWheel ?? false)) {
+        lastScaleState.mouseWheel = wantScale;
+        chart.applyOptions({ handleScale: { mouseWheel: wantScale, pinch: true } });
+      }
+    };
+    el.addEventListener('wheel', onWheel, { capture: true, passive: false });
 
     // 兜底：容器尺寸变化（flex 拉伸/弹窗缩放）时强制重绘一次，并重算覆盖层标签
     let ro: ResizeObserver | null = null;
@@ -466,6 +478,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       chart.unsubscribeClick(onChartClick);
       setHoverQuote(null);
       ro?.disconnect();
+      el.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
       el.style.touchAction = '';
       if (chartInstance.current) { chartInstance.current.remove(); chartInstance.current = null; }
       seriesRef.current = null;
