@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, Trash2, GripHorizontal, Play, Eye, EyeOff, Pin } from 'lucide-react';
+import { X, Plus, Trash2, GripHorizontal, Play, Eye, EyeOff, Pin, CheckCircle2, Circle, Palette } from 'lucide-react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, MouseEventParams, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams, UserTagRule } from '../types';
@@ -14,6 +14,7 @@ import { ENV_TAG_CATALOG, dividendRateForDay } from '../services/tagAnalyzers';
 import { calcIndicators, type IndicatorResult } from '../services/indicators';
 import PriceInfoPopover from './PriceInfoPopover';
 import SignalTagsFooter from './SignalTagsFooter';
+import { TAG_COLOR_HEX, TAG_PALETTE } from './CloudSettingsModal';
 import { InputGroup } from './InputGroup';
 
 type ChartCandle = { time: string; open: number; high: number; low: number; close: number };
@@ -86,12 +87,17 @@ const BOLL_SPECS: Array<{ key: 'upper' | 'mid' | 'lower'; color: string; label: 
 const BOLL_PERIOD = 20;
 const BOLL_MULT = 2;
 
-// 覆盖层标签：纯圆点（不再显示方块/文字/点划线），仅靠颜色区分买卖/信号
-const DOT_R = 3;              // 圆点半径
-const SPACING = 4;            // 圆点距 K 线实体边缘（high/low）的固定间距
-const SELL_BG = '#4A90D9';   // 卖出圆点颜色（蓝）
-const BUY_BG = '#ef4444';    // 买入圆点颜色（红）
-const DOT_ACTIVE = '#94a3b8'; // 选中态描边色（浅灰）
+// 覆盖层标签几何：圆角方块（无文字）+ 点划线 + 末端圆点；仅靠颜色区分买卖/信号
+const TICK_SIZE = 12;        // 方块宽高
+const TICK_RADIUS = 2.5;     // 方块圆角
+const LINE_LEN = 15;         // 点状虚线（方块→圆点）长度
+const DOT_R = TICK_SIZE / 6; // 末端圆点半径 = 标签宽度 1/3 直径 / 2
+const DOT_DA = '2 3';        // 点状虚线 pattern（短点+较大间隔）
+const SPACING = 6;           // 圆点距 K 线实体边缘（high/low）的固定间距，上下一致
+const SELL_BG = '#4A90D9';   // 卖出标签底色（蓝）
+const BUY_BG = '#ef4444';    // 买入标签底色（红）
+const TICK_FG = '#ffffff';   // 方块内文字色（买卖 B/S、预览标签首字）
+const TICK_ACTIVE = '#94a3b8'; // 选中态描边色（浅灰）
 
 // 把 lightweight Time（字符串YYYY-MM-DD / BusinessDay / 时间戳）格式化为 YYYY-MM-DD
 function formatChartTime(time: Time): string {
@@ -568,19 +574,26 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     const ch = container?.clientHeight ?? 0;
     // 右侧标尺宽度：方块右缘若越过绘图区右边界（会被标尺遮住）则直接隐藏该标签
     const priceScaleW = chart.priceScale('right').width();
-    const rightLimit = cw - priceScaleW; // 绘图区右边界（圆点右缘若越过标尺则隐藏）
+    const half = TICK_SIZE / 2; // 方块半宽（右缘越界判断用）
+    const rightLimit = cw - priceScaleW; // 绘图区右边界（方块右缘若越过标尺则隐藏）
     // 预览态：只计算预览标签（最多 2 个），B/S 买卖标签清空
     if (previewKeys.length > 0) {
       const prev: PreviewTick[] = [];
       const defOf = new Map(BACKTEST_TAG_CATALOG.map(d => [d.key, d]));
-      // 用户自定义标签预览：abbr 取名称前 2 字；颜色按标签配色 key 映射为十六进制（标签名称渲染不进图斑）
-      const customHex: Record<string, string> = { red: '#ef4444', green: '#22c55e', blue: '#60a5fa', indigo: '#818cf8', slate: '#94a3b8', orange: '#fb923c', pink: '#fb7299' };
+      // 用户自定义标签预览：abbr 取名称前 2 字；颜色按标签配色 key 映射为十六进制（与标签卡片 TAG_COLOR_HEX 同一映射，标签名称渲染不进图斑）
+      const customHex = TAG_COLOR_HEX as Record<string, string>;
       for (const r of (customTags || [])) {
         defOf.set(`user-${r.id}`, { key: `user-${r.id}`, abbr: r.name.slice(0, 2), color: customHex[r.color] ?? '#94a3b8' } as never);
       }
       const highOf = new Map<string, number>(rawKlines?.map(k => [k.date, k.high]) ?? []);
       const lowOf = new Map<string, number>(rawKlines?.map(k => [k.date, k.low]) ?? []);
       const sideOf = new Map(previewKeys.map((k, i) => [k, i === 0 ? 'top' : 'bottom']));
+      // 规则自定义颜色：key( tagKey|envKey ) → rule.color；未设置则回退目录/标签默认色
+      const keyColorOf = new Map<string, string>();
+      for (const r of strategy.rules) {
+        const k = `${r.tagKey}|${r.envCondition?.key ?? ''}`;
+        keyColorOf.set(k, TAG_COLOR_HEX[r.color ?? ''] ?? defOf.get(r.tagKey)?.color ?? '#94a3b8');
+      }
       for (const o of previewOccurrences) {
         const def = defOf.get(o.tagKey);
         if (!def) continue;
@@ -590,10 +603,10 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
         const x = ts.timeToCoordinate(o.date);
         const y = anchor != null ? series.priceToCoordinate(anchor) : null;
         if (x == null || y == null) continue;
-        if (x + DOT_R > rightLimit) continue;
+        if (x + half > rightLimit) continue;
         if (x < -24) continue;
         if (y < -40 || y > ch + 40) continue;
-        prev.push({ keyOf: o.key, date: o.date, x, y, abbr: def.abbr, color: def.color, side, detail: o.detail });
+        prev.push({ keyOf: o.key, date: o.date, x, y, abbr: def.abbr, color: keyColorOf.get(o.key) ?? def.color, side, detail: o.detail });
       }
       setOverlayTicks([]);
       setPreviewTicks(prev);
@@ -604,8 +617,8 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       const x = ts.timeToCoordinate(m.time);
       const y = series.priceToCoordinate(m.anchorPrice);
       if (x == null || y == null) continue;
-      // 贴右缘/越界：圆点右缘越过绘图区右边界即隐藏（K线回到展示区时坐标回落后自现）
-      if (x + DOT_R > rightLimit) continue;
+      // 贴右缘/越界：方块右缘越过绘图区右边界即隐藏（K线回到展示区时坐标回落后自现）
+      if (x + half > rightLimit) continue;
       // x 已在可视区但很贴边时也保留，仅过滤出左缘/右缘完全在外的情况
       if (x < -24) continue;
       if (y < -40 || y > ch + 40) continue;
@@ -613,7 +626,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     }
     setOverlayTicks(ticks);
     setPreviewTicks([]);
-  }, [demoMarkers, previewKeys, previewOccurrences, customTags]);
+  }, [demoMarkers, previewKeys, previewOccurrences, customTags, strategy.rules]);
 
   // 成交记录：直接取真实回测结果，图的标签与表的行共用同一批 id，实现双向往返定位
   const tradeRows = useMemo(() => {
@@ -1102,7 +1115,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                 ref={chartRef}
                 className="absolute inset-0"
               />
-              {/* 覆盖层：买卖点纯圆点（红=买/蓝=卖），锚定并跟随 K 线
+              {/* 覆盖层：B/S 买卖点标签（红=买/蓝=卖 + 点划线 + 圆点，无文字），锚定并跟随 K 线
                   svg 容器 inline pointer-events:none 不拦截图表滑/捏手势；热区自身 inline all 恢复点击 */}
               <svg
                 className="absolute inset-0 z-10"
@@ -1111,14 +1124,21 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                 style={{ pointerEvents: 'none' }}
               >
                 {overlayTicks.map(t => {
-                  // 布局：buy 在 K 线下方、sell 在上方；圆点贴 K 线外侧 SPACING 间距处
+                  // 布局（从 K 线往外）：K线 →[SPACING]→ 圆点 →[LINE_LEN点划线]→ 方块
+                  // 默认 buy 在 K 线下方、sell 在上方；dir=1下 / -1上
+                  const half = TICK_SIZE / 2;
                   const dir: 1 | -1 = t.action === 'buy' ? 1 : -1;
                   const color = t.action === 'buy' ? BUY_BG : SELL_BG;
+                  // 方块中心相对 K 线的总偏移
+                  const offset = SPACING + LINE_LEN + half;
                   const ch = chartRef.current?.clientHeight ?? 300;
-                  let centerY = t.y + dir * (SPACING + DOT_R);
-                  // 边界翻转：圆点即将超出顶部/底部时翻转到 K 线另一侧
-                  if (centerY - DOT_R < 2) centerY = t.y - dir * (SPACING + DOT_R);
-                  else if (centerY + DOT_R > ch - 2) centerY = t.y - dir * (SPACING + DOT_R);
+                  let centerY = t.y + dir * offset;
+                  // 边界翻转：方块即将超出顶部/底部时翻转到 K 线另一侧
+                  if (centerY - half < 2) centerY = t.y - dir * offset;
+                  else if (centerY + half > ch - 2) centerY = t.y - dir * offset;
+                  // 局部坐标（以方块中心为原点）：圆点在方块靠 K 线一侧
+                  const dotLocal = -dir * (LINE_LEN + half);
+                  const edgeY = -dir * half; // 方块朝向圆点的边缘
                   const selected = selectedTradeId === t.id;
                   return (
                     <g
@@ -1127,40 +1147,87 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                       className="cursor-pointer"
                       onClick={() => goToTrade(t.id)}
                     >
-                      {/* 透明热区：扩展点击/手型命中面积 */}
-                      <circle
-                        cx={0} cy={0} r={8}
+                      {/* 透明热区：扩展点击/手型命中面积（该批次图形在小方块外的点划线、圆点范围） */}
+                      <rect
+                        x={-12} y={dir * Math.min(edgeY, dotLocal) - 6}
+                        width={24}
+                        height={Math.abs(edgeY - dotLocal) + 12}
                         fill="transparent"
                         style={{ pointerEvents: 'all', cursor: 'pointer' }}
                       />
-                      {/* 纯圆点：颜色区分买卖，选中态加描边 */}
-                      <circle
-                        cx={0} cy={0} r={DOT_R}
-                        fill={color}
-                        stroke={selected ? DOT_ACTIVE : 'none'}
-                        strokeWidth={selected ? 1.5 : 0}
+                      {/* 点状虚线：方块边缘 → 末端圆点 */}
+                      <line
+                        x1={0} y1={edgeY}
+                        x2={0} y2={dotLocal}
+                        stroke={color}
+                        strokeWidth={1.2}
+                        strokeDasharray={DOT_DA}
                         pointerEvents="none"
                       />
+                      {/* 末端圆点：停在 K 线外侧 SPACING 间距处，不插入 K 线内部 */}
+                      <circle
+                        cx={0}
+                        cy={dotLocal}
+                        r={DOT_R}
+                        fill={color}
+                        pointerEvents="none"
+                      />
+                      {/* 圆角方块：底色随买卖（蓝=卖/红=买），选中态用描边高亮；方块内显示首文字母 B/S */}
+                      <rect
+                        x={-half} y={-half}
+                        width={TICK_SIZE} height={TICK_SIZE}
+                        rx={TICK_RADIUS}
+                        fill={color}
+                        stroke={selected ? TICK_ACTIVE : 'none'}
+                        strokeWidth={selected ? 1.5 : 0}
+                        pointerEvents="all"
+                      />
+                      {/* 首文字母：买入 B / 卖出 S */}
+                      <text
+                        x={0} y={0}
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        fontSize={8}
+                        fontWeight={700}
+                        fill={TICK_FG}
+                        pointerEvents="none"
+                      >
+                        {t.action === 'buy' ? 'B' : 'S'}
+                      </text>
                     </g>
                   );
                 })}
-                {/* 预览标签：纯圆点（颜色=标签主题色），key[0] 在 K 线上方、key[1] 下方；透明热区承载 hover/点击弹判定依据浮窗 */}
+                {/* 预览标签：缩写方块（无文字，颜色=标签主题色），key[0] 在 K 线上方、key[1] 下方；透明热区承载 hover/点击弹判定依据浮窗 */}
                 {previewTicks.map(t => {
+                  const bw = TICK_SIZE;             // 方块宽
+                  const bh = TICK_SIZE;             // 方块高（无文字，固定方形）
+                  const half = bw / 2;
+                  const bhHalf = bh / 2;
+                  const offset = SPACING + LINE_LEN + bhHalf;
+                  // top：方块中心在 high 之上 offset；bottom：在 low 之下 offset
                   const dir: 1 | -1 = t.side === 'top' ? -1 : 1;
-                  const centerY = t.y + dir * (SPACING + DOT_R);
+                  const centerY = t.y + dir * offset;
                   const popup = previewPopup?.date === t.date && previewPopup?.keyOf === t.keyOf;
                   return (
                     <g key={`${t.keyOf}-${t.date}`} transform={`translate(${t.x} ${centerY})`}>
                       {/* 透明热区：扩展命中面积，承载 hover/点击（容器 pointer-events:none，热区单独恢复） */}
                       <circle
-                        cx={0} cy={0} r={8}
+                        cx={0} cy={0} r={10}
                         fill="transparent" style={{ pointerEvents: 'all', cursor: 'pointer' }}
                         onMouseEnter={() => setPreviewPopup({ keyOf: t.keyOf, date: t.date, x: t.x, y: centerY, detail: t.detail })}
                         onMouseLeave={() => setPreviewPopup(p => (p?.keyOf === t.keyOf && p?.date === t.date ? null : p))}
                         onClick={() => setPreviewPopup(popup ? null : { keyOf: t.keyOf, date: t.date, x: t.x, y: centerY, detail: t.detail })}
                       />
-                      {/* 纯圆点：颜色取自标签自身主题色 */}
-                      <circle cx={0} cy={0} r={DOT_R} fill={t.color} pointerEvents="none" />
+                      {/* 点状虚线：方块边缘 → 末端圆点 */}
+                      <line x1={0} y1={-dir * bhHalf} x2={0} y2={-dir * (LINE_LEN + bhHalf)} stroke={t.color} strokeWidth={1.2} strokeDasharray={DOT_DA} pointerEvents="none" />
+                      {/* 末端圆点 */}
+                      <circle cx={0} cy={-dir * (LINE_LEN + bhHalf)} r={DOT_R} fill={t.color} pointerEvents="none" />
+                      {/* 缩写方块（仅首字，颜色=标签主题色） */}
+                      <rect x={-half} y={-bhHalf} width={bw} height={bh} rx={TICK_RADIUS} fill={t.color} pointerEvents="none" />
+                      {/* 首字 */}
+                      <text x={0} y={0} textAnchor="middle" dominantBaseline="central" fontSize={8} fontWeight={400} fill={TICK_FG} pointerEvents="none">
+                        {(t.abbr || '').charAt(0)}
+                      </text>
                     </g>
                   );
                 })}
@@ -1250,6 +1317,9 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
 
 // 策略规则编辑行（受控：value + onChange 由父级 strategy 状态驱动）
 const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemove, previewing, onTogglePreview, customTags }) => {
+  const [colorOpen, setColorOpen] = useState(false);
+  const curColor = value.color ?? 'indigo';
+  const curHex = TAG_COLOR_HEX[curColor] ?? '#818cf8';
   // 按 stable key 从目录取当前标签定义（用于分组显示）
   const current = BACKTEST_TAG_CATALOG.find(t => t.key === value.tagKey);
   // 自定义标签伪定义：tagKey='user-<id>'，label=名称，归入 'custom' 分组（复用目录下拉结构）
@@ -1275,24 +1345,58 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
 
   return (
     <div className="rounded-lg border border-app-border bg-app-input/30 p-2 space-y-2">
-      <div className="flex items-center justify-between">
-        <label className="flex items-center gap-1.5 text-xs text-app-subtext cursor-pointer" onClick={e => e.preventDefault()}>
-          <input type="checkbox" checked={value.enabled} onChange={e => onChange({ enabled: e.target.checked })} className="w-3.5 h-3.5 accent-indigo-500" />
-          启用
-        </label>
-        <span className="text-xs text-app-rowtext">策略 {index + 1}</span>
-        <div className="flex items-center gap-1">
+      <div className="flex items-center justify-between gap-2">
+        {/* 策略名：最左左对齐；序号紧随其后小号灰字 */}
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="truncate text-xs font-medium text-app-text">{value.label || '未命名策略'}</span>
+          <span className="shrink-0 text-[10px] text-app-rowtext">#{index + 1}</span>
+        </div>
+        {/* 右侧按钮组：启用(圆形勾) / 预览 / 颜色 / 删除 */}
+        <div className="relative flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => onChange({ enabled: !value.enabled })}
+            className={`p-0.5 rounded transition-all active:scale-90 ${value.enabled ? 'text-emerald-400' : 'text-app-subtext hover:text-emerald-400'}`}
+            title={value.enabled ? '已启用（点击停用）' : '已停用（点击启用）'}
+          >
+            {value.enabled ? <CheckCircle2 size={14} /> : <Circle size={14} />}
+          </button>
           <button
             type="button"
             onClick={onTogglePreview}
             className={`p-0.5 rounded transition-all active:scale-90 ${previewing ? 'text-indigo-300' : 'text-app-subtext hover:text-indigo-300'}`}
             title={previewing ? '取消预览该标签在 K 线上的命中位置' : '预览该标签在 K 线上的命中位置'}
           >
-            {previewing ? <Eye size={13} /> : <EyeOff size={13} />}
+            {previewing ? <Eye size={14} /> : <EyeOff size={14} />}
+          </button>
+          {/* 颜色调节：图标自身用所选颜色着色，点击展开调色板选色 */}
+          <button
+            type="button"
+            onClick={() => setColorOpen(o => !o)}
+            className="p-0.5 rounded transition-all active:scale-90 text-app-subtext hover:opacity-90"
+            style={{ color: curHex }}
+            title={`标记颜色：${curColor}（点击选择）`}
+          >
+            <Palette size={14} />
           </button>
           <button type="button" onClick={onRemove} className="text-app-subtext hover:text-brand-red transition-colors p-0.5" title="删除策略">
             <Trash2 size={13} />
           </button>
+          {/* 调色板：点颜色图标后弹出，选中即着色并收起 */}
+          {colorOpen && (
+            <div
+              className="absolute right-0 top-full mt-1 z-20 flex items-center gap-1 bg-app-bg border border-app-border rounded-lg px-1.5 py-1 shadow-[0_8px_30px_rgba(0,0,0,0.5)]"
+              onClick={e => e.stopPropagation()}
+            >
+              {TAG_PALETTE.map(c => (
+                <button key={c.key} type="button" aria-label={c.label} title={c.label}
+                  onClick={() => { onChange({ color: c.key }); setColorOpen(false); }}
+                  className={`w-4 h-4 rounded-full border transition-all hover:scale-110 ${c.border} ${curColor === c.key ? 'ring-1 ring-white/40 scale-110' : ''}`}
+                  style={{ backgroundColor: TAG_COLOR_HEX[c.key] }}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
       <div className="flex items-center gap-1.5">
@@ -1304,9 +1408,12 @@ const RuleEditor: React.FC<RuleEditorProps> = ({ index, value, onChange, onRemov
             const key = e.target.value;
             const t = BACKTEST_TAG_CATALOG.find(x => x.key === key);
             if (t) { onChange({ tagKey: t.key, label: t.label, action: t.action as BacktestRule['action'] }); return; }
-            // 用户自定义标签：tagKey='user-<id>'，label=名称；动作保留当前选择（自定义标签无内置买卖方向）
             const ct = customDefs.find(x => x.key === key);
-            onChange(ct ? { tagKey: ct.key, label: ct.label } : { tagKey: key });
+            // 用户自定义标签颜色：先沿用该标签在设置页自带颜色，用户可在颜色按钮处自行改色
+            const ctDef = (customTags || []).find(x => `user-${x.id}` === key);
+            onChange(ct
+              ? { tagKey: ct.key, label: ct.label, color: ctDef?.color ?? value.color }
+              : { tagKey: key });
           }}
         >
           <option value="" disabled>选择标签…</option>

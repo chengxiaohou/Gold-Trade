@@ -174,6 +174,7 @@ export interface BacktestRule {
   pct: number;             // 仓位百分比 1-100
   enabled: boolean;
   envCondition?: { key: string; label: string } | null; // 可选环境前提（趋势/波动状态）：成立才允许该触发规则动作
+  color?: string;          // 规则标记色（对应 TAG_PALETTE 的颜色 key，用于 K 线预览标签色）
 }
 export interface BacktestStrategy {
   rules: BacktestRule[];

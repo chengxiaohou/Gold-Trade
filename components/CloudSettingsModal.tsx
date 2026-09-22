@@ -76,7 +76,7 @@ const TARGET_INDICATOR_LABELS: Record<SignalTargetIndicator, string> = {
   bollUpper: '布林上轨', bollMid: '布林中轨', bollLower: '布林下轨',
 };
 // 标签颜色面板：与股票页「编辑标签」弹窗完全一致（8 色，半透明底 + 边框 + 选中中心色点）
-const TAG_PALETTE: { key: string; label: string; bg: string; text: string; border: string }[] = [
+export const TAG_PALETTE: { key: string; label: string; bg: string; text: string; border: string }[] = [
   { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20' },
   { key: 'indigo', label: '默认', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20' },
   { key: 'red', label: '红色', bg: 'bg-red-500/10', text: 'text-red-500', border: 'border-red-500/20' },
@@ -86,6 +86,11 @@ const TAG_PALETTE: { key: string; label: string; bg: string; text: string; borde
   { key: 'orange', label: '橙色', bg: 'bg-orange-500/10', text: 'text-orange-500', border: 'border-orange-500/20' },
   { key: 'pink', label: '粉色', bg: 'bg-pink-500/10', text: 'text-pink-500', border: 'border-pink-500/20' },
 ];
+// 颜色 key → 十六进制（供卡片色点/K线图同一映射，key 与 TAG_PALETTE 一致，单独成源避免散落）
+export const TAG_COLOR_HEX: Record<string, string> = {
+  gray: '#9ca3af', indigo: '#818cf8', red: '#ef4444', green: '#22c55e',
+  yellow: '#eab308', blue: '#60a5fa', orange: '#fb923c', pink: '#fb7299',
+};
 
 // 自定义标签卡片：默认仅显示描述文字；悬停或点击时在文字上方显示 编辑/启用/删除 三个按钮。
 // 悬停移出自动隐藏；点击固定显示，再次点击卡片空白处才隐藏。
