@@ -96,15 +96,15 @@ const CustomTagCard: React.FC<{ tag: UserTagRule; onEdit: () => void; onToggle: 
   const desc = `${SOURCE_LABELS[tag.source]} ${tag.direction === 'up' ? '增至' : tag.direction === 'down' ? '降至' : '触达'}${tag.targetType === 'fixed' ? ` ${tag.targetValue}` : ` ${tag.targetIndicator ? TARGET_INDICATOR_LABELS[tag.targetIndicator] : ''}`}`;
   return (
     <div
-      className={`relative inline-block bg-app-input border border-app-border rounded-lg px-2.5 py-1.5 cursor-pointer ${tag.enabled ? '' : 'opacity-70'}`}
+      className={`relative inline-block bg-app-input border border-app-border rounded-lg px-2 py-0.5 cursor-pointer ${tag.enabled ? '' : 'opacity-70'}`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onClick={() => setPinned(p => !p)}
     >
       {/* 文字始终渲染用于撑开卡片固定尺寸；按钮以绝对定位覆盖其上居中，不影响卡片宽高 */}
-      <span className="text-[10px] text-app-subtext leading-snug whitespace-nowrap">{desc}</span>
+      <span className="block text-[10px] leading-none text-app-subtext whitespace-nowrap">{desc}</span>
       {show && (
-        <div className="absolute inset-0 flex items-center justify-center gap-0.5">
+        <div className="absolute inset-0 flex items-center justify-center gap-0.5 bg-app-input rounded">
           <button type="button" aria-label="编辑" title="编辑" onClick={e => { e.stopPropagation(); onEdit(); }}
             className="p-0.5 rounded text-app-subtext hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"><Pencil size={12}/></button>
           <button type="button" aria-label="启用开关" title={tag.enabled ? '已启用（点击停用）' : '已停用（点击启用）'} onClick={e => { e.stopPropagation(); onToggle(); }}
