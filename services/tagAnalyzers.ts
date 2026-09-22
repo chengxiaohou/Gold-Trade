@@ -257,7 +257,7 @@ export function resolveTargetValue(klines: BollKline[], i: number, target: Signa
 
 // 单条规则判定：命中返回依据文案数组，未命中返回 null
 // dividendByYear：<年份, 每股税前派息>，供 dividendRate 数据点判定（按 K 线所属年份折算，同列表股息率曲线口径）
-export const DEFAULT_TOUCH_TOL = 0.5; // 触达默认容差（%目标值），可在规则 tolerance 覆盖
+export const DEFAULT_TOUCH_TOL = 0.5; // 触达容差（%目标值）已从 UI 隐藏，判定不再使用容差（见下）
 export function analyzeUserTagRule(klines: BollKline[], i: number, rule: UserTagRule, dividendByYear?: Record<number, number>, currentYear?: number): string[] | null {
   if (!rule || !rule.enabled) return null;
   const v = resolveSignalValue(klines, i, rule.source, dividendByYear, currentYear);
@@ -266,9 +266,8 @@ export function analyzeUserTagRule(klines: BollKline[], i: number, rule: UserTag
   if (t === null || t === undefined || Number.isNaN(t)) return null;
   let hit = false;
   if (rule.direction === 'touch') {
-    // 触达：|值-目标| 落在容差内（%目标值），任一边均可
-    const tol = (rule.tolerance ?? DEFAULT_TOUCH_TOL) / 100 * Math.max(Math.abs(t), 1e-9);
-    hit = Math.abs(v - t) <= tol;
+    // 触达：与目标值相等即命中（任一边均可）；容差已隐藏，不再偷偷生效
+    hit = Math.abs(v - t) <= 1e-9;
   } else {
     hit = rule.direction === 'up' ? v >= t : v <= t;
   }

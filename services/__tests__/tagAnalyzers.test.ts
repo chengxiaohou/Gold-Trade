@@ -933,16 +933,16 @@ describe('用户自定义动态信号标签 analyzeUserTagRule', () => {
     // 2025 根（当前年份）用预估 fallback 0.35 → 3.5% 命中
     expect(analyzeUserTagRule(k, 2, { ...rule, id: 'd2' }, { 2024: 0.25, 2025: 0.35 })).not.toBeNull();
   });
-  it('触达(touch)：|值-目标| 在容差内任一边命中，超出容差未命中', () => {
+  it('触达(touch)：与目标值相等即命中（任一边均可），偏离则不命中（容差已隐藏，不生效）', () => {
     const k = mkKlines(5, { close: () => 100 });
-    const rule: UserTagRule = { ...base, direction: 'touch', targetValue: 100.4, tolerance: 0.5 };
-    // 值 100，目标 100.4，容差 0.5%*100.4≈0.502 → |100-100.4|=0.4 ≤0.502 命中
+    const rule: UserTagRule = { ...base, direction: 'touch', targetValue: 100, tolerance: 0.5 };
+    // 值 100 = 目标 100 → 精确相等命中
     expect(analyzeUserTagRule(k, 4, rule, undefined)).not.toBeNull();
-    // 拉大差距到越界：目标 100.4，值改为 110 → |差|=9.6>容差 → 未命中
-    k[4] = { ...k[4], close: 110 };
+    // 值偏离目标 → 相等判定失败 → 未命中（容差不再生效）
+    k[4] = { ...k[4], close: 100.4 };
     expect(analyzeUserTagRule(k, 4, rule, undefined)).toBeNull();
     // 目标比值略低也命中（任一边均可）
-    const rule2: UserTagRule = { ...base, direction: 'touch', targetValue: 99.7, tolerance: 0.5 };
+    const rule2: UserTagRule = { ...base, direction: 'touch', targetValue: 100, tolerance: 0.5 };
     k[4] = { ...k[4], close: 100 };
     expect(analyzeUserTagRule(k, 4, rule2, undefined)).not.toBeNull();
   });
