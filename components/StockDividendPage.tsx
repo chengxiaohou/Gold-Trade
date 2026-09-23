@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
 import { fetchBollData, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime } from '../services/cacheService';
@@ -626,7 +626,7 @@ const DIVIDEND_CHART_RANGE_STEP = 25;
 
 // 股息率曲线共享组件：详情弹窗与列表页“股息率”浮窗共用一套渲染逻辑，
 // 之后任一处的股息率曲线改动都会同时反映到另一处。
-const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges, period, rangeValue, offsetValue, onRangeChange, onOffsetChange }: {
+const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock, fallbackDividend, title, period, rangeValue, offsetValue, onRangeChange, onOffsetChange }: {
   klines: BollKline[];
   stock: StockEntry;
   fallbackDividend: number;
@@ -691,6 +691,17 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
     onChange: (next) => { updateRange(next); },
   });
 
+  // —— 浮窗跟随移植：固定定位 + 直接改 transform 定位（不触发每帧重渲染），复用回测的边界翻转 ——
+  const [floatVisible, setFloatVisible] = useState(false);
+  const floatingElRef = useRef<HTMLDivElement>(null);
+  // 内容区用 ref 直接写 textContent，避免 setState 触发整组件重渲染、拖慢跟随
+  const floatDateRef = useRef<HTMLSpanElement>(null);
+  const floatPriceRef = useRef<HTMLSpanElement>(null);
+  const floatDividendRef = useRef<HTMLSpanElement>(null);
+  const floatRateRef = useRef<HTMLSpanElement>(null);
+  const FLOAT_W = 105;
+  const FLOAT_H = 92;
+
   const currentKlines = klines;
   if (!currentKlines || currentKlines.length === 0) return null;
   const maxRange = currentKlines.length;
@@ -739,10 +750,50 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
   const xTicks = chartData.length > 0
     ? Array.from({ length: 6 }, (_, i) => chartData[Math.round(i * (chartData.length - 1) / 5)]?.date).filter(Boolean)
     : [];
+
+  // 可视窗口内的四个极值点：最高/最低价（价格线）、最高/最低股息率（股息率线），用于在曲线上打点标注
+  const maxPricePt = chartData.length > 0 ? chartData.reduce((a, b) => a.price > b.price ? a : b) : null;
+  const minPricePt = chartData.length > 0 ? chartData.reduce((a, b) => a.price < b.price ? a : b) : null;
+  const maxRatePt = chartData.length > 0 ? chartData.reduce((a, b) => a.rate > b.rate ? a : b) : null;
+  const minRatePt = chartData.length > 0 ? chartData.reduce((a, b) => a.rate < b.rate ? a : b) : null;
+
+  // 浮窗跟随：定位窗口（transform），并把鼠标 X 映射到最近 K 线点、直接改 textContent 填充真实数据。
+  // 全程不 setState、不触发 React 重渲染，保证高频跟鼠标。
+  const handleFloatMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = floatingElRef.current;
+    if (!el) return;
+    let x = e.clientX + 12;
+    let y = e.clientY + 12;
+    if (x + FLOAT_W > window.innerWidth - 8) x = Math.max(8, e.clientX - FLOAT_W - 12);
+    if (y + FLOAT_H > window.innerHeight - 8) y = Math.max(8, e.clientY - FLOAT_H - 12);
+    el.style.transform = `translate(${x}px, ${y}px)`;
+
+    const container = chartWheelRef.current;
+    if (!container || chartData.length === 0) return;
+    const rect = container.getBoundingClientRect();
+    const plotW = rect.width - 2 - 5; // 与 LineChart margin 左2 右5 保持一致
+    const relX = e.clientX - rect.left - 2;
+    const idx = Math.max(0, Math.min(chartData.length - 1, Math.round((relX / plotW) * (chartData.length - 1))));
+    const d = chartData[idx];
+    if (floatDateRef.current) floatDateRef.current.textContent = d.date;
+    if (floatPriceRef.current) floatPriceRef.current.textContent = `¥${d.price.toFixed(2)}`;
+    if (floatDividendRef.current) floatDividendRef.current.textContent = `¥${d.dividend.toFixed(3)}`;
+    if (floatRateRef.current) floatRateRef.current.textContent = `${d.rate.toFixed(2)}%`;
+  };
+  const handleFloatLeave = () => setFloatVisible(false);
+
   return (
     <div className="border-t border-app-border bg-app-card pt-2">
       <div className="flex items-center mb-1">
-        <span className="text-[10px] text-app-subtext">{title}</span>
+        <span className="text-[10px] text-app-subtext shrink-0">{title.replace(/（([日月周]?)线）/, (m, unit) => `（${range}${unit}线）`)}</span>
+        <button
+          type="button"
+          title="重置周期为250"
+          className="p-0.5 text-app-subtext hover:text-app-text transition-colors shrink-0"
+          onClick={() => { updateRange(250); updateOffset(0); }}
+        >
+          <RotateCcw size={11} strokeWidth={2} />
+        </button>
         <button
           type="button"
           title=""
@@ -756,7 +807,13 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
           {priceAxisMode === 'dynamic' ? '区间价格' : '历史价格'}
         </button>
       </div>
-      <div ref={chartWheelRef} className="h-[120px] w-full select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none">
+      <div
+        ref={chartWheelRef}
+        className="h-[172px] w-full select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none"
+        onMouseMove={handleFloatMove}
+        onMouseEnter={() => setFloatVisible(true)}
+        onMouseLeave={handleFloatLeave}
+      >
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 5, right: 5, left: 2, bottom: 0 }}>
             {yTicks.map((v, i) => (
@@ -795,25 +852,8 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
               domain={priceAxisDomain}
             />
             <Tooltip
-              contentStyle={{
-                backgroundColor: 'rgba(15,23,42,0.95)',
-                border: '1px solid rgba(148,163,184,0.3)',
-                borderRadius: 6,
-                fontSize: 11,
-                color: 'inherit',
-              }}
-              content={({ active, payload, label }) => {
-                if (!active || !payload || !payload[0]) return null;
-                const d = payload[0].payload;
-                return (
-                  <div className="bg-[rgba(15,23,42,0.95)] border border-[rgba(148,163,184,0.3)] rounded px-2 py-1.5 text-xs leading-relaxed">
-                    <div className="text-app-subtext">{label}</div>
-                    <div>股价: <span className="text-app-text">¥{d.price.toFixed(2)}</span></div>
-                    <div>分红: <span className="text-app-text">{d.dividend.toFixed(3)} 元</span></div>
-                    <div>股息率: <span className="text-green-400">{d.rate.toFixed(2)}%</span></div>
-                  </div>
-                );
-              }}
+              // 内容盒已迁移到上方固定浮窗，这里只保留垂直光标线，避免出现两个弹窗
+              content={() => null}
               cursor={{ stroke: 'rgba(99,102,241,0.4)', strokeWidth: 1 }}
             />
             <Line
@@ -835,8 +875,42 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
               activeDot={false}
               isAnimationActive={false}
             />
+            {/* 极值点标注：在各自曲线上打点并标注数字（仿回测K线），最高/最低价 与 最高/最低股息率 */}
+            {chartData.length > 0 && maxPricePt && minPricePt && maxRatePt && minRatePt && (
+              <>
+                <ReferenceDot x={maxPricePt.date} y={maxPricePt.price} yAxisId="price" r={0} stroke="none" label={{ value: maxPricePt.price.toFixed(2), position: 'top', fontSize: 8, fill: 'rgba(203,213,225,0.85)' }} />
+                <ReferenceDot x={minPricePt.date} y={minPricePt.price} yAxisId="price" r={0} stroke="none" label={{ value: minPricePt.price.toFixed(2), position: 'bottom', fontSize: 8, fill: 'rgba(203,213,225,0.85)' }} />
+                <ReferenceDot x={maxRatePt.date} y={maxRatePt.rate} r={0} stroke="none" label={{ value: `${maxRatePt.rate.toFixed(2)}%`, position: 'top', fontSize: 8, fill: 'rgba(203,213,225,0.85)' }} />
+                <ReferenceDot x={minRatePt.date} y={minRatePt.rate} r={0} stroke="none" label={{ value: `${minRatePt.rate.toFixed(2)}%`, position: 'bottom', fontSize: 8, fill: 'rgba(203,213,225,0.85)' }} />
+              </>
+            )}
           </LineChart>
         </ResponsiveContainer>
+      </div>
+      {/* 固定定位 + transform/textContent 直接写 DOM 的悬浮窗：内容随时命中、绝不触发 React 重渲染
+         容器与字体沿用 PriceInfoPopover，标题只留日期、数据单行白色显示 */}
+      <div
+        ref={floatingElRef}
+        className={`pointer-events-none fixed left-0 top-0 z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden transition-opacity duration-100 ${floatVisible ? 'opacity-100' : 'opacity-0'}`}
+        style={{ width: 105 }}
+      >
+        <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center">
+          <span className="font-mono text-[10px] text-app-subtext" ref={floatDateRef} />
+        </div>
+        <div className="px-2.5 py-1.5 bg-app-card space-y-1">
+            <div className="flex items-baseline justify-between">
+              <span className="text-[10px] text-app-subtext whitespace-nowrap">股价</span>
+              <span className="font-mono text-[11px] text-slate-400" ref={floatPriceRef} />
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-[10px] text-app-subtext whitespace-nowrap">股息率</span>
+              <span className="font-mono text-[11px] text-slate-400" ref={floatRateRef} />
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-[10px] text-app-subtext whitespace-nowrap">分红</span>
+              <span className="font-mono text-[11px] text-slate-400" ref={floatDividendRef} />
+            </div>
+          </div>
       </div>
       <div className="flex items-center gap-2 mt-1 mb-1.5">
         <input
@@ -856,80 +930,7 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
             [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500
             [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-gray-500 [&::-moz-range-thumb]:border-0"
         />
-        <div className="w-24 shrink-0">
-          <InputGroup
-            value={range}
-            onChange={(v) => {
-              const n = Number(v);
-              if (!Number.isNaN(n)) {
-                updateRange(n);
-                updateOffset(0);
-              }
-            }}
-            step={DIVIDEND_CHART_RANGE_STEP}
-            min={options.length > 0 ? options[0] : 5}
-            max={options.length > 0 ? options[options.length - 1] : maxRange}
-            touchMode
-            className="text-sm !py-1"
-          />
-        </div>
       </div>
-      {(() => {
-        if (chartData.length === 0) return null;
-        const byYear = stock.dividendByYear || {};
-        const calcDividendForDate = (dateStr: string): { amount: number; isApproximate: boolean } => {
-          if (!dateStr) return { amount: 0, isApproximate: false };
-          const y = parseInt(dateStr.slice(0, 4), 10);
-          if (isNaN(y)) return { amount: 0, isApproximate: false };
-          // 今年（当前交易年份）分红未完成：统一用选中年份的预估分红
-          if (y === currentYear) return { amount: dividend, isApproximate: true };
-          if (byYear[y] && byYear[y] > 0) return { amount: byYear[y], isApproximate: false };
-          if (byYear[y - 1] && byYear[y - 1] > 0) return { amount: byYear[y - 1], isApproximate: true };
-          return { amount: 0, isApproximate: false };
-        };
-        const calcRate = (price: number, dividend: number): string => {
-          if (!dividend || !price) return '-';
-          return (dividend / price * 100).toFixed(2) + '%';
-        };
-        const calcRateColor = (price: number, dividend: number): string => {
-          if (!dividend || !price) return 'text-app-subtext';
-          return getDividendRateColor(dividend / price * 100, ranges);
-        };
-        const highItem = chartData.reduce((a, b) => a.price > b.price ? a : b);
-        const lowItem = chartData.reduce((a, b) => a.price < b.price ? a : b);
-        const highDiv = calcDividendForDate(highItem.date);
-        const lowDiv = calcDividendForDate(lowItem.date);
-        const highRate = calcRate(highItem.price, highDiv.amount);
-        const lowRate = calcRate(lowItem.price, lowDiv.amount);
-        const highRateColor = calcRateColor(highItem.price, highDiv.amount);
-        const lowRateColor = calcRateColor(lowItem.price, lowDiv.amount);
-        const highSymbol = !highDiv.amount ? '' : (highDiv.isApproximate ? '≈' : '=');
-        const lowSymbol = !lowDiv.amount ? '' : (lowDiv.isApproximate ? '≈' : '=');
-        return (
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
-              <span className="text-[10px] text-app-subtext shrink-0">最高价</span>
-              <span className="font-mono text-[10px] font-bold text-red-500 shrink-0">{formatPrice(highItem.price, stock.name)}</span>
-              <span className="text-[10px] shrink-0">
-                <span className="text-app-subtext">股息率</span>
-                {highSymbol && <span className="text-app-subtext mx-0.5">{highSymbol}</span>}
-                <span className={`font-mono font-bold ${highRateColor}`}>{highDiv.amount ? highRate : '-'}</span>
-              </span>
-              <span className="text-[10px] text-app-subtext ml-auto shrink-0">{highItem.date}</span>
-            </div>
-            <div className="flex items-center gap-2 p-1.5 rounded bg-app-input">
-              <span className="text-[10px] text-app-subtext shrink-0">最低价</span>
-              <span className="font-mono text-[10px] font-bold text-brand-green shrink-0">{formatPrice(lowItem.price, stock.name)}</span>
-              <span className="text-[10px] shrink-0">
-                <span className="text-app-subtext">股息率</span>
-                {lowSymbol && <span className="text-app-subtext mx-0.5">{lowSymbol}</span>}
-                <span className={`font-mono font-bold ${lowRateColor}`}>{lowDiv.amount ? lowRate : '-'}</span>
-              </span>
-              <span className="text-[10px] text-app-subtext ml-auto shrink-0">{lowItem.date}</span>
-            </div>
-          </div>
-        );
-      })()}
     </div>
   );
 });
