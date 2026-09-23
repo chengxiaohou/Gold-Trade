@@ -5750,14 +5750,31 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         // 收盘价着色：对照前一交易日，当日收盘涨红、跌绿
         const kIdx = new Map<string, number>();
         if (klines) klines.forEach((k, i) => kIdx.set(k.date, i));
-        const closeSpan = (date: string) => {
+        // 近10日数值列：收盘/现价 + 最高价(▲) + 最低价(▼) + 当日涨跌幅(在最末)
+        // 红绿着色统一参考"前一交易日收盘价"：现价、最高价、最低价各自与该参考价比较（高于红、低于绿、相等灰），▲▼ 跟随各自价格颜色
+        const priceCol = (date: string, closeVal?: number) => {
           const i = kIdx.get(date);
           if (i == null || !klines) return null;
-          const c = klines[i].close;
+          const k = klines[i];
+          const c = closeVal ?? k.close;
           const p = klines[i - 1]?.close;
-          const up = p != null && c > p;
-          const dn = p != null && c < p;
-          return <span className={`text-[9px] font-mono shrink-0 w-[30px] text-right ${up ? 'text-red-500' : dn ? 'text-green-500' : 'text-app-rowtext'}`}>{fp(c)}</span>;
+          const col = (v: number) => (p != null ? (v > p ? 'text-red-500' : v < p ? 'text-green-500' : 'text-app-rowtext') : 'text-app-rowtext');
+          const cCls = col(c);
+          const hCls = col(k.high);
+          const lCls = col(k.low);
+          return (
+            <span className="flex items-center gap-1.5 shrink-0">
+              <span className={`text-[10px] font-mono font-bold shrink-0 w-[30px] text-right ${cCls}`}>{fp(c)}</span>
+              <span className="flex items-center shrink-0">
+                <span className={`text-[10px] font-mono font-bold shrink-0 w-[30px] text-right ${hCls}`}>{fp(k.high)}</span>
+                <span className={`text-[10px] leading-none shrink-0 ${hCls}`}>↑</span>
+              </span>
+              <span className="flex items-center shrink-0">
+                <span className={`text-[10px] font-mono font-bold shrink-0 w-[30px] text-right ${lCls}`}>{fp(k.low)}</span>
+                <span className={`text-[10px] leading-none shrink-0 ${lCls}`}>↓</span>
+              </span>
+            </span>
+          );
         };
         // 默认选中：无指向时展示最新交易日行首枚标签（由权威 getDayTagSet 产出）
         const lastK = klines && klines.length > 0 ? klines[klines.length - 1] : null;
@@ -5818,10 +5835,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 </button>
               </div>
             </div>
-            <div className="px-2.5 py-2 overflow-y-auto custom-scrollbar" style={{ maxHeight: mktBodyMaxH ?? undefined }}>
+            <div className="px-2.5 py-2 flex flex-col min-h-0" style={{ maxHeight: mktBodyMaxH ?? undefined }}>
             {env && selectEnvDisplayTags(env.tags).length > 0 && (
               <div className="pt-1.5 mb-1.5">
-                <div className="text-[9px] text-app-subtext mb-2">环境</div>
+                <div className="text-[10px] font-bold text-app-subtext mb-2">环境</div>
                 <div className="flex items-center gap-1 flex-wrap">
                   {selectEnvDisplayTags(env.tags).map(t => (
                     <span
@@ -5834,7 +5851,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 </div>
               </div>
             )}
-            <div className="text-[9px] text-app-subtext border-t border-app-border pt-1 mb-1.5">近10交易日行情</div>
+            <div className="text-[10px] font-bold text-app-subtext border-t border-app-border pt-1 mb-1.5 shrink-0">近10交易日行情</div>
+            <div className="overflow-y-auto custom-scrollbar min-h-0 flex-1">
             {!klines || klines.length === 0 ? (
               <div className="text-[10px] text-app-rowtext py-1">暂无K线数据</div>
             ) : (() => {
@@ -5865,21 +5883,35 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               // 底部企稳已拆成 量能5档 + 价格态 两个原子 chip，由 getDayTagSet 提供，无需追加独立企稳 chip
               // 最新收盘日：价格列显示缓存现价（红涨绿跌），其余日期显示当日收盘
               const latestDate = klines && klines.length ? klines[klines.length - 1].date : '';
+              // 当日涨跌幅独立一行（左对齐）：最新日取实时涨跌幅，其余由收盘相对前收计算
+              const changeCol = (date: string) => {
+                const i = kIdx.get(date);
+                if (i == null || !klines) return null;
+                const k = klines[i];
+                const c = date === latestDate && mktInfoStock.price > 0 ? mktInfoStock.price : k.close;
+                const p = klines[i - 1]?.close;
+                if (p == null) return null;
+                const pct = ((c - p) / p) * 100;
+                const cCls = pct > 0 ? 'text-red-500' : pct < 0 ? 'text-green-500' : 'text-app-rowtext';
+                return <span className={`text-[10px] font-mono ${cCls}`}>{pct >= 0 ? '+' : ''}{pct.toFixed(2)}%</span>;
+              };
               const dates = [...byDate.keys()].sort();
               return dates.map(date => (
-                <div key={date} className="flex items-start gap-1.5 mb-1 last:mb-0">
-                  <span className="text-[9px] text-app-rowtext shrink-0 w-[36px] whitespace-nowrap mt-px">{fmtDay(date)}</span>
-                  {date === latestDate && mktInfoStock.price > 0 ? (
-                    <span className={`text-[9px] font-mono shrink-0 w-[30px] text-right ${mktInfoStock.changePercent >= 0 ? 'text-red-500' : 'text-green-500'}`}>{fp(mktInfoStock.price)}</span>
-                  ) : closeSpan(date)}
-                  <div className="flex flex-wrap gap-1 min-w-0">
+                <div key={date} className="mb-2.5 last:mb-0">
+                  <div className="flex items-center justify-between gap-1.5">
+                    <span className="text-[10px] font-bold text-app-rowtext shrink-0 whitespace-nowrap">{fmtDay(date)}</span>
+                    {date === latestDate && mktInfoStock.price > 0 ? priceCol(date, mktInfoStock.price) : priceCol(date)}
+                  </div>
+                  <div className="flex flex-wrap gap-1 items-center min-w-0 mt-0.5">
+                    <span className="flex items-center gap-1 mr-auto">{changeCol(date)}</span>
                     {byDate.get(date)!.map(e => <React.Fragment key={e.key}>{e.node}</React.Fragment>)}
                   </div>
                 </div>
               ));
             })()}
+            </div>
             <div className="border-t border-app-border mt-1 pt-1.5">
-              <div className="text-[9px] text-app-subtext mb-1">判定依据</div>
+              <div className="text-[10px] font-bold text-app-subtext mb-1">判定依据</div>
               {explainLines.length > 0 ? (
                 <div className="text-[9px] leading-relaxed text-app-rowtext break-all">{explainLines.map((l, i) => { const s = (l || '') as string | { t: string; cls: string } | { seg: { t: string; cls: string }[] }; if (typeof s === 'string') return <div key={i}>{s}</div>; if ('seg' in s) return <div key={i}>{s.seg.map((sg, j) => <span key={j} className={sg.cls}>{sg.t}</span>)}</div>; return <div key={i} className={s.cls}>{s.t}</div>; })}</div>
               ) : (
@@ -5887,7 +5919,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               )}
             </div>
             <div className="border-t border-app-border mt-1 pt-1.5">
-              <div className="text-[9px] text-app-subtext mb-1">参考价值</div>
+              <div className="text-[10px] font-bold text-app-subtext mb-1">参考价值</div>
               {selKey && selKey.kind === 'env' ? (() => {
                 const t = env?.tags.find(x => x.key === selKey.ekey);
                 const ref = t ? ENV_REFERENCE[t.label] : null;
