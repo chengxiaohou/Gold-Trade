@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, Copy } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
 import { fetchBollData, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
@@ -2163,6 +2163,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setExpandedProfitDays(prev => {
       const next = new Set(prev);
       if (next.has(date)) next.delete(date); else next.add(date);
+      return next;
+    });
+  };
+
+  // 逐日明细：一键全部展开/收起
+  const allProfitDaysExpanded = profitResult.byDay.length > 0 && profitResult.byDay.every(d => expandedProfitDays.has(d.date));
+  const toggleAllProfitDays = () => {
+    setExpandedProfitDays(prev => {
+      const next = new Set(prev);
+      if (allProfitDaysExpanded) {
+        profitResult.byDay.forEach(d => next.delete(d.date));
+      } else {
+        profitResult.byDay.forEach(d => next.add(d.date));
+      }
       return next;
     });
   };
@@ -6246,6 +6260,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             {/* 逐日明细 */}
               <div className="flex items-center gap-2 px-1 pt-1">
                 <span className="text-[10px] text-app-subtext">逐日明细</span>
+                <button
+                  type="button"
+                  onClick={toggleAllProfitDays}
+                  className="text-app-subtext hover:text-app-text transition-colors p-0.5 rounded"
+                  title={allProfitDaysExpanded ? '全部收起' : '全部展开'}
+                >
+                  {allProfitDaysExpanded ? <FoldVertical size={12} /> : <UnfoldVertical size={12} />}
+                </button>
                 <div className="flex-1 h-px bg-app-border"></div>
               </div>
             </div>

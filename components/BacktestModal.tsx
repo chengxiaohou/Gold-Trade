@@ -11,7 +11,7 @@ import { priceBureau } from '../services/priceBureau';
 import { getMarketStatus } from '../services/cacheService';
 import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL } from '../services/backtestEngine';
 import { ENV_TAG_CATALOG, dividendRateForDay } from '../services/tagAnalyzers';
-import { calcIndicators, type IndicatorResult } from '../services/indicators';
+import { calcIndicators, formatPrice, type IndicatorResult } from '../services/indicators';
 import PriceInfoPopover from './PriceInfoPopover';
 import SignalTagsFooter from './SignalTagsFooter';
 import { TAG_COLOR_HEX, TAG_PALETTE } from './CloudSettingsModal';
@@ -25,6 +25,8 @@ type TickSpec = { id: string; time: string; anchorPrice: number; action: 'buy' |
 type OverlayTick = { id: string; x: number; y: number; action: 'buy' | 'sell' };
 // 预览标签：某策略标签命中的 K 线像素坐标（缩写块，置于 K 线上下；color 用标签本身主题色）
 type PreviewTick = { keyOf: string; date: string; x: number; y: number; abbr: string; color: string; side: 'top' | 'bottom'; detail: string[] };
+// 极值标注：可视区内最高价/最低价 K 线的价格标签（最高价=high上侧、最低价=low下侧），跟随 K 线同步移动
+type ExtremeTick = { kind: 'high' | 'low'; x: number; y: number; price: number; side: 'top' | 'bottom' };
 
 export interface BacktestModalProps {
   stock: StockEntry;
@@ -99,6 +101,14 @@ const BUY_BG = '#ef4444';    // 买入标签底色（红）
 const TICK_FG = '#ffffff';   // 方块内文字色（买卖 B/S、预览标签首字）
 const TICK_ACTIVE = '#94a3b8'; // 选中态描边色（浅灰）
 
+// 极值标记（可视区内最高/最低价 K 线的价格标注）：纯数字，挨着 K 线尖端展示（最高价数字在上、最低价数字在下）
+const EXT_COLOR = '#ffffff';     // 极值数字色（统一白色）
+const EXT_FONT_SZ = 9;           // 数字字号
+const EXT_GAP = 3;               // 数字与 K 线尖端（high/low）的间距
+const EXT_PAD = 3;               // 数字距展示区左右/上下边缘的最小留白（避免边缘数字一半出屏幕）
+const EXT_CHAR_W = 6.2;          // 每字符近似宽度（9px monospace）
+const extremeTextWidth = (text: string) => text.length * EXT_CHAR_W;
+
 // 把 lightweight Time（字符串YYYY-MM-DD / BusinessDay / 时间戳）格式化为 YYYY-MM-DD
 function formatChartTime(time: Time): string {
   let y: number, m: number, d: number;
@@ -117,14 +127,17 @@ function formatChartTime(time: Time): string {
 }
 
 export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, customTags }: BacktestModalProps) {
-  // 按下 ESC 关闭回测弹窗（挂载期内全局监听）
+  // 按下 ESC 关闭回测弹窗（挂载期内只挂一次监听；onClose 用 ref 取最新，
+  // 避免父级内联 onClose 触发重挂导致"按两次才关"）
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onCloseRef.current();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, []);
 
   // 策略按股票持久化到 localStorage：刷新/重开页面后自动恢复上次设置
   const strategyStorageKey = `bt_strategy_${stock.code}`;
@@ -272,6 +285,8 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   const [previewKeys, setPreviewKeys] = useState<string[]>([]);
   // 预览标签的像素坐标
   const [previewTicks, setPreviewTicks] = useState<PreviewTick[]>([]);
+  // 极值标注（可视区内最高/最低价K线价格）的像素坐标，随平移/缩放重算，复用覆盖层随K线同步移动逻辑
+  const [extremeTicks, setExtremeTicks] = useState<ExtremeTick[]>([]);
   // 预览标签判定依据浮窗（hover/点击预览标签时显示）
   const [previewPopup, setPreviewPopup] = useState<{ keyOf: string; date: string; x: number; y: number; detail: string[] } | null>(null);
   const chartRef = useRef<HTMLDivElement>(null);
@@ -281,7 +296,10 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   const computeTicksRef = useRef<(() => void) | null>(null);
   const maSeriesRef = useRef<ISeriesApi<'Line'>[] | null>(null);
   const bollSeriesRef = useRef<ISeriesApi<'Line'>[] | null>(null);
+  // 缓存最新图表K线，供覆盖层极值标注（最高/最低价）随平移/缩放重算时读取
+  const klinesRef = useRef<ChartCandle[] | null>(null);
   const [klines, setKlines] = useState<ChartCandle[] | null>(null); // 图表 K 线（含实时今日K线）
+  useEffect(() => { klinesRef.current = klines; }, [klines]);
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState<string | null>(null);
   // 图表指标模式：均线(默认) / 布林线
@@ -576,6 +594,48 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     const priceScaleW = chart.priceScale('right').width();
     const half = TICK_SIZE / 2; // 方块半宽（右缘越界判断用）
     const rightLimit = cw - priceScaleW; // 绘图区右边界（方块右缘若越过标尺则隐藏）
+    // 极值标注：可视区内最高价/最低价两条 K 线，价格数字挨着最高价尖端上方、最低价尖端下方展示，
+    // 随 K 线同步移动；数字被钳制在展示区内，边缘处不会一半出屏幕。
+    // 复用覆盖层随 K 线同步移动的定位逻辑：可见逻辑范围 → timeToCoordinate/priceToCoordinate 换算像素坐标。
+    const extreme: ExtremeTick[] = [];
+    const kdata = klinesRef.current;
+    if (kdata && kdata.length > 0) {
+      const vr = ts.getVisibleLogicalRange();
+      if (vr) {
+        const n = kdata.length;
+        const s = Math.max(0, Math.floor(vr.from));
+        const e = Math.min(n - 1, Math.ceil(vr.to));
+        let hi = -Infinity, lo = Infinity, hiK: ChartCandle | null = null, loK: ChartCandle | null = null;
+        for (let i = s; i <= e; i++) {
+          const k = kdata[i];
+          if (k.high > hi) { hi = k.high; hiK = k; }
+          if (k.low < lo) { lo = k.low; loK = k; }
+        }
+        const pushExt = (k: ChartCandle | null, kind: 'high' | 'low') => {
+          if (!k) return;
+          const x = ts.timeToCoordinate(k.time);
+          const y = series.priceToCoordinate(kind === 'high' ? k.high : k.low);
+          if (x == null || y == null) return;   // K 线滚出可视区（timeToCoordinate 返回 null）则隐藏
+          const txt = formatPrice(kind === 'high' ? k.high : k.low, stock.name);
+          const tw = extremeTextWidth(txt);
+          const side: 'top' | 'bottom' = kind === 'high' ? 'top' : 'bottom';
+          const dir: 1 | -1 = side === 'top' ? -1 : 1;
+          // 数字中心锚在 K 线 x 坐标，但横向钳制在展示区内：避免边缘 K 线的数字一半出屏幕/被标尺遮住
+          const minX = tw / 2 + EXT_PAD;
+          const maxX = rightLimit - tw / 2 - EXT_PAD;
+          const cx = maxX < minX ? minX : Math.min(maxX, Math.max(minX, x));
+          // 竖直：挨着尖端——最高价在上方、最低价在下方（尖端处锚定 y），同样上下钳制在展示区内
+          const cyRaw = y + dir * (EXT_FONT_SZ / 2 + EXT_GAP);
+          const minCy = EXT_FONT_SZ / 2 + EXT_PAD;
+          const maxCy = ch - EXT_FONT_SZ / 2 - EXT_PAD;
+          const cy = maxCy < minCy ? minCy : Math.min(maxCy, Math.max(minCy, cyRaw));
+          extreme.push({ kind, x: cx, y: cy, price: kind === 'high' ? k.high : k.low, side });
+        };
+        pushExt(hiK, 'high');
+        pushExt(loK, 'low');
+      }
+    }
+    setExtremeTicks(extreme);
     // 预览态：只计算预览标签（最多 2 个），B/S 买卖标签清空
     if (previewKeys.length > 0) {
       const prev: PreviewTick[] = [];
@@ -1229,6 +1289,25 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                         {(t.abbr || '').charAt(0)}
                       </text>
                     </g>
+                  );
+                })}
+                {/* 极值标注：可视区内最高价/最低价 K 线的价格数字，紧贴尖端——最高价数字在上、最低价在下（跟随 K 线移动） */}
+                {extremeTicks.map(t => {
+                  const text = formatPrice(t.price, stock.name);
+                  return (
+                    <text
+                      key={`ext-${t.kind}`}
+                      x={t.x}
+                      y={t.y}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fontSize={EXT_FONT_SZ}
+                      fontWeight={700}
+                      fill={EXT_COLOR}
+                      pointerEvents="none"
+                    >
+                      {text}
+                    </text>
                   );
                 })}
               </svg>
