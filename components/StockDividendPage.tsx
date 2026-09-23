@@ -17,6 +17,7 @@ import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, anal
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PriceStateTag, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
 import { InputGroup } from './InputGroup';
+import { useStepWheel } from '../hooks/useStepWheel';
 import { BacktestModal } from './BacktestModal';
 import PriceInfoPopover from './PriceInfoPopover';
 import SignalTagsFooter from './SignalTagsFooter';
@@ -620,9 +621,12 @@ const SIG_LABEL: Record<DailySignal['kind'], string> = {
 };
 
 
+// 股息率曲线周期调节的步长：图表区域滚轮与下方的输入框共用，保证手感一致
+const DIVIDEND_CHART_RANGE_STEP = 25;
+
 // 股息率曲线共享组件：详情弹窗与列表页“股息率”浮窗共用一套渲染逻辑，
 // 之后任一处的股息率曲线改动都会同时反映到另一处。
-function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges, period, rangeValue, offsetValue, onRangeChange, onOffsetChange }: {
+const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges, period, rangeValue, offsetValue, onRangeChange, onOffsetChange }: {
   klines: BollKline[];
   stock: StockEntry;
   fallbackDividend: number;
@@ -672,6 +676,19 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges, per
     try { v = localStorage.getItem('dividendPriceYAxisMode') || 'dynamic'; } catch { /* ignore */ }
     // 兼容旧的 'fixed' 值，映射为最接近的 'dynamic'
     return v === 'dynamic' || v === 'history' ? v : 'dynamic';
+  });
+
+  // 图表区域滚轮/触控板调节周期：与输入框等其它控件完全共用同一套 useStepWheel 机制
+  const chartWheelRef = useRef<HTMLDivElement>(null);
+  const rangeRef = useRef<number>(range);
+  useEffect(() => { rangeRef.current = range; }, [range]);
+  useStepWheel({
+    ref: chartWheelRef,
+    valueRef: rangeRef,
+    step: DIVIDEND_CHART_RANGE_STEP,
+    min: 5,
+    max: 500,
+    onChange: (next) => { updateRange(next); },
   });
 
   const currentKlines = klines;
@@ -739,7 +756,7 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges, per
           {priceAxisMode === 'dynamic' ? '区间价格' : '历史价格'}
         </button>
       </div>
-      <div className="h-[120px] w-full select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none">
+      <div ref={chartWheelRef} className="h-[120px] w-full select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 5, right: 5, left: 2, bottom: 0 }}>
             {yTicks.map((v, i) => (
@@ -839,32 +856,22 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges, per
             [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500
             [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-gray-500 [&::-moz-range-thumb]:border-0"
         />
-        <div className="flex items-center gap-0.5 shrink-0">
-          <button
-            type="button"
-            className="text-xs px-2.5 py-1 rounded-l bg-app-input text-app-subtext hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
-            disabled={options.indexOf(range) <= 0}
-            onClick={() => {
-              const idx = options.indexOf(range);
-              if (idx > 0) {
-                updateRange(options[idx - 1]);
+        <div className="w-24 shrink-0">
+          <InputGroup
+            value={range}
+            onChange={(v) => {
+              const n = Number(v);
+              if (!Number.isNaN(n)) {
+                updateRange(n);
                 updateOffset(0);
               }
             }}
-          >−</button>
-          <span className="text-xs px-2.5 py-1 bg-app-input text-app-subtext select-none">{range}</span>
-          <button
-            type="button"
-            className="text-xs px-2.5 py-1 rounded-r bg-app-input text-app-subtext hover:bg-app-hover/50 disabled:opacity-30 disabled:cursor-not-allowed"
-            disabled={options.indexOf(range) >= options.length - 1}
-            onClick={() => {
-              const idx = options.indexOf(range);
-              if (idx < options.length - 1) {
-                updateRange(options[idx + 1]);
-                updateOffset(0);
-              }
-            }}
-          >+</button>
+            step={DIVIDEND_CHART_RANGE_STEP}
+            min={options.length > 0 ? options[0] : 5}
+            max={options.length > 0 ? options[options.length - 1] : maxRange}
+            touchMode
+            className="text-sm !py-1"
+          />
         </div>
       </div>
       {(() => {
@@ -925,7 +932,7 @@ function DividendRateCurve({ klines, stock, fallbackDividend, title, ranges, per
       })()}
     </div>
   );
-}
+});
 
 // 支撑/压力位浮窗中的一行：plain 为纯文本行，cell 为带名称的表格行（名称可着色）
 type SrRow =

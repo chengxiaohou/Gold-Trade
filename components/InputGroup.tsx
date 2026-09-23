@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
+import { useStepWheel } from '../hooks/useStepWheel';
 
 interface InputGroupProps {
   label?: React.ReactNode;
@@ -47,37 +48,32 @@ export const InputGroup: React.FC<InputGroupProps> = ({
   const internalInputRef = useRef<HTMLInputElement>(null);
   const inputRef = externalInputRef || internalInputRef;
   // 用 ref 存储最新的 value，供事件监听器使用，避免 stale closure
-  const valueRef = useRef(value);
-  
+  const valueRef = useRef<number>(parseFloat(value.toString()) || 0);
   useEffect(() => {
-    valueRef.current = value;
+    valueRef.current = parseFloat(value.toString()) || 0;
   }, [value]);
-  
-  // 保存 onChange 的最新引用，避免 useEffect 依赖变化导致重置手势状态
-  const onChangeRef = useRef(onChange);
-  useEffect(() => {
-    onChangeRef.current = onChange;
-  }, [onChange]);
-  
+
   // 检测是否为 iOS 设备
   const isIOS = useMemo(() => {
     return typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent);
   }, []);
 
-  const updateValue = (delta: number) => {
-    // 这里使用 props 传入的 value 或者 ref 都可以，但 touch 逻辑中需要用 ref
-    const currentVal = parseFloat(valueRef.current.toString()) || 0;
-    const mult = Math.pow(10, precision);
-    let nextVal = Math.round((currentVal + delta) * mult) / mult;
-    
-    if (min !== undefined) nextVal = Math.max(min, nextVal);
-    if (max !== undefined) nextVal = Math.min(max, nextVal);
-    
-    const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(precision);
-    onChange(nextStr);
-  };
+  // 统一滚轮/触控板/触屏拖拽调节机制（与图表等其它控件完全共用同一套实现）
+  const apply = useStepWheel({
+    ref: inputRef,
+    valueRef,
+    step,
+    min,
+    max,
+    precision,
+    touch: touchMode,
+    disabled: () => isIOS && !touchMode,
+    onChange: (nextNum) => {
+      onChange(Number.isInteger(nextNum) ? nextNum.toString() : nextNum.toFixed(precision));
+    },
+  });
 
-  // 生成 iOS 滚轮选项：当前值前后各 50 个步长
+  // iOS 滚轮选项：当前值前后各 50 个步长
   const pickerOptions = useMemo(() => {
     if (!isIOS || !isQuantity) return [];
     const current = parseFloat(value.toString()) || 0;
@@ -96,98 +92,6 @@ export const InputGroup: React.FC<InputGroupProps> = ({
     }
     return Array.from(new Set(options)).sort((a, b) => a - b);
   }, [isIOS, isQuantity, value, step]);
-
-  useEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-
-    // 滚轮/触控板累加器：累积 deltaY，达到阈值才步进，避免触控板连续 tick 使数值跳太快
-    let accumulator = 0;
-    const WHEEL_THRESHOLD = 40; // 像素阈值，数值每累积这个量才调整一次（步长）
-
-    const handleWheel = (e: WheelEvent) => {
-      // 如果是 iOS 且没开 TouchMode，使用原生滚轮或者 picker，不拦截
-      // 如果开了 TouchMode，或者是在桌面端，拦截滚轮
-      if (isIOS && !touchMode) return;
-      
-      e.preventDefault();
-      // 全局反转：deltaY>0 视为"上推/双指下滚" → 数值增大；deltaY<0 → 数值减小
-      accumulator += e.deltaY;
-      const direction = accumulator > 0 ? 1 : -1; // 正值(下滚)→增大；负值(上滚)→减小
-      const steps = Math.floor(Math.abs(accumulator) / WHEEL_THRESHOLD);
-      if (steps > 0) {
-        updateValue(direction * step * steps);
-        accumulator -= direction * steps * WHEEL_THRESHOLD;
-      }
-    };
-
-    el.addEventListener('wheel', handleWheel, { passive: false });
-    return () => el.removeEventListener('wheel', handleWheel);
-  }, [step, onChange, isIOS, touchMode]);
-
-  // Touch Mode Logic
-  useEffect(() => {
-    if (!touchMode || !inputRef.current) return;
-    
-    const el = inputRef.current;
-    let lastY = 0;
-    const threshold = 15; // 灵敏度阈值 (px)
-    let accumulator = 0;
-
-    const handleTouchStart = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      lastY = e.touches[0].clientY;
-      accumulator = 0;
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      
-      // 阻止默认滚动行为，实现“悬停”调节
-      if (e.cancelable) e.preventDefault();
-      
-      const currentY = e.touches[0].clientY;
-      // 计算偏移：上次位置 - 当前位置
-      // 向上滑 (currentY 变小) -> deltaY > 0 -> 增加数值
-      const deltaY = lastY - currentY; 
-      
-      accumulator += deltaY;
-      
-      const steps = Math.floor(Math.abs(accumulator) / threshold);
-      
-      if (steps > 0) {
-         const direction = accumulator > 0 ? 1 : -1;
-         
-         // 直接在 Effect 内部计算，不依赖外部不稳定的 updateValue/onChange
-         const currentVal = parseFloat(valueRef.current.toString()) || 0;
-         const changeAmount = direction * step * steps;
-         const mult = Math.pow(10, precision);
-         let nextVal = Math.round((currentVal + changeAmount) * mult) / mult;
-         
-         if (min !== undefined) nextVal = Math.max(min, nextVal);
-         if (max !== undefined) nextVal = Math.min(max, nextVal);
-         
-         const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(precision);
-         
-         // 使用 ref 调用 onChange，不作为依赖项
-         onChangeRef.current(nextStr);
-         
-         // 减去已消耗的累积量
-         accumulator -= (direction * steps * threshold);
-      }
-      
-      lastY = currentY;
-    };
-
-    // 使用 passive: false 才能调用 preventDefault
-    el.addEventListener('touchstart', handleTouchStart, { passive: false });
-    el.addEventListener('touchmove', handleTouchMove, { passive: false });
-    
-    return () => {
-      el.removeEventListener('touchstart', handleTouchStart);
-      el.removeEventListener('touchmove', handleTouchMove);
-    };
-  }, [touchMode, step]); // 移除 onChange 依赖，防止重新渲染导致 lastY 重置
 
   return (
     <div className="flex flex-col space-y-1.5 w-full group/input relative">
@@ -260,7 +164,7 @@ export const InputGroup: React.FC<InputGroupProps> = ({
              <div className="flex flex-col justify-center gap-0.5 w-6 opacity-60 group-hover/input:opacity-100 transition-opacity">
                 <button 
                   type="button"
-                  onClick={() => updateValue(step)}
+                  onClick={() => apply(step)}
                   className="flex-1 flex items-center justify-center hover:bg-brand-yellow/20 rounded-sm text-app-subtext hover:text-brand-yellow transition-colors"
                   tabIndex={-1}
                 >
@@ -268,7 +172,7 @@ export const InputGroup: React.FC<InputGroupProps> = ({
                 </button>
                 <button 
                   type="button"
-                  onClick={() => updateValue(-step)}
+                  onClick={() => apply(-step)}
                   className="flex-1 flex items-center justify-center hover:bg-brand-yellow/20 rounded-sm text-app-subtext hover:text-brand-yellow transition-colors"
                   tabIndex={-1}
                 >
