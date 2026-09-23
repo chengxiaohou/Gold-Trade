@@ -3003,6 +3003,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setTradeInfoStock(null);
     setTradeInfoSettled(false);
     setEditingTradeId(null);
+    setAddTradeNote('' as string);
     setTradeBodyMaxH(null);
   }, []);
 
@@ -5615,6 +5616,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   type="text"
                   value={addTradeNote}
                   onChange={(e) => setAddTradeNote(e.target.value)}
+                  onFocus={() => {
+                    // 备注为空时，首次点击聚焦默认填入"网格{股息率}"，方便后继续编辑
+                    if (!addTradeNote) {
+                      const r = getDividendRate(s);
+                      if (r > 0) setAddTradeNote(`网格${String(parseFloat(r.toFixed(2)))}`);
+                    }
+                  }}
                   onKeyDown={(e) => { if (e.key === 'Enter') { editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending'); } }}
                   enterKeyHint="done"
                   placeholder={addTradeSide === 'buy' ? buyOrderPlaceholder : sellOrderPlaceholder}

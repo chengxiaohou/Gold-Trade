@@ -39,7 +39,8 @@ export function toggleTradeStatus(stock: StockEntry, tradeId: string, now: numbe
       realizedPnL = cost > 0 ? (trade.price - cost) * trade.shares : 0;
       if (shares === 0) cost = 0;
     }
-    updatedTrade = { ...trade, status: 'filled', filledAt: now, realizedPnL };
+    // 标记成交时把时间更改为成交这一刻（createdAt 是记录行展示的时间字段）
+    updatedTrade = { ...trade, status: 'filled', createdAt: now, filledAt: now, realizedPnL };
   } else {
     // 取消成交（反选）：回退持仓
     if (trade.side === 'buy') {
