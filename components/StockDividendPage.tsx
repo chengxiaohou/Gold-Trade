@@ -1591,6 +1591,60 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     resetMktSel();
   };
 
+  // 股票名称文字长按：打开公告链接（点一下仍是进回测，长按才触发链接）
+  const nameLongPressTimerRef = useRef<number | null>(null);
+  const nameLongPressFiredRef = useRef(false);
+
+  // 行编辑（名称/链接）快照：进入编辑态时记录原始值，ESC 取消时还原，做到"不做任何修改"
+  const editSnapshotRef = useRef<{ id: string; name: string; nickname?: string; link?: string } | null>(null);
+
+  const beginRowEdit = (stock: StockEntry) => {
+    editSnapshotRef.current = { id: stock.id, name: stock.name, nickname: stock.nickname, link: stock.link };
+    setEditingId(stock.id);
+  };
+
+  const cancelRowEdit = () => {
+    const snap = editSnapshotRef.current;
+    if (snap && editingId === snap.id) {
+      onStocksChange(stocks.map(s => (s.id === snap!.id ? { ...s, name: snap!.name, nickname: snap!.nickname, link: snap!.link } : s)));
+    }
+    editSnapshotRef.current = null;
+    setEditingId(null);
+  };
+  const cancelRowEditRef = useRef(cancelRowEdit);
+  cancelRowEditRef.current = cancelRowEdit;
+
+  const startNameLongPress = (stock: StockEntry) => {
+    if (nameLongPressTimerRef.current !== null) return;
+    nameLongPressTimerRef.current = window.setTimeout(() => {
+      nameLongPressTimerRef.current = null;
+      nameLongPressFiredRef.current = true;
+      const cur = stocks.find(s => s.id === stock.id) || stock;
+      if (cur.link) {
+        const finalUrl = buildAmihexinUrl(cur.link);
+        if (finalUrl) openScheme(finalUrl);
+      } else {
+        // 没有链接：长按进入该行编辑态（可补链接/改名称）
+        beginRowEdit(cur);
+      }
+    }, 600);
+  };
+
+  const stopNameLongPress = () => {
+    if (nameLongPressTimerRef.current !== null) {
+      clearTimeout(nameLongPressTimerRef.current);
+      nameLongPressTimerRef.current = null;
+    }
+  };
+
+  // 长按触发后，阻止随后的 click 冒泡到单元格，避免同时进入回测
+  const guardNameLongPressClick = (e: React.MouseEvent) => {
+    if (nameLongPressFiredRef.current) {
+      nameLongPressFiredRef.current = false;
+      e.stopPropagation();
+    }
+  };
+
   // 精确单击股票名称文字 → 直接打开回测页面（不触发标签弹窗）
   const handleStockNameClick = (e: React.MouseEvent, stock: StockEntry) => {
     if (editingId === stock.id || draggedId) return;
@@ -3091,6 +3145,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      // 行编辑态（名称/链接）：ESC 取消并还原原始值，不做任何修改
+      cancelRowEditRef.current();
       // 价格技术指标浮窗
       priceInfoHoveredRef.current = false;
       priceInfoActiveIdRef.current = undefined;
@@ -3842,10 +3898,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </td>
                   {(cols.includes('code') || cols.includes('name')) && <td 
                     className={`px-1 py-1.5 align-middle sticky left-[36px] z-10 ${hasOpenPopup(stock.id) ? 'bg-app-hover' : 'bg-app-card'} ${draggedId ? '' : 'group-hover:bg-app-hover'} cursor-pointer border-r border-app-border transition-colors ${draggedId ? '' : 'hover:bg-app-input/50'} ${draggedId === stock.id ? 'opacity-50' : ''}`}
-                    onMouseEnter={(e) => handleMktInfoEnter(e, stock)}
-                    onMouseLeave={handleMktInfoLeave}
-                    onTouchStart={handleMktInfoTouchStart}
-                    onClick={(e) => handleMktInfoClick(e, stock)}
+                    onClick={(e) => handleStockNameClick(e, stock)}
                   >
                     <div className="flex items-center justify-center gap-1 w-full">
                       {editingId === stock.id ? (
@@ -3881,7 +3934,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         </div>
                       ) : nameSubMode === 'tags' ? (
                         <div className="relative flex flex-col items-center justify-center">
-                          <span onClick={(e) => handleStockNameClick(e, stock)} className={`text-[11px] font-bold leading-none cursor-pointer hover:underline underline-offset-2 ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
+                          <span
+                            onPointerDown={() => startNameLongPress(stock)}
+                            onPointerUp={stopNameLongPress}
+                            onPointerLeave={stopNameLongPress}
+                            onPointerCancel={stopNameLongPress}
+                            onClick={guardNameLongPressClick}
+                            className={`text-[11px] font-bold leading-none cursor-pointer ${stock.link ? 'hover:underline underline-offset-2' : ''} ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
                             const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
                             const n = raw.replace(/\s/g, '');
                             return n.length > 5 ? n.slice(0, 5) + '…' : n;
@@ -3900,7 +3959,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         </div>
                       ) : (
                         <div className="relative flex items-center justify-center h-8 whitespace-nowrap">
-                          <span onClick={(e) => handleStockNameClick(e, stock)} className={`text-[11px] font-bold leading-none cursor-pointer hover:underline underline-offset-2 ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
+                          <span
+                            onPointerDown={() => startNameLongPress(stock)}
+                            onPointerUp={stopNameLongPress}
+                            onPointerLeave={stopNameLongPress}
+                            onPointerCancel={stopNameLongPress}
+                            onClick={guardNameLongPressClick}
+                            className={`text-[11px] font-bold leading-none cursor-pointer ${stock.link ? 'hover:underline underline-offset-2' : ''} ${getDividendRateColor(getDividendRate(stock), ranges)}`}>{(() => {
                             const raw = showNickname ? (getNickname(stock.code, stock.nickname) || stock.name) : stock.name;
                             const n = raw.replace(/\s/g, '');
                             return n.length > 5 ? n.slice(0, 5) + '…' : n;
@@ -3939,10 +4004,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </div>
                   </td>}
                   {cols.includes('price') && <td
-                    onMouseEnter={(e) => handlePriceInfoEnter(e, stock)}
-                    onMouseLeave={handlePriceInfoLeave}
-                    onTouchStart={handlePriceInfoTouchStart}
-                    onClick={(e) => handlePriceInfoClick(e, stock)}
+                    onMouseEnter={(e) => handleMktInfoEnter(e, stock)}
+                    onMouseLeave={handleMktInfoLeave}
+                    onTouchStart={handleMktInfoTouchStart}
+                    onClick={(e) => handleMktInfoClick(e, stock)}
                     className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
@@ -4236,7 +4301,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         </button>
                       ) : (
                         <button
-                          onClick={() => setEditingId(stock.id)}
+                          onClick={() => beginRowEdit(stock)}
                           className="p-0.5 hover:bg-app-input rounded transition-colors"
                           title="编辑"
                         >
