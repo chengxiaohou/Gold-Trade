@@ -593,6 +593,10 @@ export function pickDegradedBoll(
   return null;
 }
 
+/**
+ * 数据中心内部取数。仅 priceBureau（价格数据部）与本模块测试可调用；
+ * 组件/页面一律走 priceBureau.fetchAndAbsorb/ensureBatch，不得直接 import 本方法触网。
+ */
 export async function fetchBollData(
   stockCode: string,
   period: BollPeriod = 'daily',
@@ -976,6 +980,8 @@ export interface TodayBarInput {
   price?: number;
   volume?: number;
 }
+/** 数据中心内部合并逻辑。仅 priceBureau（价格数据部）与本模块测试可调用；
+ *  组件/页面一律走 priceBureau.getTodayDailyKlines/getTodayBar，勿直接 import。 */
 export function mergeTodayBarToKlines(
   klines: BollKline[],
   rt: TodayBarInput,

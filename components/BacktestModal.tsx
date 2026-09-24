@@ -4,11 +4,8 @@ import { X, Plus, GripHorizontal, Play, Pin, Tag, Eye, EyeOff } from 'lucide-rea
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, MouseEventParams, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams, UserTagRule } from '../types';
-import { fetchBollData } from '../services/bollService';
 import type { BollKline } from '../services/bollService';
-import { mergeTodayBarToKlines } from '../services/bollService';
 import { priceBureau } from '../services/priceBureau';
-import { getMarketStatus } from '../services/cacheService';
 import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL } from '../services/backtestEngine';
 import { ENV_TAG_CATALOG, dividendRateForDay } from '../services/tagAnalyzers';
 import { calcIndicators, formatPrice, type IndicatorResult } from '../services/indicators';
@@ -529,19 +526,18 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   }, []);
 
   // 加载真实日线K线数据
-  // ⚠️ 把"实时今日K线"并入日线基座（mergeTodayBarToKlines，与股息页同一来源）：日线接口本身带 120 分钟 BOLL 缓存，
-  // 若直接拿末根今日K线会滞后；用页面已刷新的实时现价(开/高/低/量/现价)覆盖今日K线，保证与页面显示一致。
+  // 统一走价格数据部：取数收敛进数据中心（同一周期同源），画图用"含未收盘"形态——
+  // 数据中心把自持实时现价(开/高/低/量/现价)合成进今日K线，保证与列表/浮窗显示一致。
   useEffect(() => {
     let cancelled = false;
     setChartLoading(true);
     setChartError(null);
     (async () => {
-      const res = await fetchBollData(stock.code, 'daily', 'qfq');
+      const res = await priceBureau.fetchAndAbsorb(stock.code, 'daily', 'tencent', 'qfq');
       if (cancelled) return;
-      priceBureau.absorb(stock.code, 'daily', res);
       if (res.data?.klines?.length) {
-        const base = [...res.data.klines].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-        const merged = mergeTodayBarToKlines(base, stock, getMarketStatus());
+        // 画图（live）：含未收盘，末根最新价与股息页同一基准
+        const merged = priceBureau.getTodayDailyKlines(stock.code, stock);
         const candles: ChartCandle[] = merged.map(k => ({ time: k.date, open: k.open, high: k.high, low: k.low, close: k.close })).sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
         setKlines(candles);
         setRawKlines(merged);
@@ -551,7 +547,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       setChartLoading(false);
     })();
     return () => { cancelled = true; };
-    // stock.priceUpdatedAt：页面刷新出新实时价时，用新实时价重新合并今日K线（基座仍命中日线缓存，今日K线实时更新）
+    // stock.priceUpdatedAt：页面刷新出新实时价时，重新合成今日K线（基座仍命中日线缓存，今日K线实时更新）
   }, [stock.code, stock.priceUpdatedAt, stock.price, stock.open, stock.high, stock.low, stock.volume]);
 
   // 回测买卖点：由真实回测结果的成交记录映射为覆盖层标签（图⇄表一一对应）
@@ -853,24 +849,26 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     prevRulesRef.current = curr;
   }, [strategy.rules]);
 
-  // 运行回测：按所选周期截取历史K线，用当前规则+初始资金调引擎，写入 result 驱动图表买卖点/成交/统计
+  // 运行回测：按所选周期截取历史K线，用当前规则+初始资金调引擎，写入 result 驱动图表买卖点/成交/统计。
+  // 策略用"仅收盘"形态（未收盘不掺实时价，防前视偏差）；图表展示仍是"含未收盘"（见加载 effect）。
   const runTest = () => {
-    if (!rawKlines) return;
+    const srcFull = priceBureau.getClosedKlines(stock.code, 'daily');
+    if (!srcFull || srcFull.length === 0) return;
     const preset = RANGE_PRESETS.find(r => r.key === strategy.rangePreset) ?? RANGE_PRESETS.find(r => r.key === 'y1')!; // 默认近一年
-    let src = rawKlines;
+    let src = srcFull;
     if (preset.key === 'custom') {
       // 自定义：用起止日期过滤闭区间
       const { rangeStart, rangeEnd } = strategy;
-      src = rawKlines.filter(k => (!rangeStart || k.date >= rangeStart) && (!rangeEnd || k.date <= rangeEnd));
+      src = srcFull.filter(k => (!rangeStart || k.date >= rangeStart) && (!rangeEnd || k.date <= rangeEnd));
     } else if (preset.days > 0) {
       // 自然日窗口：从最后一个交易日起往前推 N 个自然日，取落在该窗口内的交易日 K 线
-      const last = rawKlines[rawKlines.length - 1];
+      const last = srcFull[srcFull.length - 1];
       if (last) {
         const [y, m, d] = last.date.split('-').map(Number);
         const end = new Date(Date.UTC(y, m - 1, d));
         end.setUTCDate(end.getUTCDate() - preset.days);
         const cutoff = end.toISOString().slice(0, 10);
-        src = rawKlines.filter(k => k.date >= cutoff);
+        src = srcFull.filter(k => k.date >= cutoff);
       }
     }
     setResult(runBacktest(src, { ...strategy }, { cfg: tagParams, customTags, dividendByYear }));
