@@ -3757,7 +3757,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     className={`group border-t border-app-border ${draggedId ? '' : 'hover:bg-app-hover'} transition-colors ${dragOverId === stock.id ? 'bg-brand-yellow/10' : ''} ${hasOpenPopup(stock.id) ? 'bg-app-hover' : ''}`}
                   >
                   <td 
-                    className={`px-1 py-1.5 align-middle sticky left-0 z-20 bg-app-card ${draggedId ? '' : 'group-hover:bg-app-hover'} cursor-move touch-none border-r border-app-border transition-colors ${draggedId === stock.id ? 'opacity-50' : ''}`}
+                    className={`px-1 py-1.5 align-middle sticky left-0 z-20 ${hasOpenPopup(stock.id) ? 'bg-app-hover' : 'bg-app-card'} ${draggedId ? '' : 'group-hover:bg-app-hover'} cursor-move touch-none border-r border-app-border transition-colors ${draggedId === stock.id ? 'opacity-50' : ''}`}
                     draggable
                     onDragStart={(e) => handleDragStart(e, stock.id)}
                     onDragEnd={handleDragEnd}
@@ -3783,7 +3783,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </div>
                   </td>
                   {(cols.includes('code') || cols.includes('name')) && <td 
-                    className={`px-1 py-1.5 align-middle sticky left-[36px] z-10 bg-app-card ${draggedId ? '' : 'group-hover:bg-app-hover'} cursor-pointer border-r border-app-border transition-colors ${draggedId ? '' : 'hover:bg-app-input/50'} ${draggedId === stock.id ? 'opacity-50' : ''}`}
+                    className={`px-1 py-1.5 align-middle sticky left-[36px] z-10 ${hasOpenPopup(stock.id) ? 'bg-app-hover' : 'bg-app-card'} ${draggedId ? '' : 'group-hover:bg-app-hover'} cursor-pointer border-r border-app-border transition-colors ${draggedId ? '' : 'hover:bg-app-input/50'} ${draggedId === stock.id ? 'opacity-50' : ''}`}
                     onMouseEnter={(e) => handleMktInfoEnter(e, stock)}
                     onMouseLeave={handleMktInfoLeave}
                     onTouchStart={handleMktInfoTouchStart}
