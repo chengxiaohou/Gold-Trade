@@ -1720,18 +1720,11 @@ export default function App() {
       )}
 
       <div className="flex gap-1.5 lg:gap-2">
-          <button 
-              onClick={() => openSettings('general')}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-text transition-colors w-7 h-7"
-              title="设置"
-            >
-              <Settings size={16} />
-          </button>
           {stockCloudDirty && (
             <button 
               onClick={handleStockCloudUpload}
               disabled={isSyncing || uploadSuccess}
-              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-brand-yellow hover:bg-brand-yellow/10 hover:border-brand-yellow'} disabled:opacity-30`}
+              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-app-subtext hover:text-indigo-300 hover:border-indigo-500'} disabled:opacity-30`}
               title="上传到云端"
             >
               {isSyncing ? (
@@ -1743,6 +1736,34 @@ export default function App() {
               )}
             </button>
           )}
+          <button 
+              onClick={() => openSettings('general')}
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-300 hover:border-indigo-500 transition-colors w-7 h-7"
+              title="设置"
+            >
+              <Settings size={16} />
+          </button>
+          <button 
+              onClick={() => setIsAddingStock(true)}
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-300 hover:border-indigo-500 transition-colors w-7 h-7"
+              title="添加股票"
+            >
+              <Plus size={16} />
+          </button>
+          <button 
+              onClick={() => setStockResetSignal(s => s + 1)}
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-300 hover:border-indigo-500 transition-colors w-7 h-7"
+              title="重置数据"
+            >
+              <Trash2 size={16} />
+          </button>
+          <button
+              onClick={toggleTheme}
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-300 hover:border-indigo-500 transition-colors w-7 h-7"
+              title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+          >
+            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
           <button 
               onClick={() => requestCloudAction('download')}
               disabled={isDownloading || downloadSuccess || !!cloudConfirm}
@@ -1758,32 +1779,11 @@ export default function App() {
               )}
           </button>
           <button 
-              onClick={() => setIsAddingStock(true)}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-text transition-colors w-7 h-7"
-              title="添加股票"
-            >
-              <Plus size={16} />
-          </button>
-          <button 
-              onClick={() => setStockResetSignal(s => s + 1)}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-red-400 hover:border-red-400 transition-colors w-7 h-7"
-              title="重置数据"
-            >
-              <Trash2 size={16} />
-          </button>
-          <button
-              onClick={toggleTheme}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-brand-yellow hover:border-brand-yellow transition-colors w-7 h-7"
-              title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
-          >
-            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
-          <button 
               onClick={() => setShowRequestStats(prev => !prev)}
               className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-7 h-7 ${
                 showRequestStats 
                   ? 'border-indigo-500 text-indigo-400' 
-                  : 'border-app-border text-app-subtext hover:text-app-text hover:border-app-text'
+                  : 'border-app-border text-app-subtext hover:text-indigo-300 hover:border-indigo-500'
               }`}
               title={showRequestStats ? '隐藏请求统计' : '显示请求统计'}
             >
