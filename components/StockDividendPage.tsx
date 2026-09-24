@@ -5490,13 +5490,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const orderDivRate = orderPriceNum > 0 && orderDividend > 0 ? (orderDividend / orderPriceNum) * 100 : 0;
         const costDivRate = avgCost > 0 && orderDividend > 0 ? (orderDividend / avgCost) * 100 : 0;
         const divDiffValid = orderPriceNum > 0 && costDivRate > 0;
-        const divDiffPct = divDiffValid ? ((orderDivRate - costDivRate) / costDivRate) * 100 : 0;
+        // 差值 = 当前股息率 − 成本股息率（百分点），如 8.17% − 7.56% ≈ +0.61%
+        const divDiffPct = divDiffValid ? (orderDivRate - costDivRate) : 0;
         // 按成交顺序用移动加权成本重算每笔卖出的已实现盈亏（不依赖可能为 0 的存储 positionCost/realizedPnL）
         const recalcPnL = calcRealizedPnlMap(getTrades(s));
         const realizedPnl = recalcPnL.total;
         const totalCost = posShares * avgCost;
         const breakEven = posShares > 0 ? Math.max(0, (totalCost - realizedPnl) / posShares) : 0;
         const floatingPnl = marketPrice > 0 && posShares > 0 ? (marketPrice - avgCost) * posShares : 0;
+        // 盈亏金额展示：带正负号；末位两位小数都是 0 时省略小数，否则保留两位（先消除浮点误差）
+        const fmtPnl = (v: number): string => {
+          const abs = Math.abs(Math.round(v * 100) / 100);
+          const str = Number.isInteger(abs)
+            ? abs.toLocaleString('zh-CN')
+            : abs.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          return `${v >= 0 ? '+' : '-'}${str}`;
+        };
         // 当前持仓总金额（市值 = 持仓 × 现价）
         const totalValue = marketPrice > 0 ? posShares * marketPrice : 0;
         // 卖出数量上限：编辑模式下"视作未发生这笔交易"，回退其持仓影响后再限制（买入已回退则更严，卖出已回退则放宽）
@@ -5542,10 +5551,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <div className="px-3 py-3 space-y-3 bg-app-card overflow-y-auto custom-scrollbar" style={{ maxHeight: tradeBodyMaxH ?? undefined }}>
               {/* 当前持仓概要 */}
               <div className="border border-app-border rounded-lg divide-y divide-app-border bg-app-input/50">
-                <div className="px-2.5 pt-2 pb-1.5 flex items-center justify-center">
-                  <span className="text-[10px] uppercase font-bold text-app-subtext tracking-wider">当前持仓</span>
-                </div>
-              <div className="grid grid-cols-3 gap-2 px-2.5 pb-2 pt-1.5">
+                <div className="grid grid-cols-3 gap-2 px-2.5 pb-2 pt-1.5">
                     <div className="flex flex-col items-center gap-0.5">
                       <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">现价</span>
                       <span className={`font-mono font-bold ${marketPrice > 0 && posShares > 0 ? priceColor(marketPrice, avgCost) : 'text-app-text'}`}>{marketPrice > 0 ? fmtP(marketPrice) : '-'}</span>
@@ -5571,13 +5577,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   <div className="flex flex-col items-center gap-0.5">
                     <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">浮动盈亏</span>
                     <span className={`font-mono font-bold text-[11px] ${posShares > 0 && marketPrice > 0 ? (floatingPnl >= 0 ? 'text-brand-red' : 'text-brand-green') : 'text-app-subtext'}`}>
-                      {posShares > 0 && marketPrice > 0 ? `${floatingPnl >= 0 ? '+' : '-'}${Math.abs(floatingPnl).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
+                      {posShares > 0 && marketPrice > 0 ? fmtPnl(floatingPnl) : '-'}
                     </span>
                   </div>
                   <div className="flex flex-col items-center gap-0.5">
                     <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">实现盈亏</span>
                     <span className={`font-mono font-bold text-[11px] ${realizedPnl !== 0 ? (realizedPnl >= 0 ? 'text-brand-red' : 'text-brand-green') : 'text-app-subtext'}`}>
-                      {realizedPnl !== 0 ? `${realizedPnl >= 0 ? '+' : '-'}${Math.abs(realizedPnl).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
+                      {realizedPnl !== 0 ? fmtPnl(realizedPnl) : '-'}
                     </span>
                   </div>
                 </div>
@@ -5606,10 +5612,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
               {/* 挂单价 + 数量（复用黄金项目 InputGroup 步进输入，支持鼠标滚轮与触屏手势调节） */}
               <div className="grid grid-cols-2 gap-3">
-                <InputGroup label={<span className="inline-flex items-baseline gap-1">挂单价格{priceGapValid && <span className="text-app-subtext/60 font-normal">({priceGapPct > 0 ? '+' : ''}{priceGapPct.toFixed(2)}%)</span>}</span>} value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 0.001 : 0.01} min={0} precision={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 3 : 2} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
+                <InputGroup label={<span className="inline-flex items-baseline gap-1 translate-y-px">挂单价格{priceGapValid && <span className="text-app-subtext/60 font-normal">({priceGapPct > 0 ? '+' : ''}{priceGapPct.toFixed(2)}%)</span>}</span>} value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 0.001 : 0.01} min={0} precision={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 3 : 2} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
                 {/* 数量：卖出时以当前持仓为上限（静默截断） */}
                 <InputGroup
-                  label="数量(股)"
+                  label={<span className="translate-y-px">数量(股)</span>}
                   value={addTradeShares}
                   onChange={(v) => {
                     // 手输超上限时截断到可编辑上限（卖出方向，编辑模式视作未成交回退后）
@@ -5629,15 +5635,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               {/* 挂单预览：挂单金额 / 股息率差（距现价移到挂单价格 label 内）并列一行 */}
               <div className="grid grid-cols-2 gap-x-3 px-0.5 pt-0.5" style={{ marginTop: 2 }}>
                 <div className="flex items-center justify-start gap-1">
-                  <span className="text-[10px] font-medium text-app-subtext translate-y-px">挂单金额</span>
-                  <span className="font-mono font-bold text-[11px] text-app-subtext">
-                    ¥{orderAmountText}
+                  <span className="text-[10px] font-medium text-app-subtext translate-y-px">股息率</span>
+                  <span className="font-mono font-bold text-[10px] text-app-subtext">
+                    {orderDivRate > 0 ? orderDivRate.toFixed(2) : '-'}%{divDiffValid ? ` (${divDiffPct > 0 ? '+' : ''}${divDiffPct.toFixed(2)}%)` : ''}
                   </span>
                 </div>
                 <div className="flex items-center justify-start gap-1">
-                  <span className="text-[10px] font-medium text-app-subtext translate-y-px">股息率差</span>
-                  <span className="font-mono font-bold text-[10px] text-app-subtext">
-                    {divDiffValid ? `${divDiffPct > 0 ? '+' : ''}${divDiffPct.toFixed(2)}%` : '-'}
+                  <span className="text-[10px] font-medium text-app-subtext translate-y-px">挂单金额</span>
+                  <span className="font-mono font-bold text-[11px] text-app-subtext">
+                    ¥{orderAmountText}
                   </span>
                 </div>
               </div>
