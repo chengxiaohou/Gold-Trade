@@ -799,13 +799,16 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
   // 浮窗跟随：定位窗口（transform），并把指针 X 映射到最近 K 线点、直接改 textContent 填充真实数据。
   // 全程不 setState、不触发 React 重渲染，保证高频跟随。
   // clientX/clientY 由鼠标或触摸统一传入：鼠标走 onMouseMove，触屏走 onTouchStart/onTouchMove（手指移动即实时跟随，不等松开）。
-  const updateFloat = (clientX: number, clientY: number) => {
+  // 触屏(isTouch)偏移策略：X 距手指更远防遮挡、Y 让弹窗中心对准手指触碰点；鼠标保持默认 +12。
+  const updateFloat = (clientX: number, clientY: number, isTouch = false) => {
     const el = floatingElRef.current;
     if (!el) return;
-    let x = clientX + 12;
-    let y = clientY + 12;
-    if (x + FLOAT_W > window.innerWidth - 8) x = Math.max(8, clientX - FLOAT_W - 12);
-    if (y + FLOAT_H > window.innerHeight - 8) y = Math.max(8, clientY - FLOAT_H - 12);
+    const ox = isTouch ? 40 : 12;
+    const oy = isTouch ? -FLOAT_H / 2 : 12;
+    let x = clientX + ox;
+    let y = clientY + oy;
+    if (x + FLOAT_W > window.innerWidth - 8) x = Math.max(8, clientX - FLOAT_W - ox);
+    if (y + FLOAT_H > window.innerHeight - 8) y = Math.max(8, clientY - FLOAT_H - oy);
     el.style.transform = `translate(${x}px, ${y}px)`;
 
     const container = chartWheelRef.current;
@@ -845,7 +848,7 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
     const t = ts[0];
     if (!t) return;
     setFloatVisible(true);
-    updateFloat(t.clientX, t.clientY);
+    updateFloat(t.clientX, t.clientY, true);
   };
   const handleFloatLeave = () => setFloatVisible(false);
 
@@ -992,7 +995,7 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
         className={`pointer-events-none fixed left-0 top-0 z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden transition-opacity duration-100 ${floatVisible ? 'opacity-100' : 'opacity-0'}`}
         style={{ width: 105 }}
       >
-        <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center">
+        <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center">
           <span className="font-mono text-[10px] text-app-subtext" ref={floatDateRef} />
         </div>
         <div className="px-2.5 py-1.5 bg-app-card space-y-1">
@@ -1001,7 +1004,7 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
               <span className="font-mono text-[11px] text-slate-400" ref={floatPriceRef} />
             </div>
             <div className="flex items-baseline justify-between">
-              <span className="text-[10px] text-app-subtext whitespace-nowrap">股息率</span>
+              <span className="text-[10px] text-app-subtext whitespace-nowrap">股息</span>
               <span className="font-mono text-[11px] text-slate-400" ref={floatRateRef} />
             </div>
             <div className="flex items-baseline justify-between">
