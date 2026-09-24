@@ -802,6 +802,10 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
       const next = e.key === 'ArrowUp' ? range + DIVIDEND_CHART_RANGE_STEP : range - DIVIDEND_CHART_RANGE_STEP;
       updateRange(Math.min(hi, Math.max(lo, next)));
       updateOffset(0);
+    } else if (e.key === '/') {
+      e.preventDefault();
+      updateRange(250);
+      updateOffset(0);
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       e.preventDefault();
       const delta = Math.max(1, Math.round(maxOffset * 0.05));
@@ -843,7 +847,7 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
         onMouseLeave={handleFloatLeave}
       >
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 5, right: 5, left: 2, bottom: 0 }}>
+          <LineChart data={chartData} margin={{ top: 5, right: 10, left: 4, bottom: 0 }}>
             {yTicks.map((v, i) => (
               <ReferenceLine key={`grid-h-${i}`} y={v} stroke="rgba(148,163,184,0.15)" strokeDasharray="3 3" />
             ))}
@@ -864,14 +868,20 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
               }}
             />
             <YAxis
-              tick={{ fontSize: yAxisFontSize, fill: '#94a3b8' }}
+              tick={(tp: any) => {
+                const { y, payload } = tp;
+                return (
+                  <text x={0} y={y} dy={0.355} fontSize={yAxisFontSize} fill="#94a3b8" textAnchor="start">
+                    {`${(payload.value as number).toFixed(1)}%`}
+                  </text>
+                );
+              }}
               stroke="rgba(148,163,184,0.3)"
               tickLine={false}
               axisLine={false}
-              domain={[yTicks[0], yTicks[4]]}
+              domain={[yTicks[0] - (yTicks[4] - yTicks[0]) * 0.06, yTicks[4] + (yTicks[4] - yTicks[0]) * 0.06]}
               ticks={yTicks}
               width={30}
-              tickFormatter={(v: number) => `${v.toFixed(1)}%`}
             />
             <YAxis
               yAxisId="price"
@@ -5062,7 +5072,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       return (
                         <div className="h-[120px] w-full select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none">
                           <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={chartData} margin={{ top: 5, right: 5, left: 2, bottom: 0 }}>
+                            <LineChart data={chartData} margin={{ top: 5, right: 10, left: 4, bottom: 0 }}>
                               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
                               <XAxis
                                 dataKey="year"
