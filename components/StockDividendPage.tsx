@@ -3800,10 +3800,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           />}
                           {cols.includes('code') && <input
                             type="text"
-                            value={getDisplayCode(stock.code)}
-                            onChange={(e) => handleUpdateField(stock.id, 'code', e.target.value.toUpperCase())}
+                            value={stock.link || ''}
+                            onChange={(e) => handleUpdateField(stock.id, 'link', e.target.value)}
                             onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
                             enterKeyHint="done"
+                            placeholder="链接"
                             className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[9px] leading-tight font-mono text-app-text outline-none text-center"
                           />}
                         </div>
