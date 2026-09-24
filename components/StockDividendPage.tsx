@@ -702,6 +702,15 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
   const FLOAT_W = 105;
   const FLOAT_H = 92;
 
+  // 图表出现即全局监听方向键调节周期/平移（通过 ref 持最新闭包避免 stale 值）。
+  // 注册 effect 放在早退之前，符合 hooks 规则；目标在输入框/编辑区时跳过以免干扰输入。
+  const chartKeyRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  useEffect(() => {
+    const fn = (e: KeyboardEvent) => chartKeyRef.current(e);
+    window.addEventListener('keydown', fn);
+    return () => window.removeEventListener('keydown', fn);
+  }, []);
+
   const currentKlines = klines;
   if (!currentKlines || currentKlines.length === 0) return null;
   const maxRange = currentKlines.length;
@@ -782,6 +791,25 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
   };
   const handleFloatLeave = () => setFloatVisible(false);
 
+  // 方向键逻辑：上下改周期（与滚轮/输入框同一步长并钳制在有效区间），左右平移底部滑块（每次移动5%）
+  chartKeyRef.current = (e: KeyboardEvent) => {
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      const lo = options.length > 0 ? options[0] : 5;
+      const hi = options.length > 0 ? options[options.length - 1] : maxRange;
+      const next = e.key === 'ArrowUp' ? range + DIVIDEND_CHART_RANGE_STEP : range - DIVIDEND_CHART_RANGE_STEP;
+      updateRange(Math.min(hi, Math.max(lo, next)));
+      updateOffset(0);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      const delta = Math.max(1, Math.round(maxOffset * 0.05));
+      if (e.key === 'ArrowLeft') updateOffset(Math.min(maxOffset, offset + delta));
+      else updateOffset(Math.max(0, offset - delta));
+    }
+  };
+
   return (
     <div className="border-t border-app-border bg-app-card pt-2">
       <div className="flex items-center mb-1">
@@ -809,7 +837,7 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
       </div>
       <div
         ref={chartWheelRef}
-        className="h-[172px] w-full select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none"
+        className="h-[172px] w-full select-none"
         onMouseMove={handleFloatMove}
         onMouseEnter={() => setFloatVisible(true)}
         onMouseLeave={handleFloatLeave}
