@@ -3079,18 +3079,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return () => window.removeEventListener('keydown', onEsc);
   }, []);
 
-  // 判断某列是否正有弹窗显示（哪一列弹窗出现，哪一列保持高亮）
-  // 各列弹窗互斥（悬停/固定有全局守卫），从已有 popup state 派生即可，无需额外状态。
-  const isActiveCol = (col: 'name' | 'dividendRate' | 'price' | 'changePercent' | 'boll' | 'position' | 'trade', stockId: string): boolean => {
-    if (col === 'name') return mktInfoStock?.id === stockId;
-    if (col === 'dividendRate') return divRateInfoStock?.id === stockId;
-    if (col === 'price') return priceInfoStock?.id === stockId;
-    if (col === 'changePercent') return !!(listSrPreviewText && listSrStock?.id === stockId);
-    if (col === 'boll') return showRatesId === stockId;
-    if (col === 'position') return positionInfoStock?.id === stockId;
-    if (col === 'trade') return tradeInfoStock?.id === stockId;
-    return false;
-  };
+  // 判断某行是否正有弹窗显示：只要该行任一列的弹窗出现，整行就保持高亮
+  // （哪一列弹窗弹出来，该行高亮就一直保持，鼠标移走也不消失）。
+  const hasOpenPopup = (stockId: string): boolean =>
+    mktInfoStock?.id === stockId ||
+    divRateInfoStock?.id === stockId ||
+    priceInfoStock?.id === stockId ||
+    !!(listSrPreviewText && listSrStock?.id === stockId) ||
+    showRatesId === stockId ||
+    positionInfoStock?.id === stockId ||
+    tradeInfoStock?.id === stockId;
 
   // 交易浮窗可拖拽（拖画画头部）——参考黄金项目 EditBubble，改用 window 级指针监听，
   // 不依赖 pointer capture，避免捕获残留导致拖拽后点击空白无法关闭
@@ -3756,7 +3754,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onDragOver={(e) => handleDragOver(e, stock.id)}
                     onDragLeave={handleDragLeave}
                     onDrop={(e) => handleDrop(e, stock.id)}
-                    className={`group border-t border-app-border ${draggedId ? '' : 'hover:bg-app-hover'} transition-colors ${dragOverId === stock.id ? 'bg-brand-yellow/10' : ''}`}
+                    className={`group border-t border-app-border ${draggedId ? '' : 'hover:bg-app-hover'} transition-colors ${dragOverId === stock.id ? 'bg-brand-yellow/10' : ''} ${hasOpenPopup(stock.id) ? 'bg-app-hover' : ''}`}
                   >
                   <td 
                     className={`px-1 py-1.5 align-middle sticky left-0 z-20 bg-app-card ${draggedId ? '' : 'group-hover:bg-app-hover'} cursor-move touch-none border-r border-app-border transition-colors ${draggedId === stock.id ? 'opacity-50' : ''}`}
@@ -3785,7 +3783,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </div>
                   </td>
                   {(cols.includes('code') || cols.includes('name')) && <td 
-                    className={`px-1 py-1.5 align-middle sticky left-[36px] z-10 ${isActiveCol('name', stock.id) ? 'bg-indigo-500/10' : 'bg-app-card'} ${draggedId ? '' : 'group-hover:bg-app-hover'} cursor-pointer border-r border-app-border transition-colors ${draggedId ? '' : 'hover:bg-app-input/50'} ${draggedId === stock.id ? 'opacity-50' : ''}`}
+                    className={`px-1 py-1.5 align-middle sticky left-[36px] z-10 bg-app-card ${draggedId ? '' : 'group-hover:bg-app-hover'} cursor-pointer border-r border-app-border transition-colors ${draggedId ? '' : 'hover:bg-app-input/50'} ${draggedId === stock.id ? 'opacity-50' : ''}`}
                     onMouseEnter={(e) => handleMktInfoEnter(e, stock)}
                     onMouseLeave={handleMktInfoLeave}
                     onTouchStart={handleMktInfoTouchStart}
@@ -3858,7 +3856,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onMouseLeave={handleDivRateInfoLeave}
                     onTouchStart={handleDivRateInfoTouchStart}
                     onClick={(e) => handleDivRateInfoClick(e, stock)}
-                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors ${isActiveCol('dividendRate', stock.id) ? 'bg-indigo-500/10' : ''}${draggedId ? '' : ' hover:bg-app-input/50'}`}
+                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
                     <div className="flex flex-col items-center leading-none gap-0.5">
@@ -3886,7 +3884,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onMouseLeave={handlePriceInfoLeave}
                     onTouchStart={handlePriceInfoTouchStart}
                     onClick={(e) => handlePriceInfoClick(e, stock)}
-                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors ${isActiveCol('price', stock.id) ? 'bg-indigo-500/10' : ''}${draggedId ? '' : ' hover:bg-app-input/50'}`}
+                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
                     <div className="flex items-center justify-center gap-0.5">
@@ -3903,7 +3901,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onMouseLeave={() => handleListSrHoverLeave()}
                     onTouchStart={handleListSrTouchStart}
                     onClick={(e) => handleListSrClick(e, stock, true)}
-                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors ${isActiveCol('changePercent', stock.id) ? 'bg-indigo-500/10' : ''}${draggedId ? '' : ' hover:bg-app-input/50'}`}
+                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
                     <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
@@ -3928,7 +3926,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       // 上轨+下箭头 或 下轨+上箭头 → 箭头放左边避免反直觉
                       const isCounterArrow = pos && ((pos.band === 'upper' && pos.percent < 0) || (pos.band === 'lower' && pos.percent >= 0));
                       return (
-                        <td key={key} className={`px-1 py-1.5 text-center cursor-pointer ${isActiveCol('boll', stock.id) ? 'bg-indigo-500/10' : ''} ${draggedId ? '' : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
+                        <td key={key} className={`px-1 py-1.5 text-center cursor-pointer ${draggedId ? '' : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             const rect = e.currentTarget.getBoundingClientRect();
@@ -3996,7 +3994,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     // 子列1：恒常展示股息率
                     const col1 = (
                       <td
-                        className={`w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer ${isActiveCol('position', stock.id) ? 'bg-indigo-500/10' : ''}`}
+                        className="w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
                         onMouseLeave={handlePositionInfoLeave}
                         onTouchStart={handlePositionInfoTouchStart}
@@ -4015,7 +4013,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     // 子列2：恒常展示仓位（总金额 + 份额 + 仓位占比）
                     const colHold = (
                       <td
-                        className={`w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer ${isActiveCol('position', stock.id) ? 'bg-indigo-500/10' : ''}`}
+                        className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
                         onMouseLeave={handlePositionInfoLeave}
                         onTouchStart={handlePositionInfoTouchStart}
@@ -4035,7 +4033,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     // 子列3：固定展示成本
                     const col2 = (
                       <td
-                        className={`w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer ${isActiveCol('position', stock.id) ? 'bg-indigo-500/10' : ''}`}
+                        className="w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
                         onMouseLeave={handlePositionInfoLeave}
                         onTouchStart={handlePositionInfoTouchStart}
@@ -4053,7 +4051,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     );
                     const col3 = (
                       <td
-                        className={`w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors ${isActiveCol('trade', stock.id) ? 'bg-indigo-500/10' : ''}`}
+                        className="w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
                         onMouseEnter={(e) => { if (editingId !== stock.id) handleTradeSimpleEnter(e, stock); }}
                         onMouseLeave={handleTradeSimpleLeave}
                         onTouchStart={handleTradeTouchStart}
