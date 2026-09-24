@@ -3079,6 +3079,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return () => window.removeEventListener('keydown', onEsc);
   }, []);
 
+  // 判断某列是否正有弹窗显示（哪一列弹窗出现，哪一列保持高亮）
+  // 各列弹窗互斥（悬停/固定有全局守卫），从已有 popup state 派生即可，无需额外状态。
+  const isActiveCol = (col: 'name' | 'dividendRate' | 'price' | 'changePercent' | 'boll' | 'position' | 'trade', stockId: string): boolean => {
+    if (col === 'name') return mktInfoStock?.id === stockId;
+    if (col === 'dividendRate') return divRateInfoStock?.id === stockId;
+    if (col === 'price') return priceInfoStock?.id === stockId;
+    if (col === 'changePercent') return !!(listSrPreviewText && listSrStock?.id === stockId);
+    if (col === 'boll') return showRatesId === stockId;
+    if (col === 'position') return positionInfoStock?.id === stockId;
+    if (col === 'trade') return tradeInfoStock?.id === stockId;
+    return false;
+  };
+
   // 交易浮窗可拖拽（拖画画头部）——参考黄金项目 EditBubble，改用 window 级指针监听，
   // 不依赖 pointer capture，避免捕获残留导致拖拽后点击空白无法关闭
   const tradeDragOffset = useRef({ x: 0, y: 0 });
@@ -3772,7 +3785,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </div>
                   </td>
                   {(cols.includes('code') || cols.includes('name')) && <td 
-                    className={`px-1 py-1.5 align-middle sticky left-[36px] z-10 bg-app-card ${draggedId ? '' : 'group-hover:bg-app-hover'} cursor-pointer border-r border-app-border transition-colors ${draggedId ? '' : 'hover:bg-app-input/50'} ${draggedId === stock.id ? 'opacity-50' : ''}`}
+                    className={`px-1 py-1.5 align-middle sticky left-[36px] z-10 ${isActiveCol('name', stock.id) ? 'bg-indigo-500/10' : 'bg-app-card'} ${draggedId ? '' : 'group-hover:bg-app-hover'} cursor-pointer border-r border-app-border transition-colors ${draggedId ? '' : 'hover:bg-app-input/50'} ${draggedId === stock.id ? 'opacity-50' : ''}`}
                     onMouseEnter={(e) => handleMktInfoEnter(e, stock)}
                     onMouseLeave={handleMktInfoLeave}
                     onTouchStart={handleMktInfoTouchStart}
@@ -3845,7 +3858,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onMouseLeave={handleDivRateInfoLeave}
                     onTouchStart={handleDivRateInfoTouchStart}
                     onClick={(e) => handleDivRateInfoClick(e, stock)}
-                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
+                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors ${isActiveCol('dividendRate', stock.id) ? 'bg-indigo-500/10' : ''}${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
                     <div className="flex flex-col items-center leading-none gap-0.5">
@@ -3873,7 +3886,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onMouseLeave={handlePriceInfoLeave}
                     onTouchStart={handlePriceInfoTouchStart}
                     onClick={(e) => handlePriceInfoClick(e, stock)}
-                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
+                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors ${isActiveCol('price', stock.id) ? 'bg-indigo-500/10' : ''}${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
                     <div className="flex items-center justify-center gap-0.5">
@@ -3890,7 +3903,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onMouseLeave={() => handleListSrHoverLeave()}
                     onTouchStart={handleListSrTouchStart}
                     onClick={(e) => handleListSrClick(e, stock, true)}
-                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
+                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors ${isActiveCol('changePercent', stock.id) ? 'bg-indigo-500/10' : ''}${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
                     <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
@@ -3915,7 +3928,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       // 上轨+下箭头 或 下轨+上箭头 → 箭头放左边避免反直觉
                       const isCounterArrow = pos && ((pos.band === 'upper' && pos.percent < 0) || (pos.band === 'lower' && pos.percent >= 0));
                       return (
-                        <td key={key} className={`px-1 py-1.5 text-center cursor-pointer ${draggedId ? '' : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
+                        <td key={key} className={`px-1 py-1.5 text-center cursor-pointer ${isActiveCol('boll', stock.id) ? 'bg-indigo-500/10' : ''} ${draggedId ? '' : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             const rect = e.currentTarget.getBoundingClientRect();
@@ -3983,7 +3996,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     // 子列1：恒常展示股息率
                     const col1 = (
                       <td
-                        className="w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
+                        className={`w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer ${isActiveCol('position', stock.id) ? 'bg-indigo-500/10' : ''}`}
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
                         onMouseLeave={handlePositionInfoLeave}
                         onTouchStart={handlePositionInfoTouchStart}
@@ -4002,7 +4015,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     // 子列2：恒常展示仓位（总金额 + 份额 + 仓位占比）
                     const colHold = (
                       <td
-                        className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
+                        className={`w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer ${isActiveCol('position', stock.id) ? 'bg-indigo-500/10' : ''}`}
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
                         onMouseLeave={handlePositionInfoLeave}
                         onTouchStart={handlePositionInfoTouchStart}
@@ -4022,7 +4035,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     // 子列3：固定展示成本
                     const col2 = (
                       <td
-                        className="w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
+                        className={`w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer ${isActiveCol('position', stock.id) ? 'bg-indigo-500/10' : ''}`}
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
                         onMouseLeave={handlePositionInfoLeave}
                         onTouchStart={handlePositionInfoTouchStart}
@@ -4040,7 +4053,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     );
                     const col3 = (
                       <td
-                        className="w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
+                        className={`w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors ${isActiveCol('trade', stock.id) ? 'bg-indigo-500/10' : ''}`}
                         onMouseEnter={(e) => { if (editingId !== stock.id) handleTradeSimpleEnter(e, stock); }}
                         onMouseLeave={handleTradeSimpleLeave}
                         onTouchStart={handleTradeTouchStart}
@@ -5758,21 +5771,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         // 收盘价着色：对照前一交易日，当日收盘涨红、跌绿
         const kIdx = new Map<string, number>();
         if (klines) klines.forEach((k, i) => kIdx.set(k.date, i));
-        // 近10日数值列：收盘/现价 + 最高价(▲) + 最低价(▼) + 当日涨跌幅(在最末)
-        // 红绿着色统一参考"前一交易日收盘价"：现价、最高价、最低价各自与该参考价比较（高于红、低于绿、相等灰），▲▼ 跟随各自价格颜色
+        // 近10日数值列：当日涨跌幅 + 最高价(▲) + 最低价(▼)；收盘价移到下一行与标签同行靠左
+        // 红绿着色统一参考"前一交易日收盘价"：最高价、最低价各自与该参考价比较（高于红、低于绿、相等灰），▲▼ 跟随各自价格颜色；涨跌幅按涨跌红绿
         const priceCol = (date: string, closeVal?: number) => {
           const i = kIdx.get(date);
           if (i == null || !klines) return null;
           const k = klines[i];
           const c = closeVal ?? k.close;
           const p = klines[i - 1]?.close;
+          const pct = p != null && p > 0 ? ((c - p) / p) * 100 : null;
+          const pctCls = pct != null ? (pct > 0 ? 'text-red-500' : pct < 0 ? 'text-green-500' : 'text-app-rowtext') : 'text-app-rowtext';
           const col = (v: number) => (p != null ? (v > p ? 'text-red-500' : v < p ? 'text-green-500' : 'text-app-rowtext') : 'text-app-rowtext');
-          const cCls = col(c);
           const hCls = col(k.high);
           const lCls = col(k.low);
           return (
             <span className="flex items-center gap-1.5 shrink-0">
-              <span className={`text-[10px] font-mono font-bold shrink-0 w-[30px] text-right ${cCls}`}>{fp(c)}</span>
+              <span className={`text-[10px] font-mono font-bold shrink-0 w-[30px] text-right ${pctCls}`}>{pct != null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : ''}</span>
               <span className="flex items-center shrink-0">
                 <span className={`text-[10px] font-mono font-bold shrink-0 w-[30px] text-right ${hCls}`}>{fp(k.high)}</span>
                 <span className={`text-[10px] leading-none shrink-0 ${hCls}`}>↑</span>
@@ -5891,27 +5905,27 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               // 底部企稳已拆成 量能5档 + 价格态 两个原子 chip，由 getDayTagSet 提供，无需追加独立企稳 chip
               // 最新收盘日：价格列显示缓存现价（红涨绿跌），其余日期显示当日收盘
               const latestDate = klines && klines.length ? klines[klines.length - 1].date : '';
-              // 当日涨跌幅独立一行（左对齐）：最新日取实时涨跌幅，其余由收盘相对前收计算
-              const changeCol = (date: string) => {
+              // 当日收盘价列（与标签同行靠左）：最新日取实时现价，其余由当日收盘展示，红绿对照前一交易日收盘
+              const closeCol = (date: string) => {
                 const i = kIdx.get(date);
                 if (i == null || !klines) return null;
                 const k = klines[i];
                 const c = date === latestDate && mktInfoStock.price > 0 ? mktInfoStock.price : k.close;
                 const p = klines[i - 1]?.close;
-                if (p == null) return null;
-                const pct = ((c - p) / p) * 100;
-                const cCls = pct > 0 ? 'text-red-500' : pct < 0 ? 'text-green-500' : 'text-app-rowtext';
-                return <span className={`text-[10px] font-mono ${cCls}`}>{pct >= 0 ? '+' : ''}{pct.toFixed(2)}%</span>;
+                const col = (v: number) => (p != null ? (v > p ? 'text-red-500' : v < p ? 'text-green-500' : 'text-app-rowtext') : 'text-app-rowtext');
+                return <span className={`text-[10px] font-mono font-bold ${col(c)}`}>{fp(c)}</span>;
               };
-              const dates = [...byDate.keys()].sort();
+              const dates = [...byDate.keys()].sort().reverse();
               return dates.map(date => (
                 <div key={date} className="mb-2.5 last:mb-0">
                   <div className="flex items-center justify-between gap-1.5">
-                    <span className="text-[10px] font-bold text-app-rowtext shrink-0 whitespace-nowrap">{fmtDay(date)}</span>
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-[10px] font-bold text-app-rowtext shrink-0 whitespace-nowrap">{fmtDay(date)}</span>
+                      {closeCol(date)}
+                    </span>
                     {date === latestDate && mktInfoStock.price > 0 ? priceCol(date, mktInfoStock.price) : priceCol(date)}
                   </div>
-                  <div className="flex flex-wrap gap-1 items-center min-w-0 mt-0.5">
-                    <span className="flex items-center gap-1 mr-auto">{changeCol(date)}</span>
+                  <div className="flex flex-wrap gap-1 items-center justify-end min-w-0 mt-0.5">
                     {byDate.get(date)!.map(e => <React.Fragment key={e.key}>{e.node}</React.Fragment>)}
                   </div>
                 </div>
