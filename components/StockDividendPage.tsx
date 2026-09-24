@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, ExternalLink } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
 import type { BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
@@ -328,6 +328,31 @@ const TRADE_STATUS_LABEL: Record<string, string> = {
   'buy-filled': '买入', 'sell-filled': '卖出',
 };
 const tradeStatusColor = (t: StockTrade) => t.status === 'pending' ? 'text-orange-400' : (t.side === 'buy' ? 'text-brand-red' : 'text-brand-green');
+
+// 把同花顺公告链接转换成 amihexin 跳转链接：
+// 取 #seq= 公告编号 → 路径替换为 /tapp/app/noticebasic/index.html → 拼 ?seq= → URL 编码后加 amihexin://url= 前缀
+const buildAmihexinUrl = (raw: string): string => {
+  const trimmed = raw.trim();
+  // 已是 amihexin:// 协议的直接透传，不再二次拼接（如用户手动输入的 amihexin://123）
+  if (trimmed.startsWith('amihexin://')) return trimmed;
+  const seqMatch = trimmed.match(/#seq=(\d+)/);
+  const seq = seqMatch ? seqMatch[1] : '';
+  let newUrl = trimmed.replace('/tapp/notice.html', '/tapp/app/noticebasic/index.html');
+  // 去掉 # 片段及原有追踪参数（backwash_xxx 等分享追踪参数直接丢弃），只保留 ?seq= 公告编号
+  const base = newUrl.split('#')[0].split('?')[0];
+  const finalUrl = seq ? `${base}?seq=${seq}` : base;
+  return `amihexin://url=${encodeURIComponent(finalUrl)}`;
+};
+
+// 触发自定义协议(amihexin://)跳转：某些 WebView 会静默拦截 location.href，改用隐藏 <a> 点击更可靠
+const openScheme = (url: string): void => {
+  const a = document.createElement('a');
+  a.href = url;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+};
 
 // ---- 挂单有效期判断：写死 5 个交易日（不含周末） ----
 const PENDING_TTL_DAYS = 5;
@@ -2985,6 +3010,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
   // 内容区高度上限（px）：空间不足时压缩+内部滚动，null 表示不限制（保持原生 max-h 由 CSS 决定）
   const [tradeBodyMaxH, setTradeBodyMaxH] = useState<number | null>(null);
+  // 标题栏公告链接：编辑模式 + 输入值（保存到股票 link 字段）
+  const [linkEditing, setLinkEditing] = useState(false);
+  const [linkInput, setLinkInput] = useState('');
 
   const openTradeInfo = (btn: HTMLElement, stock: StockEntry) => {
     tradeInfoBtnRef.current = btn as unknown as HTMLTableCellElement;
@@ -3014,6 +3042,43 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setEditingTradeId(null);
     setAddTradeNote('' as string);
     setTradeBodyMaxH(null);
+    setLinkEditing(false);
+    setLinkInput('');
+  }, []);
+
+  // 标题栏公告链接按钮：已有 link 则转成 amihexin 链接用浏览器打开；没有则进入编辑模式
+  // 注意必须从 stocks 实时取当前股票，不能用 tradeInfoStock（那是打开弹窗时捕获的旧引用，保存 link 后不会更新）
+  const handleOpenStockLink = () => {
+    if (!tradeInfoStock) return;
+    const cur = stocks.find(x => x.id === tradeInfoStock.id) || tradeInfoStock;
+    if (cur.link) {
+      const finalUrl = buildAmihexinUrl(cur.link);
+      // 用 openScheme 触发 amihexin:// 跳转：避免 window.open 新开空白标签页，也规避部分 WebView 拦截 location.href
+      if (finalUrl) openScheme(finalUrl);
+    } else {
+      setLinkInput(cur.link || '');
+      setLinkEditing(true);
+    }
+  };
+
+  // 保存链接到股票 link 字段（空值当作清除）
+  const saveStockLink = useCallback(() => {
+    if (!tradeInfoStock) return;
+    const trimmed = linkInput.trim();
+    onStocksChange(stocks.map(s => s.id === tradeInfoStock.id ? { ...s, link: trimmed || undefined } : s));
+    setLinkEditing(false);
+    setLinkInput('');
+  }, [tradeInfoStock, linkInput, stocks, onStocksChange]);
+
+  // 取消编辑：直接还原标题栏，不改动 link
+  const cancelStockLink = useCallback(() => {
+    setLinkEditing(false);
+    setLinkInput('');
+  }, []);
+
+  // 编辑模式下跳转按钮：固定触发 amihexin:// 协议跳转，与输入框内容无关
+  const handleTestLinkJump = useCallback(() => {
+    openScheme('amihexin://');
   }, []);
 
   // 统一 ESC 关闭：无论临时(hover)还是固定(click)悬浮窗，按 ESC 一律关闭
@@ -5534,12 +5599,45 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               onPointerDown={handleTradeDragStart}
               className="bg-app-bg/80 backdrop-blur-md px-3 py-2.5 flex items-center justify-between border-b border-app-border cursor-grab active:cursor-grabbing touch-none select-none group"
             >
-              <div className="flex items-center gap-2 text-app-subtext pointer-events-none">
-                <GripHorizontal size={15} className="opacity-80" />
-                <h4 className="text-[12px] font-bold tracking-wider text-app-text">{s.name} · 交易</h4>
+              <div className="flex items-center gap-2 flex-1 min-w-0 text-app-subtext">
+                <GripHorizontal size={15} className="opacity-80 shrink-0" />
+                {linkEditing ? (
+                  <input
+                    autoFocus
+                    value={linkInput}
+                    onChange={(e) => setLinkInput(e.target.value)}
+                    onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') saveStockLink(); }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    placeholder="输入公告链接"
+                    className="flex-1 min-w-0 mr-1 no-spinners bg-app-input border border-app-border rounded px-2 py-0.5 text-[11px] text-app-text outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all placeholder:text-app-subtext/40"
+                  />
+                ) : (
+                  <>
+                    <h4 className="text-[12px] font-bold tracking-wider text-app-subtext/70 min-w-0 truncate">{s.name}</h4>
+                    <button
+                      type="button"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={handleOpenStockLink}
+                      className="text-app-subtext/70 hover:text-indigo-400 transition-colors p-0.5 -mx-0.5 shrink-0"
+                      title={s.link ? '打开公告链接' : '添加公告链接'}
+                    >
+                      <ExternalLink size={13} />
+                    </button>
+                  </>
+                )}
               </div>
               <div className="flex items-center gap-1">
-                <button type="button" onClick={closeTradeInfo} onPointerDown={(e) => e.stopPropagation()} className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1" title="关闭">
+                {linkEditing && (
+                  <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={handleTestLinkJump} className="text-app-subtext hover:text-indigo-400 transition-colors p-1 rounded shrink-0" title="用当前链接跳转">
+                    <ExternalLink size={15} />
+                  </button>
+                )}
+                {linkEditing && (
+                  <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={saveStockLink} className="text-brand-green hover:opacity-80 p-1 rounded shrink-0" title="保存链接">
+                    <Check size={15} />
+                  </button>
+                )}
+                <button type="button" onClick={linkEditing ? cancelStockLink : closeTradeInfo} onPointerDown={(e) => e.stopPropagation()} className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1" title={linkEditing ? '取消编辑' : '关闭'}>
                   <X size={15} />
                 </button>
               </div>
