@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, ExternalLink } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
 import type { BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
@@ -5621,7 +5621,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       className="text-app-subtext/70 hover:text-indigo-400 transition-colors p-0.5 -mx-0.5 shrink-0"
                       title={s.link ? '打开公告链接' : '添加公告链接'}
                     >
-                      <ExternalLink size={13} />
+                      {s.link ? <Link size={13} /> : <SquarePen size={13} />}
                     </button>
                   </>
                 )}
@@ -5629,7 +5629,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <div className="flex items-center gap-1">
                 {linkEditing && (
                   <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={handleTestLinkJump} className="text-app-subtext hover:text-indigo-400 transition-colors p-1 rounded shrink-0" title="用当前链接跳转">
-                    <ExternalLink size={15} />
+                    <Link size={15} />
                   </button>
                 )}
                 {linkEditing && (
