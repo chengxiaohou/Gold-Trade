@@ -878,10 +878,10 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
             {/* 极值点标注：在各自曲线上打点并标注数字（仿回测K线），最高/最低价 与 最高/最低股息率 */}
             {chartData.length > 0 && maxPricePt && minPricePt && maxRatePt && minRatePt && (
               <>
-                <ReferenceDot x={maxPricePt.date} y={maxPricePt.price} yAxisId="price" r={0} stroke="none" label={{ value: maxPricePt.price.toFixed(2), position: 'top', fontSize: 8, fill: 'rgba(203,213,225,0.85)' }} />
-                <ReferenceDot x={minPricePt.date} y={minPricePt.price} yAxisId="price" r={0} stroke="none" label={{ value: minPricePt.price.toFixed(2), position: 'bottom', fontSize: 8, fill: 'rgba(203,213,225,0.85)' }} />
-                <ReferenceDot x={maxRatePt.date} y={maxRatePt.rate} r={0} stroke="none" label={{ value: `${maxRatePt.rate.toFixed(2)}%`, position: 'top', fontSize: 8, fill: 'rgba(203,213,225,0.85)' }} />
-                <ReferenceDot x={minRatePt.date} y={minRatePt.rate} r={0} stroke="none" label={{ value: `${minRatePt.rate.toFixed(2)}%`, position: 'bottom', fontSize: 8, fill: 'rgba(203,213,225,0.85)' }} />
+                <ReferenceDot x={maxPricePt.date} y={maxPricePt.price} yAxisId="price" r={0} stroke="none" label={{ value: maxPricePt.price.toFixed(2), position: 'top', fontSize: 8, fill: 'rgba(148,163,184,0.85)' }} />
+                <ReferenceDot x={minPricePt.date} y={minPricePt.price} yAxisId="price" r={0} stroke="none" label={{ value: minPricePt.price.toFixed(2), position: 'bottom', fontSize: 8, fill: 'rgba(148,163,184,0.85)' }} />
+                <ReferenceDot x={maxRatePt.date} y={maxRatePt.rate} r={0} stroke="none" label={{ value: `${maxRatePt.rate.toFixed(2)}%`, position: 'top', fontSize: 8, fill: '#3b82f6' }} />
+                <ReferenceDot x={minRatePt.date} y={minRatePt.rate} r={0} stroke="none" label={{ value: `${minRatePt.rate.toFixed(2)}%`, position: 'bottom', fontSize: 8, fill: '#3b82f6' }} />
               </>
             )}
           </LineChart>
