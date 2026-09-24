@@ -5789,9 +5789,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           const hCls = col(k.high);
           const lCls = col(k.low);
           return (
-            <span className="flex items-center gap-1.5 shrink-0">
+            <React.Fragment>
               <span className={`text-[10px] font-mono font-bold shrink-0 w-[30px] text-right ${pctCls}`}>{pct != null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : ''}</span>
-              <span className="flex items-center shrink-0">
+              <span className="flex items-center shrink-0 ml-1">
                 <span className={`text-[10px] font-mono font-bold shrink-0 w-[30px] text-right ${hCls}`}>{fp(k.high)}</span>
                 <span className={`text-[10px] leading-none shrink-0 ${hCls}`}>↑</span>
               </span>
@@ -5799,7 +5799,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <span className={`text-[10px] font-mono font-bold shrink-0 w-[30px] text-right ${lCls}`}>{fp(k.low)}</span>
                 <span className={`text-[10px] leading-none shrink-0 ${lCls}`}>↓</span>
               </span>
-            </span>
+            </React.Fragment>
           );
         };
         // 默认选中：无指向时展示最新交易日行首枚标签（由权威 getDayTagSet 产出）
@@ -5917,16 +5917,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 const c = date === latestDate && mktInfoStock.price > 0 ? mktInfoStock.price : k.close;
                 const p = klines[i - 1]?.close;
                 const col = (v: number) => (p != null ? (v > p ? 'text-red-500' : v < p ? 'text-green-500' : 'text-app-rowtext') : 'text-app-rowtext');
-                return <span className={`text-[10px] font-mono font-bold ${col(c)}`}>{fp(c)}</span>;
+                return <span className={`text-[10px] font-mono font-bold w-[30px] shrink-0 text-right ${col(c)}`}>{fp(c)}</span>;
               };
               const dates = [...byDate.keys()].sort().reverse();
               return dates.map(date => (
                 <div key={date} className="mb-2.5 last:mb-0">
-                  <div className="flex items-center justify-between gap-1.5">
-                    <span className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-[10px] font-bold text-app-rowtext shrink-0 whitespace-nowrap">{fmtDay(date)}</span>
-                      {closeCol(date)}
-                    </span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-app-rowtext shrink-0 whitespace-nowrap">{fmtDay(date)}</span>
+                    {closeCol(date)}
                     {date === latestDate && mktInfoStock.price > 0 ? priceCol(date, mktInfoStock.price) : priceCol(date)}
                   </div>
                   <div className="flex flex-wrap gap-1 items-center justify-end min-w-0 mt-0.5">
