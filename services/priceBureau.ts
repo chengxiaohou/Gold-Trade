@@ -262,10 +262,12 @@ export const priceBureau = {
     apiSource: ApiSource,
     adjust: BollAdjust,
     opts: EnsureBatchOpts = {},
-  ): Promise<void> {
+  ): Promise<boolean> {
     await ensureBollCacheRestored();
     const trigger = opts.trigger ?? '自动刷新布林线';
     const batchTimestamp = Date.now();
+    // 是否真正发起过网络请求（全部命中缓存时为 false，供调用方决定是否刷新"全量刷新时间戳"）
+    let madeRequest = false;
 
     const dynamicTTL = getDynamicBollCacheTTL();
     const nowDate = new Date();
@@ -302,7 +304,7 @@ export const priceBureau = {
 
     if (allCached) {
       priceBureau.setEntries(cachedByCode);
-      return;
+      return madeRequest;
     }
 
     // 先把已命中项一次性批量应用，再对缺失项顺序请求
@@ -311,7 +313,7 @@ export const priceBureau = {
     const order = opts.order ?? stocks;
     const targetIds = new Set(stocks.map(s => s.id));
     for (let i = 0; i < order.length; i++) {
-      if (opts.cancelCheck?.()) return;
+      if (opts.cancelCheck?.()) return madeRequest;
       const stock = order[i];
       if (!targetIds.has(stock.id)) continue;
       if (stock.bollHidden) continue;
@@ -326,7 +328,8 @@ export const priceBureau = {
         fetchBollData(stock.code, 'weekly', adjust, apiSource, batchTimestamp, logCtx),
         fetchBollData(stock.code, 'monthly', adjust, apiSource, batchTimestamp, logCtx),
       ]);
-      if (opts.cancelCheck?.()) return;
+      madeRequest = true; // 本次确实发起了网络请求
+      if (opts.cancelCheck?.()) return madeRequest;
       const code = stock.code;
       const cur = store.get(code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
       store.set(code, {
@@ -341,9 +344,10 @@ export const priceBureau = {
       if (i < order.length - 1) {
         for (let w = 0; w < 25; w++) {
           await new Promise(resolve => setTimeout(resolve, 10));
-          if (opts.cancelCheck?.()) return;
+          if (opts.cancelCheck?.()) return madeRequest;
         }
       }
     }
+    return madeRequest;
   },
 };

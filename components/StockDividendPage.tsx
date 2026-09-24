@@ -2306,15 +2306,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // 清空旧数据，显示加载状态
     priceBureau.clear();
 
-    await priceBureau.ensureBatch(stocks, apiSource, bollAdjust, {
+    const madeRequest = await priceBureau.ensureBatch(stocks, apiSource, bollAdjust, {
       trigger,
       order: sortedStocks,
       cancelCheck: () => fetchVersionRef.current !== currentVersion,
     });
 
-    // 全量（批量）刷新完成：记录"全量刷新时间戳"（表头与设置面板读取）。
-    // 仅此处写入，单只/单周期请求不触碰，避免该时间被个别请求频繁刷成"刚刚"。
-    setBollFullFetchTime(apiSource);
+    // 全量（批量）刷新完成：仅在本次确实发起了网络请求时，才更新"全量刷新时间戳"
+    // （表头与设置面板读取）。全部命中缓存、无需请求时保留旧时间，避免被缓存命中刷成"刚刚"。
+    if (madeRequest) {
+      setBollFullFetchTime(apiSource);
+    }
 
     setIsRefreshingBoll(false);
   }, [stocks, bollAdjust, apiSource, sortedStocks]);
