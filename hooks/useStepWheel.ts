@@ -14,6 +14,12 @@ export interface UseStepWheelOptions {
   precision?: number;
   /** 是否启用触屏纵向拖拽调节（iOS 双指/拖拽），默认 false */
   touch?: boolean;
+  /** 启用 Mac 触控板双指捏合（ctrlKey 滚轮）按比例调节，默认 false。启用后捏合事件走独立比例路径，
+   *  不再进入双指滑动步进，两者互斥、互不干扰 */
+  pinch?: boolean;
+  /** 捏合比例回调（仅 pinch 启用且收到 ctrlKey 滚轮时触发）：factor>1 = 张开(放大、数值变小)、
+   *  factor<1 = 收拢(缩小、数值变大)。由调用方自行把 factor 换算成新值 */
+  onPinch?: (factor: number) => void;
   /** 附加禁用判断（返回 true 则本次滚轮不生效）；未传则始终生效 */
   disabled?: () => boolean;
   /** 值变化回调：参数为已 clamp + 取整后的数字，由调用方自行决定如何格式化 */
@@ -42,6 +48,8 @@ export function useStepWheel({
   max,
   precision = 0,
   touch = false,
+  pinch = false,
+  onPinch,
   disabled,
   onChange,
 }: UseStepWheelOptions) {
@@ -50,6 +58,8 @@ export function useStepWheel({
   const minRef = useRef(min); minRef.current = min;
   const maxRef = useRef(max); maxRef.current = max;
   const precisionRef = useRef(precision); precisionRef.current = precision;
+  const pinchRef = useRef(pinch); pinchRef.current = pinch;
+  const onPinchRef = useRef(onPinch); onPinchRef.current = onPinch;
   const disabledRef = useRef(disabled); disabledRef.current = disabled;
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
 
@@ -88,6 +98,12 @@ export function useStepWheel({
     const onWheel = (e: WheelEvent) => {
       if (disabledRef.current?.()) return;
       e.preventDefault();
+      // Mac 触控板双指捏合以 ctrlKey=true 的 wheel 事件发出：启用 pinch 时独立走比例路径，
+      // 与双指滑动(deltaY 步进)互斥，避免同一次手势被两套逻辑重复消费。张开(deltaY<0)→factor>1 放大、收拢→factor<1 缩小
+      if (pinchRef.current && e.ctrlKey) {
+        onPinchRef.current?.(1 - e.deltaY / 200);
+        return;
+      }
       acc += e.deltaY;
       if (rafId != null) return; // 本帧已排定，合并
       rafId = requestAnimationFrame(commit);

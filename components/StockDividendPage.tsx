@@ -714,6 +714,9 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
     min: 5,
     max: 500,
     onChange: (next) => { updateRange(next); },
+    // Mac 触控板双指捏合：按比例缩放周期（张开=放大=周期变小），钳制在有效区间，与双指滑动步进互斥
+    pinch: true,
+    onPinch: (factor) => { updateRange(Math.max(5, Math.min(500, Math.round(rangeRef.current * factor)))); },
   });
 
   // —— 浮窗跟随移植：固定定位 + 直接改 transform 定位（不触发每帧重渲染），复用回测的边界翻转 ——
@@ -726,6 +729,8 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
   const floatRateRef = useRef<HTMLSpanElement>(null);
   const FLOAT_W = 105;
   const FLOAT_H = 92;
+  // 双指捏合缩放的起点状态：记录起始两指间距与起始周期，移动时按间距比例映射新周期
+  const pinchRef = useRef<{ startDist: number; startRange: number } | null>(null);
 
   // 图表出现即全局监听方向键调节周期/平移（通过 ref 持最新闭包避免 stale 值）。
   // 注册 effect 放在早退之前，符合 hooks 规则；目标在输入框/编辑区时跳过以免干扰输入。
@@ -791,28 +796,56 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
   const maxRatePt = chartData.length > 0 ? chartData.reduce((a, b) => a.rate > b.rate ? a : b) : null;
   const minRatePt = chartData.length > 0 ? chartData.reduce((a, b) => a.rate < b.rate ? a : b) : null;
 
-  // 浮窗跟随：定位窗口（transform），并把鼠标 X 映射到最近 K 线点、直接改 textContent 填充真实数据。
-  // 全程不 setState、不触发 React 重渲染，保证高频跟鼠标。
-  const handleFloatMove = (e: React.MouseEvent<HTMLDivElement>) => {
+  // 浮窗跟随：定位窗口（transform），并把指针 X 映射到最近 K 线点、直接改 textContent 填充真实数据。
+  // 全程不 setState、不触发 React 重渲染，保证高频跟随。
+  // clientX/clientY 由鼠标或触摸统一传入：鼠标走 onMouseMove，触屏走 onTouchStart/onTouchMove（手指移动即实时跟随，不等松开）。
+  const updateFloat = (clientX: number, clientY: number) => {
     const el = floatingElRef.current;
     if (!el) return;
-    let x = e.clientX + 12;
-    let y = e.clientY + 12;
-    if (x + FLOAT_W > window.innerWidth - 8) x = Math.max(8, e.clientX - FLOAT_W - 12);
-    if (y + FLOAT_H > window.innerHeight - 8) y = Math.max(8, e.clientY - FLOAT_H - 12);
+    let x = clientX + 12;
+    let y = clientY + 12;
+    if (x + FLOAT_W > window.innerWidth - 8) x = Math.max(8, clientX - FLOAT_W - 12);
+    if (y + FLOAT_H > window.innerHeight - 8) y = Math.max(8, clientY - FLOAT_H - 12);
     el.style.transform = `translate(${x}px, ${y}px)`;
 
     const container = chartWheelRef.current;
     if (!container || chartData.length === 0) return;
     const rect = container.getBoundingClientRect();
     const plotW = rect.width - 2 - 5; // 与 LineChart margin 左2 右5 保持一致
-    const relX = e.clientX - rect.left - 2;
+    const relX = clientX - rect.left - 2;
     const idx = Math.max(0, Math.min(chartData.length - 1, Math.round((relX / plotW) * (chartData.length - 1))));
     const d = chartData[idx];
     if (floatDateRef.current) floatDateRef.current.textContent = d.date;
     if (floatPriceRef.current) floatPriceRef.current.textContent = `¥${d.price.toFixed(2)}`;
     if (floatDividendRef.current) floatDividendRef.current.textContent = `¥${d.dividend.toFixed(3)}`;
     if (floatRateRef.current) floatRateRef.current.textContent = `${d.rate.toFixed(2)}%`;
+  };
+  const handleFloatMove = (e: React.MouseEvent<HTMLDivElement>) => updateFloat(e.clientX, e.clientY);
+  // 触屏统一入口：单指→浮窗实时跟随；双指→捏合缩放调节周期（间距比例映射到周期，钳制在有效区间）
+  const handleChartTouch = (e: React.TouchEvent<HTMLDivElement>) => {
+    const ts = e.touches;
+    if (ts.length >= 2) {
+      // 双指捏合：起始两指间距为基准，移动时按当前间距/起始间距的比例反向映射周期（张开=放大=周期变小）
+      e.preventDefault();
+      const dist = Math.hypot(ts[0].clientX - ts[1].clientX, ts[0].clientY - ts[1].clientY);
+      if (!pinchRef.current) {
+        pinchRef.current = { startDist: dist || 1, startRange: rangeRef.current };
+      } else {
+        const { startDist, startRange } = pinchRef.current;
+        const ratio = startDist > 0 ? dist / startDist : 1;
+        const lo = options.length > 0 ? options[0] : 5;
+        const hi = options.length > 0 ? options[options.length - 1] : maxRange;
+        const next = Math.max(lo, Math.min(hi, Math.round(startRange / ratio)));
+        if (next !== rangeRef.current) updateRange(next);
+      }
+      return;
+    }
+    // 单指：恢复浮窗跟随，手指移动实时跟随（读取 touches[0]），松开后浮窗停留在最后位置，不主动隐藏
+    pinchRef.current = null;
+    const t = ts[0];
+    if (!t) return;
+    setFloatVisible(true);
+    updateFloat(t.clientX, t.clientY);
   };
   const handleFloatLeave = () => setFloatVisible(false);
 
@@ -866,10 +899,12 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
       </div>
       <div
         ref={chartWheelRef}
-        className="h-[172px] w-full select-none"
+        className="h-[172px] w-full select-none touch-none"
         onMouseMove={handleFloatMove}
         onMouseEnter={() => setFloatVisible(true)}
         onMouseLeave={handleFloatLeave}
+        onTouchStart={handleChartTouch}
+        onTouchMove={handleChartTouch}
       >
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 5, right: 10, left: 4, bottom: 0 }}>
