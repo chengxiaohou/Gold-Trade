@@ -61,8 +61,8 @@ export function PriceIndicatorSection({ name, price, data }: { name: string; pri
   return (
     <>
       <div className="mb-1 space-y-1">
-        <div className="grid grid-cols-2 gap-x-4">{cell2('开', fmt(d.open), priceColor(d.open))}{cell2('现', price != null ? formatPrice(price, name) : '-', priceColor(price))}</div>
-        <div className="grid grid-cols-2 gap-x-4">{cell2('低', fmt(d.low), priceColor(d.low))}{cell2('高', fmt(d.high), priceColor(d.high))}</div>
+        <div className="grid grid-cols-2 gap-x-4">{cell2('现', price != null ? formatPrice(price, name) : '-', priceColor(price))}{cell2('高', fmt(d.high), priceColor(d.high))}</div>
+        <div className="grid grid-cols-2 gap-x-4">{cell2('开', fmt(d.open), priceColor(d.open))}{cell2('低', fmt(d.low), priceColor(d.low))}</div>
         <div className="grid grid-cols-2 gap-x-4">{cell2('额', changeAmount, pctColor)}{cell2('幅', fmtPct(d.changePct), pctColor)}</div>
         <div className="grid grid-cols-2 gap-x-4">{cell2('量', formatVolume(d.volume), volumeColor)}{cell2('量比', volumeRatioText, volumeColor)}</div>
       </div>
