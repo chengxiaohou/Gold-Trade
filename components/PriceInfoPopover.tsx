@@ -64,7 +64,7 @@ export function PriceIndicatorSection({ name, price, data }: { name: string; pri
         <div className="grid grid-cols-2 gap-x-4">{cell2('现', price != null ? formatPrice(price, name) : '-', priceColor(price))}{cell2('高', fmt(d.high), priceColor(d.high))}</div>
         <div className="grid grid-cols-2 gap-x-4">{cell2('开', fmt(d.open), priceColor(d.open))}{cell2('低', fmt(d.low), priceColor(d.low))}</div>
         <div className="grid grid-cols-2 gap-x-4">{cell2('额', changeAmount, pctColor)}{cell2('幅', fmtPct(d.changePct), pctColor)}</div>
-        <div className="grid grid-cols-2 gap-x-4">{cell2('量', formatVolume(d.volume), volumeColor)}{cell2('量比', volumeRatioText, volumeColor)}</div>
+        <div className="grid grid-cols-2 gap-x-4">{cell2('量', formatVolume(d.volume).replace(/手$/, ''), volumeColor)}{cell2('量比', volumeRatioText, volumeColor)}</div>
       </div>
       <div className="border-t border-app-border my-1" />
       {subRows('KDJ (9, 3, 3)', [['K', numFmt(d.kdj.k), kdjColor(d.kdj.k, 80, 20)], ['D', numFmt(d.kdj.d), kdjColor(d.kdj.d, 80, 20)], ['J', numFmt(d.kdj.j), kdjColor(d.kdj.j, 100, 0)]])}
