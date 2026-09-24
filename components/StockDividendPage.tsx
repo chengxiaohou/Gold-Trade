@@ -5612,18 +5612,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     className="flex-1 min-w-0 mr-1 no-spinners bg-app-input border border-app-border rounded px-2 py-0.5 text-[11px] text-app-text outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all placeholder:text-app-subtext/40"
                   />
                 ) : (
-                  <>
-                    <h4 className="text-[12px] font-bold tracking-wider text-app-subtext/70 min-w-0 truncate">{s.name}</h4>
-                    <button
-                      type="button"
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={handleOpenStockLink}
-                      className="text-app-subtext/70 hover:text-indigo-400 transition-colors p-0.5 -mx-0.5 shrink-0"
-                      title={s.link ? '打开公告链接' : '添加公告链接'}
-                    >
-                      {s.link ? <Link size={13} /> : <SquarePen size={13} />}
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={handleOpenStockLink}
+                    className="inline-flex items-center gap-1 text-app-subtext/70 hover:text-indigo-400 transition-colors min-w-0"
+                    title={s.link ? '打开公告链接' : '添加公告链接'}
+                  >
+                    <span className="text-[13px] font-bold tracking-wider min-w-0 truncate">{s.name}</span>
+                    {s.link ? <Link size={13} className="shrink-0" /> : <SquarePen size={13} className="shrink-0" />}
+                  </button>
                 )}
               </div>
               <div className="flex items-center gap-1">
