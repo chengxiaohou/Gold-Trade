@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
 import { fetchBollData, BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
@@ -1028,6 +1028,24 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const handleDailyOffsetChange = (v: number) => {
     setDailyChartOffset(v);
     try { localStorage.setItem('dividendChartOffset_daily', String(v)); } catch { /* ignore */ }
+  };
+  // 股息率九宫格间隔（本地记忆，0.5 ↔ 0.25 切换）
+  const [ratesGridStep, setRatesGridStep] = useState<number>(() => {
+    try { return Number(localStorage.getItem('dividendRatesGridStep')) === 0.25 ? 0.25 : 0.5; } catch { return 0.5; }
+  });
+  const handleRatesGridStepToggle = () => {
+    setRatesGridStep(prev => {
+      const next = prev === 0.5 ? 0.25 : 0.5;
+      try { localStorage.setItem('dividendRatesGridStep', String(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  // 九宫格中心格交互：悬停预览 + 点击钉住（点击状态优先于悬停）。无需本地记忆。
+  const [ratesCenterToggle, setRatesCenterToggle] = useState<boolean>(false); // 点击钉住
+  const [ratesCenterHover, setRatesCenterHover] = useState<boolean>(false);   // 悬停临时预览
+  const handleRatesCenterToggle = () => {
+    setRatesCenterHover(false); // 钉住后以点击状态为准，清除悬停预览
+    setRatesCenterToggle(prev => !prev);
   };
   // 股票列表股息率区间内每日股息率：与 DividendRateCurve 的速率算法共用 dividendRateForDay（单一事实来源）
   const rateForKline = (stock: StockEntry, k: BollKline, fallback: number, klines: BollKline[]): number => {
@@ -3938,6 +3956,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             setBollPeriod(key);
                             setDividendRateChartRange(120);
                             setShowRatesId(stock.id);
+                            setRatesCenterToggle(false); // 新弹窗默认显示网格模式
+                            setRatesCenterHover(false);
                             setRatesPopupPos({
                               top,
                               left: Math.min(Math.max(12, rect.right + 8), window.innerWidth - popupW - 12)
@@ -4596,27 +4616,51 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               </div>
             </div>
             <div ref={popupContentRef} className="flex-1 overflow-y-auto px-3" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-              <div className="text-[10px] text-app-subtext mb-2">
-                股息率对应股价（基于{getSelectedYear(stock)}年分红 ¥{formatPrice(getDividendForYear(stock, getSelectedYear(stock)), stock.name)}）
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="text-[10px] text-app-subtext">
+                  股息率对应股价（基于{getSelectedYear(stock)}年分红 ¥{formatPrice(getDividendForYear(stock, getSelectedYear(stock)), stock.name)}）
+                </div>
+                <button
+                  onClick={handleRatesGridStepToggle}
+                  title={`切换股息率九宫格间隔（当前 ${ratesGridStep}）`}
+                  className="p-0.5 hover:bg-app-input rounded transition-colors shrink-0"
+                >
+                  <ArrowLeftRight size={14} className="text-app-subtext" />
+                </button>
               </div>
               <div className="grid grid-cols-3 gap-1 mb-3">
                 {(() => {
                   const currentRate = getDividendRate(stock);
                   const dividend = getDividendForYear(stock, getSelectedYear(stock)) || 0;
-                  // 以当前股息率最近的 0.5 网格为中心，左右各 4 格按 0.5 递增/递减（共 9 格）
-                  const centerRate = Math.round(currentRate * 2) / 2;
-                  const rates = Array.from({ length: 9 }, (_, i) => centerRate - 4 * 0.5 + i * 0.5);
+                  // 以当前股息率最近的 step 网格为中心，左右各 4 格按 step 递增/递减（共 9 格）
+                  const step = ratesGridStep;
+                  const centerRate = Math.round(currentRate / step) * step;
+                  const rates = Array.from({ length: 9 }, (_, i) => centerRate - 4 * step + i * step);
                   const rateColorClass = getDividendRateColor(centerRate, ranges);
+                  // 间隔 0.25 时需保留两位小数，且去除末尾多余的 0（如 4.25 → "4.25%"，3.5 → "3.5%"）
+                  const fmtRate = (v: number) => `${parseFloat(v.toFixed(2)).toString()}%`;
                   return rates.map((rateNum, idx) => {
                     const isCurrentRate = idx === 4; // 中心格
-                    const rateLabel = `${rateNum.toFixed(1)}%`;
-                    const price = dividend > 0 ? dividend / (rateNum / 100) : 0;
+                    // 中心格展示逻辑：点击钉住后固定显示当前股息率/当前价格；未点击时悬停临时预览，移出恢复
+                    const currentRateVal = getDividendRate(stock);
+                    const showActual = isCurrentRate && (ratesCenterToggle || ratesCenterHover);
+                    const rateLabel = fmtRate(showActual ? currentRateVal : rateNum);
+                    const price = showActual
+                      ? (stock.price || 0)
+                      : dividend > 0 ? dividend / (rateNum / 100) : 0;
+                    const cellColor = showActual ? getDividendRateColor(currentRateVal, ranges) : rateColorClass;
                     return (
-                      <div key={rateLabel} className={`flex flex-col items-center p-1 rounded ${isCurrentRate ? 'bg-indigo-500/10 ring-1 ring-indigo-500/30' : 'bg-app-input'}`}>
-                        <span className={`text-[10px] ${isCurrentRate ? rateColorClass : 'text-app-subtext'}`}>{rateLabel}</span>
-                        <span className={`font-mono text-xs font-bold ${isCurrentRate ? rateColorClass : 'text-app-subtext'}`}>
+                      <div
+                        key={rateLabel}
+                        onClick={isCurrentRate ? handleRatesCenterToggle : undefined}
+                        onMouseEnter={isCurrentRate ? () => setRatesCenterHover(true) : undefined}
+                        onMouseLeave={isCurrentRate ? () => setRatesCenterHover(false) : undefined}
+                        className={`flex flex-col items-center p-1 rounded ${isCurrentRate ? 'cursor-pointer ' + (showActual ? 'bg-brand-softYellow/15 ring-1 ring-brand-softYellow/30' : 'bg-indigo-500/10 ring-1 ring-indigo-500/30') : 'bg-app-input'}`}
+                      >
+                        <span className={`font-mono text-xs font-bold ${isCurrentRate ? cellColor : 'text-app-subtext'}`}>
                           {price > 0 ? formatPrice(price, stock.name) : '-'}
                         </span>
+                        <span className={`font-mono text-xs font-normal ${isCurrentRate ? cellColor : 'text-app-subtext'}`}>{rateLabel}</span>
                       </div>
                     );
                   });
