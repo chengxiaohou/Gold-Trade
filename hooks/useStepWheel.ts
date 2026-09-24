@@ -99,9 +99,9 @@ export function useStepWheel({
       if (disabledRef.current?.()) return;
       e.preventDefault();
       // Mac 触控板双指捏合以 ctrlKey=true 的 wheel 事件发出：启用 pinch 时独立走比例路径，
-      // 与双指滑动(deltaY 步进)互斥，避免同一次手势被两套逻辑重复消费。张开(deltaY<0)→factor>1 放大、收拢→factor<1 缩小
+      // 与双指滑动(deltaY 步进)互斥，避免同一次手势被两套逻辑重复消费。张开(deltaY>0)→factor>1 放大、收拢→factor<1 缩小
       if (pinchRef.current && e.ctrlKey) {
-        onPinchRef.current?.(1 - e.deltaY / 200);
+        onPinchRef.current?.(1 + e.deltaY / 200);
         return;
       }
       acc += e.deltaY;
