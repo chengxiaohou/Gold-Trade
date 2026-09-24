@@ -19,7 +19,7 @@ import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
 import { InputGroup } from './InputGroup';
 import { useStepWheel } from '../hooks/useStepWheel';
 import { BacktestModal } from './BacktestModal';
-import PriceInfoPopover from './PriceInfoPopover';
+import PriceInfoPopover, { PriceIndicatorSection } from './PriceInfoPopover';
 import SignalTagsFooter from './SignalTagsFooter';
 import { getDayTagSet, type DayTag } from '../services/signalTagDetail';
 import { calcIndicators, formatPrice, formatVolume, type IndicatorResult } from '../services/indicators';
@@ -1504,6 +1504,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (top + estH > window.innerHeight - 10) top = window.innerHeight - estH - 10;
     if (top < 10) top = 10;
     setMktInfoPos({ left, top });
+    // 与价格弹窗一致，主动补齐该股票日线：mktInfo 读 priceBureau store，
+    // 若日线未加载会显示"暂无K线数据"且拿不到 8/3 组指标；补齐后经 subscribe → sync → 重渲染自动更新。
+    const popupLogCtx = requestLogService.beginBatch(`行情标签 ${stock.name}(${getDisplayCode(stock.code)})：日线数据补齐`);
+    priceBureau.fetchAndAbsorb(stock.code, 'daily', apiSource, bollAdjust, popupLogCtx);
   };
 
   // 悬停名称显示行情状态（临时，不固定）
@@ -5867,6 +5871,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const fp = (v: number) => formatPrice(v, mktInfoStock.name);
         // 每股分红（按年份）：供 dividendRate 自定义标签，按 K 线所属年份折算（与列表股息率曲线同源）
         const dividendByYear = mktInfoStock.dividendByYear;
+        // 价格数据区指标（8 项基础行情 + KDJ/RSI/MACD）：与价格浮窗同源(calcIndicators)、共用 PriceIndicatorSection 渲染，
+        // 复用同一套实现，绝不在此另写一套。
+        const ind = klines && klines.length > 0 ? calcIndicators(klines) : null;
         // 收盘价着色：对照前一交易日，当日收盘涨红、跌绿
         const kIdx = new Map<string, number>();
         if (klines) klines.forEach((k, i) => kIdx.set(k.date, i));
@@ -5945,7 +5952,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             >
               <div className="flex items-center gap-2 text-app-subtext pointer-events-none">
                 <GripHorizontal size={15} className="opacity-80" />
-                <h4 className="text-[12px] font-bold tracking-wider text-app-text">{mktInfoStock.name} <span className="font-mono text-[9px] font-normal text-app-rowtext">{getDisplayCode(mktInfoStock.code)}</span></h4>
+                <h4 className="text-[12px] font-bold tracking-wider text-app-rowtext">{mktInfoStock.name} <span className="font-mono text-[9px] font-normal text-app-rowtext">{envDate}</span></h4>
               </div>
               <div className="flex items-center gap-1">
                 <button type="button" onClick={(e) => { e.stopPropagation(); if (mktInfoStock) setBacktestStock(mktInfoStock); setMktInfoPinned(true); }} onPointerDown={(e) => e.stopPropagation()} className="text-app-subtext hover:text-brand-red transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1" title="回测">
@@ -5957,10 +5964,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               </div>
             </div>
             <div className="px-2.5 py-2 flex flex-col min-h-0" style={{ maxHeight: mktBodyMaxH ?? undefined }}>
+            {ind && (
+              <div className="mb-1.5">
+                <PriceIndicatorSection name={mktInfoStock.name} price={mktInfoStock.price} data={ind} />
+              </div>
+            )}
             {env && selectEnvDisplayTags(env.tags).length > 0 && (
-              <div className="pt-1.5 mb-1.5">
-                <div className="text-[10px] font-bold text-app-subtext mb-2">环境</div>
+              <div className="border-t border-app-border pt-1.5 mb-2">
                 <div className="flex items-center gap-1 flex-wrap">
+                  <span className="text-[10px] font-bold text-app-subtext shrink-0 mr-auto">环境</span>
                   {selectEnvDisplayTags(env.tags).map(t => (
                     <span
                       key={t.key}
@@ -5972,7 +5984,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 </div>
               </div>
             )}
-            <div className="text-[10px] font-bold text-app-subtext border-t border-app-border pt-1 mb-1.5 shrink-0">近10交易日行情</div>
             <div className="overflow-y-auto custom-scrollbar min-h-0 flex-1">
             {!klines || klines.length === 0 ? (
               <div className="text-[10px] text-app-rowtext py-1">暂无K线数据</div>
