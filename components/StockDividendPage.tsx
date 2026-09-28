@@ -648,6 +648,8 @@ const SIG_LABEL: Record<DailySignal['kind'], string> = {
 
 // 股息率曲线周期调节的步长：图表区域滚轮与下方的输入框共用，保证手感一致
 const DIVIDEND_CHART_RANGE_STEP = 25;
+// 股息率默认周期：图表"重置"、列表股息率周期单元格长按恢复，共用同一默认值，改一处两边同步
+const DIVIDEND_CHART_DEFAULT_RANGE = 250;
 
 // 股息率曲线共享组件：详情弹窗与列表页“股息率”浮窗共用一套渲染逻辑，
 // 之后任一处的股息率曲线改动都会同时反映到另一处。
@@ -865,7 +867,7 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
       updateOffset(0);
     } else if (e.key === '/') {
       e.preventDefault();
-      updateRange(250);
+      updateRange(DIVIDEND_CHART_DEFAULT_RANGE);
       updateOffset(0);
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       e.preventDefault();
@@ -1130,6 +1132,34 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setDailyChartOffset(v);
     try { localStorage.setItem('dividendChartOffset_daily', String(v)); } catch { /* ignore */ }
   };
+  // 股息率周期单元格长按：恢复默认周期 250（与股息率图表"重置周期为250"一致，offset 一并归零）
+  const periodLongPressTimerRef = useRef<number | null>(null);
+  const startPeriodLongPress = () => {
+    if (periodLongPressTimerRef.current !== null) return;
+    periodLongPressTimerRef.current = window.setTimeout(() => {
+      periodLongPressTimerRef.current = null;
+      handleDailyRangeChange(DIVIDEND_CHART_DEFAULT_RANGE);
+      handleDailyOffsetChange(0);
+    }, 600);
+  };
+  const stopPeriodLongPress = () => {
+    if (periodLongPressTimerRef.current !== null) {
+      clearTimeout(periodLongPressTimerRef.current);
+      periodLongPressTimerRef.current = null;
+    }
+  };
+  // 周期单元格滚轮/触控板调节：与股息率曲线同一套步进机制（useStepWheel）
+  const periodCellRef = useRef<HTMLTableCellElement | null>(null);
+  const periodRangeRef = useRef(dailyChartRange);
+  useEffect(() => { periodRangeRef.current = dailyChartRange; }, [dailyChartRange]);
+  useStepWheel({
+    ref: periodCellRef,
+    valueRef: periodRangeRef,
+    step: DIVIDEND_CHART_RANGE_STEP,
+    min: 5,
+    max: 500,
+    onChange: (next) => handleDailyRangeChange(next),
+  });
   // 股息率九宫格间隔（本地记忆，0.5 ↔ 0.25 切换）
   const [ratesGridStep, setRatesGridStep] = useState<number>(() => {
     try { return Number(localStorage.getItem('dividendRatesGridStep')) === 0.25 ? 0.25 : 0.5; } catch { return 0.5; }
@@ -3837,7 +3867,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   onClick={() => setNameSubMode(m => m === 'tags' ? 'code' : 'tags')}
                   title="点击在状态标签/代码之间切换"
                 >{nameSubMode === 'tags' ? '状态' : '代码'}</th>}
-                {cols.includes('dividendRate') && <th colSpan={1} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap" title={`股息率列按当前日线周期（${dailyChartRange}日）计算下方历史比例`}>
+                {cols.includes('dividendRate') && <th colSpan={1} ref={periodCellRef} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap cursor-pointer" title={`股息率列按当前日线周期（${dailyChartRange}日）计算下方历史比例；滚轮可调周期，长按恢复默认 ${DIVIDEND_CHART_DEFAULT_RANGE}`}
+                    onPointerDown={startPeriodLongPress}
+                    onPointerUp={stopPeriodLongPress}
+                    onPointerLeave={stopPeriodLongPress}
+                    onPointerCancel={stopPeriodLongPress}
+                  >
                     <span>{dailyChartRange}日</span>
                   </th>}
                 {(cols.includes('price') || cols.includes('changePercent')) && <th colSpan={(cols.includes('price') ? 1 : 0) + (cols.includes('changePercent') ? 1 : 0)} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap">
