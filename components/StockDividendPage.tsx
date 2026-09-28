@@ -3837,8 +3837,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   onClick={() => setNameSubMode(m => m === 'tags' ? 'code' : 'tags')}
                   title="点击在状态标签/代码之间切换"
                 >{nameSubMode === 'tags' ? '状态' : '代码'}</th>}
-                {(cols.includes('dividendRate') || cols.includes('price') || cols.includes('changePercent')) && <th colSpan={3} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap">
-                    <div className="flex items-center justify-center gap-1">
+                {cols.includes('dividendRate') && <th colSpan={1} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap" title={`股息率列按当前日线周期（${dailyChartRange}日）计算下方历史比例`}>
+                    <span>{dailyChartRange}日</span>
+                  </th>}
+                {(cols.includes('price') || cols.includes('changePercent')) && <th colSpan={(cols.includes('price') ? 1 : 0) + (cols.includes('changePercent') ? 1 : 0)} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap">
+                    <div className="flex items-center justify-center gap-1 translate-x-[10px]">
                       <span>{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</span>
                       <button
                         onClick={() => {
