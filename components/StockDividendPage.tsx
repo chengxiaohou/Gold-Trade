@@ -5859,9 +5859,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   onChange={(e) => setAddTradeNote(e.target.value)}
                   onFocus={() => {
                     // 备注为空时，首次点击聚焦默认填入"网格{股息率}"，方便后继续编辑
+                    // 口径与上方「股息率」展示一致：按挂单价格计算（分红/挂单价格）
                     if (!addTradeNote) {
-                      const r = getDividendRate(s);
-                      if (r > 0) setAddTradeNote(`网格${String(parseFloat(r.toFixed(2)))}`);
+                      if (orderDivRate > 0) setAddTradeNote(`网格${String(parseFloat(orderDivRate.toFixed(2)))}`);
                     }
                   }}
                   onKeyDown={(e) => { if (e.key === 'Enter') { editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending'); } }}
