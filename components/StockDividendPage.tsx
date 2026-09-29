@@ -2313,6 +2313,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     try { localStorage.setItem('stock_profit_panel_open', showProfitPanel ? '1' : '0'); } catch {}
   }, [showProfitPanel]);
 
+  // 盈利统计面板 wheel 接管：阻止滚轮在面板内滚动时串扰带动背后的股票大列表/页面。
+  // 不用 React onWheel（被动监听 preventDefault 不可靠），改用原生 passive:false 监听，
+  // 滚轮落在面板上一律 preventDefault + stopPropagation，并手动滚动面板内部承接滚动的容器。
+  const profitBodyRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = profitBodyRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const target = e.target as HTMLElement;
+      // 优先滚动"确实可滚动"的面板内容器（如逐日明细，scrollHeight>clientHeight 才算能滚），否则滚动整个面板
+      const inner = target.closest('.overflow-y-auto') as HTMLElement | null;
+      const scroller = inner && inner !== el && inner.scrollHeight > inner.clientHeight ? inner : el;
+      scroller.scrollTop += e.deltaY;
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [showProfitPanel, bottomBarView]);
+
   // 请求日志面板展开也一起存（既然用户说请求统计也要记住）
   const getSavedShowLogPanel = (): boolean => {
     try {
@@ -6516,7 +6536,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
         {/* 盈利明细面板（仅盈利视图） */}
         {bottomBarView === 'profit' && showProfitPanel && (
-          <div className="mt-2 pt-2 border-t border-app-border max-h-[66vh] flex flex-col">
+          <div ref={profitBodyRef} className="mt-2 pt-2 border-t border-app-border max-h-[66vh] flex flex-col overflow-y-auto custom-scrollbar" style={{ overscrollBehavior: 'contain' }}>
             {/* 汇总区（非滚动）：周期选择 + 汇总卡片 + 个股小计 + 逐日明细标题 */}
             <div className="shrink-0 space-y-2">
             {/* 周期快捷选择 */}

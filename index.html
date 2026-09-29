@@ -145,6 +145,11 @@
       input[type="number"] {
         -moz-appearance: textfield;
       }
+
+      /* 阻止弹窗/内层列表滚到尽头时串扰带动外层页面或股票大列表滚动 */
+      * {
+        overscroll-behavior: contain;
+      }
     </style>
   <script type="importmap">
 {
