@@ -1354,6 +1354,33 @@ export function buildLatestShrinkTags(
   return tags;
 }
 
+// ─────────────────────────────────────────────────────────────
+// 标签管理分发部门（数据中央集权）
+// 各消费模块只声明自己的"模块身份"，由本部门统一裁决"该身份下发哪些标签"。
+// 禁止各模块自行过滤标签（否则同一判定在各处漂移），判定与过滤规则均只在此处维护。
+// ─────────────────────────────────────────────────────────────
+export type ShrinkTagModule = 'list' | 'popup-footer';
+// 各模块是否下发"环境标签"：列表不展示环境，弹窗/底栏保留
+const SHRINK_TAG_INCLUDE_ENV: Record<ShrinkTagModule, boolean> = {
+  list: false,
+  'popup-footer': true,
+};
+// 分发入口：先由 buildLatestShrinkTags 产出全量缩略标签（判定唯一），
+// 再按模块身份统一裁决是否剔除环境标签。消费方只传身份，不做二次过滤。
+export function buildShrinkTagsForModule(
+  module: ShrinkTagModule,
+  events: MarketEvent[] | null,
+  patterns: KlinePattern[] | null,
+  env: EnvResult | null,
+  lastDate: string,
+  priceState: PriceStateTag | null,
+  latestVol: KlineVolume5 | null,
+): MktTag[] {
+  const tags = buildLatestShrinkTags(events, patterns, env, lastDate, priceState, latestVol);
+  if (!SHRINK_TAG_INCLUDE_ENV[module]) return tags.filter(t => !t.key.startsWith('env-'));
+  return tags;
+}
+
 // 便捷入口：给定 K 线序列（未覆盖实时价），内部判定一遍再生成缩略标签。
 // 组件层不应直接用它做列表/弹窗两套判定——应先用 computeAnalyzed 统一算一次，
 // 再调 buildLatestShrinkTags 复用同一结果。此函数仅作独立快捷用途（含单测）。
