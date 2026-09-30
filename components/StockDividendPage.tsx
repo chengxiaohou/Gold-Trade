@@ -386,7 +386,10 @@ const tradeStatusLabel = (t: StockTrade): string =>
 const pendingRemainingDays = (t: StockTrade, now: number): number =>
   t.status === 'pending' ? Math.max(0, PENDING_TTL_DAYS - (tradingDayIndex(t.createdAt, now) - 1)) : 0;
 
-// 按成交顺序用移动加权成本重算每笔卖出的已实现盈亏（不依赖存储字段）
+// 按成交顺序用移动加权成本重算每笔卖出的已实现盈亏（不依赖存储字段）。
+// 统一口径：卖出获利一律 = 成交金额 − 移动加权成本 × 股数。
+// 同一个函数顺带给出「卖出挂单」的预估获利（按挂单价、用当前移动加权成本），
+// 与成交采用的是同一算法，绝不另写一套。
 const calcRealizedPnlMap = (trades: StockTrade[]) => {
   const filled = trades.filter(t => t.status === 'filled' && !t.isDeleted).sort((a, b) => a.createdAt - b.createdAt);
   let rs = 0, rc = 0, total = 0;
@@ -405,23 +408,30 @@ const calcRealizedPnlMap = (trades: StockTrade[]) => {
       if (rs === 0) rc = 0;
     }
   }
-  return { map, total };
+  // 卖出挂单：同一公式（成交金额 − 当前移动加权成本 × 股数）做预估；无持仓或价格无效时不预估。
+  const pendingMap: Record<string, number> = {};
+  for (const t of trades) {
+    if (t.side === 'sell' && t.status === 'pending' && !t.isDeleted) {
+      const price = t.price ?? 0, shares = t.shares ?? 0;
+      if (rs > 0 && price > 0 && shares > 0) pendingMap[t.id] = price * shares - rc * shares;
+    }
+  }
+  return { map, total, pendingMap };
 };
 
 // 交易历史记录条目（两行布局：公式+盈亏+状态徽标 / 时间+撤单+编辑+备注），撤单带确认
 // 只接收单个 stock 对象，其余展示数据（stockName/currentPrice/avgCost）一律内部从 stock 派生，
 // 两个调用点（交易弹窗 / 简易浮窗）传同一份 stock，新增派生字段无需改任何调用处，保证完全复用。
 interface TradeRecordRowProps {
-  t: StockTrade; stock: StockEntry; pnlMap: Record<string, number>;
+  t: StockTrade; stock: StockEntry; pnlMap: Record<string, number>; pendingMap?: Record<string, number>;
   onToggle: (t: StockTrade) => void; onEdit: (t: StockTrade) => void; onDelete: (t: StockTrade) => void;
-  // 做T模式：卖超记录的 id 集合；以及当前生效的持仓成本（做T口径=剩余未匹配买入均价），用于卖出挂单预估
-  errIds?: Set<string>; effAvgCost?: number;
+  // 做T模式：卖超记录的 id 集合（仅成交卖出的 ERR 徽标；不参与获利预估）
+  errIds?: Set<string>;
 }
-const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, onToggle, onEdit, onDelete, errIds, effAvgCost }) => {
+const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendingMap, onToggle, onEdit, onDelete, errIds }) => {
   const [confirming, setConfirming] = useState(false);
   const stockName = stock.name;
   const currentPrice = stock.price || 0;
-  const avgCost = effAvgCost ?? (stock.positionCost || 0);
   const fmtP = (v: number) => formatPrice(v, stockName);
   const shares = t.shares ?? 0;
   const price = t.price ?? 0;
@@ -458,14 +468,14 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, onTog
         </span>
         {isErrSell ? (
           <span className="font-mono text-[10px] font-bold text-orange-400" title="卖出股数超过此前买入，疑似录入有误">ERR</span>
-        ) : t.side === 'sell' && t.status === 'filled' && pnlMap[t.id] !== undefined ? (
+        ) : t.side === 'sell' && pnlMap[t.id] !== undefined ? (
           <span className={`font-mono text-[10px] ${pnlMap[t.id] >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
             {`${pnlMap[t.id] >= 0 ? '+' : ''}${fmtP(pnlMap[t.id])}`}
           </span>
-        ) : t.side === 'sell' && t.status === 'pending' && avgCost > 0 && price > 0 ? (
-          // 卖出挂单：按挂单价预计成交后获利（灰色），与成交的已实现盈亏区分
+        ) : t.side === 'sell' && t.status === 'pending' && !!pendingMap && pendingMap[t.id] !== undefined ? (
+          // 卖出挂单：预估获利（灰色）同样来自 calcRealizedPnlMap 的同一移动加权口径，与成交共用一套算法，仅颜色区分
           <span className="font-mono text-[10px] text-app-subtext">
-            {`${(price - avgCost) * shares >= 0 ? '+' : ''}${fmtP((price - avgCost) * shares)}`}
+            {`${pendingMap[t.id] >= 0 ? '+' : ''}${fmtP(pendingMap[t.id])}`}
           </span>
         ) : null}
         {t.isMerged ? (
@@ -6027,8 +6037,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       t={t}
                       stock={s}
                       pnlMap={shownPnl.map}
+                      pendingMap={recalcPnL.pendingMap}
                       errIds={modeIsDt ? dtPnL.errIds : undefined}
-                      effAvgCost={costBasis}
                       onToggle={(x) => handleToggleTrade(s.id, x.id)}
                       onDelete={(x) => handleRemoveTrade(s.id, x.id)}
                       onEdit={(x) => startEditTrade(s, x)}
@@ -6064,8 +6074,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   t={t}
                   stock={s}
                   pnlMap={(pnlCalcMode === 'dt' ? simpleDt : simpleAvg).map}
+                  pendingMap={simpleAvg.pendingMap}
                   errIds={pnlCalcMode === 'dt' ? simpleDt.errIds : undefined}
-                  effAvgCost={pnlCalcMode === 'dt' ? simpleDt.positionCost : undefined}
                   onToggle={(x) => handleToggleTrade(s.id, x.id)}
                   onDelete={(x) => handleRemoveTrade(s.id, x.id)}
                   onEdit={(x) => { // 点击编辑：切换到交易窗口的编辑模式
