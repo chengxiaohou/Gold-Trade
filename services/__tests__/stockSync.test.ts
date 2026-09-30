@@ -214,18 +214,33 @@ describe('mergeStockFromCloud / mergeCloudStocks', () => {
     expect(stock.positionShares).toBe(100);
   });
 
-  it('mergeCloudStocks 保留本地独有股票（云端没有的不丢失）', () => {
+  it('mergeCloudStocks 覆盖模式：云端没有的本地独有股票被剔除（含流水账）', () => {
     const c1 = mkStock('600000', 'A');
     c1.stockTrades = [t({ side: 'buy', price: 10, shares: 100 })];
     const localOnly = mkStock('300001', '本地独有', { price: 12.3, priceUpdatedAt: 9 });
-    const localLedger: StockLedgerMap = {};
-    const { mergedStocks } = mergeCloudStocks([c1], localLedger, [c1, localOnly]);
+    // 本地流水账里含本地独有票的旧条目（模拟删除传播后的残留）
+    const localLedger: StockLedgerMap = {
+      '600000': { trades: [t({ side: 'buy', price: 10, shares: 100 })] },
+      '300001': { trades: [t({ side: 'buy', price: 5, shares: 50 })] },
+    };
+    const { mergedStocks, newLedger } = mergeCloudStocks([c1], localLedger, [c1, localOnly]);
+    // 云端没有的本地独有票：从股票列表与流水账中一并剔除
     expect(mergedStocks.map(s => s.id)).toContain('600000');
-    expect(mergedStocks.map(s => s.id)).toContain('300001');
-    // 本地独有股票原样保留（含价格缓存）
-    const kept = mergedStocks.find(s => s.id === '300001')!;
-    expect(kept.price).toBe(12.3);
-    expect(kept.name).toBe('本地独有');
+    expect(mergedStocks.map(s => s.id)).not.toContain('300001');
+    expect(Object.keys(newLedger)).toContain('600000');
+    expect(Object.keys(newLedger)).not.toContain('300001');
+  });
+
+  it('mergeCloudStocks 云端命中：仍保留本地价格缓存、业务字段以云端为准', () => {
+    const c1 = mkStock('600000', 'A');
+    c1.stockTrades = [t({ side: 'buy', price: 10, shares: 100 })];
+    const localHit = mkStock('600000', 'A', { price: 12.3, priceUpdatedAt: 9 });
+    const localLedger: StockLedgerMap = {};
+    const { mergedStocks } = mergeCloudStocks([c1], localLedger, [localHit]);
+    expect(mergedStocks).toHaveLength(1);
+    expect(mergedStocks[0].id).toBe('600000');
+    expect(mergedStocks[0].price).toBe(12.3); // 本地价格缓存保留
+    expect(mergedStocks[0].name).toBe('A');   // 业务字段以云端为准
   });
 });
 

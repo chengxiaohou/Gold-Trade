@@ -1,5 +1,6 @@
 // 股票交易记录的云端同步纯函数（无副作用，便于单元测试）
-// 机制：全量上传 + union-by-id 下载合并（软删 isDeleted 直接随记录携带，无墓碑）。
+// 机制：全量上传 + 覆盖式下载合并（下载以云端为准；云端没有而本地独有的股票条目剔除，
+// 从而实现跨设备删除传播；软删 isDeleted 只用于交易记录粒度，直接随记录携带）。
 import type { StockEntry, StockTrade, StockSettings, BacktestStrategyPreset } from '../types';
 import type { StockLedgerMap } from './stockLedgerStore';
 import { calcPositionFromTrades } from './realizedPnl';
@@ -67,9 +68,11 @@ export function mergeStockFromCloud(
   };
 }
 
-// 把整批云端股票合并到本地流水账（批量版），返回合并后的股票列表 + 新流水账。
-// cloudStocks 仅云端已有的股票；本地独有（云端没有）的股票原样保留，避免下载丢数据。
-// localStocks 用于在下载时保留本地价格缓存字段。
+// 把整批云端股票合并到本地流水账（批量版，覆盖模式），返回合并后的股票列表 + 新流水账。
+// 语义：下载以云端为准直接覆盖本地股票条目：
+//   - 云端有的股票：按 id 合并（union 流水账、云端覆盖本地非价格字段、保留本地价格缓存）
+//   - 本地有而云端没有的股票条目：从股票列表与流水账中一并剔除（实现跨设备删除传播）
+// localStocks 仅用于在下载时保留云端命中的本地价格缓存字段。
 export function mergeCloudStocks(
   cloudStocks: StockEntry[],
   localLedger: StockLedgerMap,
@@ -82,10 +85,11 @@ export function mergeCloudStocks(
     newLedger[c.id] = ledgerEntry;
     return stock;
   });
-  // 本地独有股票（云端没有）保留原样，价格缓存同样保留
+  // 覆盖模式：云端没有、本地独有的股票条目 → 从流水账中一并剔除，
+  // 避免下载后启动回填从流水账读到旧条目把已覆盖删除的股票"复活"。
   const cloudIds = new Set(cloudStocks.map(c => c.id));
-  for (const local of localStocks) {
-    if (!cloudIds.has(local.id)) mergedStocks.push(local);
+  for (const id of Object.keys(newLedger)) {
+    if (!cloudIds.has(id)) delete newLedger[id];
   }
   return { mergedStocks, newLedger };
 }
