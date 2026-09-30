@@ -13,7 +13,7 @@ import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
 import { calcRealizedPnlForRange, calcPositionFromTrades } from '../services/realizedPnl';
-import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, classifyPriceState, classifyPriceStateAt, volBucket, stabilizeComboReference, buildLatestShrinkTags, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, PRICESTATE_CHIP_CLS as PRICESTATE_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5 } from '../services/tagAnalyzers';
+import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, classifyPriceState, classifyPriceStateAt, volBucket, stabilizeComboReference, buildLatestShrinkTags, buildShrinkTagsForModule, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, PRICESTATE_CHIP_CLS as PRICESTATE_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5 } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PriceStateTag, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
 import { InputGroup } from './InputGroup';
@@ -410,10 +410,10 @@ const calcRealizedPnlMap = (trades: StockTrade[]) => {
 
 // 交易历史记录条目（两行布局：公式+盈亏+状态徽标 / 时间+撤单+编辑+备注），撤单带确认
 interface TradeRecordRowProps {
-  t: StockTrade; stockName: string; currentPrice?: number; pnlMap: Record<string, number>;
+  t: StockTrade; stockName: string; currentPrice?: number; pnlMap: Record<string, number>; avgCost?: number;
   onToggle: (t: StockTrade) => void; onEdit: (t: StockTrade) => void; onDelete: (t: StockTrade) => void;
 }
-const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stockName, currentPrice = 0, pnlMap, onToggle, onEdit, onDelete }) => {
+const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stockName, currentPrice = 0, pnlMap, avgCost = 0, onToggle, onEdit, onDelete }) => {
   const [confirming, setConfirming] = useState(false);
   const fmtP = (v: number) => formatPrice(v, stockName);
   const shares = t.shares ?? 0;
@@ -444,15 +444,20 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stockName, currentPr
           <span className="font-normal text-app-subtext"> × </span>
           {Number.isInteger(shares) ? shares : shares.toFixed(2)}
           <span className="font-normal text-app-subtext"> = </span>
-          <span className={`font-bold ${t.side === 'buy' ? 'text-brand-red' : 'text-brand-green'}`}>
+          <span className={`font-bold ${t.side === 'buy' ? 'text-blue-500' : 'text-red-500'}`}>
             {(price * shares).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
           </span>
         </span>
-        {t.side === 'sell' && t.status === 'filled' && pnlMap[t.id] !== undefined && (
+        {t.side === 'sell' && t.status === 'filled' && pnlMap[t.id] !== undefined ? (
           <span className={`font-mono text-[10px] ${pnlMap[t.id] >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
             {`${pnlMap[t.id] >= 0 ? '+' : ''}${fmtP(pnlMap[t.id])}`}
           </span>
-        )}
+        ) : t.side === 'sell' && t.status === 'pending' && avgCost > 0 && price > 0 ? (
+          // 卖出挂单：按挂单价预计成交后获利（灰色），与成交的已实现盈亏区分
+          <span className="font-mono text-[10px] text-app-subtext">
+            {`${(price - avgCost) * shares >= 0 ? '+' : ''}${fmtP((price - avgCost) * shares)}`}
+          </span>
+        ) : null}
         {t.isMerged ? (
           <span className="shrink-0 text-[8px] px-1 py-px rounded-full border font-bold ml-auto text-app-subtext/60 border-app-border/60 bg-app-text/5">
             {t.side === 'buy' ? '买入汇总' : '卖出汇总'}
@@ -2153,11 +2158,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return data;
   };
 
-  // 列表名称列缩略标签：直接复用 computeAnalyzed 的判定结果，从不自行重新判定
+  // 列表名称列缩略标签：只声明本模块身份，由标签分发部门统一裁决下发哪些标签（数据中央集权），本模块不自行过滤。
   const getLatestDayTags = (stock: StockEntry): { key: string; text: string; cls: string }[] => {
     const a = computeAnalyzed(stock);
     if (!a.klines) return [];
-    return buildLatestShrinkTags(a.events, a.patterns, a.env, a.klines[a.klines.length - 1].date, a.priceState, a.latestVol);
+    return buildShrinkTagsForModule('list', a.events, a.patterns, a.env, a.klines[a.klines.length - 1].date, a.priceState, a.latestVol);
   };
 
   // 列表当前显示顺序（按排序规则重排；默认顺序即 stocks 原序）
@@ -5988,6 +5993,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       stockName={s.name}
                       currentPrice={s.price}
                       pnlMap={recalcPnL.map}
+                      avgCost={s.positionCost || 0}
                       onToggle={(x) => handleToggleTrade(s.id, x.id)}
                       onDelete={(x) => handleRemoveTrade(s.id, x.id)}
                       onEdit={(x) => startEditTrade(s, x)}
