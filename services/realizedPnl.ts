@@ -1,11 +1,14 @@
 import type { StockTrade } from '../types';
 import type { StockLedgerMap } from './stockLedgerStore';
 
-// 统一的持仓计算结果：剩余持股数 + 移动加权成本
+// 统一持仓计算结果：剩余持股数 + 移动加权成本
 export interface PositionFromTrades {
   shares: number;
   avgCost: number;
 }
+
+// 盈利计算模式：均价（移动加权） / 做T（最近买入匹配）
+export type PnlCalcMode = 'avg' | 'dt';
 
 // 从一组交易记录按「移动加权平均」重算持仓（忽略软删与挂单）。
 // 任何时候本地/云端/持久化恢复后需要对齐 positionShares / positionCost，都应调用此函数，
@@ -39,6 +42,7 @@ export interface PnlTx {
   shares: number;
   amount: number;   // 成交金额 = price × shares
   pnl?: number;     // 仅卖出：该笔已实现盈亏
+  err?: boolean;    // 仅做T模式：该笔卖出配不满买入（卖超），视为录入有误
   time: number;     // 有效时间（filledAt || createdAt）
 }
 
@@ -56,6 +60,58 @@ export interface RealizedPnlForRange {
   byDay: PnlDay[];                          // 逐日明细（按日期升序）
 }
 
+// 做T口径的整只股票计算结果
+export interface DtPnlResult {
+  map: Record<string, number>;      // 每笔卖出 id → 做T已实现盈亏（只计有买入匹配的部分）
+  total: number;                     // 已实现盈亏合计
+  positionShares: number;            // 剩余未匹配买入的持有股数
+  positionCost: number;              // 剩余未匹配买入的加权均价（每股）
+  errIds: Set<string>;               // 卖超（配不满买入）的卖出记录 id
+}
+
+// 从最近的未匹配买入开始倒序匹配一笔卖出，返回该卖出的做T已实现盈亏，并扣减已用买入。
+// 数量不足时只匹配能覆盖的部分（部分匹配），剩余股数仍配不满即视为卖超（err=true）。
+function matchDtSell(lots: { price: number; shares: number }[], sellPrice: number, sellShares: number) {
+  let remaining = sellShares, pnl = 0;
+  while (remaining > 0 && lots.length > 0) {
+    const lot = lots[lots.length - 1];
+    const take = Math.min(remaining, lot.shares);
+    pnl += (sellPrice - lot.price) * take;
+    lot.shares -= take;
+    remaining -= take;
+    if (lot.shares <= 0) lots.pop();
+  }
+  return { pnl, err: remaining > 0 };
+}
+
+// 做T口径：按成交顺序把每笔卖出匹配到「最近的一笔未匹配买入」，计算做T已实现盈亏，
+// 并得到剩余未匹配买入（即做T口径下的当前持仓）。与均价口径 differ：卖出成本取自所匹配买入价。
+export function calcDtPnlForTrades(trades?: StockTrade[]): DtPnlResult {
+  const result: DtPnlResult = { map: {}, total: 0, positionShares: 0, positionCost: 0, errIds: new Set() };
+  if (!trades || trades.length === 0) return result;
+  const filled = trades
+    .filter(t => t.status === 'filled' && !t.isDeleted)
+    .sort((a, b) => effectiveTime(a) - effectiveTime(b));
+  const lots: { price: number; shares: number }[] = [];
+  for (const t of filled) {
+    const shares = t.shares ?? 0;
+    if (t.side === 'buy') {
+      lots.push({ price: t.price ?? 0, shares });
+    } else {
+      const { pnl, err } = matchDtSell(lots, t.price ?? 0, shares);
+      if (err) result.errIds.add(t.id);
+      result.map[t.id] = pnl;
+      result.total += pnl;
+    }
+  }
+  for (const lot of lots) {
+    result.positionShares += lot.shares;
+    result.positionCost += (lot.price ?? 0) * lot.shares;
+  }
+  result.positionCost = result.positionShares > 0 ? result.positionCost / result.positionShares : 0;
+  return result;
+}
+
 const effectiveTime = (t: StockTrade) => t.filledAt ?? t.createdAt;
 
 const dateKeyOf = (ts: number) => {
@@ -66,14 +122,15 @@ const dateKeyOf = (ts: number) => {
 };
 
 // 统计某时间窗口 [startTs, endTs) 内的已实现盈亏：
-// 1. 先按时间顺序扫描窗口前所有成交，建立各股票期初持仓（移动加权成本）；
-// 2. 再扫窗口内成交，卖出按 dateKey 归属，realized = 卖出金额 - 持仓成本 × 股数。
-// 忽略软删（isDeleted）与挂单（非 filled）记录。
+// 1. 先按时间顺序扫描窗口前所有成交，建立各股票期初状态；
+// 2. 再扫窗口内成交，卖出按 dateKey 归属并计算已实现盈亏，忽略软删与挂单。
+// mode='avg'：移动加权成本结算（卖出按均价成本）；mode='dt'：做T匹配（卖出匹配最近买入）。
 export function calcRealizedPnlForRange(
   ledger: StockLedgerMap,
   stockNames: Record<string, string>,
   startTs: number,
   endTs: number,
+  mode: PnlCalcMode = 'avg',
 ): RealizedPnlForRange {
   const byStock: Record<string, number> = {};
   const dayMap = new Map<string, PnlDay>();
@@ -96,38 +153,43 @@ export function calcRealizedPnlForRange(
       .filter(t => t.status === 'filled' && !t.isDeleted)
       .sort((a, b) => effectiveTime(a) - effectiveTime(b));
 
-    let rs = 0;   // 剩余持股
-    let rc = 0;   // 移动加权成本（每股）
     let realized = 0;
+    let rs = 0;                                  // avg 模式：剩余持股
+    let rc = 0;                                  // avg 模式：移动加权成本（每股）
+    const lots: { price: number; shares: number }[] = []; // dt 模式：未匹配买入
 
     for (const t of trades) {
       const eff = effectiveTime(t);
       if (eff >= endTs) break;               // 窗口之后不再影响窗口内盈亏
       const amt = t.amount ?? t.price * t.shares;
-      if (eff < startTs) {
-        // 窗口前的成交：仅用于建立期初持仓
-        if (t.side === 'buy') {
-          const prevRs = rs;
-          rs += t.shares;
-          rc = rs > 0 ? (rc * prevRs + amt) / rs : 0;
-        } else {
-          rs = Math.max(0, rs - t.shares);
-          if (rs === 0) rc = 0;
+      const shares = t.shares;
+      if (t.side === 'buy') {
+        lots.push({ price: t.price, shares });
+        const prevRs = rs;
+        rs += shares;
+        rc = rs > 0 ? (rc * prevRs + amt) / rs : 0;
+        if (eff >= startTs) {
+          addTx(dateKeyOf(eff), { stockId, stockName: name, price: t.price, shares, amount: amt, time: eff });
         }
         continue;
       }
-      // 窗口内成交
-      if (t.side === 'buy') {
-        const prevRs = rs;
-        rs += t.shares;
-        rc = rs > 0 ? (rc * prevRs + amt) / rs : 0;
-        addTx(dateKeyOf(eff), { stockId, stockName: name, price: t.price, shares: t.shares, amount: amt, time: eff });
+      // 卖出
+      let pnl: number;
+      let err = false;
+      if (mode === 'dt') {
+        // 做T：卖出匹配最近的未匹配买入（含窗口前买入），只计有匹配的部分
+        const r = matchDtSell(lots, t.price, shares);
+        pnl = r.pnl;
+        err = r.err;
       } else {
-        const pnl = rs > 0 ? amt - rc * t.shares : 0;
-        realized += pnl;
-        rs = Math.max(0, rs - t.shares);
+        // 均价：按移动加权成本结算
+        pnl = rs > 0 ? amt - rc * shares : 0;
+        rs = Math.max(0, rs - shares);
         if (rs === 0) rc = 0;
-        addTx(dateKeyOf(eff), { stockId, stockName: name, price: t.price, shares: t.shares, amount: amt, time: eff, pnl });
+      }
+      if (eff >= startTs) {
+        realized += pnl;
+        addTx(dateKeyOf(eff), { stockId, stockName: name, price: t.price, shares, amount: amt, time: eff, pnl, err: err || undefined });
       }
     }
 
