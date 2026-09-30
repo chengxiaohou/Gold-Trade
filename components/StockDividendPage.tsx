@@ -409,12 +409,17 @@ const calcRealizedPnlMap = (trades: StockTrade[]) => {
 };
 
 // 交易历史记录条目（两行布局：公式+盈亏+状态徽标 / 时间+撤单+编辑+备注），撤单带确认
+// 只接收单个 stock 对象，其余展示数据（stockName/currentPrice/avgCost）一律内部从 stock 派生，
+// 两个调用点（交易弹窗 / 简易浮窗）传同一份 stock，新增派生字段无需改任何调用处，保证完全复用。
 interface TradeRecordRowProps {
-  t: StockTrade; stockName: string; currentPrice?: number; pnlMap: Record<string, number>; avgCost?: number;
+  t: StockTrade; stock: StockEntry; pnlMap: Record<string, number>;
   onToggle: (t: StockTrade) => void; onEdit: (t: StockTrade) => void; onDelete: (t: StockTrade) => void;
 }
-const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stockName, currentPrice = 0, pnlMap, avgCost = 0, onToggle, onEdit, onDelete }) => {
+const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, onToggle, onEdit, onDelete }) => {
   const [confirming, setConfirming] = useState(false);
+  const stockName = stock.name;
+  const currentPrice = stock.price || 0;
+  const avgCost = stock.positionCost || 0;
   const fmtP = (v: number) => formatPrice(v, stockName);
   const shares = t.shares ?? 0;
   const price = t.price ?? 0;
@@ -5982,10 +5987,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     <TradeRecordRow
                       key={t.id}
                       t={t}
-                      stockName={s.name}
-                      currentPrice={s.price}
+                      stock={s}
                       pnlMap={recalcPnL.map}
-                      avgCost={s.positionCost || 0}
                       onToggle={(x) => handleToggleTrade(s.id, x.id)}
                       onDelete={(x) => handleRemoveTrade(s.id, x.id)}
                       onEdit={(x) => startEditTrade(s, x)}
@@ -6016,8 +6019,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <TradeRecordRow
                   key={t.id}
                   t={t}
-                  stockName={s.name}
-                  currentPrice={s.price}
+                  stock={s}
                   pnlMap={calcRealizedPnlMap(getTrades(s)).map}
                   onToggle={(x) => handleToggleTrade(s.id, x.id)}
                   onDelete={(x) => handleRemoveTrade(s.id, x.id)}
