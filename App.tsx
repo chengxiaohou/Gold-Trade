@@ -182,6 +182,43 @@ export default function App() {
     document.title = currentPage === 'gold' ? '黄金' : '股息';
   }, [currentPage]);
 
+  // 全局 wheel 截断：滚轮落在 fixed 弹窗/浮层上时，若弹窗内部没有能承接滚动的容器，
+  // 一律 preventDefault，避免滚轮带动外层股票大列表/页面。原生 passive:false 保证生效。
+  useEffect(() => {
+    const onGlobalWheel = (e: WheelEvent) => {
+      const t = e.target;
+      if (!(t instanceof HTMLElement)) return;
+      const delta = e.deltaY;
+      if (delta === 0) return;
+      // 找目标最近的 fixed 祖先（弹窗/浮层根）
+      let overlayRoot: HTMLElement | null = null;
+      let node: HTMLElement | null = t;
+      while (node && node !== document.documentElement) {
+        if (getComputedStyle(node).position === 'fixed') { overlayRoot = node; break; }
+        node = node.parentElement;
+      }
+      // 从目标向上收集可滚动容器（自身+祖先，仅真正有溢出内容的）
+      const scrollers: HTMLElement[] = [];
+      let el: HTMLElement | null = t;
+      while (el && el !== document.documentElement) {
+        const st = getComputedStyle(el);
+        if (/auto|scroll|overlay/.test(st.overflowY) && el.scrollHeight > el.clientHeight) scrollers.push(el);
+        el = el.parentElement;
+      }
+      // 能朝 delta 方向滚动的容器
+      const canScroll = scrollers.find(s => delta > 0 ? s.scrollTop + s.clientHeight < s.scrollHeight - 1 : s.scrollTop > 0);
+      if (canScroll) {
+        // 该容器在弹窗内（被 overlay 包含）→ 允许正常滚动；否则（在弹窗外的背景）→ 光标在弹窗内时阻止
+        if (overlayRoot && !overlayRoot.contains(canScroll)) e.preventDefault();
+        return;
+      }
+      // 无可滚动容器：光标在弹窗内时阻止背景滚动
+      if (overlayRoot) e.preventDefault();
+    };
+    document.addEventListener('wheel', onGlobalWheel, { passive: false });
+    return () => document.removeEventListener('wheel', onGlobalWheel);
+  }, []);
+
   const togglePage = () => {
     setCurrentPage(prev => prev === 'gold' ? 'stocks' : 'gold');
   };

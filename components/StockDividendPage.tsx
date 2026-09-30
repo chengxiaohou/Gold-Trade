@@ -6017,7 +6017,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     ))}
                   </div>
                 </div>
-                <div className="space-y-1 h-[132px] overflow-y-auto pr-0.5 custom-scrollbar" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                <div className="space-y-1 max-h-[210px] overflow-y-auto pr-0.5 custom-scrollbar" style={{ height: tradeBodyMaxH ? Math.min(210, tradeBodyMaxH) : 210, scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
                   {sortedTrades.length === 0 ? (
                     // 空态占满固定高度，与有记录时高度一致，保证弹窗垂直居中不跳动
                     <div className="h-full flex items-center justify-center text-[10px] text-app-subtext border border-dashed border-app-border rounded-lg">暂无记录，添加第一条挂单吧</div>
