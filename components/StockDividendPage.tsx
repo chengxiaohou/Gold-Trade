@@ -591,7 +591,13 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
           <span className="font-normal text-app-subtext"> × </span>
           {Number.isInteger(shares) ? shares : shares.toFixed(2)}
           <span className="font-normal text-app-subtext"> = </span>
-          <span className={`font-bold ${t.side === 'buy' ? 'text-blue-500' : 'text-red-500'} ${t.side === 'buy' && t.status === 'filled' && buyMatchMap?.[t.id] && buyMatchMap[t.id].matched >= buyMatchMap[t.id].original ? 'line-through opacity-60' : ''}`}>
+          <span className={`font-bold ${t.side === 'buy' ? 'text-blue-500' : 'text-red-500'} ${(() => {
+            if (t.side !== 'buy' || t.status !== 'filled') return '';
+            const m = buyMatchMap?.[t.id];
+            if (!m || m.matched <= 0) return '';
+            // 完全被卖出对冲：删除线 + 调暗；部分被对冲：仅调暗
+            return m.matched >= m.original ? 'line-through opacity-60' : 'opacity-60';
+          })()}`}>
             {(price * shares).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
           </span>
         </span>
@@ -645,14 +651,14 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
         <span className="font-mono font-bold whitespace-nowrap self-center leading-none">{timeStr(t.createdAt)}</span>
         {!t.isMerged && (
           confirming ? (
-            <span className="flex items-center -space-x-1 -ml-1">
-              <button type="button" onClick={() => { onDelete(t); setConfirming(false); }} className="shrink-0 px-1 rounded text-[9px] font-bold text-brand-red hover:bg-app-text/5 transition-colors self-center leading-none">确认</button>
-              <button type="button" onClick={() => setConfirming(false)} className="shrink-0 px-1 rounded text-[9px] text-app-subtext/70 hover:bg-app-text/5 transition-colors self-center leading-none">取消</button>
+            <span className="flex items-center -space-x-1 -ml-1 select-none">
+              <button type="button" onClick={() => { onDelete(t); setConfirming(false); }} className="shrink-0 px-1 rounded text-[9px] font-bold text-brand-red hover:bg-app-text/5 transition-colors self-center leading-none cursor-pointer select-none">确认</button>
+              <button type="button" onClick={() => setConfirming(false)} className="shrink-0 px-1 rounded text-[9px] text-app-subtext/70 hover:bg-app-text/5 transition-colors self-center leading-none cursor-pointer select-none">取消</button>
             </span>
           ) : (
-            <div className="flex items-center -space-x-1 -ml-1">
-              <button type="button" onClick={() => setConfirming(true)} className="shrink-0 px-1 rounded text-[9px] text-app-subtext/50 hover:text-brand-red hover:bg-app-text/5 transition-colors inline-flex items-center justify-center self-center leading-none" title="撤单（删除该记录）">撤单</button>
-              <button type="button" onClick={() => onEdit(t)} className="shrink-0 px-1 rounded text-[9px] text-app-subtext/50 hover:text-app-text hover:bg-app-text/5 transition-colors inline-flex items-center justify-center self-center leading-none" title="编辑该记录">编辑</button>
+            <div className="flex items-center -space-x-1 -ml-1 select-none">
+              <button type="button" onClick={() => setConfirming(true)} className="shrink-0 px-1 rounded text-[9px] text-app-subtext/50 hover:text-brand-red hover:bg-app-text/5 transition-colors inline-flex items-center justify-center self-center leading-none cursor-pointer select-none" title="撤单（删除该记录）">撤单</button>
+              <button type="button" onClick={() => onEdit(t)} className="shrink-0 px-1 rounded text-[9px] text-app-subtext/50 hover:text-app-text hover:bg-app-text/5 transition-colors inline-flex items-center justify-center self-center leading-none cursor-pointer select-none" title="编辑该记录">编辑</button>
             </div>
           )
         )}
