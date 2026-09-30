@@ -76,6 +76,7 @@ export interface DtPnlResult {
   total: number;                     // 已实现盈亏合计
   pendingMap: Record<string, number>; // 卖出挂单 id → 做T口径预估盈亏（用同一匹配规则在"当前持仓"上预结算）
   pairMap: Record<string, DtPair[]>; // 卖出 id（含挂单）→ 与其配对的买入记录明细
+  buyMatchMap: Record<string, { original: number; matched: number }>; // 买入 id → 原始份额 & 累计被卖出匹配份额（original === matched 表示该买入已完全对冲）
   positionShares: number;            // 剩余未匹配买入的持有股数
   positionCost: number;              // 剩余未匹配买入的加权均价（每股）
   errIds: Set<string>;               // 卖超（配不满买入）的卖出记录 id
@@ -110,7 +111,7 @@ function matchDtSell(lots: DtLot[], sellPrice: number, sellShares: number) {
 // 做T口径：按成交顺序把每笔卖出匹配到「最近的一笔未匹配买入」，计算做T已实现盈亏，
 // 并得到剩余未匹配买入（即做T口径下的当前持仓）。与均价口径 differ：卖出成本取自所匹配买入价。
 export function calcDtPnlForTrades(trades?: StockTrade[]): DtPnlResult {
-  const result: DtPnlResult = { map: {}, total: 0, pendingMap: {}, pairMap: {}, positionShares: 0, positionCost: 0, errIds: new Set() };
+  const result: DtPnlResult = { map: {}, total: 0, pendingMap: {}, pairMap: {}, buyMatchMap: {}, positionShares: 0, positionCost: 0, errIds: new Set() };
   if (!trades || trades.length === 0) return result;
   const all = trades
     .filter(t => !t.isDeleted)
@@ -127,6 +128,18 @@ export function calcDtPnlForTrades(trades?: StockTrade[]): DtPnlResult {
       result.map[t.id] = pnl;
       result.pairMap[t.id] = pairs;
       result.total += pnl;
+    }
+  }
+  // 汇总买入被匹配情况：原始份额来自未删除的买入成交记录（已不依赖 lots，因 lots 中 rest 已被消耗）
+  for (const t of all) {
+    if (t.side === 'buy' && t.status === 'filled') {
+      result.buyMatchMap[t.id] = { original: t.shares ?? 0, matched: 0 };
+    }
+  }
+  for (const pairs of Object.values(result.pairMap)) {
+    for (const p of pairs) {
+      const entry = result.buyMatchMap[p.buyId];
+      if (entry) entry.matched += p.take;
     }
   }
   for (const lot of lots) {

@@ -554,8 +554,10 @@ interface TradeRecordRowProps {
   errIds?: Set<string>;
   // 做T模式：卖出记录 id → 与其配对的买入记录明细（盈利数字悬停/点击可追溯）
   pairMap?: Record<string, DtPair[]>;
+  // 做T模式：买入 id → { original, matched }，matched >= original 表示该买入已被卖出全部对冲
+  buyMatchMap?: Record<string, { original: number; matched: number }>;
 }
-const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendingMap, onToggle, onEdit, onDelete, errIds, pairMap }) => {
+const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendingMap, onToggle, onEdit, onDelete, errIds, pairMap, buyMatchMap }) => {
   const [confirming, setConfirming] = useState(false);
   const stockName = stock.name;
   const currentPrice = stock.price || 0;
@@ -589,7 +591,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
           <span className="font-normal text-app-subtext"> × </span>
           {Number.isInteger(shares) ? shares : shares.toFixed(2)}
           <span className="font-normal text-app-subtext"> = </span>
-          <span className={`font-bold ${t.side === 'buy' ? 'text-blue-500' : 'text-red-500'}`}>
+          <span className={`font-bold ${t.side === 'buy' ? 'text-blue-500' : 'text-red-500'} ${t.side === 'buy' && t.status === 'filled' && buyMatchMap?.[t.id] && buyMatchMap[t.id].matched >= buyMatchMap[t.id].original ? 'line-through opacity-60' : ''}`}>
             {(price * shares).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
           </span>
         </span>
@@ -6172,6 +6174,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       pnlMap={shownPnl.map}
                       pendingMap={shownPnl.pendingMap}
                       pairMap={modeIsDt ? dtPnL.pairMap : undefined}
+                      buyMatchMap={modeIsDt ? dtPnL.buyMatchMap : undefined}
                       errIds={modeIsDt ? dtPnL.errIds : undefined}
                       onToggle={(x) => handleToggleTrade(s.id, x.id)}
                       onDelete={(x) => handleRemoveTrade(s.id, x.id)}
@@ -6210,6 +6213,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   pnlMap={(pnlCalcMode === 'dt' ? simpleDt : simpleAvg).map}
                   pendingMap={(pnlCalcMode === 'dt' ? simpleDt : simpleAvg).pendingMap}
                   pairMap={pnlCalcMode === 'dt' ? simpleDt.pairMap : undefined}
+                  buyMatchMap={pnlCalcMode === 'dt' ? simpleDt.buyMatchMap : undefined}
                   errIds={pnlCalcMode === 'dt' ? simpleDt.errIds : undefined}
                   onToggle={(x) => handleToggleTrade(s.id, x.id)}
                   onDelete={(x) => handleRemoveTrade(s.id, x.id)}
