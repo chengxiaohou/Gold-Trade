@@ -562,6 +562,12 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
   const stockName = stock.name;
   const currentPrice = stock.price || 0;
   const fmtP = (v: number) => formatPrice(v, stockName);
+  // 盈利金额格式化：先消除浮点误差，再去除多余尾零（如 150.00 → 150, 150.50 → 150.5）
+  const fmtProfit = (v: number) => {
+    const n = Math.round(v * 100) / 100;
+    const s = n.toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    return s.replace(/\.?0+$/, '');
+  };
   const shares = t.shares ?? 0;
   const price = t.price ?? 0;
   const isErrSell = t.side === 'sell' && t.status === 'filled' && !!errIds && errIds.has(t.id);
@@ -606,12 +612,12 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
             <span className="font-mono text-[10px] font-bold text-orange-400" title="卖出股数超过此前买入，疑似录入有误">ERR</span>
           ) : t.side === 'sell' && pnlMap[t.id] !== undefined ? (
             <span className={`font-mono text-[10px] ${pnlMap[t.id] >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-              {`${pnlMap[t.id] >= 0 ? '+' : ''}${fmtP(pnlMap[t.id])}`}
+              {`${pnlMap[t.id] >= 0 ? '+' : ''}${fmtProfit(pnlMap[t.id])}`}
             </span>
           ) : t.side === 'sell' && t.status === 'pending' && !!pendingMap && pendingMap[t.id] !== undefined ? (
             // 卖出挂单：预估获利（灰色）同样来自同一移动加权/做T口径，与成交共用一套算法，仅颜色区分
             <span className="font-mono text-[10px] text-app-subtext">
-              {`${pendingMap[t.id] >= 0 ? '+' : ''}${fmtP(pendingMap[t.id])}`}
+              {`${pendingMap[t.id] >= 0 ? '+' : ''}${fmtProfit(pendingMap[t.id])}`}
             </span>
           ) : null;
           const tradePairs = pairMap?.[t.id];
