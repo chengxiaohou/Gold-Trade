@@ -43,6 +43,7 @@ export interface PnlTx {
   amount: number;   // 成交金额 = price × shares
   pnl?: number;     // 仅卖出：该笔已实现盈亏
   err?: boolean;    // 仅做T模式：该笔卖出配不满买入（卖超），视为录入有误
+  pairs?: DtPair[]; // 仅做T模式：该笔卖出匹配到的买入记录明细
   time: number;     // 有效时间（filledAt || createdAt）
 }
 
@@ -60,63 +61,86 @@ export interface RealizedPnlForRange {
   byDay: PnlDay[];                          // 逐日明细（按日期升序）
 }
 
+// 做T口径的一条配对明细：某笔卖出占用了哪一笔买入的多少份额
+export interface DtPair {
+  buyId: string;   // 被匹配买入记录 id
+  date: string;    // 买入日期 yyyy-MM-dd
+  price: number;   // 买入单价
+  shares: number;  // 该笔买入的原始总份额
+  take: number;    // 本次卖出占用的份额
+}
+
 // 做T口径的整只股票计算结果
 export interface DtPnlResult {
   map: Record<string, number>;      // 每笔卖出 id → 做T已实现盈亏（只计有买入匹配的部分）
   total: number;                     // 已实现盈亏合计
   pendingMap: Record<string, number>; // 卖出挂单 id → 做T口径预估盈亏（用同一匹配规则在"当前持仓"上预结算）
+  pairMap: Record<string, DtPair[]>; // 卖出 id（含挂单）→ 与其配对的买入记录明细
   positionShares: number;            // 剩余未匹配买入的持有股数
   positionCost: number;              // 剩余未匹配买入的加权均价（每股）
   errIds: Set<string>;               // 卖超（配不满买入）的卖出记录 id
 }
 
-// 从最近的未匹配买入开始倒序匹配一笔卖出，返回该卖出的做T已实现盈亏，并扣减已用买入。
-// 数量不足时只匹配能覆盖的部分（部分匹配），剩余股数仍配不满即视为卖超（err=true）。
-function matchDtSell(lots: { price: number; shares: number }[], sellPrice: number, sellShares: number) {
+// 做T匹配过程中的未匹配买入份额（可被后续卖出逐份占用）
+interface DtLot {
+  id: string;
+  time: number;
+  price: number;
+  total: number;   // 该笔买入的原始总份额
+  rest: number;    // 仍未被占用的剩余份额
+}
+
+// 从最近的未匹配买入开始倒序匹配一笔卖出，返回该卖出的做T已实现盈亏、逐笔配对明细，
+// 并扣减已用买入。数量不足时只匹配能覆盖的部分（部分匹配），剩余股数仍配不满即视为卖超（err=true）。
+function matchDtSell(lots: DtLot[], sellPrice: number, sellShares: number) {
   let remaining = sellShares, pnl = 0;
+  const pairs: DtPair[] = [];
   while (remaining > 0 && lots.length > 0) {
     const lot = lots[lots.length - 1];
-    const take = Math.min(remaining, lot.shares);
+    const take = Math.min(remaining, lot.rest);
     pnl += (sellPrice - lot.price) * take;
-    lot.shares -= take;
+    lot.rest -= take;
     remaining -= take;
-    if (lot.shares <= 0) lots.pop();
+    pairs.push({ buyId: lot.id, date: dateKeyOf(lot.time), price: lot.price, shares: lot.total, take });
+    if (lot.rest <= 0) lots.pop();
   }
-  return { pnl, err: remaining > 0 };
+  return { pnl, pairs, err: remaining > 0 };
 }
 
 // 做T口径：按成交顺序把每笔卖出匹配到「最近的一笔未匹配买入」，计算做T已实现盈亏，
 // 并得到剩余未匹配买入（即做T口径下的当前持仓）。与均价口径 differ：卖出成本取自所匹配买入价。
 export function calcDtPnlForTrades(trades?: StockTrade[]): DtPnlResult {
-  const result: DtPnlResult = { map: {}, total: 0, pendingMap: {}, positionShares: 0, positionCost: 0, errIds: new Set() };
+  const result: DtPnlResult = { map: {}, total: 0, pendingMap: {}, pairMap: {}, positionShares: 0, positionCost: 0, errIds: new Set() };
   if (!trades || trades.length === 0) return result;
   const all = trades
     .filter(t => !t.isDeleted)
     .sort((a, b) => effectiveTime(a) - effectiveTime(b));
-  const lots: { price: number; shares: number }[] = [];
+  const lots: DtLot[] = [];
   for (const t of all) {
     const shares = t.shares ?? 0;
     if (t.side === 'buy') {
       if (t.status !== 'filled') continue; // 买入挂单尚未执行，不进持仓
-      lots.push({ price: t.price ?? 0, shares });
+      lots.push({ id: t.id, time: effectiveTime(t), price: t.price ?? 0, total: shares, rest: shares });
     } else if (t.status === 'filled') {
-      const { pnl, err } = matchDtSell(lots, t.price ?? 0, shares);
+      const { pnl, pairs, err } = matchDtSell(lots, t.price ?? 0, shares);
       if (err) result.errIds.add(t.id);
       result.map[t.id] = pnl;
+      result.pairMap[t.id] = pairs;
       result.total += pnl;
     }
   }
   for (const lot of lots) {
-    result.positionShares += lot.shares;
-    result.positionCost += (lot.price ?? 0) * lot.shares;
+    result.positionShares += lot.rest;
+    result.positionCost += (lot.price ?? 0) * lot.rest;
   }
   result.positionCost = result.positionShares > 0 ? result.positionCost / result.positionShares : 0;
   // 卖出挂单：用做T同一「最近买入匹配」规则在"当前持仓"上预结算（深拷贝 lots，不真正扣减）。
   if (result.positionShares > 0) {
     for (const t of all) {
       if (t.side === 'sell' && t.status === 'pending' && !t.isDeleted) {
-        const { pnl } = matchDtSell(lots.map(l => ({ ...l })), t.price ?? 0, t.shares ?? 0);
+        const { pnl, pairs } = matchDtSell(lots.map(l => ({ ...l })), t.price ?? 0, t.shares ?? 0);
         result.pendingMap[t.id] = pnl;
+        result.pairMap[t.id] = pairs;
       }
     }
   }
@@ -167,7 +191,7 @@ export function calcRealizedPnlForRange(
     let realized = 0;
     let rs = 0;                                  // avg 模式：剩余持股
     let rc = 0;                                  // avg 模式：移动加权成本（每股）
-    const lots: { price: number; shares: number }[] = []; // dt 模式：未匹配买入
+    const lots: DtLot[] = [];                    // dt 模式：未匹配买入
 
     for (const t of trades) {
       const eff = effectiveTime(t);
@@ -175,7 +199,7 @@ export function calcRealizedPnlForRange(
       const amt = t.amount ?? t.price * t.shares;
       const shares = t.shares;
       if (t.side === 'buy') {
-        lots.push({ price: t.price, shares });
+        lots.push({ id: t.id, time: eff, price: t.price, total: shares, rest: shares });
         const prevRs = rs;
         rs += shares;
         rc = rs > 0 ? (rc * prevRs + amt) / rs : 0;
@@ -187,11 +211,13 @@ export function calcRealizedPnlForRange(
       // 卖出
       let pnl: number;
       let err = false;
+      let pairs: DtPair[] | undefined;
       if (mode === 'dt') {
         // 做T：卖出匹配最近的未匹配买入（含窗口前买入），只计有匹配的部分
         const r = matchDtSell(lots, t.price, shares);
         pnl = r.pnl;
         err = r.err;
+        pairs = r.pairs;
       } else {
         // 均价：按移动加权成本结算
         pnl = rs > 0 ? amt - rc * shares : 0;
@@ -200,7 +226,7 @@ export function calcRealizedPnlForRange(
       }
       if (eff >= startTs) {
         realized += pnl;
-        addTx(dateKeyOf(eff), { stockId, stockName: name, price: t.price, shares, amount: amt, time: eff, pnl, err: err || undefined });
+        addTx(dateKeyOf(eff), { stockId, stockName: name, price: t.price, shares, amount: amt, time: eff, pnl, err: err || undefined, pairs });
       }
     }
 

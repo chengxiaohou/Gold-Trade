@@ -12,7 +12,7 @@ import { fetchYearlyDividends, DividendRecord } from '../services/dividendServic
 import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
-import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, type PnlCalcMode } from '../services/realizedPnl';
+import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
 import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, classifyPriceState, classifyPriceStateAt, volBucket, stabilizeComboReference, buildLatestShrinkTags, buildShrinkTagsForModule, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, PRICESTATE_CHIP_CLS as PRICESTATE_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5 } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PriceStateTag, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
@@ -426,13 +426,136 @@ const calcRealizedPnlMap = (trades: StockTrade[]) => {
 // 交易历史记录条目（两行布局：公式+盈亏+状态徽标 / 时间+撤单+编辑+备注），撤单带确认
 // 只接收单个 stock 对象，其余展示数据（stockName/currentPrice/avgCost）一律内部从 stock 派生，
 // 两个调用点（交易弹窗 / 简易浮窗）传同一份 stock，新增派生字段无需改任何调用处，保证完全复用。
+// 做T配对提示：悬停盈利数字，显示它匹配到的买入记录。
+// 架构对齐股息率曲线浮窗：骨架 DOM 一次性渲染 + transform 定位 + textContent 直接写，
+// 全程不触发 React 重渲染，鼠标再快也丝滑。仅做T模式有配对数据时展示。
+// 交互：hover 显示，离开隐藏；点击固定（触屏），点外部取消。
+const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; children: React.ReactNode }> = ({ pairs, fmtPrice, children }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const rowsRef = useRef<HTMLSpanElement[]>([]);
+  const headerDateRefs = useRef<HTMLSpanElement[]>([]);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const pinnedRef = useRef(false);
+  const rafRef = useRef<number | null>(null);
+
+  if (!pairs || pairs.length === 0) return <>{children}</>;
+
+  const showAt = (triggerRect: DOMRect) => {
+    const el = containerRef.current;
+    if (!el) return;
+    // 写内容：公式还原该笔买入的完整原始份额（price × shares），右上角百分比再表达本次占用比例
+    pairs.forEach((p, i) => {
+      const row = rowsRef.current[i];
+      if (!row) return;
+      const pct = p.shares > 0 ? (p.take / p.shares) * 100 : 0;
+      const pctLabel = pct >= 100 ? '100%' : `${pct.toFixed(0)}%`;
+      row.textContent = `${fmtPrice(p.price)} × ${p.shares} = ${fmtPrice(p.price * p.shares)}`;
+      const h = headerDateRefs.current[i];
+      if (h) h.textContent = `T${pctLabel}  ${p.date}`;
+    });
+    // 估算高度后定位（触发器上方居中）
+    const estH = pairs.length * 24 + 26;
+    let x = triggerRect.left + triggerRect.width / 2;
+    let y = triggerRect.top - estH - 6;
+    const w = 170;
+    if (x - w / 2 < 8) x = w / 2 + 8;
+    if (x + w / 2 > window.innerWidth - 8) x = window.innerWidth - w / 2 - 8;
+    if (y < 8) y = triggerRect.bottom + 14; // 上方放不下就翻到下方
+    el.style.transform = `translate(${x - w / 2}px, ${y}px)`;
+    el.style.opacity = '1';
+  };
+
+  const hide = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.style.opacity = '0';
+  };
+
+  const requestShowAt = () => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      showAt(rect);
+    });
+  };
+
+  // 全局点外部隐藏 pinned 浮窗
+  useEffect(() => {
+    const onGlobalDown = (e: MouseEvent | TouchEvent) => {
+      if (!pinnedRef.current) return;
+      const t = e.target as Node;
+      const c = containerRef.current;
+      const tr = triggerRef.current;
+      if (c && c.contains(t)) return;
+      if (tr && tr.contains(t)) return; // 点击触发器时 pinned 会在 click 里 toggle，这里不拦截
+      pinnedRef.current = false;
+      hide();
+    };
+    window.addEventListener('mousedown', onGlobalDown);
+    window.addEventListener('touchstart', onGlobalDown);
+    return () => {
+      window.removeEventListener('mousedown', onGlobalDown);
+      window.removeEventListener('touchstart', onGlobalDown);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
+  const w = 170;
+  return (
+    <>
+      <span
+        ref={triggerRef}
+        className="inline-block cursor-default"
+        onMouseEnter={() => requestShowAt()}
+        onMouseLeave={() => { if (!pinnedRef.current) hide(); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          pinnedRef.current = !pinnedRef.current;
+          if (pinnedRef.current) requestShowAt();
+          else hide();
+        }}
+        onTouchStart={(e) => {
+          e.stopPropagation();
+          pinnedRef.current = !pinnedRef.current;
+          if (pinnedRef.current) requestShowAt();
+          else hide();
+        }}
+      >
+        {children}
+      </span>
+      {typeof document !== 'undefined' && createPortal(
+        <div
+          ref={containerRef}
+          style={{ width: w, opacity: 0 }}
+          className="fixed left-0 top-0 z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2.5 py-2 text-[10px] text-app-text whitespace-nowrap transition-opacity duration-100"
+        >
+          {pairs.map((p, i) => (
+            <div key={i}>
+              <div className="pb-1 text-[9px] font-semibold text-app-subtext tracking-wide flex items-center">
+                <span ref={(el) => { if (el) headerDateRefs.current[i] = el; }} className="text-app-subtext/80 font-normal" />
+              </div>
+              <span ref={(el) => { if (el) rowsRef.current[i] = el; }} className="block font-mono" />
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+};
+
 interface TradeRecordRowProps {
   t: StockTrade; stock: StockEntry; pnlMap: Record<string, number>; pendingMap?: Record<string, number>;
   onToggle: (t: StockTrade) => void; onEdit: (t: StockTrade) => void; onDelete: (t: StockTrade) => void;
   // 做T模式：卖超记录的 id 集合（仅成交卖出的 ERR 徽标；不参与获利预估）
   errIds?: Set<string>;
+  // 做T模式：卖出记录 id → 与其配对的买入记录明细（盈利数字悬停/点击可追溯）
+  pairMap?: Record<string, DtPair[]>;
 }
-const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendingMap, onToggle, onEdit, onDelete, errIds }) => {
+const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendingMap, onToggle, onEdit, onDelete, errIds, pairMap }) => {
   const [confirming, setConfirming] = useState(false);
   const stockName = stock.name;
   const currentPrice = stock.price || 0;
@@ -470,18 +593,24 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
             {(price * shares).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
           </span>
         </span>
-        {isErrSell ? (
-          <span className="font-mono text-[10px] font-bold text-orange-400" title="卖出股数超过此前买入，疑似录入有误">ERR</span>
-        ) : t.side === 'sell' && pnlMap[t.id] !== undefined ? (
-          <span className={`font-mono text-[10px] ${pnlMap[t.id] >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-            {`${pnlMap[t.id] >= 0 ? '+' : ''}${fmtP(pnlMap[t.id])}`}
-          </span>
-        ) : t.side === 'sell' && t.status === 'pending' && !!pendingMap && pendingMap[t.id] !== undefined ? (
-          // 卖出挂单：预估获利（灰色）同样来自 calcRealizedPnlMap 的同一移动加权口径，与成交共用一套算法，仅颜色区分
-          <span className="font-mono text-[10px] text-app-subtext">
-            {`${pendingMap[t.id] >= 0 ? '+' : ''}${fmtP(pendingMap[t.id])}`}
-          </span>
-        ) : null}
+        {(() => {
+          const sellContent = isErrSell ? (
+            <span className="font-mono text-[10px] font-bold text-orange-400" title="卖出股数超过此前买入，疑似录入有误">ERR</span>
+          ) : t.side === 'sell' && pnlMap[t.id] !== undefined ? (
+            <span className={`font-mono text-[10px] ${pnlMap[t.id] >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+              {`${pnlMap[t.id] >= 0 ? '+' : ''}${fmtP(pnlMap[t.id])}`}
+            </span>
+          ) : t.side === 'sell' && t.status === 'pending' && !!pendingMap && pendingMap[t.id] !== undefined ? (
+            // 卖出挂单：预估获利（灰色）同样来自同一移动加权/做T口径，与成交共用一套算法，仅颜色区分
+            <span className="font-mono text-[10px] text-app-subtext">
+              {`${pendingMap[t.id] >= 0 ? '+' : ''}${fmtP(pendingMap[t.id])}`}
+            </span>
+          ) : null;
+          const tradePairs = pairMap?.[t.id];
+          return tradePairs && tradePairs.length > 0
+            ? <PairTip pairs={tradePairs} fmtPrice={fmtP}>{sellContent}</PairTip>
+            : sellContent;
+        })()}
         {t.isMerged ? (
           <span className="shrink-0 text-[8px] px-1 py-px rounded-full border font-bold ml-auto text-app-subtext/60 border-app-border/60 bg-app-text/5">
             {t.side === 'buy' ? '买入汇总' : '卖出汇总'}
@@ -6042,6 +6171,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       stock={s}
                       pnlMap={shownPnl.map}
                       pendingMap={shownPnl.pendingMap}
+                      pairMap={modeIsDt ? dtPnL.pairMap : undefined}
                       errIds={modeIsDt ? dtPnL.errIds : undefined}
                       onToggle={(x) => handleToggleTrade(s.id, x.id)}
                       onDelete={(x) => handleRemoveTrade(s.id, x.id)}
@@ -6079,6 +6209,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   stock={s}
                   pnlMap={(pnlCalcMode === 'dt' ? simpleDt : simpleAvg).map}
                   pendingMap={(pnlCalcMode === 'dt' ? simpleDt : simpleAvg).pendingMap}
+                  pairMap={pnlCalcMode === 'dt' ? simpleDt.pairMap : undefined}
                   errIds={pnlCalcMode === 'dt' ? simpleDt.errIds : undefined}
                   onToggle={(x) => handleToggleTrade(s.id, x.id)}
                   onDelete={(x) => handleRemoveTrade(s.id, x.id)}
@@ -6727,11 +6858,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                   <span>=</span>
                                   <span>{tx.amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}</span>
                                 </span>
-                                {isSell && tx.err ? (
-                                  <span className="shrink-0 font-mono text-[11px] font-bold text-orange-400" title="卖出股数超过此前买入，疑似录入有误">ERR</span>
-                                ) : isSell && tx.pnl !== 0 && (
-                                  <span className={`shrink-0 font-mono text-[11px] font-bold ${(tx.pnl ?? 0) >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(tx.pnl!)}</span>
-                                )}
+                                {(() => {
+                                  const sellPnl = isSell && tx.err ? (
+                                    <span className="shrink-0 font-mono text-[11px] font-bold text-orange-400" title="卖出股数超过此前买入，疑似录入有误">ERR</span>
+                                  ) : isSell && tx.pnl !== 0 && (
+                                    <span className={`shrink-0 font-mono text-[11px] font-bold ${(tx.pnl ?? 0) >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(tx.pnl!)}</span>
+                                  );
+                                  return tx.pairs && tx.pairs.length > 0
+                                    ? <PairTip pairs={tx.pairs} fmtPrice={(v) => formatPrice(v, tx.stockName)}>{sellPnl}</PairTip>
+                                    : sellPnl;
+                                })()}
                                 <span className="ml-auto shrink-0 font-mono text-[10px] text-app-subtext">{new Date(tx.time).toLocaleTimeString('zh-CN', { hour12: false })}</span>
                               </div>
                             );
