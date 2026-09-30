@@ -108,6 +108,7 @@ export interface StockEntry {
   bollHidden?: boolean; // Whether BOLL data is hidden for this stock
   registerDate?: string; // 最近一次股权登记日（同步分红数据时获取）
   stockTrades?: StockTrade[]; // 该股的买卖/挂单记录，随股票整体同步到 Gist（软删 isDeleted 随记录携带）
+  isDeleted?: boolean; // 软删墓碑：整只股票被删除时置为 true。不展示、不计持仓/统计，仅保留在 stocks 中作云端删除传播锚点
 }
 
 export type StockTradeSide = 'buy' | 'sell';

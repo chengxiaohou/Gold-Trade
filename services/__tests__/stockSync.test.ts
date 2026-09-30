@@ -227,6 +227,42 @@ describe('mergeStockFromCloud / mergeCloudStocks', () => {
     expect(kept.price).toBe(12.3);
     expect(kept.name).toBe('本地独有');
   });
+
+  // 整只股票软删墓碑（方案A）：云端墓碑 → 本地流水账清空 + 股票带 isDeleted，删除跨设备传播
+  it('云端墓碑 → 清空本地流水账且股票保留 isDeleted', () => {
+    const tombstone = mkStock('600000', 'A', { isDeleted: true });
+    tombstone.stockTrades = [t({ id: 'del', side: 'buy', price: 10, shares: 100, isDeleted: true })];
+    // 本地设备 B 已有该票的活交易与流水账
+    const liveLocal = t({ id: 'live', side: 'buy', price: 8, shares: 50, createdAt: 2 });
+    const local = mkStock('600000', 'A', { price: 12.3, priceUpdatedAt: 9 });
+    const { stock, ledgerEntry } = mergeStockFromCloud(tombstone, [liveLocal], local);
+    // 流水账清空，防启动回填把墓碑"复活"
+    expect(ledgerEntry.trades).toEqual([]);
+    // 股票保留 isDeleted（作删除传播锚点，展示/统计过滤）
+    expect(stock.isDeleted).toBe(true);
+    // 持仓归零
+    expect(stock.positionShares).toBe(0);
+    // 本地价格缓存保留
+    expect(stock.price).toBe(12.3);
+  });
+
+  it('mergeCloudStocks 批量下载时墓碑清零流水账并传入 isDeleted', () => {
+    const tombstone = mkStock('600000', 'A', { isDeleted: true });
+    const localLedger: StockLedgerMap = { '600000': { trades: [t({ id: 'live', side: 'buy', price: 8, shares: 50 }) ] } };
+    const local = mkStock('600000', 'A');
+    const { mergedStocks, newLedger } = mergeCloudStocks([tombstone], localLedger, [local]);
+    expect(mergedStocks[0].isDeleted).toBe(true);
+    expect(newLedger['600000'].trades).toEqual([]);
+  });
+
+  it('本地独有、云端缺失该票 → 仍保留本地（旧数据兼容，无墓碑不判删）', () => {
+    const cloud = mkStock('600000', 'A');
+    const local = mkStock('300001', '本地票');
+    const { mergedStocks } = mergeCloudStocks([cloud], {}, [cloud, local]);
+    expect(mergedStocks.find(s => s.id === '300001')).toBeDefined();
+    // 一条都没有墓碑的话，删除不应误判
+    expect(mergedStocks.find(s => s.id === '300001')!.isDeleted).toBeUndefined();
+  });
 });
 
 // ---- 上传 buildUploadStocks / stripStockPriceCache ----

@@ -1092,7 +1092,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     { min: 6, max: 7, color: 'green' }
   ];
   
-  const latestUpdateTime = stocks.reduce((max, stock) => Math.max(max, stock.priceUpdatedAt || 0), 0);
+  const latestUpdateTime = stocks.filter(s => !s.isDeleted).reduce((max, stock) => Math.max(max, stock.priceUpdatedAt || 0), 0);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showRatesId, setShowRatesId] = useState<string | null>(null);
   const [ratesPopupPos, setRatesPopupPos] = useState<{ top: number, left: number }>({ top: 0, left: 0 });
@@ -2160,6 +2160,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return buildLatestShrinkTags(a.events, a.patterns, a.env, a.klines[a.klines.length - 1].date, a.priceState, a.latestVol);
   };
 
+  // 过滤掉软删墓碑后的可见股票：展示/排序/批量刷新/统计统一用这份，墓碑只作云端删除传播锚点
+  const activeStocks = useMemo(() => stocks.filter(s => !s.isDeleted), [stocks]);
+
   // 列表当前显示顺序（按排序规则重排；默认顺序即 stocks 原序）
   const sortedStocks = useMemo(() => {
     if (sortMode === 'dividendRate') {
@@ -2172,20 +2175,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           const v = calcDivRateHistoryRatio(s, klines, cur);
           return v ?? -Infinity;
         };
-        return [...stocks].sort((a, b) => ratioVal(b) - ratioVal(a));
+        return [...activeStocks].sort((a, b) => ratioVal(b) - ratioVal(a));
       }
       // 第1档：按股息率从高到低
-      return [...stocks].sort((a, b) => getDividendRate(b) - getDividendRate(a));
+      return [...activeStocks].sort((a, b) => getDividendRate(b) - getDividendRate(a));
     } else if (sortMode === 'changePercent') {
       // 两档切换：false=从大到小，true=从小到大
-      return [...stocks].sort((a, b) => changePctSortReverse
+      return [...activeStocks].sort((a, b) => changePctSortReverse
         ? (a.changePercent || 0) - (b.changePercent || 0)
         : (b.changePercent || 0) - (a.changePercent || 0));
     } else if (sortMode === 'costPct') {
       // 成本列排序：按成本下方盈亏%(现价相对成本的涨跌)高低，两档切换；空成本/无价格股票始终排在最后
       const costPct = (s: StockEntry): number | null =>
         s.positionCost > 0 && (s.price || 0) > 0 ? ((s.price - s.positionCost) / s.positionCost) * 100 : null;
-      return [...stocks].sort((a, b) => {
+      return [...activeStocks].sort((a, b) => {
         const pa = costPct(a), pb = costPct(b);
         if (pa == null && pb == null) return 0;
         if (pa == null) return 1; // 空数据排最后
@@ -2201,7 +2204,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         if (!latest || latest.price <= 0 || (s.price || 0) <= 0) return null;
         return ((s.price - latest.price) / latest.price) * 100;
       };
-      return [...stocks].sort((a, b) => {
+      return [...activeStocks].sort((a, b) => {
         const pa = tradePct(a), pb = tradePct(b);
         if (pa == null && pb == null) return 0;
         if (pa == null) return 1; // 空数据排最后
@@ -2212,7 +2215,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       // 仓位列排序：按持仓总金额(份额×成本)高低，两档切换；无持仓股票始终排在最后
       const amt = (s: StockEntry): number | null =>
         s.positionShares > 0 && s.positionCost > 0 ? s.positionShares * s.positionCost : null;
-      return [...stocks].sort((a, b) => {
+      return [...activeStocks].sort((a, b) => {
         const pa = amt(a), pb = amt(b);
         if (pa == null && pb == null) return 0;
         if (pa == null) return 1; // 空数据排最后
@@ -2220,7 +2223,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         return positionAmountSortReverse ? pa - pb : pb - pa;
       });
     } else if (sortMode === 'tag') {
-      return [...stocks].sort((a, b) => {
+      return [...activeStocks].sort((a, b) => {
         const aHasTag = a.tag && a.tag.trim() ? 0 : 1;
         const bHasTag = b.tag && b.tag.trim() ? 0 : 1;
         if (aHasTag !== bHasTag) return aHasTag - bHasTag;
@@ -2235,9 +2238,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       const bandRank = bollSortReverse
         ? { upper: 0, mid: 1, lower: 2, default: 3 }
         : { lower: 0, mid: 1, upper: 2, default: 3 };
-      const rank = (stock: typeof stocks[number]) =>
+      const rank = (stock: typeof activeStocks[number]) =>
         stock.bollHidden ? null : getBollPosition(stockBollMap.get(stock.id)?.[sortMode] ?? null, stock.price || 0);
-      return [...stocks].sort((a, b) => {
+      return [...activeStocks].sort((a, b) => {
         const pa = rank(a), pb = rank(b);
         if (!pa || !pb) return !pa && !pb ? 0 : pa ? -1 : 1;
         const ba = bandRank[pa.band] ?? 3, bb = bandRank[pb.band] ?? 3;
@@ -2245,7 +2248,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         return bollSortReverse ? pb.percent - pa.percent : pa.percent - pb.percent;
       });
     }
-    return stocks;
+    return activeStocks;
   }, [stocks, sortMode, stockBollMap, bollSortReverse, changePctSortReverse, divRateSortMode, costPctSortReverse, tradePctSortReverse, positionAmountSortReverse]);
 
   // 请求日志状态
@@ -2356,10 +2359,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const effectiveLedger = useMemo<StockLedgerMap>(() => {
     if (ledgerMap && Object.keys(ledgerMap).length > 0) return ledgerMap;
     const m: StockLedgerMap = {};
-    stocks.forEach(s => { m[s.id] = { trades: s.stockTrades || [] }; });
+    activeStocks.forEach(s => { m[s.id] = { trades: s.stockTrades || [] }; });
     return m;
   }, [ledgerMap, stocks]);
-  const profitStockNames = useMemo(() => Object.fromEntries(stocks.map(s => [s.id, s.name])), [stocks]);
+  const profitStockNames = useMemo(() => Object.fromEntries(activeStocks.map(s => [s.id, s.name])), [activeStocks]);
   // 计算所选时间窗口 [startTs, endTs)
   const profitRange = useMemo(() => {
     const now = new Date();
@@ -2473,7 +2476,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // 清空旧数据，显示加载状态
     priceBureau.clear();
 
-    const madeRequest = await priceBureau.ensureBatch(stocks, apiSource, bollAdjust, {
+    const madeRequest = await priceBureau.ensureBatch(activeStocks, apiSource, bollAdjust, {
       trigger,
       order: sortedStocks,
       cancelCheck: () => fetchVersionRef.current !== currentVersion,
@@ -2645,9 +2648,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   const availableTags = useMemo(() => {
     const tags = new Set<string>();
-    stocks.forEach(s => { if (s.tag && s.tag.trim()) tags.add(s.tag.trim()); });
+    activeStocks.forEach(s => { if (s.tag && s.tag.trim()) tags.add(s.tag.trim()); });
     return Array.from(tags).sort();
-  }, [stocks]);
+  }, [activeStocks]);
 
   const handleEditTagClick = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -2796,10 +2799,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // 休市时股价已是当日/最近收盘价，手动刷新也视为无需请求（除非缓存已过期）
     const effectiveSkip = skipFresh || marketClosed;
     const staleCount = effectiveSkip
-      ? stocks.filter(s => !isStockPriceFresh(s.priceUpdatedAt)).length
-      : stocks.length;
+      ? activeStocks.filter(s => !isStockPriceFresh(s.priceUpdatedAt)).length
+      : activeStocks.length;
     // 计算缓存时间信息用于日志
-    const priceTimestamps = stocks.map(s => s.priceUpdatedAt).filter((t): t is number => t !== null && t !== undefined);
+    const priceTimestamps = activeStocks.map(s => s.priceUpdatedAt).filter((t): t is number => t !== null && t !== undefined);
     let cacheInfoStr = '';
     const now = Date.now();
     if (priceTimestamps.length > 0) {
@@ -2811,20 +2814,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     let refreshReason: string;
     if (skipFresh) {
       refreshReason = staleCount === 0
-        ? `打开股息页自动刷新股价：${stocks.length} 只股票缓存均未过期，无需请求${cacheInfoStr}`
-        : `打开股息页自动刷新股价：${staleCount}/${stocks.length} 只已过期，1 条批量请求（${staleCount} 只）${cacheInfoStr}`;
+        ? `打开股息页自动刷新股价：${activeStocks.length} 只股票缓存均未过期，无需请求${cacheInfoStr}`
+        : `打开股息页自动刷新股价：${staleCount}/${activeStocks.length} 只已过期，1 条批量请求（${staleCount} 只）${cacheInfoStr}`;
     } else if (marketClosed) {
       refreshReason = staleCount === 0
-        ? `点击「价格」列头刷新（休市）：${stocks.length} 只股票缓存均未过期，无需请求${cacheInfoStr}`
-        : `点击「价格」列头刷新（休市）：${staleCount}/${stocks.length} 只已过期，1 条批量请求（${staleCount} 只）${cacheInfoStr}`;
+        ? `点击「价格」列头刷新（休市）：${activeStocks.length} 只股票缓存均未过期，无需请求${cacheInfoStr}`
+        : `点击「价格」列头刷新（休市）：${staleCount}/${activeStocks.length} 只已过期，1 条批量请求（${staleCount} 只）${cacheInfoStr}`;
     } else {
-      refreshReason = `点击「价格」列头刷新：${stocks.length} 只股票 · 1 条批量请求`;
+      refreshReason = `点击「价格」列头刷新：${activeStocks.length} 只股票 · 1 条批量请求`;
     }
     const batchTime = Date.now(); // 同批次共用的触发时间，作为本批所有股票的过期起点
-    setIsRefreshing(new Set(stocks.map(s => s.id)));
+    setIsRefreshing(new Set(activeStocks.map(s => s.id)));
     setRefreshFailed(new Set());
     try {
-      const updatedStocks = [...stocks];
+      const updatedStocks = [...activeStocks];
       const failedIds = new Set<string>();
       let changed = false;
       let skippedCount = 0;
@@ -2883,11 +2886,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         }
       }
       if (skippedCount > 0) {
-        showNotice(skippedCount >= stocks.length
+        showNotice(skippedCount >= activeStocks.length
           ? (marketClosed
               ? '休市期间，行情已是最新，无需刷新'
               : '全部股价已是最新，无需刷新')
-          : `已跳过 ${skippedCount} 只仍新鲜的股票，刷新其余 ${stocks.length - skippedCount} 只`);
+          : `已跳过 ${skippedCount} 只仍新鲜的股票，刷新其余 ${activeStocks.length - skippedCount} 只`);
       }
       if (changed) {
         onStocksChange(updatedStocks);
@@ -2896,11 +2899,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         setRefreshFailed(failedIds);
       }
     } catch {
-      setRefreshFailed(new Set(stocks.map(s => s.id)));
+      setRefreshFailed(new Set(activeStocks.map(s => s.id)));
     } finally {
       setIsRefreshing(new Set());
     }
-  }, [stocks, onStocksChange]);
+  }, [activeStocks, onStocksChange]);
 
   // ---- 长按刷新按钮进入"自动刷新" ----
   // 自动刷新：仅盘中（isTradingHours 命中交易时段）每 interval 秒刷新一次；
@@ -2959,15 +2962,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 批量获取所有股票的 2024/2025 全年分红（东方财富，按报告期年度汇总）
   const handleFetchAllDividends = useCallback(async () => {
-    if (isFetchingDividends || stocks.length === 0) return;
+    if (isFetchingDividends || activeStocks.length === 0) return;
     const logCtx = requestLogService.beginBatch(
-      `点击「分红」列头刷新：${stocks.length} 只股票 · ${stocks.length} 条请求`
+      `点击「分红」列头刷新：${activeStocks.length} 只股票 · ${activeStocks.length} 条请求`
     );
     setIsFetchingDividends(true);
     const entries: DividendDiffEntry[] = [];
     const selected = new Set<string>();
-    for (let i = 0; i < stocks.length; i++) {
-      const stock = stocks[i];
+    for (let i = 0; i < activeStocks.length; i++) {
+      const stock = activeStocks[i];
       const result = await fetchYearlyDividends(stock.code, logCtx);
       // 第一条请求失败即终止所有请求，并提示网络异常
       if (i === 0 && result.error) {
@@ -3003,7 +3006,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setDividendDiff(entries);
     setSelectedDividendIds(selected);
     setIsFetchingDividends(false);
-  }, [stocks, isFetchingDividends]);
+  }, [activeStocks, isFetchingDividends]);
 
   // 单只股票拉取年度分红（与批量拉取流程一致，仅拉取当前这一只，弹窗只展示这一只的结果）
   const handleFetchSingleDividend = useCallback(async (stock: StockEntry) => {
@@ -3643,7 +3646,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
     const stockCode = getFullCode(newStock.code);
     const existing = stocks.find(s => s.code.toLowerCase() === stockCode.toLowerCase());
-    if (existing) {
+    // 软删墓碑：同一股票此前被删除，重新添加时恢复该墓碑（保留原 id 与流水账锚点），而非新增重复
+    const tombstone = existing?.isDeleted ? existing : undefined;
+    if (existing && existing.isDeleted !== true) {
       alert('该股票已存在');
       return;
     }
@@ -3686,28 +3691,54 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
       // 步骤3：写入列表
       setAddStep('正在写入列表…');
-      const newEntry: StockEntry = {
-        id: Date.now().toString(),
-        code: stockCode,
-        name: newStock.name || result?.name || stockCode,
-        price: result?.price || 0,
-        changePercent: result?.changePercent || 0,
-        high: result?.high || 0,
-        low: result?.low || 0,
-        open: result?.open || 0,
-        volume: result?.volume || 0,
-        dividend2024,
-        dividend2025,
-        dividendByYear,
-        dividendRate2025: 0,
-        positionShares: 0,
-        positionCost: 0,
-        priceUpdatedAt: result ? Date.now() : null,
-        dividendRates: calculateDividendRates(dividend2025),
-        registerDate,
-      };
+      if (tombstone) {
+        // 恢复软删墓碑：清除 isDeleted（保留原 id/流水账作为传送锚），更新最新行情与分红数据
+        onStocksChange(stocks.map(s =>
+          s.id === tombstone.id
+            ? {
+                ...s,
+                name: newStock.name || result?.name || stockCode,
+                price: result?.price || 0,
+                changePercent: result?.changePercent || 0,
+                high: result?.high || 0,
+                low: result?.low || 0,
+                open: result?.open || 0,
+                volume: result?.volume || 0,
+                dividend2024,
+                dividend2025,
+                dividendByYear,
+                dividendRate2025: 0,
+                priceUpdatedAt: result ? Date.now() : null,
+                dividendRates: calculateDividendRates(dividend2025),
+                registerDate,
+                isDeleted: false,
+              }
+            : s
+        ));
+      } else {
+        const newEntry: StockEntry = {
+          id: Date.now().toString(),
+          code: stockCode,
+          name: newStock.name || result?.name || stockCode,
+          price: result?.price || 0,
+          changePercent: result?.changePercent || 0,
+          high: result?.high || 0,
+          low: result?.low || 0,
+          open: result?.open || 0,
+          volume: result?.volume || 0,
+          dividend2024,
+          dividend2025,
+          dividendByYear,
+          dividendRate2025: 0,
+          positionShares: 0,
+          positionCost: 0,
+          priceUpdatedAt: result ? Date.now() : null,
+          dividendRates: calculateDividendRates(dividend2025),
+          registerDate,
+        };
 
-      onStocksChange([...stocks, newEntry]);
+        onStocksChange([...stocks, newEntry]);
+      }
       setNewStock({ code: '', name: '' });
       setAddStep(null);
       setAddError(null);
@@ -3722,10 +3753,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   }, [newStock, stocks, onStocksChange]);
 
   const handleDeleteStock = useCallback((id: string) => {
-    onStocksChange(stocks.filter(s => s.id !== id));
+    // 软删：标记墓碑而非物理移除。墓碑随 stocks 一起上传，保证删除能跨设备传播；
+    // 展示/统计层会过滤掉 isDeleted 的股票。
+    onStocksChange(stocks.map(s =>
+      s.id === id
+        ? { ...s, isDeleted: true, stockTrades: undefined, positionShares: 0, positionCost: 0 }
+        : s
+    ));
     // 同步删本地流水账（IndexedDB）：否则刷新时启动回填会从流水账读到该股旧交易、把股票"复活"
     onLedgerMapChange?.(prev => {
       const next = { ...prev };
+      if (next[id]?.trades?.length) {
+        return { ...next, [id]: { trades: [] } };
+      }
       delete next[id];
       return next;
     });
@@ -3892,7 +3932,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     <span>分红</span>
                     <button
                       onClick={handleFetchAllDividends}
-                      disabled={isFetchingDividends || stocks.length === 0}
+                      disabled={isFetchingDividends || activeStocks.length === 0}
                       className="p-0.5 hover:bg-app-card rounded transition-colors disabled:opacity-50"
                       title="批量获取全年分红（同花顺 F10）"
                     >
@@ -4441,13 +4481,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </td>
                 </tr>
               ))}
-              {stocks.length === 0 && (
+              {(activeStocks.length === 0 && (
                 <tr>
                   <td colSpan={8} className="px-3 py-8 text-center text-app-subtext text-sm">
                     暂无股票数据，点击上方按钮添加股票
                   </td>
                 </tr>
-              )}
+              ))}
             </tbody>
           </table>
         </div>
@@ -6440,7 +6480,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             </button>
             <button
               onClick={handleExportDefaultData}
-              disabled={stocks.length === 0}
+              disabled={activeStocks.length === 0}
               className="flex items-center gap-1 px-2 py-1 text-xs text-app-subtext hover:text-blue-400 border border-app-border rounded hover:border-blue-400/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="导出当前股票分红数据为内置代码"
             >
