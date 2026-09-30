@@ -42,19 +42,6 @@ export function mergeStockFromCloud(
   localTrades: StockTrade[] | undefined,
   localStock?: StockEntry | undefined,
 ): MergeStockResult {
-  // 云端墓碑（整只股票被删除）：本地流水账作废，股票保留 isDeleted 作删除传播，后续展示/统计会过滤掉。
-  if (cloudStock.isDeleted) {
-    return {
-      stock: {
-        ...cloudStock,
-        stockTrades: [],
-        positionShares: 0,
-        positionCost: 0,
-        ...pickLocalPrice(localStock),
-      },
-      ledgerEntry: { trades: [] },
-    };
-  }
   const cloudTrades = cloudStock.stockTrades || [];
   const baseById = new Map<string, StockTrade>((localTrades || []).map(t => [t.id, t]));
   for (const ct of cloudTrades) baseById.set(ct.id, ct);
