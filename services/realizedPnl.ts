@@ -64,6 +64,7 @@ export interface RealizedPnlForRange {
 export interface DtPnlResult {
   map: Record<string, number>;      // 每笔卖出 id → 做T已实现盈亏（只计有买入匹配的部分）
   total: number;                     // 已实现盈亏合计
+  pendingMap: Record<string, number>; // 卖出挂单 id → 做T口径预估盈亏（用同一匹配规则在"当前持仓"上预结算）
   positionShares: number;            // 剩余未匹配买入的持有股数
   positionCost: number;              // 剩余未匹配买入的加权均价（每股）
   errIds: Set<string>;               // 卖超（配不满买入）的卖出记录 id
@@ -87,17 +88,18 @@ function matchDtSell(lots: { price: number; shares: number }[], sellPrice: numbe
 // 做T口径：按成交顺序把每笔卖出匹配到「最近的一笔未匹配买入」，计算做T已实现盈亏，
 // 并得到剩余未匹配买入（即做T口径下的当前持仓）。与均价口径 differ：卖出成本取自所匹配买入价。
 export function calcDtPnlForTrades(trades?: StockTrade[]): DtPnlResult {
-  const result: DtPnlResult = { map: {}, total: 0, positionShares: 0, positionCost: 0, errIds: new Set() };
+  const result: DtPnlResult = { map: {}, total: 0, pendingMap: {}, positionShares: 0, positionCost: 0, errIds: new Set() };
   if (!trades || trades.length === 0) return result;
-  const filled = trades
-    .filter(t => t.status === 'filled' && !t.isDeleted)
+  const all = trades
+    .filter(t => !t.isDeleted)
     .sort((a, b) => effectiveTime(a) - effectiveTime(b));
   const lots: { price: number; shares: number }[] = [];
-  for (const t of filled) {
+  for (const t of all) {
     const shares = t.shares ?? 0;
     if (t.side === 'buy') {
+      if (t.status !== 'filled') continue; // 买入挂单尚未执行，不进持仓
       lots.push({ price: t.price ?? 0, shares });
-    } else {
+    } else if (t.status === 'filled') {
       const { pnl, err } = matchDtSell(lots, t.price ?? 0, shares);
       if (err) result.errIds.add(t.id);
       result.map[t.id] = pnl;
@@ -109,6 +111,15 @@ export function calcDtPnlForTrades(trades?: StockTrade[]): DtPnlResult {
     result.positionCost += (lot.price ?? 0) * lot.shares;
   }
   result.positionCost = result.positionShares > 0 ? result.positionCost / result.positionShares : 0;
+  // 卖出挂单：用做T同一「最近买入匹配」规则在"当前持仓"上预结算（深拷贝 lots，不真正扣减）。
+  if (result.positionShares > 0) {
+    for (const t of all) {
+      if (t.side === 'sell' && t.status === 'pending' && !t.isDeleted) {
+        const { pnl } = matchDtSell(lots.map(l => ({ ...l })), t.price ?? 0, t.shares ?? 0);
+        result.pendingMap[t.id] = pnl;
+      }
+    }
+  }
   return result;
 }
 

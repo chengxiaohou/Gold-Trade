@@ -391,29 +391,33 @@ const pendingRemainingDays = (t: StockTrade, now: number): number =>
 // 同一个函数顺带给出「卖出挂单」的预估获利（按挂单价、用当前移动加权成本），
 // 与成交采用的是同一算法，绝不另写一套。
 const calcRealizedPnlMap = (trades: StockTrade[]) => {
-  const filled = trades.filter(t => t.status === 'filled' && !t.isDeleted).sort((a, b) => a.createdAt - b.createdAt);
+  // 单次遍历按时间顺序同时结算「成交」与「挂单」的卖出获利，二者用同一套实时移动加权成本，
+  // 同一笔卖出在挂单/成交间切换时数字不因状态改变而变化。
+  // 买入仅成交参与持仓累加（挂单未执行不占股）；卖出成交结算并扣持仓，卖出挂单同公式预结算但不扣持仓。
+  const all = trades.filter(t => !t.isDeleted).sort((a, b) => a.createdAt - b.createdAt);
   let rs = 0, rc = 0, total = 0;
   const map: Record<string, number> = {};
-  for (const t of filled) {
+  const pendingMap: Record<string, number> = {};
+  for (const t of all) {
     const amt = (t.amount ?? ((t.price ?? 0) * (t.shares ?? 0))) || 0;
     if (t.side === 'buy') {
+      if (t.status !== 'filled') continue; // 买入挂单尚未执行，不影响持仓与成本
       const prevRs = rs;
       rs += t.shares ?? 0;
       rc = rs > 0 ? (rc * prevRs + amt) / rs : 0;
     } else {
       const shares = t.shares ?? 0;
-      map[t.id] = rs > 0 ? amt - rc * shares : 0;
-      total += map[t.id];
-      rs = Math.max(0, rs - shares);
-      if (rs === 0) rc = 0;
-    }
-  }
-  // 卖出挂单：同一公式（成交金额 − 当前移动加权成本 × 股数）做预估；无持仓或价格无效时不预估。
-  const pendingMap: Record<string, number> = {};
-  for (const t of trades) {
-    if (t.side === 'sell' && t.status === 'pending' && !t.isDeleted) {
-      const price = t.price ?? 0, shares = t.shares ?? 0;
-      if (rs > 0 && price > 0 && shares > 0) pendingMap[t.id] = price * shares - rc * shares;
+      if (rs <= 0) continue; // 无持仓时不估算（成交或挂单都一样）
+      const pnl = amt - rc * shares;
+      if (t.status === 'filled') {
+        map[t.id] = pnl;
+        total += pnl;
+        rs = Math.max(0, rs - shares);
+        if (rs === 0) rc = 0;
+      } else {
+        // 卖出挂单：同一公式、同一实时成本预结算，仅入预估表（灰色），不扣减真实持仓
+        pendingMap[t.id] = pnl;
+      }
     }
   }
   return { map, total, pendingMap };
@@ -6037,7 +6041,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       t={t}
                       stock={s}
                       pnlMap={shownPnl.map}
-                      pendingMap={recalcPnL.pendingMap}
+                      pendingMap={shownPnl.pendingMap}
                       errIds={modeIsDt ? dtPnL.errIds : undefined}
                       onToggle={(x) => handleToggleTrade(s.id, x.id)}
                       onDelete={(x) => handleRemoveTrade(s.id, x.id)}
@@ -6074,7 +6078,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   t={t}
                   stock={s}
                   pnlMap={(pnlCalcMode === 'dt' ? simpleDt : simpleAvg).map}
-                  pendingMap={simpleAvg.pendingMap}
+                  pendingMap={(pnlCalcMode === 'dt' ? simpleDt : simpleAvg).pendingMap}
                   errIds={pnlCalcMode === 'dt' ? simpleDt.errIds : undefined}
                   onToggle={(x) => handleToggleTrade(s.id, x.id)}
                   onDelete={(x) => handleRemoveTrade(s.id, x.id)}
