@@ -4243,11 +4243,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     // 子列1：恒常展示股息率
                     const col1 = (
                       <td
-                        className="w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
-                        onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
-                        onMouseLeave={handlePositionInfoLeave}
-                        onTouchStart={handlePositionInfoTouchStart}
-                        onClick={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoClick(e, stock); }}
+                        className="w-[56px] px-1 py-1.5 text-center border-r border-app-border"
                       >
                         {hasPosition ? (
                           <div className="flex flex-col items-center leading-tight gap-px">
@@ -4262,11 +4258,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     // 子列2：恒常展示仓位（总金额 + 份额 + 仓位占比）
                     const colHold = (
                       <td
-                        className="w-[64px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
-                        onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
-                        onMouseLeave={handlePositionInfoLeave}
-                        onTouchStart={handlePositionInfoTouchStart}
-                        onClick={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoClick(e, stock); }}
+                        className="w-[64px] px-1 py-1.5 text-center border-r border-app-border"
                       >
                         {hasPosition ? (
                           <div className="flex flex-col items-center leading-tight gap-px">
