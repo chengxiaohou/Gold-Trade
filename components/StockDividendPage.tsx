@@ -2290,6 +2290,53 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return priceBureau.subscribe(sync);
   }, [stocks]);
 
+  // ── 历史数据展示模式 ──
+  // 通过数据中心（priceBureau）的"截止日"开关实现：价格与布林数据都由数据中心按该日截断/重算，
+  // 本模块不关心内部实现，只负责"选日期 → 交给数据中心 → 展示拿到的数据"。
+  // histDate 非空 = 历史模式；null = 正常实时模式。
+  const [histDate, setHistDate] = useState<string | null>(null);
+  const [histPickerPos, setHistPickerPos] = useState<{ top: number; left: number } | null>(null);
+  const [histPickerDates, setHistPickerDates] = useState<string[]>([]);
+
+  useEffect(() => {
+    priceBureau.setAsOfDate(histDate);
+  }, [histDate]);
+  // 离开页面时恢复实时模式，避免数据中心残留截止日影响其他页面
+  useEffect(() => () => { priceBureau.setAsOfDate(null); }, []);
+
+  // 点击表头时间戳（价格列 / 布林线列）弹出日期选择控件
+  const openHistPicker = (e: React.MouseEvent<HTMLElement>) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const panelW = 168;
+    const panelH = 264;
+    let left = rect.left + rect.width / 2 - panelW / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - panelW - 8));
+    let top = rect.bottom + 6;
+    if (top + panelH > window.innerHeight - 8) top = Math.max(8, rect.top - panelH - 6);
+    setHistPickerDates(priceBureau.getAvailableDates());
+    setHistPickerPos({ top, left });
+  };
+  const pickHistDate = (date: string | null) => {
+    setHistDate(date);
+    setHistPickerPos(null);
+  };
+
+  // 历史模式下的展示用股票：价格/涨跌幅/高低量由数据中心按截止日投影（收盘价即"限价数据"），
+  // 其余字段保持原值。注意：一切写回（交易/编辑/刷新）仍使用原始 stocks，
+  // 绝不把历史价写进实时缓存。
+  const displayStocks = useMemo(() => {
+    if (!histDate) return stocks;
+    return stocks.map(s => {
+      const q = priceBureau.getAsOfQuote(s.code);
+      // 该股在截止日无缓存数据时，价格类字段置 NaN（formatPrice 渲染为 '-'），
+      // 而不是回落到实时价——避免在历史视图里冒充当日数据。
+      return q
+        ? { ...s, price: q.price, changePercent: q.changePercent, high: q.high, low: q.low, open: q.open, volume: q.volume }
+        : { ...s, price: NaN, changePercent: NaN, high: NaN, low: NaN, open: NaN, volume: 0 };
+    });
+  }, [stocks, histDate, stockBollMap]);
+
   // 名称列第二行展示模式：默认“状态标签”，点击“代码”表头切换为展示代码
   const [nameSubMode, setNameSubMode] = useState<'tags' | 'code'>('tags');
   // 首次判定的统一数据源：对"同一组（实时价覆盖后的）K 线"只计算一遍 破位/形态/环境，
@@ -2344,20 +2391,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           const v = calcDivRateHistoryRatio(s, klines, cur);
           return v ?? -Infinity;
         };
-        return [...stocks].sort((a, b) => ratioVal(b) - ratioVal(a));
+        return [...displayStocks].sort((a, b) => ratioVal(b) - ratioVal(a));
       }
       // 第1档：按股息率从高到低
-      return [...stocks].sort((a, b) => getDividendRate(b) - getDividendRate(a));
+      return [...displayStocks].sort((a, b) => getDividendRate(b) - getDividendRate(a));
     } else if (sortMode === 'changePercent') {
       // 两档切换：false=从大到小，true=从小到大
-      return [...stocks].sort((a, b) => changePctSortReverse
+      return [...displayStocks].sort((a, b) => changePctSortReverse
         ? (a.changePercent || 0) - (b.changePercent || 0)
         : (b.changePercent || 0) - (a.changePercent || 0));
     } else if (sortMode === 'costPct') {
       // 成本列排序：按成本下方盈亏%(现价相对成本的涨跌)高低，两档切换；空成本/无价格股票始终排在最后
       const costPct = (s: StockEntry): number | null =>
         s.positionCost > 0 && (s.price || 0) > 0 ? ((s.price - s.positionCost) / s.positionCost) * 100 : null;
-      return [...stocks].sort((a, b) => {
+      return [...displayStocks].sort((a, b) => {
         const pa = costPct(a), pb = costPct(b);
         if (pa == null && pb == null) return 0;
         if (pa == null) return 1; // 空数据排最后
@@ -2373,7 +2420,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         if (!latest || latest.price <= 0 || (s.price || 0) <= 0) return null;
         return ((s.price - latest.price) / latest.price) * 100;
       };
-      return [...stocks].sort((a, b) => {
+      return [...displayStocks].sort((a, b) => {
         const pa = tradePct(a), pb = tradePct(b);
         if (pa == null && pb == null) return 0;
         if (pa == null) return 1; // 空数据排最后
@@ -2384,7 +2431,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       // 仓位列排序：按持仓总金额(份额×成本)高低，两档切换；无持仓股票始终排在最后
       const amt = (s: StockEntry): number | null =>
         s.positionShares > 0 && s.positionCost > 0 ? s.positionShares * s.positionCost : null;
-      return [...stocks].sort((a, b) => {
+      return [...displayStocks].sort((a, b) => {
         const pa = amt(a), pb = amt(b);
         if (pa == null && pb == null) return 0;
         if (pa == null) return 1; // 空数据排最后
@@ -2392,7 +2439,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         return positionAmountSortReverse ? pa - pb : pb - pa;
       });
     } else if (sortMode === 'tag') {
-      return [...stocks].sort((a, b) => {
+      return [...displayStocks].sort((a, b) => {
         const aHasTag = a.tag && a.tag.trim() ? 0 : 1;
         const bHasTag = b.tag && b.tag.trim() ? 0 : 1;
         if (aHasTag !== bHasTag) return aHasTag - bHasTag;
@@ -2409,7 +2456,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         : { lower: 0, mid: 1, upper: 2, default: 3 };
       const rank = (stock: typeof stocks[number]) =>
         stock.bollHidden ? null : getBollPosition(stockBollMap.get(stock.id)?.[sortMode] ?? null, stock.price || 0);
-      return [...stocks].sort((a, b) => {
+      return [...displayStocks].sort((a, b) => {
         const pa = rank(a), pb = rank(b);
         if (!pa || !pb) return !pa && !pb ? 0 : pa ? -1 : 1;
         const ba = bandRank[pa.band] ?? 3, bb = bandRank[pb.band] ?? 3;
@@ -2417,8 +2464,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         return bollSortReverse ? pb.percent - pa.percent : pa.percent - pb.percent;
       });
     }
-    return stocks;
-  }, [stocks, sortMode, stockBollMap, bollSortReverse, changePctSortReverse, divRateSortMode, costPctSortReverse, tradePctSortReverse, positionAmountSortReverse]);
+    return displayStocks;
+  }, [displayStocks, sortMode, stockBollMap, bollSortReverse, changePctSortReverse, divRateSortMode, costPctSortReverse, tradePctSortReverse, positionAmountSortReverse]);
 
   // 请求日志状态
   const [requestLogs, setRequestLogs] = useState<RequestLogEntry[]>([]);
@@ -2635,6 +2682,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const fetchVersionRef = useRef(0);
 
   const fetchAllBoll = useCallback(async (trigger = '打开股息页自动刷新布林线') => {
+    if (histDate) { showNotice('历史展示模式下不刷新布林线数据'); return; }
     // 价格数据部持权威数据与订阅；这里只做：源切换清场 + 委托批量加载 + 维护刷新态信号。
     // 请求取消/缓存判定/逐个落地/250ms 节流/日志全在 priceBureau.ensureBatch 内完成。
     const currentVersion = ++fetchVersionRef.current;
@@ -2669,7 +2717,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     }
 
     setIsRefreshingBoll(false);
-  }, [stocks, bollAdjust, apiSource, sortedStocks]);
+  }, [stocks, bollAdjust, apiSource, sortedStocks, histDate]);
 
   // 防止 StrictMode 双重调用：标志在 effect 层设置，与 fetchAllBoll 内部守卫无关
   const didAutoRefreshBollRef = useRef(false);
@@ -2931,6 +2979,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
 
   const handleRefreshPrice = useCallback(async (id: string) => {
+    if (histDate) { showNotice('历史展示模式下不刷新实时股价'); return; }
     const stock = stocks.find(s => s.id === id);
     if (!stock) return;
 
@@ -2972,9 +3021,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         return next;
       });
     }
-  }, [stocks, onStocksChange]);
+  }, [stocks, onStocksChange, histDate]);
 
   const handleRefreshAll = useCallback(async (skipFresh = false) => {
+    if (histDate) { showNotice('历史展示模式下不刷新实时股价'); return; }
     const marketClosed = !isTradingHours();
     // 休市时股价已是当日/最近收盘价，手动刷新也视为无需请求（除非缓存已过期）
     const effectiveSkip = skipFresh || marketClosed;
@@ -3083,7 +3133,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     } finally {
       setIsRefreshing(new Set());
     }
-  }, [stocks, onStocksChange]);
+  }, [stocks, onStocksChange, histDate]);
 
   // ---- 长按刷新按钮进入"自动刷新" ----
   // 自动刷新：仅盘中（isTradingHours 命中交易时段）每 interval 秒刷新一次；
@@ -3126,6 +3176,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [autoRefreshOn, autoRefreshInterval]);
+
+  // 进入历史展示模式时停止自动刷新（历史模式下不请求实时数据）
+  useEffect(() => {
+    if (histDate) setAutoRefreshOn(false);
+  }, [histDate]);
 
   // 长按进入自动刷新的手势状态：按下后 600ms 未抬起/未移出则触发
   const startAutoHold = () => {
@@ -4044,9 +4099,27 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               >
                 <div className="flex items-center justify-center gap-1">
                   <span>BOLL</span>
-                  {(() => {
+                  {histDate ? (
+                    <span
+                      onClick={openHistPicker}
+                      className="text-[9px] font-mono cursor-pointer select-none text-indigo-400 hover:opacity-80"
+                      title={`历史数据截止日：${histDate}（点击切换/退出历史模式）`}
+                    >{histDate}</span>
+                  ) : (() => {
                     const t = getBollFullFetchTime(apiSource);
-                    return t ? <span className="text-[9px] text-app-subtext">{formatRelativeTime(t)}</span> : null;
+                    return t ? (
+                      <span
+                        onClick={openHistPicker}
+                        className="text-[9px] text-app-subtext cursor-pointer select-none hover:text-app-text"
+                        title="点击选择历史日期，以该日为截止日展示"
+                      >{formatRelativeTime(t)}</span>
+                    ) : (
+                      <span
+                        onClick={openHistPicker}
+                        className="text-[9px] text-app-subtext cursor-pointer select-none hover:text-app-text"
+                        title="点击选择历史日期，以该日为截止日展示"
+                      >--</span>
+                    );
                   })()}
                   <button
                     onClick={(e) => {
@@ -4101,7 +4174,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </th>}
                 {(cols.includes('price') || cols.includes('changePercent')) && <th colSpan={(cols.includes('price') ? 1 : 0) + (cols.includes('changePercent') ? 1 : 0)} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap">
                     <div className="flex items-center justify-center gap-1 translate-x-[10px]">
-                      <span>{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</span>
+                      {histDate ? (
+                        <span
+                          onClick={openHistPicker}
+                          className="font-mono text-indigo-400 cursor-pointer select-none hover:opacity-80"
+                          title={`历史数据截止日：${histDate}（点击切换/退出历史模式）`}
+                        >{histDate}</span>
+                      ) : (
+                        <span
+                          onClick={openHistPicker}
+                          className="cursor-pointer select-none hover:text-app-text"
+                          title="点击选择历史日期，以该日收盘价作为实时限价数据展示"
+                        >{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</span>
+                      )}
                       <button
                         onClick={() => {
                           if (autoFired.current) { autoFired.current = false; return; } // 长按触发后吞掉这次 click
@@ -4373,6 +4458,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             setBollData(null);
                             setBollError(null);
                             if (!stock.bollHidden) {
+                              // 与其它控件一致，不区分模式：统一向数据中心要数据。
+                              // 历史模式下数据中心直接返回按截止日投影（截断至该日）的数据，不发请求。
                               const popupLogCtx = requestLogService.beginBatch('打开 BOLL 弹窗：1 只股票 · 1 条请求');
                               priceBureau.fetchAndAbsorb(stock.code, key, apiSource, bollAdjust, popupLogCtx).then(result => {
                                 setBollData(result.data);
@@ -5803,6 +5890,38 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         <div className="fixed bottom-14 left-1/2 -translate-x-1/2 z-40 bg-app-card border border-app-border rounded-lg px-4 py-2 text-xs text-app-text shadow-xl">
           {notice}
         </div>
+      )}
+
+      {/* 历史数据模式：日期选择控件（点击表头的时间戳弹出） */}
+      {histPickerPos && typeof document !== 'undefined' && createPortal(
+        <>
+          <div className="fixed inset-0 z-[9998]" onClick={() => setHistPickerPos(null)} />
+          <div
+            className="fixed z-[9999] bg-app-card border border-app-border rounded-lg shadow-xl py-1 text-[11px]"
+            style={{ top: histPickerPos.top, left: histPickerPos.left, width: 168 }}
+          >
+            <button
+              type="button"
+              onClick={() => pickHistDate(null)}
+              className={`w-full text-left px-3 py-1.5 hover:bg-app-input transition-colors ${!histDate ? 'text-indigo-400 font-bold' : 'text-app-text'}`}
+            >最新（恢复实时）</button>
+            <div className="my-1 border-t border-app-border" />
+            <div className="max-h-[210px] overflow-y-auto custom-scrollbar">
+              {histPickerDates.length === 0 && (
+                <div className="px-3 py-2 text-app-subtext">缓存中暂无历史数据</div>
+              )}
+              {histPickerDates.map(d => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => pickHistDate(d)}
+                  className={`w-full text-left px-3 py-1.5 font-mono hover:bg-app-input transition-colors ${histDate === d ? 'text-indigo-400 font-bold' : 'text-app-text'}`}
+                >{d}</button>
+              ))}
+            </div>
+          </div>
+        </>,
+        document.body
       )}
 
       {/* 列表页价格技术指标弹窗 */}

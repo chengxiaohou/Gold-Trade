@@ -13,6 +13,7 @@ import {
   getBollCacheTimestamps,
   ensureBollCacheRestored,
   mergeTodayBarToKlines,
+  projectBollAsOf,
   type BollData,
   type BollPeriod,
   type BollAdjust,
@@ -71,9 +72,45 @@ export interface EnsureBatchOpts {
 // code → 条目（code 沿用 stock.code 原始字符串，与 fetchBollData 同一口径）
 const store = new Map<string, PriceEntry>();
 
+// ── 历史展示模式（截止日投影）──
+// asOfDate 非空时，本部门对外输出的一切数据都以该日为截止日：K 线截断到该日（含当日），
+// BOLL 三轨/均线/区间高低基于截断后的序列重算，实时行情不再参与合成。
+// null = 正常实时模式。消费方只需调用 setAsOfDate，之后照常读取，无需关心内部实现。
+let asOfDate: string | null = null;
+// 投影结果缓存：保证同一 (code, asOfDate) 在两次写入之间返回稳定引用，
+// 避免上层以数组引用作缓存键时被反复判为变更。任何写入/切换截止日都清空。
+const projectionCache = new Map<string, PriceEntry | null>();
+let projectionCacheDate: string | null | undefined = undefined;
+
+function getProjected(code: string): PriceEntry | null {
+  if (!asOfDate) return null;
+  if (projectionCacheDate !== asOfDate) {
+    projectionCache.clear();
+    projectionCacheDate = asOfDate;
+  }
+  if (projectionCache.has(code)) return projectionCache.get(code) ?? null;
+  const raw = store.get(code);
+  const projected: PriceEntry | null = raw
+    ? {
+        daily: projectBollAsOf(raw.daily, asOfDate),
+        weekly: projectBollAsOf(raw.weekly, asOfDate),
+        monthly: projectBollAsOf(raw.monthly, asOfDate),
+        realtime: null,
+      }
+    : null;
+  projectionCache.set(code, projected);
+  return projected;
+}
+
+// 对外统一读入口：历史模式下返回截止日投影，否则返回自持原始条目
+function readEntry(code: string): PriceEntry | null {
+  return asOfDate ? getProjected(code) : (store.get(code) ?? null);
+}
+
 // 订阅表：任何条目写入都触发全部监听，页面用它回填镜像 state 触发重渲
 const listeners = new Set<() => void>();
 function notify(): void {
+  projectionCache.clear();
   for (const cb of listeners) cb();
 }
 
@@ -88,41 +125,47 @@ export const priceBureau = {
   },
 
   getEntry(code: string): PriceEntry | null {
-    return store.get(code) ?? null;
+    return readEntry(code);
   },
 
   getDaily(code: string): BollData | null {
-    return store.get(code)?.daily ?? null;
+    return readEntry(code)?.daily ?? null;
   },
   getWeekly(code: string): BollData | null {
-    return store.get(code)?.weekly ?? null;
+    return readEntry(code)?.weekly ?? null;
   },
   getMonthly(code: string): BollData | null {
-    return store.get(code)?.monthly ?? null;
+    return readEntry(code)?.monthly ?? null;
   },
 
-  /** 唯一"今日合并日K线"权威：返回该股票的 canonical 日 K 线（bollService 已做盘中 volume 保护）。 */
+  /** 唯一"今日合并日K线"权威：返回该股票的 canonical 日 K 线（bollService 已做盘中 volume 保护）。
+   *  历史模式下返回按截止日截断后的序列。 */
   getTodayKlines(code: string): BollKline[] | null {
-    return store.get(code)?.daily?.klines ?? null;
+    return readEntry(code)?.daily?.klines ?? null;
   },
 
-  /** 自持的当日最新实时行情（未收盘前含当日）。 */
+  /** 自持的当日最新实时行情（未收盘前含当日）。历史模式下无实时行情，返回 null。 */
   getRealtime(code: string): RealTimeQuote | null {
+    if (asOfDate) return null;
     return store.get(code)?.realtime ?? null;
   },
 
   /** 数据形态①【仅收盘】：未收盘时剔除今日 K 线，历史到最近一个已收盘交易日为止。
-   *  给回测引擎、历史股息率等"不掺未收盘实时价"的消费方显式选择。 */
+   *  给回测引擎、历史股息率等"不掺未收盘实时价"的消费方显式选择。
+   *  历史模式下数据已在数据中心按截止日截断（含当日），不再做"剔除今日"处理。 */
   getClosedKlines(code: string, period: BollPeriod): BollKline[] | null {
-    const entry = store.get(code);
+    const entry = readEntry(code);
     const data = period === 'daily' ? entry?.daily : period === 'weekly' ? entry?.weekly : entry?.monthly;
+    if (asOfDate) return data?.klines ?? null;
     return toClosedKlines(data?.klines, getMarketStatus());
   },
 
   /** 数据形态②【含未收盘】：把自持的最新实时行情合成进今日 K 线。
    *  自包含——优先用本模块自持 realtime 合成；未自持时才用调用方传入的 rt 兜底；
-   *  两者皆无有效实时价时退回"仅收盘"序列。所有要"当前/今日实时"的消费方一律走这里。 */
+   *  两者皆无有效实时价时退回"仅收盘"序列。所有要"当前/今日实时"的消费方一律走这里。
+   *  历史模式下不合成实时行情，直接返回按截止日截断后的序列。 */
   getTodayDailyKlines(code: string, rt?: TodayBarInput): BollKline[] {
+    if (asOfDate) return readEntry(code)?.daily?.klines ?? [];
     const closed = toClosedKlines(store.get(code)?.daily?.klines, getMarketStatus());
     const curRt = store.get(code)?.realtime;
     const marketStatus = getMarketStatus();
@@ -139,6 +182,41 @@ export const priceBureau = {
   getTodayBar(code: string, rt?: TodayBarInput): BollKline | null {
     const lines = priceBureau.getTodayDailyKlines(code, rt);
     return lines && lines.length > 0 ? lines[lines.length - 1] : null;
+  },
+
+  // ── 历史展示模式：对外唯一开关与配套读取 ──
+  /** 设置历史截止日（'YYYY-MM-DD'）；传 null 恢复正常实时模式。 */
+  setAsOfDate(date: string | null): void {
+    if (asOfDate === date) return;
+    asOfDate = date;
+    projectionCache.clear();
+    projectionCacheDate = date;
+    notify();
+  },
+  getAsOfDate(): string | null {
+    return asOfDate;
+  },
+
+  /** 缓存中所有股票日线覆盖到的交易日（倒序，最新在前），作为历史模式的日期选择来源。 */
+  getAvailableDates(): string[] {
+    const dates = new Set<string>();
+    for (const e of store.values()) {
+      for (const k of e.daily?.klines ?? []) dates.add(k.date);
+    }
+    return [...dates].sort().reverse();
+  },
+
+  /** 历史模式的"当日限价数据"：取截止日（或之前最近一个交易日）那根日 K，
+   *  收盘价作为现价，涨跌幅相对前一根收盘价。非历史模式返回 null。 */
+  getAsOfQuote(code: string): { price: number; changePercent: number; high: number; low: number; open: number; volume: number } | null {
+    if (!asOfDate) return null;
+    // 直接用自持日线截断到截止日（不依赖 BOLL 投影：K 线不足 20 根也能给出限价数据）
+    const sliced = (store.get(code)?.daily?.klines ?? []).filter(k => k.date <= asOfDate);
+    if (sliced.length === 0) return null;
+    const last = sliced[sliced.length - 1];
+    const prev = sliced.length >= 2 ? sliced[sliced.length - 2] : null;
+    const changePercent = prev && prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0;
+    return { price: last.close, changePercent, high: last.high, low: last.low, open: last.open, volume: last.volume };
   },
 
   /** 覆盖式写入单只条目（返回 false 表示写的是一个空条目，供调用方决定是否保留） */
@@ -185,6 +263,7 @@ export const priceBureau = {
     apiSource: ApiSource,
     adjust: BollAdjust,
   ): Promise<void> {
+    if (asOfDate) return; // 历史展示模式：不触网，缺失即缺失（由投影读取层呈现为空）
     if (store.get(code)?.[period]) return;
     await ensureBollCacheRestored();
     const result = await fetchBollData(code, period, adjust, apiSource);
@@ -194,8 +273,9 @@ export const priceBureau = {
     notify();
   },
 
-  /** 写入单只最新实时行情（供刷新/回填复用），写实会 notify。 */
+  /** 写入单只最新实时行情（供刷新/回填复用），写实会 notify。历史模式下拒绝写入。 */
   setRealtime(code: string, q: TencentQuote): void {
+    if (asOfDate) return;
     const cur = store.get(code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
     store.set(code, { ...cur, realtime: { ...q, updatedAt: Date.now() } });
     notify();
@@ -210,6 +290,14 @@ export const priceBureau = {
     adjust: BollAdjust,
     logCtx?: LogBatchContext,
   ): Promise<BollResult> {
+    // 历史展示模式：不做网络请求，直接返回本部门按截止日投影的数据
+    // （K 线截断至截止日、其后行情忽略，BOLL 三轨/均线/区间均基于截断序列重算）。
+    // 这样所有消费方（K 线图、布林弹窗、复制指标等）拿到什么就画什么，无需各自适配。
+    if (asOfDate) {
+      const entry = readEntry(code);
+      const data = period === 'daily' ? entry?.daily : period === 'weekly' ? entry?.weekly : entry?.monthly;
+      return data ? { data } : { data: null, error: '该历史日期数据不足' };
+    }
     await ensureBollCacheRestored();
     const result = await fetchBollData(code, period, adjust, apiSource, undefined, logCtx);
     priceBureau.absorb(code, period, result);
@@ -222,7 +310,7 @@ export const priceBureau = {
     trigger = '自动刷新股价',
     cancelCheck?: () => boolean,
   ): Promise<void> {
-    if (stocks.length === 0) return;
+    if (asOfDate || stocks.length === 0) return;
     const logCtx: LogBatchContext = requestLogService.beginBatch(`${trigger}：${stocks.length} 只股票 · 1 条批量请求`);
     const quotes = await fetchTencentRealtime(stocks.map(s => s.code), logCtx);
     if (cancelCheck?.()) return;
@@ -240,6 +328,7 @@ export const priceBureau = {
 
   /** 逐只刷新实时行情兜底（单个代码解析失败/批量缺失时用）。返回是否成功。 */
   async refreshRealtimeSingle(code: string, trigger = '补拉单只股价'): Promise<boolean> {
+    if (asOfDate) return false;
     const logCtx: LogBatchContext = requestLogService.beginBatch(`${trigger}：1 只股票 · 1 条请求`);
     const quotes = await fetchTencentRealtime([code], logCtx);
     const q = quotes.get(toTencentCode(code));
@@ -263,6 +352,8 @@ export const priceBureau = {
     adjust: BollAdjust,
     opts: EnsureBatchOpts = {},
   ): Promise<boolean> {
+    // 历史展示模式：不发起任何批量拉取（照常读取截止日投影即可）
+    if (asOfDate) return false;
     await ensureBollCacheRestored();
     const trigger = opts.trigger ?? '自动刷新布林线';
     const batchTimestamp = Date.now();

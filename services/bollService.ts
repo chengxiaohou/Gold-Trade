@@ -455,6 +455,57 @@ function computeMAs(closes: number[]) {
   };
 }
 
+const round3 = (v: number): number => Math.round(v * 1000) / 1000;
+
+// 由（已归一化的）K 线数组构建 BollData：BOLL 三轨 + 全部均线 + 区间高低。
+// 唯一计算来源：实时取数（腾讯/新浪）与历史投影（projectBollAsOf）共用此函数，
+// 避免"实时一套算法、历史一套算法"产生口径差异。
+export function buildBollDataFromKlines(klines: BollKline[] | null | undefined, fetchedAt: number): BollData | null {
+  if (!klines || klines.length < 20) return null;
+  const allCloses = klines.map(k => k.close);
+  const ma = computeMAs(allCloses);
+  const closes = allCloses.slice(-20);
+  const mid = closes.reduce((a, b) => a + b, 0) / 20;
+  const variance = closes.reduce((s, val) => s + Math.pow(val - mid, 2), 0) / 20;
+  const std = Math.sqrt(variance);
+
+  let rangePriceHigh = -Infinity;
+  let rangePriceHighDate = '';
+  let rangePriceLow = Infinity;
+  let rangePriceLowDate = '';
+  for (const k of klines) {
+    if (k.high > rangePriceHigh) { rangePriceHigh = k.high; rangePriceHighDate = k.date; }
+    if (k.low < rangePriceLow) { rangePriceLow = k.low; rangePriceLowDate = k.date; }
+  }
+
+  const last = klines[klines.length - 1];
+  return {
+    upper: round3(mid + 2 * std),
+    mid: round3(mid),
+    lower: round3(mid - 2 * std),
+    close: Math.round(last.close * 100) / 100,
+    ma,
+    date: last.date,
+    fetchedAt,
+    rangeCount: klines.length,
+    rangePriceHigh: round3(rangePriceHigh),
+    rangePriceHighDate,
+    rangePriceLow: round3(rangePriceLow),
+    rangePriceLowDate,
+    klines,
+  };
+}
+
+// 历史投影（数据中心内部纯函数）：把 BollData 的 K 线序列截断到 asOfDate（含当日），
+// 并基于截断后的序列重算 BOLL 三轨/均线/区间高低——完全还原"当天收盘后"的视角，
+// 该日之后的行情一律忽略。数据不足 20 根时返回 null。
+export function projectBollAsOf(data: BollData | null | undefined, asOfDate: string): BollData | null {
+  if (!data?.klines || data.klines.length === 0) return null;
+  const sliced = data.klines.filter(k => k.date <= asOfDate);
+  if (sliced.length < 20) return null;
+  return buildBollDataFromKlines(sliced, data.fetchedAt);
+}
+
 interface SinaKline {
   day: string;
   open: string;
@@ -713,86 +764,23 @@ async function fetchBollFromTencent(
     // 腾讯接口内嵌实时行情，不复权模式下直接使用
     const realtimePrice = adjust === 'none' ? getTencentRealtimePrice(result.data, code) : null;
 
-    const closes: number[] = [];
-    for (let i = klines.length - 20; i < klines.length; i++) {
-      let close = klines[i].close;
-      // 不复权模式下，用实时价格替换最后一天的收盘价
-      if (adjust === 'none' && i === klines.length - 1 && realtimePrice) {
-        close = realtimePrice;
-      }
-      closes.push(close);
-    }
+    const fetchedAt = batchTimestamp ?? Date.now();
+    // 归一化 K 线；不复权模式下用实时价替换最后一根的收盘价（当日盘中）。
+    const lastDate = klines[klines.length - 1].date;
+    const normalized: BollKline[] = klines.map(k => ({
+      date: k.date,
+      open: round3(k.open),
+      high: round3(k.high),
+      low: round3(k.low),
+      close: adjust === 'none' && realtimePrice && k.date === lastDate ? realtimePrice : round3(k.close),
+      volume: k.volume,
+    }));
 
-    if (closes.length < 20) {
+    const result_data = buildBollDataFromKlines(normalized, fetchedAt);
+    if (!result_data) {
       requestLogService.failed(requestId, '收盘价数据不足');
       return { data: null, error: '收盘价数据不足' };
     }
-
-    // 全部K线收盘价（不复权模式下最后一天用实时价替换），用于计算均线
-    const allCloses: number[] = [];
-    for (let i = 0; i < klines.length; i++) {
-      let c = klines[i].close;
-      if (adjust === 'none' && i === klines.length - 1 && realtimePrice) {
-        c = realtimePrice;
-      }
-      allCloses.push(c);
-    }
-    const ma = computeMAs(allCloses);
-
-    const sum = closes.reduce((a, b) => a + b, 0);
-    const mid = sum / 20;
-
-    const variance = closes.reduce((sum, val) => sum + Math.pow(val - mid, 2), 0) / 20;
-    const std = Math.sqrt(variance);
-
-    const upper = mid + 2 * std;
-    const lower = mid - 2 * std;
-
-    // 遍历全部已拉取的K线，找出区间最高/最低（使用 high/low）
-    const rangeCount = klines.length;
-    let rangePriceHigh = -Infinity;
-    let rangePriceHighDate = '';
-    let rangePriceLow = Infinity;
-    let rangePriceLowDate = '';
-    for (let i = 0; i < klines.length; i++) {
-      const k = klines[i];
-      if (k.high > rangePriceHigh) {
-        rangePriceHigh = k.high;
-        rangePriceHighDate = k.date;
-      }
-      if (k.low < rangePriceLow) {
-        rangePriceLow = k.low;
-        rangePriceLowDate = k.date;
-      }
-    }
-
-    const last = klines[klines.length - 1];
-    const close = adjust === 'none' && realtimePrice ? realtimePrice : last.close;
-    const date = last.date;
-    const fetchedAt = batchTimestamp ?? Date.now();
-
-    const result_data: BollData = {
-      upper: Math.round(upper * 1000) / 1000,
-      mid: Math.round(mid * 1000) / 1000,
-      lower: Math.round(lower * 1000) / 1000,
-      close: Math.round(close * 100) / 100,
-      ma,
-      date,
-      fetchedAt,
-      rangeCount,
-      rangePriceHigh: Math.round(rangePriceHigh * 1000) / 1000,
-      rangePriceHighDate,
-      rangePriceLow: Math.round(rangePriceLow * 1000) / 1000,
-      rangePriceLowDate,
-      klines: klines.map(k => ({
-        date: k.date,
-        open: Math.round(k.open * 1000) / 1000,
-        high: Math.round(k.high * 1000) / 1000,
-        low: Math.round(k.low * 1000) / 1000,
-        close: adjust === 'none' && realtimePrice && k.date === last.date ? realtimePrice : Math.round(k.close * 1000) / 1000,
-        volume: k.volume,
-      })),
-    };
 
     const cacheKey = getCacheKey(code, period, adjust, 'tencent');
     cache.set(cacheKey, { data: result_data, timestamp: fetchedAt });
@@ -872,76 +860,21 @@ async function fetchBollFromSina(
     }
 
     // 新浪只支持前复权，不需要请求实时价格
-    const closes: number[] = [];
-    for (let i = klines.length - 20; i < klines.length; i++) {
-      closes.push(parseFloat(klines[i].close));
-    }
+    const fetchedAt = batchTimestamp ?? Date.now();
+    const normalized: BollKline[] = klines.map(k => ({
+      date: k.day,
+      open: round3(parseFloat(k.open)),
+      high: round3(parseFloat(k.high)),
+      low: round3(parseFloat(k.low)),
+      close: round3(parseFloat(k.close)),
+      volume: parseFloat(k.volume),
+    }));
 
-    if (closes.length < 20) {
+    const result_data = buildBollDataFromKlines(normalized, fetchedAt);
+    if (!result_data) {
       requestLogService.failed(requestId, '收盘价数据不足');
       return { data: null, error: '收盘价数据不足' };
     }
-
-    // 全部K线收盘价（新浪仅前复权），用于计算均线
-    const allCloses = klines.map(k => parseFloat(k.close));
-    const ma = computeMAs(allCloses);
-
-    const sum = closes.reduce((a, b) => a + b, 0);
-    const mid = sum / 20;
-
-    const variance = closes.reduce((sum, val) => sum + Math.pow(val - mid, 2), 0) / 20;
-    const std = Math.sqrt(variance);
-
-    const upper = mid + 2 * std;
-    const lower = mid - 2 * std;
-
-    // 遍历全部已拉取的K线，找出区间最高/最低（使用 high/low）
-    const rangeCount = klines.length;
-    let rangePriceHigh = -Infinity;
-    let rangePriceHighDate = '';
-    let rangePriceLow = Infinity;
-    let rangePriceLowDate = '';
-    for (let i = 0; i < klines.length; i++) {
-      const k = klines[i];
-      const high = parseFloat(k.high);
-      const low = parseFloat(k.low);
-      if (high > rangePriceHigh) {
-        rangePriceHigh = high;
-        rangePriceHighDate = k.day;
-      }
-      if (low < rangePriceLow) {
-        rangePriceLow = low;
-        rangePriceLowDate = k.day;
-      }
-    }
-
-    const last = klines[klines.length - 1];
-    const close = parseFloat(last.close);
-    const date = last.day;
-    const fetchedAt = batchTimestamp ?? Date.now();
-
-    const result_data: BollData = {
-      upper: Math.round(upper * 1000) / 1000,
-      mid: Math.round(mid * 1000) / 1000,
-      lower: Math.round(lower * 1000) / 1000,
-      close: Math.round(close * 100) / 100,
-      ma,
-      date,
-      fetchedAt,
-      rangeCount,
-      rangePriceHigh: Math.round(rangePriceHigh * 1000) / 1000,
-      rangePriceHighDate,
-      rangePriceLow: Math.round(rangePriceLow * 1000) / 1000,
-      rangePriceLowDate,
-      klines: klines.map(k => ({
-        date: k.day,
-        open: Math.round(parseFloat(k.open) * 1000) / 1000,
-        high: Math.round(parseFloat(k.high) * 1000) / 1000,
-        low: Math.round(parseFloat(k.low) * 1000) / 1000,
-        close: Math.round(parseFloat(k.close) * 1000) / 1000,
-        volume: parseFloat(k.volume),
-      })),
-    };
 
     const cacheKey = getCacheKey(fullCode, period, adjust, 'sina');
     cache.set(cacheKey, { data: result_data, timestamp: fetchedAt });
