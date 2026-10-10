@@ -584,6 +584,13 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
     : diffNum != null && isBuyFilled && diffNum > 0 ? 'text-brand-red'
     : diffNum != null && isPending && likelyFill ? 'text-orange-400'
     : 'text-app-rowtext';
+  // T 模式下买入行根据配对状态决定划线/调暗样式，两处（总金额、百分比）共享
+  const buyMatchStyle = (() => {
+    if (t.side !== 'buy' || t.status !== 'filled') return '';
+    const m = buyMatchMap?.[t.id];
+    if (!m || m.matched <= 0) return '';
+    return m.matched >= m.original ? 'line-through opacity-60' : 'opacity-60';
+  })();
   const timeStr = (ts: number) => {
     const d = new Date(ts);
     return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -597,13 +604,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
           <span className="font-normal text-app-subtext"> × </span>
           {Number.isInteger(shares) ? shares : shares.toFixed(2)}
           <span className="font-normal text-app-subtext"> = </span>
-          <span className={`font-bold ${t.side === 'buy' ? 'text-blue-500' : 'text-red-500'} ${(() => {
-            if (t.side !== 'buy' || t.status !== 'filled') return '';
-            const m = buyMatchMap?.[t.id];
-            if (!m || m.matched <= 0) return '';
-            // 完全被卖出对冲：删除线 + 调暗；部分被对冲：仅调暗
-            return m.matched >= m.original ? 'line-through opacity-60' : 'opacity-60';
-          })()}`}>
+          <span className={`font-bold ${t.side === 'buy' ? 'text-blue-500' : 'text-red-500'} ${buyMatchStyle}`}>
             {(price * shares).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
           </span>
         </span>
@@ -637,7 +638,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
               </span>
             )}
             {diffNum != null && (
-              <span className={`font-mono text-[8px] font-semibold whitespace-nowrap ${pctColor}`}>
+              <span className={`font-mono text-[8px] font-semibold whitespace-nowrap ${pctColor} ${buyMatchStyle}`}>
                 {`${diffNum >= 0 ? '+' : ''}${diffNum.toFixed(2)}%`}
               </span>
             )}
@@ -4058,13 +4059,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               {cols.includes('dividendRate') && <col style={{ width: '70px' }} />}
               {cols.includes('price') && <col style={{ width: '60px' }} />}
               {cols.includes('changePercent') && <col style={{ width: '55px' }} />}
-              <col style={{ width: '65px' }} />
-              <col style={{ width: '65px' }} />
-              <col style={{ width: '65px' }} />
               {cols.includes('position') && <col style={{ width: '56px' }} />}
               {cols.includes('position') && <col style={{ width: '64px' }} />}
               {cols.includes('position') && <col style={{ width: '56px' }} />}
               {cols.includes('position') && <col style={{ width: '56px' }} />}
+              <col style={{ width: '65px' }} />
+              <col style={{ width: '65px' }} />
+              <col style={{ width: '65px' }} />
               {dividendYearCols.map(yearCol => <col key={yearCol} style={{ width: '50px' }} />)}
               <col style={{ width: '60px' }} />
             </colgroup>
@@ -4093,6 +4094,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 )}
                 {cols.includes('price') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">价格</th>}
                 {cols.includes('changePercent') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none" onClick={() => handleChangePctSortClick()}>涨跌幅</th>}
+                {cols.includes('position') && <th
+                  colSpan={4}
+                  className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-r border-app-border"
+                >
+                  持仓
+                </th>}
                 <th
                 className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap"
                 colSpan={3}
@@ -4134,12 +4141,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </button>
                 </div>
               </th>
-                {cols.includes('position') && <th
-                  colSpan={4}
-                  className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-r border-app-border"
-                >
-                  持仓
-                </th>}
                 {dividendYearCols.length > 0 && <th
                   colSpan={dividendYearCols.length + 1}
                   className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap"
@@ -4209,9 +4210,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       </button>
                     </div>
                   </th>}
-                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('daily')}>日线</th>
-                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('weekly')}>周线</th>
-                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('monthly')}>月线</th>
                 {cols.includes('position') && <>
                   <th
                     className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border select-none"
@@ -4240,6 +4238,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     交易
                   </th>
                 </>}
+                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('daily')}>日线</th>
+                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('weekly')}>周线</th>
+                <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('monthly')}>月线</th>
                 {dividendYearCols.map((yearCol, idx) => (
                   <th key={yearCol} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">
                     {yearCol === 'dividendLeft' ? dividendYearLeft : dividendYearRight}
@@ -4419,67 +4420,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       {stock.changePercent >= 0 ? '+' : ''}{formatPercent(stock.changePercent)}
                     </span>
                   </td>}
-                  {(() => {
-                    const bollInfo = stockBollMap.get(stock.id);
-                    const price = stock.price || 0;
-                    const periods: { key: BollPeriod; data: BollData | null }[] = [
-                      { key: 'daily', data: !stock.bollHidden ? (bollInfo?.daily ?? null) : null },
-                      { key: 'weekly', data: !stock.bollHidden ? (bollInfo?.weekly ?? null) : null },
-                      { key: 'monthly', data: !stock.bollHidden ? (bollInfo?.monthly ?? null) : null },
-                    ];
-                    return periods.map(({ key, data }, idx) => {
-                      const pos = getBollPosition(data, price);
-                      const bandColor = pos?.band === 'upper' ? 'text-brand-red' : pos?.band === 'lower' ? 'text-brand-green' : 'text-blue-500';
-                      const percentStr = pos ? `${pos.percent >= 0 ? '+' : ''}${pos.percent.toFixed(2)}%` : '-';
-                      const absPct = pos ? Math.abs(pos.percent) : 0;
-                      const arrowCount = absPct <= 0.5 ? 0 : absPct <= 3 ? 1 : absPct <= 6 ? 2 : 3;
-                      const arrow = pos ? (arrowCount === 0 ? '' : (pos.percent >= 0 ? '↑' : '↓').repeat(arrowCount)) : '';
-                      // 上轨+下箭头 或 下轨+上箭头 → 箭头放左边避免反直觉
-                      const isCounterArrow = pos && ((pos.band === 'upper' && pos.percent < 0) || (pos.band === 'lower' && pos.percent >= 0));
-                      return (
-                        <td key={key} className={`px-1 py-1.5 text-center cursor-pointer ${draggedId ? '' : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            const popupW = 340;
-                            const popupH = window.innerHeight * 0.9;
-                            const centerY = window.innerHeight / 2;
-                            let top = centerY - popupH / 2;
-                            top = Math.max(12, Math.min(top, window.innerHeight - popupH - 12));
-                            setBollPeriod(key);
-                            setDividendRateChartRange(120);
-                            setShowRatesId(stock.id);
-                            setRatesCenterToggle(false); // 新弹窗默认显示网格模式
-                            setRatesCenterHover(false);
-                            setRatesPopupPos({
-                              top,
-                              left: Math.min(Math.max(12, rect.right + 8), window.innerWidth - popupW - 12)
-                            });
-                            setBollData(null);
-                            setBollError(null);
-                            if (!stock.bollHidden) {
-                              // 与其它控件一致，不区分模式：统一向数据中心要数据。
-                              // 历史模式下数据中心直接返回按截止日投影（截断至该日）的数据，不发请求。
-                              const popupLogCtx = requestLogService.beginBatch('打开 BOLL 弹窗：1 只股票 · 1 条请求');
-                              priceBureau.fetchAndAbsorb(stock.code, key, apiSource, bollAdjust, popupLogCtx).then(result => {
-                                setBollData(result.data);
-                                setBollError(result.error || null);
-                              });
-                            }
-                          }}
-                        >
-                          {pos ? (
-                            <div className="flex flex-col items-center leading-tight">
-                              <span className={`text-[11px] font-bold ${bandColor}`}>{isCounterArrow ? arrow : ''}{getBollBandLabel(key, pos.band)}{!isCounterArrow ? arrow : ''}</span>
-                              <span className="font-mono text-[10px] text-app-rowtext">{percentStr}</span>
-                            </div>
-                          ) : (
-                            <span className="text-app-subtext text-[11px]">-</span>
-                          )}
-                        </td>
-                      );
-                    });
-                  })()}
                   {cols.includes('position') && (() => {
                     const shares = stock.positionShares || 0;
                     const cost = stock.positionCost || 0;
@@ -4608,6 +4548,67 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         {col3}
                       </React.Fragment>
                     );
+                  })()}
+                  {(() => {
+                    const bollInfo = stockBollMap.get(stock.id);
+                    const price = stock.price || 0;
+                    const periods: { key: BollPeriod; data: BollData | null }[] = [
+                      { key: 'daily', data: !stock.bollHidden ? (bollInfo?.daily ?? null) : null },
+                      { key: 'weekly', data: !stock.bollHidden ? (bollInfo?.weekly ?? null) : null },
+                      { key: 'monthly', data: !stock.bollHidden ? (bollInfo?.monthly ?? null) : null },
+                    ];
+                    return periods.map(({ key, data }, idx) => {
+                      const pos = getBollPosition(data, price);
+                      const bandColor = pos?.band === 'upper' ? 'text-brand-red' : pos?.band === 'lower' ? 'text-brand-green' : 'text-blue-500';
+                      const percentStr = pos ? `${pos.percent >= 0 ? '+' : ''}${pos.percent.toFixed(2)}%` : '-';
+                      const absPct = pos ? Math.abs(pos.percent) : 0;
+                      const arrowCount = absPct <= 0.5 ? 0 : absPct <= 3 ? 1 : absPct <= 6 ? 2 : 3;
+                      const arrow = pos ? (arrowCount === 0 ? '' : (pos.percent >= 0 ? '↑' : '↓').repeat(arrowCount)) : '';
+                      // 上轨+下箭头 或 下轨+上箭头 → 箭头放左边避免反直觉
+                      const isCounterArrow = pos && ((pos.band === 'upper' && pos.percent < 0) || (pos.band === 'lower' && pos.percent >= 0));
+                      return (
+                        <td key={key} className={`px-1 py-1.5 text-center cursor-pointer ${draggedId ? '' : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const popupW = 340;
+                            const popupH = window.innerHeight * 0.9;
+                            const centerY = window.innerHeight / 2;
+                            let top = centerY - popupH / 2;
+                            top = Math.max(12, Math.min(top, window.innerHeight - popupH - 12));
+                            setBollPeriod(key);
+                            setDividendRateChartRange(120);
+                            setShowRatesId(stock.id);
+                            setRatesCenterToggle(false); // 新弹窗默认显示网格模式
+                            setRatesCenterHover(false);
+                            setRatesPopupPos({
+                              top,
+                              left: Math.min(Math.max(12, rect.right + 8), window.innerWidth - popupW - 12)
+                            });
+                            setBollData(null);
+                            setBollError(null);
+                            if (!stock.bollHidden) {
+                              // 与其它控件一致，不区分模式：统一向数据中心要数据。
+                              // 历史模式下数据中心直接返回按截止日投影（截断至该日）的数据，不发请求。
+                              const popupLogCtx = requestLogService.beginBatch('打开 BOLL 弹窗：1 只股票 · 1 条请求');
+                              priceBureau.fetchAndAbsorb(stock.code, key, apiSource, bollAdjust, popupLogCtx).then(result => {
+                                setBollData(result.data);
+                                setBollError(result.error || null);
+                              });
+                            }
+                          }}
+                        >
+                          {pos ? (
+                            <div className="flex flex-col items-center leading-tight">
+                              <span className={`text-[11px] font-bold ${bandColor}`}>{isCounterArrow ? arrow : ''}{getBollBandLabel(key, pos.band)}{!isCounterArrow ? arrow : ''}</span>
+                              <span className="font-mono text-[10px] text-app-rowtext">{percentStr}</span>
+                            </div>
+                          ) : (
+                            <span className="text-app-subtext text-[11px]">-</span>
+                          )}
+                        </td>
+                      );
+                    });
                   })()}
                   {dividendYearCols.map((yearCol, idx) => {
                     const year = yearCol === 'dividendLeft' ? dividendYearLeft : dividendYearRight;
