@@ -1211,10 +1211,42 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
   );
 });
 
-// 支撑/压力位浮窗中的一行：plain 为纯文本行，cell 为带名称的表格行（名称可着色）
+// 支撑/压力位浮窗中的一行：plain 为纯文本行，cell 为带名称的表格行（名称可着色，price 为该行对应价格）
 type SrRow =
   | { kind: 'plain'; text: string }
-  | { kind: 'cell'; name: string; color?: string; rest: string };
+  | { kind: 'cell'; name: string; color?: string; rest: string; price?: number };
+
+// 支撑/压力位弹窗的表格体 —— 单一实现：MA & BOLL 入口弹窗 与 列表/交易入口弹窗共用。
+// 组件自身不决定点击用途，只把点击到的价格通过 onPriceClick 抛给调用方；
+// 仅在外部传入了 onPriceClick（即确有消费方关心点击）时，悬停才出现整行下划线。
+const SupportResistanceRows: React.FC<{
+  rows: SrRow[] | null;
+  fallback: string | null;
+  onPriceClick?: (price: number) => void;
+}> = ({ rows, fallback, onPriceClick }) => (
+  <div className="px-2.5 py-1.5 font-mono text-[12px] text-app-rowtext whitespace-pre leading-[1.75] text-left">
+    {rows && rows.length > 0 ? (
+      rows.map((row, i) => {
+        if (row.kind === 'plain') return <div key={i} className="whitespace-pre">{row.text}</div>;
+        const clickable = !!onPriceClick && row.price != null;
+        return (
+          <div
+            key={i}
+            className={`whitespace-pre rounded-sm${clickable ? ' cursor-pointer hover:bg-app-text/10 hover:underline transition-colors' : ''}`}
+            style={row.color ? { color: row.color } : undefined}
+            onMouseDown={clickable ? (e) => e.stopPropagation() : undefined}
+            onClick={clickable ? () => onPriceClick!(row.price as number) : undefined}
+          >
+            <span>{row.name}</span>
+            <span>{row.rest}</span>
+          </div>
+        );
+      })
+    ) : (
+      fallback
+    )}
+  </div>
+);
 
 export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, autoRefreshInterval = 60, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
   // 全量备份导入用的隐藏文件选择（放入盈利统计面板）
@@ -1548,19 +1580,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       const diff = r.price - (stock.price || 0);
       const pct = (diff / (stock.price || 1)) * 100;
       const diffStr = (diff >= 0 ? '+' : '') + formatPrice(diff, stock.name);
-      rows.push({ kind: 'cell', name: r.name, color: colorForName(r.name), rest: `\t${formatPrice(r.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` });
+      rows.push({ kind: 'cell', name: r.name, color: colorForName(r.name), price: r.price, rest: `\t${formatPrice(r.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` });
     }
-    rows.push({ kind: 'cell', name: '现价', color: undefined, rest: `\t${fmt(stock.price)}\t------\t------` });
+    rows.push({ kind: 'cell', name: '现价', color: undefined, price: stock.price, rest: `\t${fmt(stock.price)}\t------\t------` });
     for (const s of supports) {
       const diff = s.price - (stock.price || 0);
       const pct = (diff / (stock.price || 1)) * 100;
       const diffStr = (diff >= 0 ? '+' : '') + formatPrice(diff, stock.name);
-      rows.push({ kind: 'cell', name: s.name, color: colorForName(s.name), rest: `\t${formatPrice(s.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` });
+      rows.push({ kind: 'cell', name: s.name, color: colorForName(s.name), price: s.price, rest: `\t${formatPrice(s.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` });
     }
     rows.push({ kind: 'plain', text: '───────────────────────────────' });
     const text = rows.map(r => (r.kind === 'plain' ? r.text : r.name + r.rest)).join('\n');
     const measureEl = document.createElement('div');
-    measureEl.style.cssText = 'position:fixed;visibility:hidden;white-space:pre;font-family:monospace;font-size:10px;padding:6px 10px;border:1px solid;line-height:1.5';
+    measureEl.style.cssText = 'position:fixed;visibility:hidden;white-space:pre;font-family:monospace;font-size:12px;padding:6px 10px;border:1px solid;line-height:1.75';
     measureEl.textContent = text;
     document.body.appendChild(measureEl);
     const w = measureEl.offsetWidth;
@@ -1609,7 +1641,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
 
   // 列表页股票名称支撑/压力位弹窗（hover 或 click）
-  const handleListSrClick = (e: React.MouseEvent, stock: StockEntry, pin = false) => {
+  const handleListSrClick = (e: React.MouseEvent, stock: StockEntry, pin = false, pricePickTo: 'trade' | null = null) => {
     e.stopPropagation();
     // 点击固定且当前正是同一股票的固定弹窗 → 再次点击收起
     if (pin && listSrTooltipPinned && listSrStock?.id === stock.id) {
@@ -1619,6 +1651,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       setListSrPreviewText(null);
       setListSrPreviewRows(null);
       setListSrStock(null);
+      setListSrPricePickTo(null);
       return;
     }
     const btn = e.currentTarget as HTMLElement;
@@ -1628,6 +1661,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     listSrActiveIdRef.current = stock.id;
     setListSrTooltipPinned(pin);
     setListSrStock(stock);
+    setListSrPricePickTo(pricePickTo);
     buildSupportResistanceRows(stock, 'qfq', '支撑/压力位预览：1 只股票 · 3 条请求').then(({ rows, text, w, h, date }) => {
       if (!listSrActiveIdRef.current || listSrActiveIdRef.current !== stock.id) return;
       listSrTooltipMeasuredSize.current = { w, h };
@@ -1654,11 +1688,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     });
   };
 
+  // 支撑/压力位价格行点击：仅当由交易弹窗「挂单价格」图标呼出时，把点到的价格回填挂单价格输入框；
+  // 弹窗自身只负责抛出被点击的价格（见 SupportResistanceRows 的 onPriceClick），用途由调用方决定。
+  const handleSrPricePick = (price: number) => {
+    if (listSrPricePickTo !== 'trade' || !(price > 0)) return;
+    setAddTradePrice(formatPrice(price, listSrStock?.name));
+    listSrHoveredRef.current = false;
+    listSrActiveIdRef.current = undefined;
+    setListSrTooltipPinned(false);
+    setListSrPreviewText(null);
+    setListSrPreviewRows(null);
+    setListSrStock(null);
+    setListSrPricePickTo(null);
+  };
+
   // 悬停名称显示支撑/压力位（临时，不固定）
-  const handleListSrHoverEnter = (e: React.MouseEvent, stock: StockEntry) => {
+  const handleListSrHoverEnter = (e: React.MouseEvent, stock: StockEntry, pricePickTo: 'trade' | null = null) => {
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
     if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned || mktInfoPinned) return;
-    handleListSrClick(e, stock, false);
+    handleListSrClick(e, stock, false, pricePickTo);
   };
 
   // 移开名称：非固定时关闭；触摸点按中跳过关闭，交由 click 固定
@@ -1732,6 +1780,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [listCopyPreviewPos, setListCopyPreviewPos] = useState({ left: 0, top: 0 });
   // 当前点击的股票（用于列表页弹窗内的复制操作）
   const [listSrStock, setListSrStock] = useState<StockEntry | null>(null);
+  // 支撑/压力位弹窗价格行点击的消费方：'trade' = 由交易弹窗「挂单价格」图标呼出，点击价格回填挂单价格输入框
+  const [listSrPricePickTo, setListSrPricePickTo] = useState<'trade' | null>(null);
   // 支撑/压力位弹窗标题栏拖拽：与价格弹窗共用同一套实现
   const srDrag = usePopoverDrag(srTooltipRef, setSrTooltipAbove, setSrTooltipOffset);
   const listSrDrag = usePopoverDrag(listSrTooltipRef, setListSrTooltipAbove, setListSrTooltipOffset);
@@ -2895,6 +2945,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         setListSrPreviewText(null);
         setListSrPreviewRows(null);
         setListSrStock(null);
+        setListSrPricePickTo(null);
       }
     };
     document.addEventListener('mousedown', handler);
@@ -3584,6 +3635,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       setListSrPreviewText(null);
       setListSrPreviewRows(null);
       setListSrStock(null);
+      setListSrPricePickTo(null);
       // 股息率/BOLL 曲线浮窗
       setShowRatesId(null);
       // 复制预览浮窗
@@ -3789,6 +3841,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     if (!tradeInfoPinned) return;
     const handler = (e: MouseEvent) => {
+      // 交易弹窗内图标呼出的支撑/压力位弹窗：点击或拖动它不应关闭交易弹窗
+      if (listSrTooltipRef.current?.contains(e.target as Node)) return;
       if (tradeInfoRef.current && !tradeInfoRef.current.contains(e.target as Node) &&
           tradeInfoBtnRef.current && !tradeInfoBtnRef.current.contains(e.target as Node)) {
         closeTradeInfo();
@@ -5235,22 +5289,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         </button>
                         </>}
                       />
-                      <div className="px-2.5 py-1.5 font-mono text-[11px] text-app-rowtext whitespace-pre leading-relaxed text-left">
-                        {srPreviewRows && srPreviewRows.length > 0 ? (
-                          srPreviewRows.map((row, i) =>
-                            row.kind === 'plain' ? (
-                              <div key={i} className="whitespace-pre">{row.text}</div>
-                            ) : (
-                              <div key={i} className="whitespace-pre" style={row.color ? { color: row.color } : undefined}>
-                                <span>{row.name}</span>
-                                <span>{row.rest}</span>
-                              </div>
-                            )
-                          )
-                        ) : (
-                          srPreviewText
-                        )}
-                      </div>
+                      <SupportResistanceRows rows={srPreviewRows} fallback={srPreviewText} />
                     </div>
                   )}
                 </div>
@@ -6000,7 +6039,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
               {/* 挂单价 + 数量（复用黄金项目 InputGroup 步进输入，支持鼠标滚轮与触屏手势调节） */}
               <div className="grid grid-cols-2 gap-3">
-                <InputGroup label={<span className="inline-flex items-baseline gap-1 translate-y-px">挂单价格{priceGapValid && <span className="text-app-subtext/60 font-normal">({priceGapPct > 0 ? '+' : ''}{priceGapPct.toFixed(2)}%)</span>}</span>} value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 0.001 : 0.01} min={0} precision={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 3 : 2} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
+                <InputGroup label={<span className="inline-flex items-baseline gap-1 translate-y-px">挂单价格{priceGapValid && <span className="text-app-subtext/60 font-normal">({priceGapPct > 0 ? '+' : ''}{priceGapPct.toFixed(2)}%)</span>}<button type="button" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={(e) => { e.stopPropagation(); handleListSrClick(e, s, true, 'trade'); }} onMouseEnter={(e) => handleListSrHoverEnter(e, s, 'trade')} onMouseLeave={() => handleListSrHoverLeave()} className="p-0.5 rounded transition-colors hover:bg-app-input cursor-pointer select-none shrink-0 self-center" title=""><BarChart3 size={12} className="text-app-subtext" /></button></span>} value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 0.001 : 0.01} min={0} precision={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 3 : 2} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
                 {/* 数量：卖出时以当前持仓为上限（静默截断） */}
                 <InputGroup
                   label={<span className="translate-y-px">数量(股)</span>}
@@ -6479,6 +6518,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               setListSrPreviewText(null);
               setListSrPreviewRows(null);
               setListSrStock(null);
+              setListSrPricePickTo(null);
             }}
             onPointerDown={(e) => e.stopPropagation()}
             className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1 shrink-0"
@@ -6488,22 +6528,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           </button>
             </>}
           />
-          <div className="px-2.5 py-1.5 font-mono text-[11px] text-app-rowtext whitespace-pre leading-relaxed text-left">
-          {listSrPreviewRows && listSrPreviewRows.length > 0 ? (
-            listSrPreviewRows.map((row, i) =>
-              row.kind === 'plain' ? (
-                <div key={i} className="whitespace-pre">{row.text}</div>
-              ) : (
-                <div key={i} className="whitespace-pre" style={row.color ? { color: row.color } : undefined}>
-                  <span>{row.name}</span>
-                  <span>{row.rest}</span>
-                </div>
-              )
-            )
-          ) : (
-            listSrPreviewText
-          )}
-          </div>
+          <SupportResistanceRows
+            rows={listSrPreviewRows}
+            fallback={listSrPreviewText}
+            onPriceClick={listSrPricePickTo === 'trade' ? handleSrPricePick : undefined}
+          />
         </div>
       )}
 
