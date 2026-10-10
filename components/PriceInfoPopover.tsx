@@ -3,6 +3,7 @@
 // 价格数据区（8 项基础行情 + KDJ/RSI/MACD）抽成 PriceIndicatorSection，供价格浮窗与标签弹窗复用，
 // 确保两处数据与样式的实现完全一致，绝不各自另写一套。
 import React from 'react';
+import { GripHorizontal } from 'lucide-react';
 import type { IndicatorResult } from '../services/indicators';
 import { formatPrice, formatVolume } from '../services/indicators';
 
@@ -88,8 +89,79 @@ export interface PriceInfoPopoverProps {
   onMouseEnter?: (e: React.MouseEvent<HTMLDivElement>) => void;
   onMouseLeave?: (e: React.MouseEvent<HTMLDivElement>) => void;
   footer?: React.ReactNode;          // 可选底部追加区（回测叠"当日信号标签"行）
-  headerLeft?: React.ReactNode;      // 可选标题行左侧操作区（回测放"取消固定"按钮）
+  headerLeft?: React.ReactNode;      // 可选标题栏右侧操作区（回测放"取消固定"按钮）
   dividendRate?: number | null;      // 当日股息率（%）；null/undefined 时不显示该行（仅回测十字线悬浮传）
+}
+
+// 弹窗标题栏 —— 单一实现：价格弹窗（列表页价格列悬浮）、支撑/压力位弹窗 共用。
+// 样式照搬价格弹窗：左侧拖拽把手 + 加粗标题（+可选小号日期），右侧操作按钮区。
+export function PopoverTitleBar({
+  title,
+  date,
+  onPointerDown,
+  onMouseDown,
+  onClick,
+  right,
+}: {
+  title: React.ReactNode;
+  date?: string | null;
+  onPointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onMouseDown?: (e: React.MouseEvent<HTMLDivElement>) => void;
+  onClick?: (e: React.MouseEvent<HTMLDivElement>) => void;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      onMouseDown={onMouseDown}
+      onClick={onClick}
+      className={`bg-app-bg/80 backdrop-blur-md px-3 py-2 flex items-center justify-between border-b border-app-border${onPointerDown ? ' cursor-grab active:cursor-grabbing touch-none select-none group' : ''}`}
+    >
+      <div className="flex items-center gap-2 text-app-subtext pointer-events-none">
+        <GripHorizontal size={15} className="opacity-80 shrink-0" />
+        <h4 className="text-[12px] font-bold tracking-wider text-app-rowtext">
+          {title}
+          {date && <span className="font-mono text-[9px] font-normal text-app-rowtext ml-1">{date}</span>}
+        </h4>
+      </div>
+      {right && <div className="flex items-center gap-1">{right}</div>}
+    </div>
+  );
+}
+
+// 弹窗标题栏拖拽 —— 单一实现：价格弹窗与支撑/压力位弹窗共用同一套拖动逻辑。
+// 传入浮窗 ref 与设置 top/left 的 setter，返回的 onPointerDown 交给 PopoverTitleBar 即可拖动。
+export function usePopoverDrag(
+  ref: React.RefObject<HTMLElement | null>,
+  setTop: (n: number) => void,
+  setLeft: (n: number) => void,
+) {
+  const offset = React.useRef({ x: 0, y: 0 });
+  const onMove = React.useCallback((e: PointerEvent) => {
+    setLeft(e.clientX - offset.current.x);
+    setTop(e.clientY - offset.current.y);
+  }, [setLeft, setTop]);
+  const onEnd = React.useCallback(() => {
+    document.body.style.cursor = '';
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onEnd);
+    window.removeEventListener('pointercancel', onEnd);
+  }, [onMove]);
+  // 卸载时兜底移除监听，避免拖拽过程中浮窗被关闭造成监听泄漏
+  React.useEffect(() => () => onEnd(), [onEnd]);
+  const onPointerDown = React.useCallback((e: React.PointerEvent) => {
+    const el = ref.current;
+    if (!el || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = el.getBoundingClientRect();
+    offset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    document.body.style.cursor = 'grabbing';
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+  }, [ref, onMove, onEnd]);
+  return { onPointerDown };
 }
 
 export default function PriceInfoPopover({
@@ -104,11 +176,7 @@ export default function PriceInfoPopover({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
-      <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center relative">
-        {headerLeft && <div className="flex items-center mr-1.5">{headerLeft}</div>}
-        <span className="text-[11px] font-bold text-app-subtext">{name}</span>
-        {date && <span className="ml-1 font-mono text-[10px] text-app-subtext font-normal leading-none">{date}</span>}
-      </div>
+      <PopoverTitleBar title={name} date={date} right={headerLeft} />
       <div className="px-2.5 py-1.5 bg-app-card">
         {loading && <div className="text-[10px] text-app-subtext py-2 text-center">加载中…</div>}
         {!loading && !data && <div className="text-[10px] text-app-subtext py-2 text-center">暂无数据</div>}
