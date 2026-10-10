@@ -1302,8 +1302,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [showRatesId, setShowRatesId] = useState<string | null>(null);
   const [ratesPopupPos, setRatesPopupPos] = useState<{ top: number, left: number }>({ top: 0, left: 0 });
   const ratesPopupRef = useRef<HTMLDivElement>(null);
-  const ratesDragOffset = useRef({ x: 0, y: 0 });
-  const isRatesDragging = useRef(false);
+  // BOLL 弹窗标题栏拖拽：与价格/股息率/支撑压力位弹窗共用同一套拖动实现
+  const setRatesPopupTop = useCallback((n: number) => setRatesPopupPos(p => ({ ...p, top: n })), []);
+  const setRatesPopupLeft = useCallback((n: number) => setRatesPopupPos(p => ({ ...p, left: n })), []);
+  const ratesDrag = usePopoverDrag(ratesPopupRef, setRatesPopupTop, setRatesPopupLeft);
   const [newStock, setNewStock] = useState({
     code: '',
     name: '',
@@ -1757,7 +1759,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const sliderRAFRef = useRef<number | null>(null);
   const copyHoveredRef = useRef(false);
   const [copyPreviewPos, setCopyPreviewPos] = useState({ left: 0, top: 0 });
-  const [srTooltipHidden, setSrTooltipHidden] = useState(false);
 
   // 列表页支撑/压力位弹窗状态
   const [listSrPreviewText, setListSrPreviewText] = useState<string | null>(null);
@@ -1814,6 +1815,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const divRateTouchTimerRef = useRef<number | undefined>(undefined);
   const divRateInfoActiveIdRef = useRef<string | undefined>(undefined);
   const isInsideDivRateInfo = (node: Node | null) => !!node && !!divRateInfoRef.current?.contains(node);
+  // 股息率曲线浮窗标题栏拖拽：与价格/支撑压力位弹窗共用同一套拖动实现
+  const setDivRateInfoTop = useCallback((n: number) => setDivRateInfoPos(p => ({ ...p, top: n })), []);
+  const setDivRateInfoLeft = useCallback((n: number) => setDivRateInfoPos(p => ({ ...p, left: n })), []);
+  const divRateDrag = usePopoverDrag(divRateInfoRef, setDivRateInfoTop, setDivRateInfoLeft);
+  // 关闭股息率曲线浮窗：悬停离开 / 点击切换 / 点击外部 / 右上角关闭按钮 共用同一套重置
+  const closeDivRateInfo = useCallback(() => {
+    divRateInfoHoveredRef.current = false;
+    divRateInfoActiveIdRef.current = undefined;
+    setDivRateInfoPinned(false);
+    setDivRateInfoStock(null);
+    setDivRateInfoKlines(null);
+    setDivRateInfoLoading(false);
+  }, []);
 
   // 行情状态浮窗（近5交易日“破位”事件分析，数据复用 stockBollMap 日线，无需额外请求）
   const [mktInfoStock, setMktInfoStock] = useState<StockEntry | null>(null);
@@ -2283,11 +2297,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const handleDivRateInfoFloatLeave = (e: React.MouseEvent) => {
     if (divRateInfoPinned) return;
     if (isInsideDivRateInfo(e.relatedTarget as Node | null)) return;
-    divRateInfoHoveredRef.current = false;
-    divRateInfoActiveIdRef.current = undefined;
-    setDivRateInfoStock(null);
-    setDivRateInfoKlines(null);
-    setDivRateInfoLoading(false);
+    closeDivRateInfo();
   };
 
   // 点击股息率：切换固定/取消固定
@@ -2295,12 +2305,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     e.stopPropagation();
     if (divRateInfoPinned && divRateInfoStock?.id === stock.id) {
       // 取消固定并关闭
-      divRateInfoHoveredRef.current = false;
-      divRateInfoActiveIdRef.current = undefined;
-      setDivRateInfoPinned(false);
-      setDivRateInfoStock(null);
-      setDivRateInfoKlines(null);
-      setDivRateInfoLoading(false);
+      closeDivRateInfo();
       return;
     }
     openDivRateInfo(e.currentTarget as HTMLElement, stock);
@@ -2891,12 +2896,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const handler = (e: MouseEvent) => {
       if (divRateInfoRef.current && !divRateInfoRef.current.contains(e.target as Node) &&
           divRateInfoBtnRef.current && !divRateInfoBtnRef.current.contains(e.target as Node)) {
-        divRateInfoHoveredRef.current = false;
-        divRateInfoActiveIdRef.current = undefined;
-        setDivRateInfoPinned(false);
-        setDivRateInfoStock(null);
-        setDivRateInfoKlines(null);
-        setDivRateInfoLoading(false);
+        closeDivRateInfo();
       }
     };
     document.addEventListener('mousedown', handler);
@@ -5047,40 +5047,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           });
         };
 
-        const handleRatesPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-          if (!ratesPopupRef.current) return;
-          e.preventDefault();
-          e.stopPropagation();
-          const rect = ratesPopupRef.current.getBoundingClientRect();
-          ratesDragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-          isRatesDragging.current = true;
-          e.currentTarget.setPointerCapture(e.pointerId);
-          ratesPopupRef.current.style.transition = 'none';
-          document.body.style.cursor = 'grabbing';
-          setSrTooltipHidden(true);
-        };
-
-        const handleRatesPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-          if (!isRatesDragging.current || !ratesPopupRef.current) return;
-          e.preventDefault();
-          e.stopPropagation();
-          const newLeft = e.clientX - ratesDragOffset.current.x;
-          const newTop = e.clientY - ratesDragOffset.current.y;
-          ratesPopupRef.current.style.left = `${newLeft}px`;
-          ratesPopupRef.current.style.top = `${newTop}px`;
-        };
-
-        const handleRatesPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-          if (!isRatesDragging.current || !ratesPopupRef.current) return;
-          isRatesDragging.current = false;
-          e.currentTarget.releasePointerCapture(e.pointerId);
-          document.body.style.cursor = '';
-          const rect = ratesPopupRef.current.getBoundingClientRect();
-          setRatesPopupPos({ left: rect.left, top: rect.top });
-          ratesPopupRef.current.style.transition = '';
-          setSrTooltipHidden(false);
-        };
-        
         return createPortal(
           <>
             <div 
@@ -5092,31 +5058,32 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               className="fixed z-50 bg-app-card border border-app-border rounded-lg shadow-xl w-[340px] flex flex-col"
               style={{ top: ratesPopupPos.top, left: ratesPopupPos.left, maxHeight: window.innerHeight * 0.9 }}
             >
-              <div className="p-3 pb-0 shrink-0">
-              <div
-                onPointerDown={handleRatesPointerDown}
-                onPointerMove={handleRatesPointerMove}
-                onPointerUp={handleRatesPointerUp}
-                className="flex items-center justify-between mb-2 cursor-grab active:cursor-grabbing touch-none select-none"
-              >
-                <div className="flex items-center gap-2 pointer-events-none">
-                  <span className="text-sm font-bold text-app-text">{stock.name}</span>
-                  {stock.price > 0 && (
-                    <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-red-500' : 'text-brand-green'}`}>
-                      {formatPrice(stock.price, stock.name)}
+              <div className="shrink-0">
+                <PopoverTitleBar
+                  title={
+                    <span className="inline-flex items-baseline gap-2">
+                      {stock.name}
+                      {stock.price > 0 && (
+                        <span className={`font-mono text-[11px] ${stock.changePercent >= 0 ? 'text-red-500' : 'text-brand-green'}`}>
+                          {formatPrice(stock.price, stock.name)}
+                        </span>
+                      )}
                     </span>
-                  )}
-                </div>
-                <button
-                  onClick={() => setShowRatesId(null)}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  className="p-0.5 hover:bg-app-input rounded transition-colors"
-                >
-                  <X size={14} className="text-app-subtext" />
-                </button>
+                  }
+                  onPointerDown={ratesDrag.onPointerDown}
+                  right={
+                    <button
+                      onClick={() => setShowRatesId(null)}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1 shrink-0"
+                      title="关闭"
+                    >
+                      <X size={15} className="text-app-subtext" />
+                    </button>
+                  }
+                />
               </div>
-            </div>
-            <div ref={popupContentRef} className="flex-1 overflow-y-auto px-3" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+            <div ref={popupContentRef} className="flex-1 overflow-y-auto px-3 pt-2" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
               <div className="flex items-start justify-between gap-2 mb-2">
                 <div className="text-[10px] text-app-subtext">
                   股息率对应股价（基于{getSelectedYear(stock)}年分红 ¥{formatPrice(getDividendForYear(stock, getSelectedYear(stock)), stock.name)}）
@@ -5189,7 +5156,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   {srPreviewText && (
                     <div
                       ref={srTooltipRef}
-                      className={`fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg overflow-hidden text-[11px] shadow-[0_8px_30px_rgba(0,0,0,0.55)] text-left${srTooltipHidden ? ' invisible' : ''}`}
+                      className="fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg overflow-hidden text-[11px] shadow-[0_8px_30px_rgba(0,0,0,0.55)] text-left"
                       style={{ top: srTooltipAbove, left: srTooltipOffset, tabSize: 8 }}
                     >
                       <PopoverTitleBar
@@ -6425,14 +6392,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {divRateInfoStock && (
         <div
           ref={divRateInfoRef}
-          className="fixed z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden"
+          className="fixed z-[59] bg-app-card border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden"
           style={{ top: divRateInfoPos.top, left: divRateInfoPos.left, width: 330 }}
           onMouseEnter={() => { divRateInfoHoveredRef.current = true; }}
           onMouseLeave={handleDivRateInfoFloatLeave}
         >
-          <div className="px-2.5 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center">
-            <span className="text-[11px] font-bold text-app-subtext">{divRateInfoStock.name}</span>
-          </div>
+          <PopoverTitleBar
+            title={divRateInfoStock.name}
+            onPointerDown={divRateDrag.onPointerDown}
+            right={
+              <button
+                onClick={(e) => { e.stopPropagation(); closeDivRateInfo(); }}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1 shrink-0"
+                title="关闭"
+              >
+                <X size={15} className="text-app-subtext" />
+              </button>
+            }
+          />
           <div className="p-2.5 bg-app-card">
             {divRateInfoLoading ? (
               <div className="text-[10px] text-app-subtext py-2 text-center">加载中…</div>
