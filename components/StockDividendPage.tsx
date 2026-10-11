@@ -1815,10 +1815,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const divRateTouchTimerRef = useRef<number | undefined>(undefined);
   const divRateInfoActiveIdRef = useRef<string | undefined>(undefined);
   const isInsideDivRateInfo = (node: Node | null) => !!node && !!divRateInfoRef.current?.contains(node);
-  // 股息率曲线浮窗标题栏拖拽：与价格/支撑压力位弹窗共用同一套拖动实现
-  const setDivRateInfoTop = useCallback((n: number) => setDivRateInfoPos(p => ({ ...p, top: n })), []);
-  const setDivRateInfoLeft = useCallback((n: number) => setDivRateInfoPos(p => ({ ...p, left: n })), []);
-  const divRateDrag = usePopoverDrag(divRateInfoRef, setDivRateInfoTop, setDivRateInfoLeft);
   // 关闭股息率曲线浮窗：悬停离开 / 点击切换 / 点击外部 / 右上角关闭按钮 共用同一套重置
   const closeDivRateInfo = useCallback(() => {
     divRateInfoHoveredRef.current = false;
@@ -6392,25 +6388,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {divRateInfoStock && (
         <div
           ref={divRateInfoRef}
-          className="fixed z-[59] bg-app-card border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden"
+          className="fixed z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden"
           style={{ top: divRateInfoPos.top, left: divRateInfoPos.left, width: 330 }}
           onMouseEnter={() => { divRateInfoHoveredRef.current = true; }}
           onMouseLeave={handleDivRateInfoFloatLeave}
         >
-          <PopoverTitleBar
-            title={divRateInfoStock.name}
-            onPointerDown={divRateDrag.onPointerDown}
-            right={
-              <button
-                onClick={(e) => { e.stopPropagation(); closeDivRateInfo(); }}
-                onPointerDown={(e) => e.stopPropagation()}
-                className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1 shrink-0"
-                title="关闭"
-              >
-                <X size={15} className="text-app-subtext" />
-              </button>
-            }
-          />
+          <div className="relative px-7 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center">
+            <span className="text-[11px] font-bold text-app-subtext">{divRateInfoStock.name}</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); closeDivRateInfo(); }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-app-subtext hover:text-app-text hover:bg-app-text/10 transition-colors"
+              title="关闭"
+            >
+              <X size={13} />
+            </button>
+          </div>
           <div className="p-2.5 bg-app-card">
             {divRateInfoLoading ? (
               <div className="text-[10px] text-app-subtext py-2 text-center">加载中…</div>
