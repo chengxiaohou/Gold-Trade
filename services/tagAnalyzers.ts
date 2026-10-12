@@ -52,16 +52,6 @@ export const DAILY_SIGNAL_CATALOG: BacktestTagDef[] = [
   { key: 'volume-down-mid', label: '温和缩量', abbr: '小缩', group: 'volume', source: 'volume', signalName: '温和缩量', action: 'sell', color: '#4A90D9' },
   { key: 'volume-down-strong', label: '明显缩量', abbr: '大缩', group: 'volume', source: 'volume', signalName: '明显缩量', action: 'sell', color: '#4A90D9' },
   // 位置(高位/低位)属于"环境前提"(ENV_TAG_CATALOG)，不作为每日信号——不在此列
-  // 底部企稳（source=stabilize，signalName = `${volBucket(量能)}${价格态}` 组合，如 放量企稳；弹窗企稳 chip 由其两个原子派生）
-  // 回踩按 sub 分档：健康回踩（低点抬高）/ 弱势回踩（低点下移）；底部确认是反弹的强化态（放量+收复MA10+低点连抬+MA5走平）
-  { key: 'stabilize-confirm-volup', label: '放量企稳', abbr: '放稳', group: 'stabilize', source: 'stabilize', signalName: '放量企稳', action: 'buy', color: '#C44A3D' },
-  { key: 'stabilize-stable-voldn', label: '缩量企稳', abbr: '缩稳', group: 'stabilize', source: 'stabilize', signalName: '缩量企稳', action: 'buy', color: '#C44A3D' },
-  { key: 'stabilize-stable-flat', label: '平量企稳', abbr: '平稳', group: 'stabilize', source: 'stabilize', signalName: '平量企稳', action: 'buy', color: '#C44A3D' },
-  { key: 'stabilize-bounce-volup', label: '放量反弹', abbr: '放反', group: 'stabilize', source: 'stabilize', signalName: '放量反弹', action: 'buy', color: '#C44A3D' },
-  { key: 'stabilize-bounce-voldn', label: '缩量反弹', abbr: '缩反', group: 'stabilize', source: 'stabilize', signalName: '缩量反弹', action: 'buy', color: '#C44A3D' },
-  { key: 'stabilize-bottom-confirm-volup', label: '放量底部确认', abbr: '放底', group: 'stabilize', source: 'stabilize', signalName: '放量底部确认', action: 'buy', color: '#C44A3D' },
-  { key: 'stabilize-retrace-health-voldn', label: '缩量健康回踩', abbr: '健回', group: 'stabilize', source: 'stabilize', signalName: '缩量健康回踩', action: 'buy', color: '#C44A3D' },
-  { key: 'stabilize-retrace-weak-voldn', label: '缩量弱势回踩', abbr: '弱回', group: 'stabilize', source: 'stabilize', signalName: '缩量弱势回踩', action: 'sell', color: '#4A90D9' },
 ];
 
 // K 线形态标签（十字星 / 金针探底 / 吊颈线 / 射击之星 / 倒锤子线）
@@ -324,11 +314,6 @@ export const VOLUME5_CHIP_CLS: Record<KlineVolume5, ChipCls> = {
   平量: { cls: CHIP_CLS_SLATE, sel: CHIP_SEL_SLATE },
   温和缩量: { cls: CHIP_CLS_GREEN, sel: CHIP_SEL_GREEN },
   明显缩量: { cls: 'bg-green-600/10 text-green-500 border-green-500/30', sel: ' border-green-500/70' },
-};
-// 价格态 chip：偏多红、看空绿（clean 按 ps.color 取）
-export const PRICESTATE_CHIP_CLS: Record<'red' | 'green', ChipCls> = {
-  red: { cls: CHIP_CLS_RED, sel: CHIP_SEL_RED },
-  green: { cls: CHIP_CLS_GREEN, sel: CHIP_SEL_GREEN },
 };
 // 破位事件 chip：看空 → 绿色
 export const BREAK_CHIP_CLS: ChipCls = { cls: CHIP_CLS_GREEN, sel: CHIP_SEL_GREEN };
@@ -1139,155 +1124,6 @@ export function latestBarFingerprint(klines: BollKline[]): string {
   return `${k.date}|${k.open}|${k.high}|${k.low}|${k.close}|${k.volume}`;
 }
 
-// ── 价格态原子（作用于当日，互斥 + 无态，按强度优先：底部确认(反弹强化) > 反弹 > 企稳 > 回踩）──
-//   反弹 = C > MA10 ∧ C ≥ 昨收；若同时 放量 ∧ L≥昨低 ∧ 近3日低点至少2日抬高 ∧ MA5走平/上翘 → 升级"底部确认"
-//   企稳 = L ≥ 昨低 ∧ C ≥ 昨收 ∧ MA5 ≤ C < MA10 ∧ 前段下跌背景（近5日 t-5..t-1 存在某日 close<该日MA5）
-//   回踩 = C < MA5 ∧ 前段曾站上MA5；按 L vs 昨低 分健康/弱势两档
-//   都不满足 → 无态（null）。量能是另一独立原子，参考价值在弹窗按“价格态×量能”组合呈现。
-export interface PriceStateTag {
-  date: string;
-  kind: 'bounce' | 'stable' | 'pullback' | 'bottom-confirm' | null; // 反弹 / 企稳 / 回踩 / 底部确认 / 无态
-  name: '反弹' | '企稳' | '回踩' | '底部确认' | null;
-  single: string;           // 反 / 稳 / 回 / 底
-  color: 'red' | 'green' | 'neutral'; // 红=偏多 绿=偏空 中性=无态（不返回）
-  sub?: 'health' | 'weak';  // 回踩分档：health=健康（低点抬高）、weak=弱势（低点未抬高/下移）
-  detail: string[];         // 判定依据（含 C/MA5/MA10/昨收/昨低/前段下跌背景等具体数值）
-  reference: string;        // 价格态自身参考价值（组合参考价值由弹窗按 价态×量能 单独呈现）
-}
-
-const PRICE_STATE_REFERENCE: Record<'bounce' | 'stable' | 'pullback' | 'bottom-confirm', string> = {
-  bounce: '反弹状态：价格站上10日线并当日走强，若放量则追势信号强、可参与；缺量则属弱反弹，追高需谨慎。',
-  stable: '企稳状态：低点不再创新低、收盘回到短均线上方（尚未站上MA10）且前段有下跌背景，属止跌观察期，需量能与后续阳线确认，非直接买点。',
-  pullback: '回踩状态：价格仍弱于5日线。低点抬高（健康回踩）可等企稳信号；低点下移（弱势回踩）更可能是下跌中继，不宜急于介入。',
-  'bottom-confirm': '底部确认状态：放量收复10日线、低点连续抬高、MA5走平/上翘，量价结构同步确认，是可交易的高价值信号。',
-};
-
-// 价格态×量能组合参考价值：key = `${价态}-${量能粗分(volBucket)}`；未命中回落中性兜底文案。
-// 量能用粗分（温和/明显 折叠），因“企稳-缩量（温和/明显）”等共享同一参考口径。
-// 回踩按 sub 分档：健康回踩（低点抬高）/ 弱势回踩（低点下移）；底部确认只出现在 放量 组合。
-export const STABILIZE_COMBO_REFERENCE: Record<string, string> = {
-  '反弹-放量': '高 —— 放量反弹，量价配合向上、资金真实进场，可交易追势信号。',
-  '反弹-缩量': '中 —— 反弹缺量，动能不足，追高需谨慎，防冲高回落。',
-  '反弹-平量': '中 —— 平量反弹，方向略偏多但量能未放大，观望为主。',
-  '企稳-放量': '中高 —— 放量企稳，资金进场迹象明显（如放量收复短均线），可小仓位试盘。',
-  '企稳-缩量': '中 —— 缩量企稳，止跌观察、非买点，等放量阳线确认。',
-  '企稳-平量': '中 —— 平量企稳，止跌但动能不足，继续观察。',
-  '底部确认-放量': '高 —— 底部结构确认：放量+收复MA10+低点连抬+MA5走平，量价同步，可交易确认信号。',
-  '健康回踩-放量': '中低 —— 健康回踩但放量：低点抬高说明有承接，放量却提示分歧仍在，等企稳或缩量再介入。',
-  '健康回踩-缩量': '中 —— 健康回踩缩量：低点抬高、量缩价稳，属正常回踩，等企稳信号出现再介入。',
-  '健康回踩-平量': '中 —— 健康回踩平量：低点抬高但动能未放大，观望等企稳。',
-  '弱势回踩-放量': '低 —— 弱势回踩放量：低点下移且放量，抛压仍重，下跌中继风险高。',
-  '弱势回踩-缩量': '低 —— 弱势回踩缩量：低点下移、动能不足，更可能是下跌中继，不宜急于抄底。',
-  '弱势回踩-平量': '低 —— 弱势回踩平量：低点下移、价格偏弱，观望等待企稳信号。',
-};
-const STABILIZE_COMBO_FALLBACK = '中性 —— 价格态与量能的组合未在预设映射中，需结合趋势与位置综合判断。';
-export function stabilizeComboReference(name: PriceStateTag['name'] & string, vol5: KlineVolume5, sub?: 'health' | 'weak'): string {
-  // 回踩按 sub 分档：弱势/健康 分别映射不同参考价值（无 sub 时按健康处理）
-  const keyName = name === '回踩' ? (sub === 'weak' ? '弱势回踩' : '健康回踩') : name;
-  return STABILIZE_COMBO_REFERENCE[`${keyName}-${volBucket(vol5)}`] ?? STABILIZE_COMBO_FALLBACK;
-}
-
-// 价格态判定（按指定日期索引 t）：底部确认(反弹强化) > 反弹 > 企稳 > 回踩 强度优先，互斥命中其一，否则返回 null。
-export function classifyPriceStateAt(
-  klines: BollKline[],
-  t: number,
-  fmt: (v: number) => string = (v) => v.toFixed(2),
-  cfg: TagParams = DEFAULT_TAG_PARAMS,
-): PriceStateTag | null {
-  if (!klines || klines.length === 0 || t <= 0 || t >= klines.length) return null;
-  const k = klines[t], pk = klines[t - 1];
-  const C = k.close, L = k.low, PKC = pk.close, PKL = pk.low;
-  const ma5 = calcMaSeries(klines, 5);
-  const ma10 = calcMaSeries(klines, 10);
-  const MA5 = ma5[t], MA10 = ma10[t];
-  const ds = k.date.slice(5).replace('-', '/');
-  // 前段背景（近 5 日内 t-5..t-1）：
-  //  hadDown = 曾跌破该日 MA5（企稳需此，证明刚从下跌中爬回，避免上涨中企稳刷屏）
-  //  hadUp   = 曾站上该日 MA5（回踩需此，证明是从上方跌回，避免持续弱势阴跌天天叫回踩）
-  let hadDown = false, downCnt = 0, hadUp = false, upCnt = 0;
-  for (let j = t - 1; j >= Math.max(1, t - 5); j--) {
-    const m = ma5[j];
-    if (m == null) continue;
-    if (klines[j].close < m) { hadDown = true; downCnt++; }
-    else { hadUp = true; upCnt++; }
-  }
-  // 反弹（含强化"底部确认"）：C > MA10 ∧ C ≥ 昨收
-  if (MA10 != null && C > MA10 && C >= PKC) {
-    // 底部确认 = 反弹 + 放量 + L≥昨低 + 近3日低点至少2日抬高 + MA5走平/上翘（t≥5 保证 t-4..t-1 索引有效）
-    if (t >= 5 && L >= PKL) {
-      const vol = classifyVolumeAt(klines, t, cfg);
-      const L1 = klines[t - 1].low, L2 = klines[t - 2].low, L3 = klines[t - 3].low;
-      const lowUp2 = L >= L1 && (L1 >= L2 || L2 >= L3); // 近3日低点至少2日抬高
-      const MA5Prev = ma5[t - 1];
-      if (volBucket(vol) === '放量' && lowUp2 && MA5Prev != null && MA5 != null && MA5 >= MA5Prev) {
-        let volSum = 0;
-        for (let j = t - 4; j <= t; j++) volSum += klines[j].volume;
-        const volRatio = volSum > 0 ? k.volume / (volSum / 5) : 0;
-        return {
-          date: k.date, kind: 'bottom-confirm', name: '底部确认', single: '底', color: 'red',
-          detail: [
-            `${ds} 底部确认：收 ${fmt(C)} > MA10 ${fmt(MA10)}，且收 ≥ 昨收 ${fmt(PKC)}（收复10日线）`,
-            `放量确认：${vol}，量比 ${volRatio.toFixed(2)}（5日均量含当日口径）`,
-            `低点连抬：L ${fmt(L)} ≥ L-1 ${fmt(L1)}，近3日低点 ${fmt(L3)} → ${fmt(L2)} → ${fmt(L1)} → ${fmt(L)} 至少2日抬高；L ${fmt(L)} ≥ 昨低 ${fmt(PKL)}`,
-            `MA5 ${fmt(MA5)} ≥ 昨日 MA5 ${fmt(MA5Prev)}（走平/上翘）`,
-            `放量 + 收复MA10 + 低点连抬 + MA5走平 → 底部结构确认，可交易高价值信号`,
-          ],
-          reference: PRICE_STATE_REFERENCE['bottom-confirm'],
-        };
-      }
-    }
-    return {
-      date: k.date, kind: 'bounce', name: '反弹', single: '反', color: 'red',
-      detail: [
-        `${ds} 反弹：收 ${fmt(C)} > MA10 ${fmt(MA10)}，且收 ≥ 昨收 ${fmt(PKC)}`,
-        `价格站上10日线且日内走强 → 反弹（偏多）状态`,
-      ],
-      reference: PRICE_STATE_REFERENCE.bounce,
-    };
-  }
-  // 企稳（需前段下跌背景 + 尚未站上MA10：C<MA10 与反弹严格互斥，底部修复收MA5=企稳 → 收MA10=反弹自然过渡）
-  if (hadDown && MA5 != null && MA10 != null && C < MA10 && C >= MA5 && C >= PKC && L >= PKL) {
-    return {
-      date: k.date, kind: 'stable', name: '企稳', single: '稳', color: 'red',
-      detail: [
-        `${ds} 企稳：低点 ${fmt(L)} ≥ 昨低 ${fmt(PKL)}，收 ${fmt(C)} ≥ 昨收 ${fmt(PKC)}，且 MA5 ${fmt(MA5)} ≤ 收 ${fmt(C)} < MA10 ${fmt(MA10)}（尚未站上MA10）`,
-        `前段下跌背景：近5日内 ${downCnt} 日收盘跌破其 MA5；低点不创新低 + 收上短均线 → 企稳（止跌观察）状态`,
-      ],
-      reference: PRICE_STATE_REFERENCE.stable,
-    };
-  }
-  // 回踩（需前段曾站上 MA5，即从上方跌回；持续弱势阴跌、从未站上 5 日线则不叫回踩，避免刷屏）
-  // 按低点分两档：L ≤ 昨低 → 弱势回踩（下跌中继风险）；L > 昨低 → 健康回踩（正常回踩、等企稳）
-  if (MA5 != null && C < MA5 && hadUp) {
-    if (L <= PKL) {
-      return {
-        date: k.date, kind: 'pullback', name: '回踩', single: '回', color: 'green', sub: 'weak',
-        detail: [
-          `${ds} 弱势回踩：收 ${fmt(C)} < MA5 ${fmt(MA5)}，低点 ${fmt(L)} ≤ 昨低 ${fmt(PKL)}`,
-          `前段曾站上5日线（近5日内 ${upCnt} 日收 ≥ 其MA5）后跌破；低点未抬高/下移 → 偏下跌中继风险，不宜急于介入`,
-        ],
-        reference: PRICE_STATE_REFERENCE.pullback,
-      };
-    }
-    return {
-      date: k.date, kind: 'pullback', name: '回踩', single: '回', color: 'green', sub: 'health',
-      detail: [
-        `${ds} 健康回踩：收 ${fmt(C)} < MA5 ${fmt(MA5)}，低点 ${fmt(L)} > 昨低 ${fmt(PKL)}`,
-        `前段曾站上5日线（近5日内 ${upCnt} 日收 ≥ 其MA5）后跌破；低点抬高、量缩则属正常回踩 → 等企稳信号`,
-      ],
-      reference: PRICE_STATE_REFERENCE.pullback,
-    };
-  }
-  return null;
-}
-
-export function classifyPriceState(
-  klines: BollKline[],
-  fmt: (v: number) => string = (v) => v.toFixed(2),
-  cfg: TagParams = DEFAULT_TAG_PARAMS,
-): PriceStateTag | null {
-  return classifyPriceStateAt(klines, (klines?.length ?? 1) - 1, fmt, cfg);
-}
 
 // 列表页缩略展示：封装原 getLatestDayTags 的拼装体——破位单字(破/真/假) → K线形态单字 → 环境(trend/volatility)单字
 // 从"已判定的结果"生成列表页缩略单字标签（纯映射，不再重复判定）。
@@ -1298,7 +1134,6 @@ export function buildLatestShrinkTags(
   patterns: KlinePattern[] | null,
   env: EnvResult | null,
   lastDate: string,
-  priceState: PriceStateTag | null,
   latestVol: KlineVolume5 | null,
 ): MktTag[] {
   // 破位类事件标签（不含“修复观察”）
@@ -1340,10 +1175,6 @@ export function buildLatestShrinkTags(
       cls: bucket === '放量' ? ENV_SINGLE_CLS.red : bucket === '缩量' ? ENV_SINGLE_CLS.green : ENV_SINGLE_CLS.slate,
     });
   }
-  // 价格态：反弹/企稳/回踩（最新日有态则给出，无态不刷屏；单字精简保留在列表缩略）
-  if (priceState && priceState.name) {
-    tags.push({ key: `ps-${priceState.kind}`, text: priceState.single, cls: priceState.color === 'green' ? ENV_SINGLE_CLS.green : ENV_SINGLE_CLS.red });
-  }
   tags.push(...breakTags);
   return tags;
 }
@@ -1373,10 +1204,9 @@ export function buildShrinkTagsForModule(
   patterns: KlinePattern[] | null,
   env: EnvResult | null,
   lastDate: string,
-  priceState: PriceStateTag | null,
   latestVol: KlineVolume5 | null,
 ): MktTag[] {
-  let tags = buildLatestShrinkTags(events, patterns, env, lastDate, priceState, latestVol);
+  let tags = buildLatestShrinkTags(events, patterns, env, lastDate, latestVol);
   if (!SHRINK_TAG_INCLUDE_ENV[module]) tags = tags.filter(t => !t.key.startsWith('env-'));
   if (SHRINK_TAG_HIDE_VOL_FLAT[module]) tags = tags.filter(t => t.key !== 'vol-平量');
   return tags;
@@ -1391,9 +1221,8 @@ export function buildLatestDayTags(klines: BollKline[], fmt: (v: number) => stri
   const patterns = analyzeKlinePatterns(klines, fmt, cfg);
   const allowVol = isTodayVolumeEligible(klines);
   const env = analyzeEnvironment(klines, fmt, allowVol, cfg);
-  const priceState = classifyPriceState(klines, fmt, cfg);
   const latestVol = classifyVolume(klines, cfg);
-  return buildLatestShrinkTags(events, patterns, env, lastDate, priceState, latestVol);
+  return buildLatestShrinkTags(events, patterns, env, lastDate, latestVol);
 }
 
 // 弹窗破位事件“判断依据”文案拼接（封装原 explainLines 中 selEv 分支）

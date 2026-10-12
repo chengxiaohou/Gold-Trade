@@ -1,7 +1,7 @@
 import type { BollKline } from './bollService';
 import { DEFAULT_TAG_PARAMS } from '../types';
 import type { TagParams, UserTagRule, BacktestRule, BacktestStrategy, BacktestTrade, BacktestResult, BacktestTagGroup } from '../types';
-import { analyzeKlinePatterns, analyzeMarketConditions, analyzeEnvironment, envHasCondition, buildBreakExplainLines, classifyVolumeAt, classifyPriceStateAt, volBucket, analyzeUserTagRule, DAILY_SIGNAL_CATALOG } from './tagAnalyzers';
+import { analyzeKlinePatterns, analyzeMarketConditions, analyzeEnvironment, envHasCondition, buildBreakExplainLines, classifyVolumeAt, volBucket, analyzeUserTagRule, DAILY_SIGNAL_CATALOG } from './tagAnalyzers';
 import type { EnvResult, BacktestTagDef } from './tagAnalyzers';
 import { getDayTagSet } from './signalTagDetail';
 
@@ -27,7 +27,7 @@ export type { BacktestTagDef } from './tagAnalyzers';
 
 // 策略编辑器下拉的分组中文名（<optgroup> 标签）
 export const BT_GROUP_LABEL: Record<BacktestTagGroup, string> = {
-  'pattern': 'K线形态', 'break': '破位', 'volume': '量能', 'position': '位置', 'stabilize': '底态·价量组合',
+  'pattern': 'K线形态', 'break': '破位', 'volume': '量能', 'position': '位置',
   'feng-add': '风系·加仓', 'feng-reduce': '风系·减仓', 'env': '环境', 'daily': '每日信号', 'custom': '自定义',
 };
 
@@ -45,14 +45,6 @@ function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams, custom
   const events = analyzeMarketConditions(win, Math.min(10, win.length - 1));
   const dayTags = getDayTagSet(win, cfg, fmtP, { events, customTags, dividendByYear });
   for (const t of dayTags) hits.add(t.label);
-  // 价格态×量能 组合信号（source=stabilize，signalName = `${volBucket(量能)}${价格态}`，如 放量企稳）
-  // 弹窗不展示组合名，但回测 catalog 里有 stabilize 分组依赖这些组合触发语义，保留
-  const ps = classifyPriceStateAt(win, win.length - 1, fmtP, cfg);
-  if (ps && ps.name) {
-    const vol = classifyVolumeAt(win, win.length - 1, cfg);
-    const psName = ps.kind === 'pullback' ? (ps.sub === 'weak' ? '弱势回踩' : '健康回踩') : ps.name;
-    hits.add(`${volBucket(vol)}${psName}`);
-  }
   // 环境状态：仅当 K 线足够长（≥130）才计算，供规则 envCondition 门控判定
   const env = win.length >= 130 ? analyzeEnvironment(win, fmtP, true, cfg) : null;
   void i; void currentYear;
@@ -253,16 +245,8 @@ export function scanTagOccurrences(k: BollKline[], tagKey: string, envKey?: stri
       } else if (classifyVolumeAt(win, win.length - 1, cfg) === def.signalName && def.signalName === '平量') {
         detail = [`${fmtShort(last.date)} 平量：当日量/前5日均量处于放量与缩量阈值之间`];
       }
-    } else if (def.source === 'stabilize') {
-      // 价格态×量能 组合信号：与弹窗参考价值区同源（classifyPriceStateAt + volBucket）；detail 复用价格态判定依据
-      // 回踩按 sub 分档（健康/弱势）拼入信号名匹配；底部确认（放量底部确认）同样由该分支命中
-      const vol = classifyVolumeAt(win, win.length - 1, cfg);
-      const st = classifyPriceStateAt(win, win.length - 1, fmtP, cfg);
-      if (st && st.name) {
-        const stName = st.kind === 'pullback' ? (st.sub === 'weak' ? '弱势回踩' : '健康回踩') : st.name;
-        if (`${volBucket(vol)}${stName}` === def.signalName) detail = st.detail;
-      }
     }
+
     if (!detail) continue;
     // 环境前提：指定了 envKey 时，当日环境状态必须命中该 key 才算命中位置（与 runBacktest 门控一致）
     if (envKey) {

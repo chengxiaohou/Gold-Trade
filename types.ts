@@ -224,7 +224,7 @@ export interface BacktestResult {
   tradeCount: number;
 }
 // 标签目录分组（策略编辑器的下拉选项结构）
-export type BacktestTagGroup = 'feng-add' | 'feng-reduce' | 'pattern' | 'env' | 'break' | 'daily' | 'volume' | 'position' | 'stabilize' | 'custom';
+export type BacktestTagGroup = 'feng-add' | 'feng-reduce' | 'pattern' | 'env' | 'break' | 'daily' | 'volume' | 'position' | 'custom';
 
 // ===== 用户自定义动态信号标签 =====
 // 用户以"某个数据点 增至/降至 某个值（固定值 或 动态目标如均线/BOLL）"为规则定义信号标签，

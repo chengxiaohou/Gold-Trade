@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 // 信号标签部 —— 唯一权威接口 getDayTagSet
-// 产出"某交易日"的完整信号 chip 集（量能5档 + 价格态原子 + K线形态 + 破位观测态）。
+// 产出"某交易日"的完整信号 chip 集（量能5档 + K线形态 + 破位观测态）。
 // 所有消费方（价格浮窗底栏 SignalTagsFooter、标签弹窗"近10交易日"逐日区、回测、单元测试）
 // 一律从本接口取数，禁止在别处重复拼装。判定复用 tagAnalyzers，配色复用共享 CHIP_CLS，本文件不写判定。
 // ─────────────────────────────────────────────────────────────
@@ -8,10 +8,10 @@ import type { BollKline } from './bollService';
 import type { TagParams, UserTagRule } from '../types';
 import { DEFAULT_TAG_PARAMS } from '../types';
 import {
-  analyzeKlinePatternsAt, analyzeKlineCombo, classifyVolumeAt, classifyPriceStateAt,
-  analyzeMarketConditions, buildBreakExplainLines, stabilizeComboReference, volBucket,
+  analyzeKlinePatternsAt, analyzeKlineCombo, classifyVolumeAt,
+  analyzeMarketConditions, buildBreakExplainLines, volBucket,
   analyzeUserTagRule,
-  PATTERN_CHIP_CLS, VOLUME5_CHIP_CLS, PRICESTATE_CHIP_CLS, BREAK_CHIP_CLS,
+  PATTERN_CHIP_CLS, VOLUME5_CHIP_CLS, BREAK_CHIP_CLS,
   CHIP_CLS_RED, CHIP_SEL_RED, CHIP_CLS_INDIGO, CHIP_SEL_INDIGO, CHIP_CLS_BLUE, CHIP_SEL_BLUE,
   CHIP_CLS_GREEN, CHIP_SEL_GREEN, CHIP_CLS_SLATE, CHIP_SEL_SLATE,
   type KlineVolume5, type MarketEvent,
@@ -99,13 +99,6 @@ export function getDayTagSet(
   const vol = classifyVolumeAt(win, i, cfg);
   const volChip = VOLUME5_CHIP_CLS[vol];
   out.push({ key: `vol-${vol}`, kind: 'volume', label: vol, cls: volChip.cls, sel: volChip.sel, detail: volumeDetail(win, i, vol), reference: VOL_REFERENCE });
-
-  // 价格态原子（弹窗 priceStateChip 同源）
-  const ps = classifyPriceStateAt(win, i, fmt, cfg);
-  if (ps && ps.name) {
-    const psChip = PRICESTATE_CHIP_CLS[ps.color === 'green' ? 'green' : 'red'];
-    out.push({ key: `ps-${ps.name}`, kind: 'pricestate', label: ps.name, cls: psChip.cls, sel: psChip.sel, detail: ps.detail, reference: stabilizeComboReference(ps.name, vol, ps.sub) });
-  }
 
   // K线形态（弹窗 patternChip 同源）：每个命中形态一个 chip
   const patterns = analyzeKlinePatternsAt(win, i, fmt, cfg);

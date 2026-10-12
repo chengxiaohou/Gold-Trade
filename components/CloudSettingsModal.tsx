@@ -127,7 +127,6 @@ const SIGNAL_GROUP_LABELS: Record<string, string> = {
   pattern: 'K线形态',
   break: '破位事件',
   volume: '量能信号',
-  stabilize: '底部企稳',
 };
 
 // 标签判定参数：各参数的中文名与说明（用于设置 UI）
@@ -1506,7 +1505,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                   </p>
                 </div>
                 <div className="space-y-3">
-                  {(['pattern', 'break', 'volume', 'stabilize'] as string[]).map(group => {
+                  {Array.from(new Set(DAILY_SIGNAL_CATALOG.map(d => d.group))).map(group => {
                     const defs = DAILY_SIGNAL_CATALOG.filter(d => d.group === group);
                     if (defs.length === 0) return null;
                     return (
