@@ -119,7 +119,8 @@ export interface StockTrade {
   price: number;             // 点位（合并记录为加权均价）
   shares: number;            // 股数
   status: StockTradeStatus;  // 挂单中 / 已成交
-  createdAt: number;         // 创建时间戳
+  createdAt: number;         // 创建时间戳（标记成交时会被更新为成交时刻，用于记录行展示）
+  originalCreatedAt?: number; // 原始创建时间（不受 toggle 覆盖，用于做T配对等场景的真实买入日期）
   filledAt?: number;         // 成交时间戳
   note?: string;             // 备注
   realizedPnL?: number;      // 卖出成交时按当前均价结算的落袋盈亏

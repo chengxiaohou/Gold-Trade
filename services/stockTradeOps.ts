@@ -40,7 +40,9 @@ export function toggleTradeStatus(stock: StockEntry, tradeId: string, now: numbe
       if (shares === 0) cost = 0;
     }
     // 标记成交时把时间更改为成交这一刻（createdAt 是记录行展示的时间字段）
-    updatedTrade = { ...trade, status: 'filled', createdAt: now, filledAt: now, realizedPnL };
+    // 但在覆盖 createdAt 之前，先保存原始创建时刻（首次 toggle 时存一次，后续取消/再成交不再更新）
+    const prevOriginal = trade.originalCreatedAt ?? trade.createdAt;
+    updatedTrade = { ...trade, status: 'filled', createdAt: now, filledAt: now, originalCreatedAt: prevOriginal, realizedPnL };
   } else {
     // 取消成交（反选）：回退持仓
     if (trade.side === 'buy') {

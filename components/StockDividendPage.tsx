@@ -451,7 +451,12 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
       const pctLabel = pct >= 100 ? '100%' : `${pct.toFixed(0)}%`;
       row.textContent = `${fmtPrice(p.price)} × ${p.shares} = ${fmtPrice(p.price * p.shares)}`;
       const h = headerDateRefs.current[i];
-      if (h) h.textContent = `T${pctLabel}  ${p.date}`;
+      if (h) {
+        // 将 YYYY-MM-DD 显示为 "M月D日"
+        const parts = p.date.split('-');
+        const dateLabel = parts.length === 3 ? `${parseInt(parts[1], 10)}月${parseInt(parts[2], 10)}日` : p.date;
+        h.textContent = `T${pctLabel}  ${dateLabel}`;
+      }
     });
     // 估算高度后定位（触发器上方居中）
     const estH = pairs.length * 24 + 26;
@@ -530,7 +535,7 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
         <div
           ref={containerRef}
           style={{ width: w, opacity: 0 }}
-          className="fixed left-0 top-0 z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2.5 py-2 text-[10px] text-app-text whitespace-nowrap transition-opacity duration-100"
+          className="fixed left-0 top-0 z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2.5 py-2 text-[10px] text-app-text whitespace-nowrap transition-opacity duration-100 pointer-events-none select-none"
         >
           {pairs.map((p, i) => (
             <div key={i}>
@@ -562,11 +567,10 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
   const stockName = stock.name;
   const currentPrice = stock.price || 0;
   const fmtP = (v: number) => formatPrice(v, stockName);
-  // 盈利金额格式化：先消除浮点误差，再去除多余尾零（如 150.00 → 150, 150.50 → 150.5）
+  // 盈利金额格式化：先消除浮点误差，再让 toLocaleString 自动处理小数零位（250 → "250"，250.50 → "250.5"）
   const fmtProfit = (v: number) => {
     const n = Math.round(v * 100) / 100;
-    const s = n.toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-    return s.replace(/\.?0+$/, '');
+    return n.toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   };
   const shares = t.shares ?? 0;
   const price = t.price ?? 0;

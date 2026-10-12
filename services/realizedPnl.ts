@@ -85,7 +85,8 @@ export interface DtPnlResult {
 // 做T匹配过程中的未匹配买入份额（可被后续卖出逐份占用）
 interface DtLot {
   id: string;
-  time: number;
+  time: number;       // 成交/生效时间（filledAt ?? createdAt，用于排序与配对顺序）
+  originalCreatedAt: number; // 买入记录的原始创建时间（不受 toggleTradeStatus 覆盖），用于 PairTip 展示真实买入日期
   price: number;
   total: number;   // 该笔买入的原始总份额
   rest: number;    // 仍未被占用的剩余份额
@@ -102,7 +103,7 @@ function matchDtSell(lots: DtLot[], sellPrice: number, sellShares: number) {
     pnl += (sellPrice - lot.price) * take;
     lot.rest -= take;
     remaining -= take;
-    pairs.push({ buyId: lot.id, date: dateKeyOf(lot.time), price: lot.price, shares: lot.total, take });
+    pairs.push({ buyId: lot.id, date: dateKeyOf(lot.originalCreatedAt), price: lot.price, shares: lot.total, take });
     if (lot.rest <= 0) lots.pop();
   }
   return { pnl, pairs, err: remaining > 0 };
@@ -121,7 +122,7 @@ export function calcDtPnlForTrades(trades?: StockTrade[]): DtPnlResult {
     const shares = t.shares ?? 0;
     if (t.side === 'buy') {
       if (t.status !== 'filled') continue; // 买入挂单尚未执行，不进持仓
-      lots.push({ id: t.id, time: effectiveTime(t), price: t.price ?? 0, total: shares, rest: shares });
+      lots.push({ id: t.id, time: effectiveTime(t), originalCreatedAt: t.originalCreatedAt ?? t.createdAt, price: t.price ?? 0, total: shares, rest: shares });
     } else if (t.status === 'filled') {
       const { pnl, pairs, err } = matchDtSell(lots, t.price ?? 0, shares);
       if (err) result.errIds.add(t.id);
@@ -212,7 +213,7 @@ export function calcRealizedPnlForRange(
       const amt = t.amount ?? t.price * t.shares;
       const shares = t.shares;
       if (t.side === 'buy') {
-        lots.push({ id: t.id, time: eff, price: t.price, total: shares, rest: shares });
+        lots.push({ id: t.id, time: eff, originalCreatedAt: t.originalCreatedAt ?? t.createdAt, price: t.price, total: shares, rest: shares });
         const prevRs = rs;
         rs += shares;
         rc = rs > 0 ? (rc * prevRs + amt) / rs : 0;
