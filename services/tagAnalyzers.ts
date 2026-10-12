@@ -48,7 +48,6 @@ export const DAILY_SIGNAL_CATALOG: BacktestTagDef[] = [
   // 每日量能（source=volume，signalName = classifyVolumeAt 5档返回值；弹窗量能 chip 同源）
   { key: 'volume-up-strong', label: '明显放量', abbr: '大放', group: 'volume', source: 'volume', signalName: '明显放量', action: 'buy', color: '#C44A3D' },
   { key: 'volume-up-mid', label: '温和放量', abbr: '小放', group: 'volume', source: 'volume', signalName: '温和放量', action: 'buy', color: '#C44A3D' },
-  { key: 'volume-flat', label: '平量', abbr: '平', group: 'volume', source: 'volume', signalName: '平量', action: 'buy', color: '#C44A3D' },
   { key: 'volume-down-mid', label: '温和缩量', abbr: '小缩', group: 'volume', source: 'volume', signalName: '温和缩量', action: 'sell', color: '#4A90D9' },
   { key: 'volume-down-strong', label: '明显缩量', abbr: '大缩', group: 'volume', source: 'volume', signalName: '明显缩量', action: 'sell', color: '#4A90D9' },
   // 位置(高位/低位)属于"环境前提"(ENV_TAG_CATALOG)，不作为每日信号——不在此列
@@ -1135,6 +1134,7 @@ export function buildLatestShrinkTags(
   env: EnvResult | null,
   lastDate: string,
   latestVol: KlineVolume5 | null,
+  volUp?: boolean | null,  // 当日涨跌：true=涨(红) / false=跌(绿) / null=沿用量增价涨旧配色
 ): MktTag[] {
   // 破位类事件标签（不含“修复观察”）
   const breakTags: MktTag[] = [];
@@ -1166,14 +1166,19 @@ export function buildLatestShrinkTags(
       tags.push({ key: `env-${t.key}`, text: t.single, cls: ENV_SINGLE_CLS[t.color] });
     }
   }
-  // 量能单字（最新日 5 档 → 放/平/缩，粗分着色；与弹窗逐日量能 chip 同一口径）
+  // 量能单字：平量信息量低 → 跳过；放量/缩量按当日涨跌方向着色（涨红/跌绿）
   if (latestVol) {
     const bucket = volBucket(latestVol);
-    tags.push({
-      key: `vol-${bucket}`,
-      text: bucket === '放量' ? '放' : bucket === '缩量' ? '缩' : '平',
-      cls: bucket === '放量' ? ENV_SINGLE_CLS.red : bucket === '缩量' ? ENV_SINGLE_CLS.green : ENV_SINGLE_CLS.slate,
-    });
+    if (bucket === '平量') {
+      // skip — 平量信息量低，缩略不展示
+    } else {
+      const up = volUp ?? bucket === '放量';  // 旧口径：放量=红（量增价涨），缩量=绿；显式传入 volUp 时按涨跌方向
+      tags.push({
+        key: `vol-${bucket}`,
+        text: bucket === '放量' ? '放' : '缩',
+        cls: up ? ENV_SINGLE_CLS.red : ENV_SINGLE_CLS.green,
+      });
+    }
   }
   tags.push(...breakTags);
   return tags;
@@ -1195,7 +1200,7 @@ const SHRINK_TAG_INCLUDE_ENV: Record<ShrinkTagModule, boolean> = {
 // 各模块是否展示"平量"缩略单字：信息量低，列表里隐藏（放/缩仍展示），弹窗/底栏保留
 const SHRINK_TAG_HIDE_VOL_FLAT: Record<ShrinkTagModule, boolean> = {
   list: true,
-  'popup-footer': false,
+  'popup-footer': true,
 };
 
 export function buildShrinkTagsForModule(
@@ -1205,8 +1210,9 @@ export function buildShrinkTagsForModule(
   env: EnvResult | null,
   lastDate: string,
   latestVol: KlineVolume5 | null,
+  volUp?: boolean | null,
 ): MktTag[] {
-  let tags = buildLatestShrinkTags(events, patterns, env, lastDate, latestVol);
+  let tags = buildLatestShrinkTags(events, patterns, env, lastDate, latestVol, volUp);
   if (!SHRINK_TAG_INCLUDE_ENV[module]) tags = tags.filter(t => !t.key.startsWith('env-'));
   if (SHRINK_TAG_HIDE_VOL_FLAT[module]) tags = tags.filter(t => t.key !== 'vol-平量');
   return tags;
@@ -1222,7 +1228,10 @@ export function buildLatestDayTags(klines: BollKline[], fmt: (v: number) => stri
   const allowVol = isTodayVolumeEligible(klines);
   const env = analyzeEnvironment(klines, fmt, allowVol, cfg);
   const latestVol = classifyVolume(klines, cfg);
-  return buildLatestShrinkTags(events, patterns, env, lastDate, latestVol);
+  const last = klines[klines.length - 1];
+  const prevClose = klines.length >= 2 ? klines[klines.length - 2].close : last.close;
+  const volUp = last.close >= prevClose;
+  return buildLatestShrinkTags(events, patterns, env, lastDate, latestVol, volUp);
 }
 
 // 弹窗破位事件“判断依据”文案拼接（封装原 explainLines 中 selEv 分支）

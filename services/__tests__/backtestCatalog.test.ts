@@ -206,7 +206,7 @@ describe('BACKTEST_TAG_CATALOG 与标签弹窗展示集同步', () => {
 
       ...perMABreak,                                                    // break（每条均线独立事件）
 
-      '明显放量', '温和放量', '平量', '温和缩量', '明显缩量',            // volume（量能5档）
+      '明显放量', '温和放量', '温和缩量', '明显缩量',                           // volume（量能5档，平量信息量低不进弹窗）
 
 
 
@@ -752,9 +752,11 @@ describe('getDayTagSet（信号标签部唯一权威，当日行 = 底栏 = 标�
 
       const got = getDayTagSet(ks, undefined, fmt).map(t => t.label);
 
-      // 量能标签恒存在
+      // 量能标签恒存在（平量信息量低 → 跳过，不产出）
 
-      expect(got).toContain(classifyVolumeAt(ks, i));
+      const volAt = classifyVolumeAt(ks, i);
+      if (volAt === '平量') expect(got).not.toContain('平量');
+      else expect(got).toContain(volAt);
 
       // 严禁出现回测组合标签（价格浮窗应展示原子标签，与标签弹窗一致，不重复两套）
 
@@ -810,7 +812,10 @@ describe('getDayTagSet（信号标签部唯一权威，当日行 = 底栏 = 标�
 
     expect(vol!.reference).toContain('量增价升有持续性'); // 与弹窗 volday 参考价值同一静态文案
 
-    expect(vol!.cls).toBe(VOLUME5_CHIP_CLS['明显放量'].cls); // 放量 → 红
+    // 明显放量 + 当日涨/平盘 → 红色；当日跌 → 绿色
+    const last = ks[ks.length - 1], prev = ks[ks.length - 2];
+    const up = last.close >= prev.close;
+    expect(vol!.cls).toBe(up ? CHIP_CLS_RED : CHIP_CLS_GREEN);
 
   });
 

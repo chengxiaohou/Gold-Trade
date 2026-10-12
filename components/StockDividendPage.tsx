@@ -2502,7 +2502,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const getLatestDayTags = (stock: StockEntry): { key: string; text: string; cls: string }[] => {
     const a = computeAnalyzed(stock);
     if (!a.klines) return [];
-    return buildShrinkTagsForModule('list', a.events, a.patterns, a.env, a.klines[a.klines.length - 1].date, a.latestVol);
+    const last = a.klines[a.klines.length - 1];
+    const prevClose = a.klines.length >= 2 ? a.klines[a.klines.length - 2].close : last.close;
+    const volUp = last.close >= prevClose;
+    return buildShrinkTagsForModule('list', a.events, a.patterns, a.env, last.date, a.latestVol, volUp);
   };
 
   // 列表当前显示顺序（按排序规则重排；默认顺序即 stocks 原序）
@@ -2850,8 +2853,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     if (didAutoRefreshBollRef.current) return;
     didAutoRefreshBollRef.current = true;
-    if (!import.meta.env.DEV) fetchAllBoll();
-    // DEV 模式下跳过挂载时的自动 BOLL 刷新，避免开发中频繁拉取
+    fetchAllBoll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2860,8 +2862,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     if (didAutoRefreshPricesRef.current) return;
     didAutoRefreshPricesRef.current = true;
-    if (!import.meta.env.DEV) handleRefreshAll(true);
-    // DEV 模式下跳过挂载时的自动股价刷新，避免开发中频繁拉取
+    handleRefreshAll(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

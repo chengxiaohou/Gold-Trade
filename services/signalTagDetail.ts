@@ -95,10 +95,15 @@ export function getDayTagSet(
   const i = win.length - 1;
   const date = win[i].date;
 
-  // 量能5档（弹窗 volChip 同源）
+  // 量能5档（弹窗 volChip 同源）：平量信息量低 → 跳过；放量/缩量按当日涨跌方向着色（涨红/跌绿）
   const vol = classifyVolumeAt(win, i, cfg);
-  const volChip = VOLUME5_CHIP_CLS[vol];
-  out.push({ key: `vol-${vol}`, kind: 'volume', label: vol, cls: volChip.cls, sel: volChip.sel, detail: volumeDetail(win, i, vol), reference: VOL_REFERENCE });
+  if (vol !== '平量') {
+    const prevClose = i >= 1 ? win[i - 1].close : win[i].close;
+    const up = win[i].close >= prevClose;
+    const cls = up ? CHIP_CLS_RED : CHIP_CLS_GREEN;
+    const sel = up ? CHIP_SEL_RED : CHIP_SEL_GREEN;
+    out.push({ key: `vol-${vol}`, kind: 'volume', label: vol, cls, sel, detail: volumeDetail(win, i, vol), reference: VOL_REFERENCE });
+  }
 
   // K线形态（弹窗 patternChip 同源）：每个命中形态一个 chip
   const patterns = analyzeKlinePatternsAt(win, i, fmt, cfg);
