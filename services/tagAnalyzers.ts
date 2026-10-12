@@ -27,6 +27,9 @@ export interface BacktestTagDef {
   action: 'buy' | 'sell';   // 语义方向提示（执行仍以规则 action 为准）
   color: string;            // 标签主题色：买=砖红、卖=蓝（与 B/S 买卖标签同一套）
 }
+// 破位检测覆盖的日线均线周期（catalog 动态生成 per-MA 条目也复用此数组）
+export const MARKET_MA_PERIODS = [5, 10, 20, 30, 60, 120, 250, 500];
+
 export const DAILY_SIGNAL_CATALOG: BacktestTagDef[] = [
   // K 线形态（signalName = analyzeKlinePatterns 的 label，弹窗形态 chip 同一来源）
   { key: 'pattern-doji', label: '十字星', abbr: '十', group: 'pattern', source: 'pattern', signalName: '十字星', action: 'sell', color: '#4A90D9' },
@@ -35,8 +38,13 @@ export const DAILY_SIGNAL_CATALOG: BacktestTagDef[] = [
   { key: 'pattern-hanging', label: '吊颈线', abbr: '吊', group: 'pattern', source: 'pattern', signalName: '吊颈线', action: 'sell', color: '#4A90D9' },
   { key: 'pattern-shooting', label: '射击之星', abbr: '射', group: 'pattern', source: 'pattern', signalName: '射击之星', action: 'sell', color: '#4A90D9' },
   { key: 'pattern-inverted-hammer', label: '倒锤子线', abbr: '倒', group: 'pattern', source: 'pattern', signalName: '倒锤子线', action: 'buy', color: '#C44A3D' },
-  // 破位事件（source=break，走弹窗 analyzeMarketConditions 破位事件；signalName 为固定 token）
-  { key: 'break-event', label: '破位', abbr: '破', group: 'break', source: 'break', signalName: 'break-event', action: 'sell', color: '#4A90D9' },
+  // 破位事件（source=break，每条均线独立事件 + 独立 3 天窗口；signalName 与 getDayTagSet 的 label 一致）
+  // 动态生成 per-MA 条目：破{period}（新破位 sell）、真破位{period}（定论 sell）、假破位{period}（定论后回到均线上方 buy）
+  ...MARKET_MA_PERIODS.flatMap(p => ([
+    { key: `break-${p}`, label: `破${p}`, abbr: `破${p}`, group: 'break' as const, source: 'break' as const, signalName: `破${p}`, action: 'sell' as const, color: '#4A90D9' },
+    { key: `break-true-${p}`, label: `真破位${p}`, abbr: `真${p}`, group: 'break' as const, source: 'break' as const, signalName: `真破位${p}`, action: 'sell' as const, color: '#4A90D9' },
+    { key: `break-false-${p}`, label: `假破位${p}`, abbr: `假${p}`, group: 'break' as const, source: 'break' as const, signalName: `假破位${p}`, action: 'buy' as const, color: '#C44A3D' },
+  ] as BacktestTagDef[])),
   // 每日量能（source=volume，signalName = classifyVolumeAt 5档返回值；弹窗量能 chip 同源）
   { key: 'volume-up-strong', label: '明显放量', abbr: '大放', group: 'volume', source: 'volume', signalName: '明显放量', action: 'buy', color: '#C44A3D' },
   { key: 'volume-up-mid', label: '温和放量', abbr: '小放', group: 'volume', source: 'volume', signalName: '温和放量', action: 'buy', color: '#C44A3D' },
@@ -775,35 +783,27 @@ export function analyzeFengSignals(klines: BollKline[], fmt: (v: number) => stri
   return { latest: evalDay(n - 1), days };
 }
 
-// ── 破位事件分析：近 N 个交易日“破位”事件（自 components/StockDividendPage.tsx 迁入）──
-export const MARKET_MA_PERIODS = [5, 10, 20, 30, 60, 120, 250, 500];
+// ── 破位事件分析：近 N 个交易日"破位"事件（自 components/StockDividendPage.tsx 迁入）──
 
-// 被跌破的均线明细
-export interface MarketMaInfo {
-  period: number;
-  value: number; // 破位当天的均线值
-}
-
+// 单个均线破位事件（每条均线独立一个事件 + 独立 3 天观测窗口）
 export interface MarketEvent {
-  date: string; // 破位当天日期 YYYY-MM-DD
-  brokenCount: number; // 当日跌破的均线条数 N
-  brokenList: MarketMaInfo[]; // 当日下穿的均线明细（按周期升序）
-  ref: MarketMaInfo; // 参照均线：被跌破中数值最高的一条
-  close: number; // 破位当天收盘价
-  status: 'confirming' | 'trueBreak' | 'falseBreak'; // 修复观察 / 真破位 / 假破位
-  returnDay?: { date: string; close: number; refMa: number }; // 假破位：回到均线上方那天
-  window: { date: string; close: number; refMa: number }[]; // 观测窗口每日数据（破位日起）
+  date: string;       // 破位当天日期 YYYY-MM-DD
+  period: number;     // 被跌破的均线周期（5/10/20/...）
+  breakMa: number;    // 破位当天该均线值
+  close: number;      // 破位当天收盘价
+  status: 'confirming' | 'trueBreak' | 'falseBreak';
+  returnDay?: { date: string; close: number; refMa: number };
+  window: { date: string; close: number; refMa: number }[];
 }
 
-// 破位：当日收盘价下穿若干条均线（前一日收盘≥均线、当日收盘<均线）
-// 真/假破位：以被跌破均线中数值最高的一条为参照，破位当天算第1天，3天内
-// 收盘价（每日对比该日最新均线值）回到其上方即假破位，否则第3天收盘后判真破位；
-// 数据不足（事件距今天太近）时保持“修复观察”。
+// 破位：当日收盘价下穿某条均线（前一日收盘≥当日均线、当日收盘<当日均线）
+// 真/假破位：每条均线各自独立 3 天观测窗口，3 天内收盘回到该日均线上方即假破位，否则判真破位；
+// 数据不足（距今天太近）时保持"修复观察"。
 export function analyzeMarketConditions(klines: BollKline[], lastDays = 5): MarketEvent[] {
   const n = klines.length;
   if (n < lastDays + 1) return [];
   const closes = klines.map(k => k.close);
-  // 各周期均线序列：maSeries[pi][i] 为第 i 天该周期均线值，历史不足时为 null
+  // 各周期均线序列：maSeries[pi][i] = 第 i 天该周期均线值
   const maSeries = MARKET_MA_PERIODS.map(period => {
     const res: (number | null)[] = new Array(n).fill(null);
     let sum = 0;
@@ -817,43 +817,37 @@ export function analyzeMarketConditions(klines: BollKline[], lastDays = 5): Mark
   const events: MarketEvent[] = [];
   for (let t = n - lastDays; t < n; t++) {
     if (t - 1 < 0) continue;
-    // 统计当日下穿的均线集合
-    const broken: MarketMaInfo[] = [];
     for (let pi = 0; pi < MARKET_MA_PERIODS.length; pi++) {
       const period = MARKET_MA_PERIODS[pi];
       const maT = maSeries[pi][t];
       const maPrev = maSeries[pi][t - 1];
       if (maT == null || maPrev == null) continue;
-      if (closes[t] < maT && closes[t - 1] >= maPrev) broken.push({ period, value: maT });
+      // 当日下穿该均线
+      if (!(closes[t] < maT && closes[t - 1] >= maPrev)) continue;
+      // 该均线独立 3 天窗口
+      const window: { date: string; close: number; refMa: number }[] = [];
+      let returned = false;
+      for (let d = t; d <= t + 2 && d < n; d++) {
+        const maD = maSeries[pi][d];
+        const refMa = maD ?? 0;
+        window.push({ date: klines[d].date, close: closes[d], refMa });
+        if (maD != null && closes[d] >= maD) { returned = true; break; }
+      }
+      let status: MarketEvent['status'];
+      if (returned) status = 'falseBreak';
+      else if (n - 1 >= t + 2) status = 'trueBreak';
+      else status = 'confirming';
+      const ev: MarketEvent = {
+        date: klines[t].date,
+        period,
+        breakMa: maT,
+        close: closes[t],
+        status,
+        window,
+      };
+      if (status === 'falseBreak') ev.returnDay = window[window.length - 1];
+      events.push(ev);
     }
-    if (broken.length === 0) continue;
-    // 参照均线：被跌破中数值最高的一条（价格下跌时最先触到）
-    const ref = broken.reduce((a, b) => (b.value > a.value ? b : a));
-    const refPi = MARKET_MA_PERIODS.indexOf(ref.period);
-    // 3 天观测：破位当天为第 1 天，记录每日收盘与当日最新参照均线值
-    const window: { date: string; close: number; refMa: number }[] = [];
-    let returned = false;
-    for (let d = t; d <= t + 2 && d < n; d++) {
-      const maD = maSeries[refPi][d];
-      const refMa = maD ?? 0;
-      window.push({ date: klines[d].date, close: closes[d], refMa });
-      if (maD != null && closes[d] >= maD) { returned = true; break; }
-    }
-    let status: MarketEvent['status'];
-    if (returned) status = 'falseBreak';
-    else if (n - 1 >= t + 2) status = 'trueBreak';
-    else status = 'confirming';
-    const ev: MarketEvent = {
-      date: klines[t].date,
-      brokenCount: broken.length,
-      brokenList: broken.slice().sort((a, b) => a.period - b.period),
-      ref,
-      close: closes[t],
-      status,
-      window,
-    };
-    if (status === 'falseBreak') ev.returnDay = window[window.length - 1];
-    events.push(ev);
   }
   return events;
 }
@@ -1315,10 +1309,10 @@ export function buildLatestShrinkTags(
       if (!ev.window.some(w => w.date === lastDate)) continue;
       if (ev.date === lastDate) {
         // 当天破位
-        breakTags.push({ key: `r-${lastDate}`, text: '破', cls: ENV_SINGLE_CLS.green });
+        breakTags.push({ key: `r-${lastDate}-${ev.period}`, text: `破${ev.period}`, cls: ENV_SINGLE_CLS.green });
       } else if (ev.status !== 'confirming') {
         // 观测窗口恰好在最新交易日收盘后定论（仍在观测中的“修”不展示）
-        breakTags.push({ key: `d-${ev.date}`, text: ev.status === 'trueBreak' ? '真' : '假', cls: ev.status === 'trueBreak' ? ENV_SINGLE_CLS.green : ENV_SINGLE_CLS.red });
+        breakTags.push({ key: `d-${ev.date}-${ev.period}`, text: `${ev.status === 'trueBreak' ? '真' : '假'}${ev.period}`, cls: ev.status === 'trueBreak' ? ENV_SINGLE_CLS.green : ENV_SINGLE_CLS.red });
       }
     }
   }
@@ -1396,6 +1390,7 @@ export function buildLatestDayTags(klines: BollKline[], fmt: (v: number) => stri
 }
 
 // 弹窗破位事件“判断依据”文案拼接（封装原 explainLines 中 selEv 分支）
+// 弹窗破位事件判断依据文案拼接（封装原 explainLines 中 selEv 分支）
 export function buildBreakExplainLines(
   ev: MarketEvent,
   kind: 'event' | 'status' | 'repair',
@@ -1403,31 +1398,30 @@ export function buildBreakExplainLines(
   fmtDay: (d: string) => string,
   fmtShort: (d: string) => string,
 ): string[] {
-  const maStr = ev.brokenList.map(b => `MA${b.period} ${fmt(b.value)}`).join(' · ');
   if (kind === 'event') {
-    return [`${fmtDay(ev.date)} 收盘 ${fmt(ev.close)}`, `当日下穿 ${ev.brokenCount} 条均线：${maStr}`];
+    return [`${fmtDay(ev.date)} 收盘 ${fmt(ev.close)}`, `当日下穿 MA${ev.period}（破位日该均线 ${fmt(ev.breakMa)}）`];
   }
   if (ev.status === 'trueBreak') {
     return [
-      `${fmtDay(ev.date)} 收盘 ${fmt(ev.close)}，下穿 ${ev.brokenCount} 条均线`,
-      `参照均线 MA${ev.ref.period}（破位日 ${fmt(ev.ref.value)}）`,
-      ...ev.window.map((w, i) => `${i + 1}天 ${fmtShort(w.date)}：收 ${fmt(w.close)} < 均线 ${fmt(w.refMa)}`),
-      `3 天观测收盘均未回到均线上方 → 真破位`,
+      `${fmtDay(ev.date)} 收盘 ${fmt(ev.close)}，下穿 MA${ev.period}`,
+      `参照均线 MA${ev.period}（破位日 ${fmt(ev.breakMa)}）`,
+      ...ev.window.map((w, i) => `${i + 1}天 ${fmtShort(w.date)}：收 ${fmt(w.close)} < MA${ev.period} ${fmt(w.refMa)}`),
+      `3 天观测收盘均未回到 MA${ev.period} 上方 → 真破位`,
     ];
   }
   if (ev.status === 'falseBreak') {
     const r = ev.returnDay!;
     return [
-      `${fmtDay(ev.date)} 收盘 ${fmt(ev.close)}，下穿 ${ev.brokenCount} 条均线`,
-      `参照均线 MA${ev.ref.period}（破位日 ${fmt(ev.ref.value)}）`,
-      `${fmtShort(r.date)} 收盘 ${fmt(r.close)} 回到均线上方（MA${ev.ref.period} ${fmt(r.refMa)}）→ 假破位`,
+      `${fmtDay(ev.date)} 收盘 ${fmt(ev.close)}，下穿 MA${ev.period}`,
+      `参照均线 MA${ev.period}（破位日 ${fmt(ev.breakMa)}）`,
+      `${fmtShort(r.date)} 收盘 ${fmt(r.close)} 回到 MA${ev.period} 上方（${fmt(r.refMa)}）→ 假破位`,
     ];
   }
   const last = ev.window[ev.window.length - 1];
   return [
-    `${fmtDay(ev.date)} 收盘 ${fmt(ev.close)}，下穿 ${ev.brokenCount} 条均线`,
-    `参照均线 MA${ev.ref.period}（破位日 ${fmt(ev.ref.value)}）`,
-    `已观测 ${ev.window.length}/3 天，最新 ${fmtShort(last.date)} 收盘 ${fmt(last.close)} 仍低于均线 ${fmt(last.refMa)}`,
+    `${fmtDay(ev.date)} 收盘 ${fmt(ev.close)}，下穿 MA${ev.period}`,
+    `参照均线 MA${ev.period}（破位日 ${fmt(ev.breakMa)}）`,
+    `已观测 ${ev.window.length}/3 天，最新 ${fmtShort(last.date)} 收盘 ${fmt(last.close)} 仍低于 MA${ev.period} ${fmt(last.refMa)}`,
     `观测未满 3 天 → 修复观察`,
   ];
 }

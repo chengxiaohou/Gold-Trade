@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { BollKline } from '../bollService';
 import { BACKTEST_TAG_CATALOG, runBacktest, scanTagOccurrences, getDaySignalLabels } from '../backtestEngine';
 import { getDayTagSet } from '../signalTagDetail';
-import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeMarketConditions, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPriceStateAt, volBucket, stabilizeComboReference, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags, PATTERN_CHIP_CLS, VOLUME5_CHIP_CLS, BREAK_CHIP_CLS, CHIP_CLS_INDIGO, CHIP_CLS_RED } from '../tagAnalyzers';
+import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeMarketConditions, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, classifyPriceStateAt, volBucket, stabilizeComboReference, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags, PATTERN_CHIP_CLS, VOLUME5_CHIP_CLS, BREAK_CHIP_CLS, CHIP_CLS_INDIGO, CHIP_CLS_RED, MARKET_MA_PERIODS } from '../tagAnalyzers';
 import type { EnvTag } from '../tagAnalyzers';
 import type { BacktestStrategy, TagParams } from '../../types';
 import { DEFAULT_TAG_PARAMS } from '../../types';
@@ -95,11 +95,13 @@ describe('BACKTEST_TAG_CATALOG 与标签弹窗展示集同步', () => {
   });
 
   it('反向兜底：回测目录穷尽弹窗全部可选信号（新增弹窗每日信号但漏登记回测目录时此处必然卡住）', () => {
-    // 弹窗“每日类”可选信号全集（与 StockDividendPage.tsx 弹窗 chip 来源一致）：
+    // 弹窗"每日类"可选信号全集（与 StockDividendPage.tsx 弹窗 chip 来源一致）：
     // 形态 + 破位 + 量能 + 企稳。位置(高位/低位)属于环境前提（ENV_TAG_CATALOG），不进信号栏。
+    // 破位：每条均线独立事件 + 独立 3 天窗口 → per-MA 条目
+    const perMABreak = MARKET_MA_PERIODS.flatMap(p => [`破${p}`, `真破位${p}`, `假破位${p}`]);
     const POPUP_SIGNALS = [
       '十字星', '金针探底', '放量金针', '吊颈线', '射击之星', '倒锤子线', // pattern
-      '破位',                                                          // break
+      ...perMABreak,                                                    // break（每条均线独立事件）
       '明显放量', '温和放量', '平量', '温和缩量', '明显缩量',            // volume（量能5档）
       '放量企稳', '缩量企稳', '平量企稳', '放量反弹', '缩量反弹', '放量底部确认', '缩量健康回踩', '缩量弱势回踩', // stabilize（价格态×量能组合信号，回踩按 sub 分档）
     ];
@@ -154,13 +156,14 @@ describe('scanTagOccurrences（预览扫描，复用弹窗判定）', () => {
     expect(scanTagOccurrences(ks, 'pattern-doji').length).toBeGreaterThan(0);
   });
 
-  it('破位事件命中：应用于合法输入不抛错且末根跌破均线 → 破位', () => {
+  it('破位事件命中：应用于合法输入不抛错且末根跌破均线 → 破{period}', () => {
     const k2 = mkKlines(83, i => 200 - i * 0.5, {
       81: { close: 170 },                          // 前日收在均线上方
       82: { open: 165, high: 166, low: 90, close: 95 }, // 当日大幅跌破均线 → 破位
     });
-    const hits = scanTagOccurrences(k2, 'break-event');
-    expect(hits.length).toBeGreaterThan(0);
+    // 末根（day 82）会下穿 5/10/20 等多条均线，任选一条测试 scanTagOccurrences 能命中
+    const hitAny = MARKET_MA_PERIODS.some(p => scanTagOccurrences(k2, `break-${p}`).length > 0);
+    expect(hitAny).toBe(true);
   });
 
   it('未知 tagKey → 空结果', () => {
@@ -381,8 +384,8 @@ describe('getDayTagSet（信号标签部唯一权威，当日行 = 底栏 = 标�
     tags.find(t => t.label === label);
   const findByPrefix = (tags: ReturnType<typeof getDayTagSet>, prefix: string) =>
     tags.find(t => t.label.startsWith(prefix));
-  const findBreakChip = (tags: ReturnType<typeof getDayTagSet>, prefix: string, N: number) =>
-    tags.find(t => t.label === `${prefix}${N}`);
+  const findBreakChip = (tags: ReturnType<typeof getDayTagSet>, label: string) =>
+    tags.find(t => t.label === label);
 
   it('常态：量能 + 价格态原子为必出基础标签，且不得出现回测组合标签（价格浮窗展示原子，与标签弹窗一致）', () => {
     const cases: BollKline[][] = [
@@ -446,46 +449,53 @@ describe('getDayTagSet（信号标签部唯一权威，当日行 = 底栏 = 标�
     expect(pull!.reference).toBe(stabilizeComboReference(ps!.name, classifyVolumeAt(win, 39), ps!.sub));
   });
 
-  // —— 破位观测态：触发日 / 观测中 / 定论日 的完整 chip 映射（标签弹窗 statusChip/repairChip 的复刻） ——
-  it('破位触发日（window 首日）：出「破位 xN」绿 chip，破位属性 detail 非空', () => {
+  // —— 破位观测态：触发日 / 观测中 / 定论日 的完整 chip 映射（每条均线独立事件 + 独立 3 天窗口） ——
+  it('破位触发日（window 首日）：每条被下穿均线各自出「破{period}」绿 chip', () => {
     const k2 = mkKlines(83, i => 200 - i * 0.5, {
       81: { close: 170 },
       82: { open: 165, high: 166, low: 90, close: 95 },
     });
     const events = analyzeMarketConditions(k2, 10);
-    const ev = events.find(e => e.date === date(82))!;
     const tags = getDayTagSet(k2.slice(0, 83), undefined, fmt, { events });
-    const brk = findBreakChip(tags, '破位 x', ev.brokenCount);
-    expect(brk).toBeTruthy();
-    expect(brk!.detail.length).toBeGreaterThan(0);
-    expect(brk!.reference).toBe('');
-    expect(brk!.cls).toBe(BREAK_CHIP_CLS.cls); // 看空 → 绿
-    expect(brk!.sel).toBe(BREAK_CHIP_CLS.sel);
+    // 所有破位事件（可能多条均线同时破）都应该产出对应破位 label
+    const breakEvts = events.filter(e => e.date === date(82));
+    expect(breakEvts.length).toBeGreaterThan(0);
+    for (const ev of breakEvts) {
+      const brk = findBreakChip(tags, `破${ev.period}`);
+      expect(brk).toBeTruthy();
+      expect(brk!.detail.length).toBeGreaterThan(0);
+      expect(brk!.reference).toBe('');
+      expect(brk!.cls).toBe(BREAK_CHIP_CLS.cls); // 看空 → 绿
+      expect(brk!.sel).toBe(BREAK_CHIP_CLS.sel);
+    }
   });
 
-  it('破位观测中（window 中间观测日）：出「观察 xN」indigo chip；破位触发日仍为「破位 xN」且无观察', () => {
+  it('破位观测中（window 中间观测日）：每条均线各自出「观察{period}」indigo chip；破位触发日仍为「破{period}」且无观察', () => {
     const k3 = mkKlines(84, i => 200 - i * 0.5, {
       81: { close: 170 },
       82: { open: 165, high: 166, low: 90, close: 95 },  // 破位日 t
       83: { open: 95, high: 96, low: 90, close: 93 },    // t+1 观测中（未修复也未定论）
     });
     const events = analyzeMarketConditions(k3, 10);
-    const ev = events.find(e => e.date === date(82)); // 破位发生在 day 82
-    expect(ev).toBeTruthy();
-    expect(ev!.status).toBe('confirming');
-    const N = ev!.brokenCount;
-    // 观测中当日（t+1=day83）：观察 xN，indigo
+    const breakEvts = events.filter(e => e.date === date(82));
+    expect(breakEvts.length).toBeGreaterThan(0);
+    for (const ev of breakEvts) expect(ev.status).toBe('confirming');
+    // 观测中当日（t+1=day83）：每条均线各自出"观察{period}"，indigo
     const tags = getDayTagSet(k3.slice(0, 84), undefined, fmt, { events });
-    const obs = findBreakChip(tags, '观察 x', N);
-    expect(obs).toBeTruthy();
-    expect(obs!.cls).toBe(CHIP_CLS_INDIGO);            // 观察 → indigo
-    // 破位触发日（day82）打回：含破位 xN，不留观察
+    for (const ev of breakEvts) {
+      const obs = findBreakChip(tags, `观察${ev.period}`);
+      expect(obs).toBeTruthy();
+      expect(obs!.cls).toBe(CHIP_CLS_INDIGO);            // 观察 → indigo
+    }
+    // 破位触发日（day82）打回：含"破{period}"，不留观察
     const tagT = getDayTagSet(k3.slice(0, 83), undefined, fmt, { events });
-    expect(findBreakChip(tagT, '破位 x', N)).toBeTruthy();
-    expect(findByPrefix(tagT, '观察 x')).toBeUndefined();
+    for (const ev of breakEvts) {
+      expect(findBreakChip(tagT, `破${ev.period}`)).toBeTruthy();
+    }
+    expect(findByPrefix(tagT, '观察')).toBeUndefined();
   });
 
-  it('定论日：真实破位出「真破位 xN」绿 chip、假破位出「假破位 xN」红 chip', () => {
+  it('定论日：真实破位出「真破位{period}」绿 chip、假破位出「假破位{period}」红 chip', () => {
     // 真破位：3 日 window 末（t+2）仍收在 break 下方，status=trueBreak
     const kTrue = mkKlines(85, i => 200 - i * 0.5, {
       81: { close: 170 },
@@ -493,13 +503,16 @@ describe('getDayTagSet（信号标签部唯一权威，当日行 = 底栏 = 标�
       83: { open: 95, high: 96, low: 90, close: 92 },
       84: { open: 92, high: 93, low: 88, close: 90 },    // t+2 定论日：真破位
     });
-    const evT = analyzeMarketConditions(kTrue, 10).find(e => e.date === date(82))!;
-    expect(evT.status).toBe('trueBreak');
+    const evTs = analyzeMarketConditions(kTrue, 10).filter(e => e.date === date(82));
+    expect(evTs.length).toBeGreaterThan(0);
+    for (const evT of evTs) expect(evT.status).toBe('trueBreak');
     const tagEnd = getDayTagSet(kTrue.slice(0, 85), undefined, fmt, { events: analyzeMarketConditions(kTrue, 10) });
-    const trueChip = findBreakChip(tagEnd, '真破位 x', evT.brokenCount);
-    expect(trueChip).toBeTruthy();
-    expect(trueChip!.cls).toBe(BREAK_CHIP_CLS.cls);     // 真破位 → 绿
-    expect(findByPrefix(tagEnd, '观察 x')).toBeUndefined(); // 定论日不再出观察
+    for (const evT of evTs) {
+      const trueChip = findBreakChip(tagEnd, `真破位${evT.period}`);
+      expect(trueChip).toBeTruthy();
+      expect(trueChip!.cls).toBe(BREAK_CHIP_CLS.cls);     // 真破位 → 绿
+    }
+    expect(findByPrefix(tagEnd, '观察')).toBeUndefined(); // 定论日不再出观察
 
     // 假破位：3 日 window 末收回 break 上方，status=falseBreak
     const kFalse = mkKlines(85, i => 200 - i * 0.5, {
@@ -508,12 +521,15 @@ describe('getDayTagSet（信号标签部唯一权威，当日行 = 底栏 = 标�
       83: { open: 95, high: 140, low: 94, close: 138 },
       84: { open: 138, high: 205, low: 138, close: 202 }, // t+2 定论日：假破位
     });
-    const evF = analyzeMarketConditions(kFalse, 10).find(e => e.date === date(82))!;
-    expect(evF.status).toBe('falseBreak');
+    const evFs = analyzeMarketConditions(kFalse, 10).filter(e => e.date === date(82));
+    expect(evFs.length).toBeGreaterThan(0);
+    for (const evF of evFs) expect(evF.status).toBe('falseBreak');
     const tagFalse = getDayTagSet(kFalse.slice(0, 85), undefined, fmt, { events: analyzeMarketConditions(kFalse, 10) });
-    const falseChip = findBreakChip(tagFalse, '假破位 x', evF.brokenCount);
-    expect(falseChip).toBeTruthy();
-    expect(falseChip!.cls).toBe(CHIP_CLS_RED);          // 假破位 → 红
+    for (const evF of evFs) {
+      const falseChip = findBreakChip(tagFalse, `假破位${evF.period}`);
+      expect(falseChip).toBeTruthy();
+      expect(falseChip!.cls).toBe(CHIP_CLS_RED);          // 假破位 → 红
+    }
   });
 });
 

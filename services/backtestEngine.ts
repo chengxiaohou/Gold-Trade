@@ -3,6 +3,7 @@ import { DEFAULT_TAG_PARAMS } from '../types';
 import type { TagParams, UserTagRule, BacktestRule, BacktestStrategy, BacktestTrade, BacktestResult, BacktestTagGroup } from '../types';
 import { analyzeKlinePatterns, analyzeMarketConditions, analyzeEnvironment, envHasCondition, buildBreakExplainLines, classifyVolumeAt, classifyPriceStateAt, volBucket, analyzeUserTagRule, DAILY_SIGNAL_CATALOG } from './tagAnalyzers';
 import type { EnvResult, BacktestTagDef } from './tagAnalyzers';
+import { getDayTagSet } from './signalTagDetail';
 
 // ─────────────────────────────────────────────────────────────
 // 回测引擎
@@ -40,30 +41,21 @@ export const fmtShort = (d: string) => d.slice(5).replace('-', '/');
 function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams, customTags: UserTagRule[] = [], dividendByYear?: Record<number, number>, currentYear?: number): { hits: Set<string>; env: EnvResult | null } {
   const hits = new Set<string>();
   const last = win[win.length - 1];
-  // K 线形态：直接用 analyzeKlinePatterns 的 label（弹窗同一套）
-  for (const p of analyzeKlinePatterns(win, fmtP, cfg)) if (p.date === last.date) hits.add(p.label);
-  // 破位事件：复用弹窗 analyzeMarketConditions，只看当日（lastDays=1）
-  for (const ev of analyzeMarketConditions(win, 1)) if (ev.date === last.date && ev.brokenCount > 0) hits.add('break-event');
-  // 每日量能（source=volume，signalName = classifyVolumeAt 5档返回值；弹窗量能 chip 同源）
-  hits.add(classifyVolumeAt(win, win.length - 1, cfg));
+  // 从中央标签分发部门 getDayTagSet 取当日所有 label（形态/量能/价格态/破位/自定义同源）
+  const events = analyzeMarketConditions(win, Math.min(10, win.length - 1));
+  const dayTags = getDayTagSet(win, cfg, fmtP, { events, customTags, dividendByYear });
+  for (const t of dayTags) hits.add(t.label);
   // 价格态×量能 组合信号（source=stabilize，signalName = `${volBucket(量能)}${价格态}`，如 放量企稳）
-  // 由量能原子 + 价格态原子组合派生，弹窗参考价值区同源；历史已收盘 → 直接判定
-  // 回踩按 sub 分档（健康/弱势）拼入信号名；底部确认作为反弹的强化态直接命中（放量底部确认）
+  // 弹窗不展示组合名，但回测 catalog 里有 stabilize 分组依赖这些组合触发语义，保留
   const ps = classifyPriceStateAt(win, win.length - 1, fmtP, cfg);
   if (ps && ps.name) {
     const vol = classifyVolumeAt(win, win.length - 1, cfg);
     const psName = ps.kind === 'pullback' ? (ps.sub === 'weak' ? '弱势回踩' : '健康回踩') : ps.name;
     hits.add(`${volBucket(vol)}${psName}`);
   }
-  // 用户自定义动态信号标签：命中当日即作为可判定信号（label 直接并入 hits；
-  // 与弹窗 getDayTagSet 的 collectUserTags 同一判定源 analyzeUserTagRule，保证回测与弹窗一致）
-  for (const r of customTags) {
-    if (!r.enabled) continue;
-    if (analyzeUserTagRule(win, i, r, dividendByYear, currentYear)) hits.add(r.name);
-  }
-  // 环境状态：仅当 K 线足够长（≥130，环境判断需要 120 日均线）才计算，供规则 envCondition 门控判定
+  // 环境状态：仅当 K 线足够长（≥130）才计算，供规则 envCondition 门控判定
   const env = win.length >= 130 ? analyzeEnvironment(win, fmtP, true, cfg) : null;
-  void i;
+  void i; void currentYear;
   return { hits, env };
 }
 
@@ -228,9 +220,25 @@ export function scanTagOccurrences(k: BollKline[], tagKey: string, envKey?: stri
     const last = win[win.length - 1];
     let detail: string[] | null = null;
     if (def.source === 'break') {
-      // 破位事件：复用 analyzeMarketConditions + buildBreakExplainLines（与弹窗破位 chip 同一依据）
-      const ev = analyzeMarketConditions(win, 1).find(x => x.date === last.date && x.brokenCount > 0);
+      // 破位事件：每条均线独立事件 + 独立 3 天窗口；按 catalog signalName（如"破5"、"真破位20"）精确匹配
+      const ev = analyzeMarketConditions(win, 1).find(x => {
+        if (x.date !== last.date) return false;
+        const label = `破${x.period}`;
+        return label === def.signalName;
+      });
       if (ev) detail = buildBreakExplainLines(ev, 'event', fmtP, fmtDay, fmtShort);
+      // 定论态（真/假破位）也支持匹配
+      if (!ev) {
+        const ev2 = analyzeMarketConditions(win, Math.min(10, win.length - 1)).find(x => {
+          if (x.date !== last.date) return false;
+          const label = `${x.status === 'trueBreak' ? '真破位' : x.status === 'falseBreak' ? '假破位' : ''}${x.period}`;
+          return label === def.signalName;
+        });
+        if (ev2) {
+          const kind = ev2.status === 'trueBreak' || ev2.status === 'falseBreak' ? 'status' : 'repair';
+          detail = buildBreakExplainLines(ev2, kind, fmtP, fmtDay, fmtShort);
+        }
+      }
     } else if (def.source === 'pattern') {
       const p = analyzeKlinePatterns(win, fmtP, cfg).find(x => x.date === last.date && x.label === def.signalName);
       if (p) detail = p.detail;

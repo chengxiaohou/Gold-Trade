@@ -118,31 +118,28 @@ export function getDayTagSet(
     }
   }
 
-  // 破位观测态：复用弹窗 statusChip/repairChip 的完整映射
+  // 破位观测态：每条均线独立事件 + 独立 3 天窗口；复用弹窗 statusChip/repairChip 的完整映射
   const events = opts.events ?? analyzeMarketConditions(win, Math.min(10, win.length - 1));
   for (const ev of events) {
     const w = ev.window.findIndex(x => x.date === date);
     if (w === -1) continue;
-    const N = ev.brokenCount;
-    // 破位触发日：window 首日恒出"破位 xN"（破位当天=window[0]）
+    const p = ev.period;
+    // 破位触发日：window 首日恒出"破{period}"
     if (w === 0) {
-      out.push({ key: `break-${ev.date}`, kind: 'break', label: `破位 x${N}`, cls: BREAK_CHIP_CLS.cls, sel: BREAK_CHIP_CLS.sel, detail: buildBreakExplainLines(ev, 'event', fmt, fmtDay, fmtShort), reference: '' });
+      out.push({ key: `break-${ev.date}-${p}`, kind: 'break', label: `破${p}`, cls: BREAK_CHIP_CLS.cls, sel: BREAK_CHIP_CLS.sel, detail: buildBreakExplainLines(ev, 'event', fmt, fmtDay, fmtShort), reference: '' });
     }
-    // 观测/定论 chip：MID（单日 window 或中间观测日或待定末日起点）→"观察 xN"；定论日 →"真/假破位 xN"
+    // 观测/定论 chip：MID（单日 window 或中间观测日或待定末日起点）→"观察{period}"；定论日 →"真/假破位{period}"
     if (ev.window.length === 1) {
-      // 单日 window：破位当天即观测起点 → 观察 xN（与破位 xN 并存）
-      out.push({ key: `obs-${ev.date}`, kind: 'break-obs', label: `观察 x${N}`, cls: OBS_CHIP_CLS.cls, sel: OBS_CHIP_CLS.sel, detail: buildBreakExplainLines(ev, 'repair', fmt, fmtDay, fmtShort), reference: '' });
+      out.push({ key: `obs-${ev.date}-${p}`, kind: 'break-obs', label: `观察${p}`, cls: OBS_CHIP_CLS.cls, sel: OBS_CHIP_CLS.sel, detail: buildBreakExplainLines(ev, 'repair', fmt, fmtDay, fmtShort), reference: '' });
     } else if (w > 0 && w < ev.window.length - 1) {
-      // 中间观测日 → 观察 xN
-      out.push({ key: `obs-${ev.date}`, kind: 'break-obs', label: `观察 x${N}`, cls: OBS_CHIP_CLS.cls, sel: OBS_CHIP_CLS.sel, detail: buildBreakExplainLines(ev, 'repair', fmt, fmtDay, fmtShort), reference: '' });
+      out.push({ key: `obs-${ev.date}-${p}`, kind: 'break-obs', label: `观察${p}`, cls: OBS_CHIP_CLS.cls, sel: OBS_CHIP_CLS.sel, detail: buildBreakExplainLines(ev, 'repair', fmt, fmtDay, fmtShort), reference: '' });
     } else if (w === ev.window.length - 1) {
-      // 末日起点（定论窗）：观察中(confirming) → 观察 xN；定论 → 真/假破位 xN
       if (ev.status === 'confirming') {
-        out.push({ key: `obs-${ev.date}`, kind: 'break-obs', label: `观察 x${N}`, cls: OBS_CHIP_CLS.cls, sel: OBS_CHIP_CLS.sel, detail: buildBreakExplainLines(ev, 'repair', fmt, fmtDay, fmtShort), reference: '' });
+        out.push({ key: `obs-${ev.date}-${p}`, kind: 'break-obs', label: `观察${p}`, cls: OBS_CHIP_CLS.cls, sel: OBS_CHIP_CLS.sel, detail: buildBreakExplainLines(ev, 'repair', fmt, fmtDay, fmtShort), reference: '' });
       } else {
         const trueBreak = ev.status === 'trueBreak';
         const stCls = trueBreak ? BREAK_CHIP_CLS : FALSE_CHIP_CLS;
-        out.push({ key: `status-${ev.date}`, kind: 'break-status', label: `${trueBreak ? '真破位' : '假破位'} x${N}`, cls: stCls.cls, sel: stCls.sel, detail: buildBreakExplainLines(ev, 'status', fmt, fmtDay, fmtShort), reference: '' });
+        out.push({ key: `status-${ev.date}-${p}`, kind: 'break-status', label: `${trueBreak ? '真破位' : '假破位'}${p}`, cls: stCls.cls, sel: stCls.sel, detail: buildBreakExplainLines(ev, 'status', fmt, fmtDay, fmtShort), reference: '' });
       }
     }
   }

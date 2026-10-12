@@ -2850,8 +2850,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     if (didAutoRefreshBollRef.current) return;
     didAutoRefreshBollRef.current = true;
-    fetchAllBoll();
-    // 只在挂载时自动刷新一次布林线；之后由「布林线」列头按钮手动刷新
+    if (!import.meta.env.DEV) fetchAllBoll();
+    // DEV 模式下跳过挂载时的自动 BOLL 刷新，避免开发中频繁拉取
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2860,7 +2860,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     if (didAutoRefreshPricesRef.current) return;
     didAutoRefreshPricesRef.current = true;
-    handleRefreshAll(true);
+    if (!import.meta.env.DEV) handleRefreshAll(true);
+    // DEV 模式下跳过挂载时的自动股价刷新，避免开发中频繁拉取
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -4143,7 +4144,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       <div className="flex justify-center -mb-2.5">
         <div className="w-full flex items-end gap-3" style={{ maxWidth }}>
           <div className="flex items-center gap-3 pb-2">
-            <h1 className="text-3xl font-bold text-app-subtext tracking-wide">股息率</h1>
+            <h1 className={`text-3xl font-bold tracking-wide ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}>股息率{import.meta.env.DEV ? ' (debug)' : ''}</h1>
           </div>
           {actionButtons && (
             <div className="ml-auto pb-1.5">

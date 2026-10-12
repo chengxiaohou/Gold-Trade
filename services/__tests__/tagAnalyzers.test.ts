@@ -432,31 +432,36 @@ describe('analyzeKlineCombo（组合词条 位置·量能·形态 + 参考价值
   });
 });
 
-describe('analyzeMarketConditions（破位与观察）', () => {
-  it('3天不回 → 真破位，窗口含破位日/次日/再日', () => {
+describe('analyzeMarketConditions（破位与观察，每条均线独立事件+独立3天窗口）', () => {
+  it('破位日真破位：所有被下穿的均线各自独立 3 天窗口，status=trueBreak', () => {
     const evs = analyzeMarketConditions(kTrueBreak);
-    expect(evs).toHaveLength(1);
-    const ev = evs[0];
-    expect(ev.status).toBe('trueBreak');
-    expect(ev.date).toBe(date(80));
-    expect(ev.brokenCount).toBeGreaterThan(0);
-    expect(ev.ref.period).toBeGreaterThan(0);
-    expect(ev.window.map(w => w.date)).toEqual([date(80), date(81), date(82)]);
+    expect(evs.length).toBeGreaterThan(0);
+    // 每条均线独立事件，都有 period + breakMa
+    for (const ev of evs) {
+      expect(ev.period).toBeGreaterThan(0);
+      expect(ev.breakMa).toBeGreaterThan(0);
+      expect(ev.date).toBe(date(80));
+      expect(ev.window.map(w => w.date)).toEqual([date(80), date(81), date(82)]);
+      expect(ev.status).toBe('trueBreak');
+    }
   });
 
-  it('次日收回 → 假破位并记录 returnDay', () => {
+  it('次日收回 → 假破位并记录 returnDay，每条均线独立', () => {
     const evs = analyzeMarketConditions(kFalseBreak);
-    expect(evs).toHaveLength(1);
-    const ev = evs[0];
-    expect(ev.status).toBe('falseBreak');
-    expect(ev.returnDay?.date).toBe(date(81));
+    expect(evs.length).toBeGreaterThan(0);
+    for (const ev of evs) {
+      expect(ev.status).toBe('falseBreak');
+      expect(ev.returnDay?.date).toBe(date(81));
+    }
   });
 
-  it('窗口不足3天 → 修复观察（confirming）', () => {
+  it('窗口不足3天 → 修复观察（confirming），每条均线独立', () => {
     const evs = analyzeMarketConditions(kConfirming);
-    expect(evs).toHaveLength(1);
-    expect(evs[0].status).toBe('confirming');
-    expect(evs[0].window).toHaveLength(1);
+    expect(evs.length).toBeGreaterThan(0);
+    for (const ev of evs) {
+      expect(ev.status).toBe('confirming');
+      expect(ev.window.length).toBeLessThan(3);
+    }
   });
 });
 
@@ -540,14 +545,14 @@ describe('buildLatestDayTags（列表页缩略展示）', () => {
     for (const s of CYCLE_SINGLES) expect(texts).not.toContain(s);
   });
 
-  it('真破位事件 → 缩略单字"真"', () => {
+  it('真破位事件 → 缩略文字以"真"开头（每条均线独立，如"真5"/"真20"）', () => {
     const tags = buildLatestDayTags(kTrueBreak, fmt);
-    expect(tags.map(t => t.text)).toContain('真');
+    expect(tags.some(t => t.text.startsWith('真'))).toBe(true);
   });
 
   it('破位/形态标签带底色 CLS', () => {
     const tags = buildLatestDayTags(kTrueBreak, fmt);
-    const want = tags.find(t => t.text === '真');
+    const want = tags.find(t => t.text.startsWith('真'));
     expect(want).toBeDefined();
     expect(want!.cls).toContain('bg-');
     expect(want!.cls).toContain('text-');

@@ -1975,7 +1975,7 @@ export default function App() {
       <div className="max-w-[1400px] w-full pb-12 flex flex-col">
         {currentPage === 'gold' && (
         <header className="mb-6 flex items-end justify-between gap-4">
-          <h1 className="text-3xl font-bold text-app-subtext tracking-wide">黄金交易模拟</h1>
+          <h1 className={`text-3xl font-bold tracking-wide ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}>黄金交易模拟{import.meta.env.DEV ? ' (debug)' : ''}</h1>
           <div className="flex items-center gap-3">{renderActionButtons()}</div>
         </header>
         )}
