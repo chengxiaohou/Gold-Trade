@@ -4,11 +4,13 @@ import { X, Plus, GripHorizontal, Play, Pin, Tag, Eye, EyeOff } from 'lucide-rea
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, MouseEventParams, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams, UserTagRule } from '../types';
-import type { BollKline } from '../services/bollService';
 import { priceBureau } from '../services/priceBureau';
+import type { BollKline } from '../services/bollService';
+import { getMarketStatus } from '../services/cacheService';
 import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL } from '../services/backtestEngine';
 import { ENV_TAG_CATALOG, dividendRateForDay } from '../services/tagAnalyzers';
 import { calcIndicators, formatPrice, type IndicatorResult } from '../services/indicators';
+import { calcPositionFromTrades } from '../services/realizedPnl';
 import PriceInfoPopover from './PriceInfoPopover';
 import SignalTagsFooter from './SignalTagsFooter';
 import { TAG_COLOR_HEX, TAG_PALETTE } from './CloudSettingsModal';
@@ -181,6 +183,8 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   const dividendByYear = stock?.dividendByYear;
   const [result, setResult] = useState<BacktestResult | null>(null);    // 回测结果（买卖点+成交+统计）
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
+  // 交易记录按日期排序：'desc'=最新在最上（默认）；'asc'=最旧在最上；null=不排序（保持上游原始顺序）
+  const [tradeSortDir, setTradeSortDir] = useState<'desc' | 'asc'>('desc');
   // —— 策略组合模板（全局，仅规则列表，localStorage 持久化 + 云端独立字段同步）——
   const PRESET_STORAGE_KEY = 'bt_strategy_presets';
   const loadPresets = (): BacktestStrategyPreset[] => {
@@ -297,6 +301,54 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   const klinesRef = useRef<ChartCandle[] | null>(null);
   const [klines, setKlines] = useState<ChartCandle[] | null>(null); // 图表 K 线（含实时今日K线）
   useEffect(() => { klinesRef.current = klines; }, [klines]);
+  // 初始真实成交记录：用父级 StockEntry.stockTrades（已成交、未软删）映射，作为"一打开就可见"的 B/S 标签和交易表。
+  // 运行回测后 result 存在 → 自动优先用 result.trades，initialTrades 被覆盖。
+  const initialTrades = useMemo(() => {
+    const trades = stock?.stockTrades ?? [];
+    if (trades.length === 0) return [] as { id: string; date: string; action: 'buy' | 'sell'; price: number; shares: number; amount: number; triggerLabel: string }[];
+    const kDateSet = new Set((klines ?? []).map(k => k.time));
+    return trades
+      .filter(t => t.status === 'filled' && !t.isDeleted)
+      .map(t => {
+        const ts = t.filledAt ?? t.createdAt ?? 0;
+        const d = new Date(ts);
+        const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        return {
+          id: t.id,
+          date,
+          action: t.side,
+          price: t.price,
+          shares: t.shares,
+          amount: t.price * t.shares,
+          triggerLabel: t.note || '',
+        };
+      })
+      .filter(t => kDateSet.has(t.date)); // 过滤掉非交易日（周末/停牌），K线图上才有对应位置
+  }, [stock?.stockTrades, klines]);
+  // 初始真实统计：一打开就展示真实交易的持仓市值、盈亏、交易次数。
+  // 胜率/最大回撤属回测引擎特有概念，真实交易留 null → UI 显示 "—"。
+  const initialStats = useMemo(() => {
+    const trades = stock?.stockTrades ?? [];
+    const filled = trades.filter(t => t.status === 'filled' && !t.isDeleted);
+    if (filled.length === 0) return null;
+    let buyAmt = 0, sellAmt = 0;
+    for (const t of filled) {
+      const amt = (t.amount ?? (t.price ?? 0) * (t.shares ?? 0)) || 0;
+      if (t.side === 'buy') buyAmt += amt; else sellAmt += amt;
+    }
+    const pos = calcPositionFromTrades(filled);
+    const curPrice = stock?.price ?? 0;
+    const finalValue = sellAmt + pos.shares * curPrice;
+    const totalReturnPct = buyAmt > 0 ? (finalValue - buyAmt) / buyAmt * 100 : 0;
+    return {
+      buyAmt,
+      finalValue,
+      totalReturnPct,
+      tradeCount: filled.length,
+      winRate: null as number | null,
+      maxDrawdownPct: null as number | null,
+    };
+  }, [stock?.stockTrades, stock?.price]);
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState<string | null>(null);
   // 图表指标模式：均线(默认) / 布林线
@@ -550,20 +602,20 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     // stock.priceUpdatedAt：页面刷新出新实时价时，重新合成今日K线（基座仍命中日线缓存，今日K线实时更新）
   }, [stock.code, stock.priceUpdatedAt, stock.price, stock.open, stock.high, stock.low, stock.volume]);
 
-  // 回测买卖点：由真实回测结果的成交记录映射为覆盖层标签（图⇄表一一对应）
+  // 回测买卖点：运行回测后取 result.trades；否则用初始真实成交记录（initialTrades）让用户一打开就能看到图
   const demoMarkers = useMemo<TickSpec[]>(() => {
-    if (!result || !result.trades) return [];
+    const src = result?.trades?.length ? result.trades : initialTrades;
+    if (!src || !src.length) return [];
     const priceOf = new Map<string, ChartCandle>(klines?.map(k => [k.time, k]) ?? []);
-    return result.trades.map(t => {
+    return src.map(t => {
       const candle = priceOf.get(t.date);
       return {
         id: t.id, time: t.date,
-        // 锚定价：买=B(下方)锚 low、卖=S(上方)锚 high，圆点贴实体边缘外侧固定间距
         anchorPrice: t.action === 'buy' ? (candle?.low ?? t.price) : (candle?.high ?? t.price),
         action: t.action as 'buy' | 'sell',
       };
     });
-  }, [result, klines]);
+  }, [result, initialTrades, klines]);
 
   // 预览：扫描所选（最多 2 个）标签在完整历史 K 线中的命中位置（含判定依据），预览态在图上画缩写块。
   // 组合键 "tagKey|envKey"：无环境前提时 envKey 为空 → 扫全部命中；有环境前提 → 仅扫满足该环境的命中。
@@ -684,19 +736,24 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     setPreviewTicks([]);
   }, [demoMarkers, previewKeys, previewOccurrences, customTags, strategy.rules]);
 
-  // 成交记录：直接取真实回测结果，图的标签与表的行共用同一批 id，实现双向往返定位
+  // 成交记录：运行回测后取 result.trades；否则用初始真实成交记录（initialTrades）让用户一打开就能看到表
   const tradeRows = useMemo(() => {
-    if (!result) return [] as { id: string; time: string; action: 'buy' | 'sell'; price: number; shares: number; amount: number; triggerLabel: string }[];
-    return result.trades.map(t => ({
+    const src = result?.trades?.length ? result.trades : initialTrades;
+    if (!src || !src.length) return [] as { id: string; time: string; action: 'buy' | 'sell'; price: number; shares: number; amount: number; triggerLabel: string }[];
+    const rows = src.map(t => ({
       id: t.id,
       time: t.date,
       action: t.action,
       price: t.price,
       shares: t.shares,
       amount: t.amount,
-      triggerLabel: t.tagName,
+      triggerLabel: t.triggerLabel,
     }));
-  }, [result]);
+    // 按日期排序（日期字符串 YYYY-MM-DD 可直接字典序比较）
+    rows.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+    if (tradeSortDir === 'desc') rows.reverse();
+    return rows;
+  }, [result, initialTrades, tradeSortDir]);
 
   // 双向定位：点击成交记录行时滚动图表 + 高亮；点击图表标签时仅定位表格（不移动图表可视区）
   const goToTrade = useCallback((id: string, alsoScrollChart = false) => {
@@ -1121,12 +1178,12 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
           {/* 右：K线图 + 统计 + 记录表 */}
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="px-3 py-1.5 border-b border-app-border flex items-center gap-4 text-xs flex-wrap shrink-0">
-              <Stat label="初始资金" value={initialCapital.toLocaleString()} />
-              <Stat label="期末市值" value={result ? Math.round(result.finalValue).toLocaleString() : '—'} />
-              <Stat label="总收益" value={result ? `${result.totalReturnPct >= 0 ? '+' : ''}${result.totalReturnPct.toFixed(2)}%` : '—'} className={result && result.totalReturnPct >= 0 ? 'text-brand-red' : 'text-green-500'} />
-              <Stat label="胜率" value={result ? `${(result.winRate * 100).toFixed(1)}%` : '—'} />
-              <Stat label="最大回撤" value={result ? `-${result.maxDrawdownPct.toFixed(2)}%` : '—'} />
-              <Stat label="交易次数" value={result ? String(result.tradeCount) : '0'} />
+              <Stat label="初始资金" value={result ? initialCapital.toLocaleString() : initialStats ? Math.round(initialStats.buyAmt).toLocaleString() : initialCapital.toLocaleString()} />
+              <Stat label="期末市值" value={result ? Math.round(result.finalValue).toLocaleString() : initialStats ? Math.round(initialStats.finalValue).toLocaleString() : '—'} />
+              <Stat label="总收益" value={result ? `${result.totalReturnPct >= 0 ? '+' : ''}${result.totalReturnPct.toFixed(2)}%` : initialStats ? `${initialStats.totalReturnPct >= 0 ? '+' : ''}${initialStats.totalReturnPct.toFixed(2)}%` : '—'} className={(result ? result.totalReturnPct : initialStats?.totalReturnPct) !== undefined && (result?.totalReturnPct ?? initialStats?.totalReturnPct ?? 0) >= 0 ? 'text-brand-red' : 'text-green-500'} />
+              <Stat label="胜率" value={result ? `${(result.winRate * 100).toFixed(1)}%` : initialStats?.winRate != null ? `${(initialStats.winRate * 100).toFixed(1)}%` : '—'} />
+              <Stat label="最大回撤" value={result ? `-${result.maxDrawdownPct.toFixed(2)}%` : initialStats?.maxDrawdownPct != null ? `-${initialStats.maxDrawdownPct.toFixed(2)}%` : '—'} />
+              <Stat label="交易次数" value={result ? String(result.tradeCount) : initialStats ? String(initialStats.tradeCount) : '0'} />
             </div>
 
             {/* 指标控件条：切换均线/布林线 + 当前各指标值 */}
@@ -1349,7 +1406,15 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                 </colgroup>
                 <thead className="sticky top-0 bg-app-bg border-b border-app-border z-10">
                   <tr className="text-app-subtext text-[11px]">
-                    <th className="px-2 py-1.5 text-left">日期</th>
+                    <th
+                      className="px-2 py-1.5 text-left cursor-pointer select-none hover:text-app-text transition-colors"
+                      onClick={() => setTradeSortDir(prev => prev === 'desc' ? 'asc' : 'desc')}
+                      title="点击切换排序（新→旧 / 旧→新）"
+                    >
+                      日期
+                      <span className={`ml-0.5 text-[10px] ${tradeSortDir === 'desc' ? 'text-app-text' : 'opacity-40'}`}>▼</span>
+                      <span className={`text-[10px] ${tradeSortDir === 'asc' ? 'text-app-text' : 'opacity-40'}`}>▲</span>
+                    </th>
                     <th className="px-2 py-1.5 text-right">操作</th>
                     <th className="px-2 py-1.5 text-right">价格</th>
                     <th className="px-2 py-1.5 text-right">股数</th>
@@ -1375,7 +1440,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                       <td className="px-2 py-1.5 text-right" style={{ color: r.action === 'buy' ? BUY_BG : SELL_BG }}>{r.action === 'buy' ? '买入' : '卖出'}</td>
                       <td className="px-2 py-1.5 text-right">{r.price.toFixed(2)}</td>
                       <td className="px-2 py-1.5 text-right">{r.shares}</td>
-                      <td className="px-2 py-1.5 text-right">{r.amount}</td>
+                      <td className="px-2 py-1.5 text-right">{r.amount.toFixed(2)}</td>
                       <td className="px-2 py-1.5 text-right">—</td>
                       <td className="px-2 py-1.5 text-right">—</td>
                       <td className="px-2 py-1.5 whitespace-nowrap text-right">{r.triggerLabel}</td>

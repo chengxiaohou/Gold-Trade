@@ -1423,6 +1423,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (maxRate <= 0) return null;
     return (minRate / maxRate) * 100;
   };
+  // segment 内实际收盘价格的最高/最低值。
+  // 与 percent 模式共用同一段 segment（dailyChartRange 窗口），口径一致；
+  // 两个值直接取收盘价极值，永远不同（除非 segment 所有收盘价相同），
+  // 调周期时两边同步变化，不会再出现两个价格撞一起的问题。
+  const calcDivRateSubPrices = (
+    stock: StockEntry, klines: BollKline[] | undefined
+  ): { maxPrice: number | null; minPrice: number | null } => {
+    if (!klines || klines.length === 0 || stock.bollHidden) return { maxPrice: null, minPrice: null };
+    const seg = klines.slice(-dailyChartRange - dailyChartOffset, klines.length - dailyChartOffset);
+    if (seg.length === 0) return { maxPrice: null, minPrice: null };
+    const closes = seg.map(k => k.close).filter(c => c > 0);
+    if (closes.length === 0) return { maxPrice: null, minPrice: null };
+    return {
+      maxPrice: Math.max(...closes),
+      minPrice: Math.min(...closes),
+    };
+  };
   // 备忘录上传状态与错误提示
   const [memoUploading, setMemoUploading] = useState(false);
   const [memoToast, setMemoToast] = useState<string | null>(null);
@@ -2463,7 +2480,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     });
   }, [stocks, histDate, stockBollMap]);
 
-  // 名称列第二行展示模式：默认“状态标签”，点击“代码”表头切换为展示代码
+  // 名称列第二行展示模式：默认"状态标签"，点击"代码"表头切换为展示代码
   const [nameSubMode, setNameSubMode] = useState<'tags' | 'code'>('tags');
   // 首次判定的统一数据源：对"同一组（实时价覆盖后的）K 线"只计算一遍 破位/形态/环境，
   // 列表缩略标签（buildLatestShrinkTags）与行情浮窗详细展示共用这份结果，杜绝两套判定喂不同数据。
@@ -4340,17 +4357,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 {cols.includes('position') && <>
                   <th
                     className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
-                    onClick={handleTradePctSortClick}
-                    title="点击切换排序：成交价涨跌%高→低 / 低→高"
-                  >
-                    交易
-                  </th>
-                  <th
-                    className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
                     onClick={handleCostPctSortClick}
                     title="点击切换排序：成本下方盈亏%高→低 / 低→高"
                   >
                     成本
+                  </th>
+                  <th
+                    className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
+                    onClick={handleTradePctSortClick}
+                    title="点击切换排序：成交价涨跌%高→低 / 低→高"
+                  >
+                    交易
                   </th>
                   <th
                     className="w-[64px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
@@ -4500,7 +4517,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
-                    <div className="flex flex-col items-center leading-none gap-0.5">
+                    <div className="flex flex-col items-center leading-tight gap-px">
                       <span className={`font-mono text-xs font-bold ${getDividendRateColor(getDividendRate(stock), ranges)}`}>
                         {getDividendRate(stock) > 0 ? formatPercent(getDividendRate(stock)) : '--'}
                       </span>
@@ -4510,11 +4527,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         const klines = stockBollMap.get(stock.id)?.daily?.klines;
                         const ratio = calcDivRateHistoryRatio(stock, klines, cur);
                         const rangeRatio = calcDivRateRangeRatio(stock, klines);
+                        if (ratio === null && rangeRatio === null) return null;
                         return (
-                          <span className="font-mono text-[10px] text-app-rowtext">
-                            {ratio !== null && rangeRatio !== null
-                              ? `${Math.round(rangeRatio)}-${Math.round(ratio)}%`
-                              : ratio !== null ? `${Math.round(ratio)}%` : '--'}
+                          <span className="font-mono text-[9px] text-app-rowtext">
+                            {rangeRatio !== null ? `${Math.round(rangeRatio)}-${Math.round(ratio ?? 0)}%` : (ratio !== null ? `${Math.round(ratio)}%` : '--')}
+                          </span>
+                        );
+                      })()}
+                      {(() => {
+                        const klines = stockBollMap.get(stock.id)?.daily?.klines;
+                        const { maxPrice, minPrice } = calcDivRateSubPrices(stock, klines);
+                        if (maxPrice === null && minPrice === null) return null;
+                        return (
+                          <span className="font-mono text-[8px] text-app-rowtext">
+                            {maxPrice !== null ? formatPrice(maxPrice, stock.name) : '-'}-{minPrice !== null ? formatPrice(minPrice, stock.name) : '-'}
                           </span>
                         );
                       })()}
@@ -4671,8 +4697,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     );
                     return (
                       <React.Fragment key="position-cols">
-                        {col3}
                         {col2}
+                        {col3}
                         {colHold}
                         {col1}
                       </React.Fragment>
