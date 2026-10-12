@@ -4463,10 +4463,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             const tags = getLatestDayTags(stock);
                             if (tags.length === 0) return null;
                             return (
-                              <div className="flex items-center justify-center gap-0.5 mt-1.5 leading-none">
-                                {tags.slice(0, 5).map(t => (
-                                  <span key={t.key} className={`inline-flex items-center justify-center rounded text-[8px] font-medium border px-0.5 py-px whitespace-nowrap ${t.cls}`}>{t.text}</span>
-                                ))}
+                              <div className="mt-1.5 w-full">
+                                <div className="flex flex-wrap items-center justify-center gap-0.5 gap-y-0.5 px-0.5 leading-none">
+                                  {tags.map(t => (
+                                    <span key={t.key} className={`inline-flex shrink-0 items-center justify-center rounded text-[8px] font-medium border px-0.5 py-px whitespace-nowrap ${t.cls}`}>{t.text}</span>
+                                  ))}
+                                </div>
                               </div>
                             );
                           })()}
