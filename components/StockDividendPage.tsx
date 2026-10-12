@@ -6386,7 +6386,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 const col = (v: number) => (p != null ? (v > p ? 'text-red-500' : v < p ? 'text-green-500' : 'text-app-rowtext') : 'text-app-rowtext');
                 return <span className={`text-[10px] font-mono font-bold w-[30px] shrink-0 text-right ${col(c)}`}>{fp(c)}</span>;
               };
-              const dates = [...byDate.keys()].sort().reverse();
+              // 每日行情行日期顺序：固定取最后10根 klines，每日都展示（无标签则 chip 区留空）
+              // 不能用 byDate.keys() 做日期来源——某些日子没有任何标签（如泸州老窖 10/8~10/12）就会被跳过，
+              // 但"日期/现价/高/低"是基础行情，与当天是否有标签无关
+              const last10Klines = klines.slice(vStart);
+              const dates = last10Klines.map(k => k.date).reverse();
               return dates.map(date => (
                 <div key={date} className="mb-2.5 last:mb-0">
                   <div className="flex items-center justify-between">
@@ -6395,7 +6399,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     {date === latestDate && mktInfoStock.price > 0 ? priceCol(date, mktInfoStock.price) : priceCol(date)}
                   </div>
                   <div className="flex flex-wrap gap-1 items-center justify-end min-w-0 mt-0.5">
-                    {byDate.get(date)!.map(e => <React.Fragment key={e.key}>{e.node}</React.Fragment>)}
+                    {(byDate.get(date) ?? []).map(e => <React.Fragment key={e.key}>{e.node}</React.Fragment>)}
                   </div>
                 </div>
               ));
