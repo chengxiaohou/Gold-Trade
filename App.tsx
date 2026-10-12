@@ -57,7 +57,22 @@ class PageErrorBoundary extends React.Component<{ children: React.ReactNode }, {
             <pre className="bg-black/30 text-app-text text-[11px] whitespace-pre-wrap break-all rounded-lg p-3 mb-3 select-all">{text}</pre>
             <div className="flex gap-2">
               <button className="flex-1 py-2 rounded-lg bg-brand-red text-white text-sm font-semibold" onClick={() => location.reload()}>重新加载</button>
-              <button className="flex-1 py-2 rounded-lg bg-app-border text-app-text text-sm font-semibold" onClick={() => { navigator.clipboard.writeText(text); alert('报错信息已复制'); }}>复制报错</button>
+              <button className="flex-1 py-2 rounded-lg bg-app-border text-app-text text-sm font-semibold" onClick={async () => {
+                try {
+                  if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(text);
+                  } else {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed'; ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                  }
+                  alert('报错信息已复制');
+                } catch { alert('复制失败，请手动选择报错文本复制'); }
+              }}>复制报错</button>
               <button className="flex-1 py-2 rounded-lg bg-app-border text-app-text text-sm font-semibold" onClick={() => { freeCacheSpace(); setTimeout(() => location.reload(), 100); }}>清理缓存恢复</button>
             </div>
           </div>
