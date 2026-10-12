@@ -1361,6 +1361,12 @@ const SHRINK_TAG_INCLUDE_ENV: Record<ShrinkTagModule, boolean> = {
 };
 // 分发入口：先由 buildLatestShrinkTags 产出全量缩略标签（判定唯一），
 // 再按模块身份统一裁决是否剔除环境标签。消费方只传身份，不做二次过滤。
+// 各模块是否展示"平量"缩略单字：信息量低，列表里隐藏（放/缩仍展示），弹窗/底栏保留
+const SHRINK_TAG_HIDE_VOL_FLAT: Record<ShrinkTagModule, boolean> = {
+  list: true,
+  'popup-footer': false,
+};
+
 export function buildShrinkTagsForModule(
   module: ShrinkTagModule,
   events: MarketEvent[] | null,
@@ -1370,8 +1376,9 @@ export function buildShrinkTagsForModule(
   priceState: PriceStateTag | null,
   latestVol: KlineVolume5 | null,
 ): MktTag[] {
-  const tags = buildLatestShrinkTags(events, patterns, env, lastDate, priceState, latestVol);
-  if (!SHRINK_TAG_INCLUDE_ENV[module]) return tags.filter(t => !t.key.startsWith('env-'));
+  let tags = buildLatestShrinkTags(events, patterns, env, lastDate, priceState, latestVol);
+  if (!SHRINK_TAG_INCLUDE_ENV[module]) tags = tags.filter(t => !t.key.startsWith('env-'));
+  if (SHRINK_TAG_HIDE_VOL_FLAT[module]) tags = tags.filter(t => t.key !== 'vol-平量');
   return tags;
 }
 
