@@ -13,7 +13,7 @@ import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
 import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
-import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, volBucket, buildLatestShrinkTags, buildShrinkTagsForModule, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5 } from '../services/tagAnalyzers';
+import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, volBucket, buildLatestShrinkTags, buildShrinkTagsForModule, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, analyzeStandEvents, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5, type StandEvent } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
 import { InputGroup } from './InputGroup';
@@ -2485,13 +2485,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 首次判定的统一数据源：对"同一组（实时价覆盖后的）K 线"只计算一遍 破位/形态/环境，
   // 列表缩略标签（buildLatestShrinkTags）与行情浮窗详细展示共用这份结果，杜绝两套判定喂不同数据。
   const LATEST_TAG_VERSION = 19; // 判定/展示逻辑变更时 +1，避免 HMR 保留旧缓存导致缩略与弹窗不一致
-  const analyzedCache = useRef(new Map<string, { v: number; key: string; data: { klines: BollKline[] | null; events: MarketEvent[] | null; allowVol: boolean; patterns: KlinePattern[] | null; combos: PatternCombo[]; env: EnvResult | null; latestVol: KlineVolume5 | null } }>());
-  const computeAnalyzed = (stock: StockEntry): { klines: BollKline[] | null; events: MarketEvent[] | null; allowVol: boolean; patterns: KlinePattern[] | null; combos: PatternCombo[]; env: EnvResult | null; latestVol: KlineVolume5 | null } => {
+  const analyzedCache = useRef(new Map<string, { v: number; key: string; data: { klines: BollKline[] | null; events: MarketEvent[] | null; standEvents: StandEvent[] | null; allowVol: boolean; patterns: KlinePattern[] | null; combos: PatternCombo[]; env: EnvResult | null; latestVol: KlineVolume5 | null } }>());
+  const computeAnalyzed = (stock: StockEntry): { klines: BollKline[] | null; events: MarketEvent[] | null; standEvents: StandEvent[] | null; allowVol: boolean; patterns: KlinePattern[] | null; combos: PatternCombo[]; env: EnvResult | null; latestVol: KlineVolume5 | null } => {
     // 与行情浮窗同一基准：走价格数据部"今日合并日K线"（最新一根统一为现价/实时最高最低），
     // 名称列缩略与价格浮窗天然同源，消除只看 close 导致的当日最高价漂移。
     const base = stockBollMap.get(stock.id)?.daily?.klines;
     const klines = priceBureau.getTodayDailyKlines(stock.code);
-    if (!klines || klines.length === 0) return { klines: null, events: null, allowVol: false, patterns: null, combos: [], env: null, latestVol: null };
+    if (!klines || klines.length === 0) return { klines: null, events: null, standEvents: null, allowVol: false, patterns: null, combos: [], env: null, latestVol: null };
     const price = stock.price;
     // 缓存键必须包含实时价与"今日/live bar 的内容指纹"——盘中价格原地更新时数组引用不变，
     // 仅用数组引用会导致判定结果（如来去匆匆的十字星）缓存过期、与实时价不一致。
@@ -2504,6 +2504,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const data = {
       klines,
       events: analyzeMarketConditions(klines, 10),
+      standEvents: analyzeStandEvents(klines, 10),
       allowVol,
       patterns,
       combos: analyzeKlineCombo(klines, patterns, tagParams),
@@ -2522,7 +2523,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const last = a.klines[a.klines.length - 1];
     const prevClose = a.klines.length >= 2 ? a.klines[a.klines.length - 2].close : last.close;
     const volUp = last.close >= prevClose;
-    return buildShrinkTagsForModule('list', a.events, a.patterns, a.env, last.date, a.latestVol, volUp);
+    return buildShrinkTagsForModule('list', a.events, a.patterns, a.env, last.date, a.latestVol, volUp, a.standEvents);
   };
 
   // 列表当前显示顺序（按排序规则重排；默认顺序即 stocks 原序）

@@ -22,7 +22,7 @@ export interface BacktestTagDef {
   label: string;            // UI 展示名 / 成交记录触发标签名
   abbr: string;             // 预览/单元格单字缩写
   group: BacktestTagGroup;
-  source: 'pattern' | 'break' | 'volume' | 'stabilize';
+  source: 'pattern' | 'break' | 'volume' | 'stand';
   signalName?: string;      // 各 source 用其判定函数返回的 label 匹配（pattern=analyzeKlinePatterns 的 label；break=固定 token 'break-event'；volume=classifyVolumeAt 5档；stabilize=`${volBucket(量能)}${价格态}` 组合）
   action: 'buy' | 'sell';   // 语义方向提示（执行仍以规则 action 为准）
   color: string;            // 标签主题色：买=砖红、卖=蓝（与 B/S 买卖标签同一套）
@@ -39,17 +39,22 @@ export const DAILY_SIGNAL_CATALOG: BacktestTagDef[] = [
   { key: 'pattern-shooting', label: '射击之星', abbr: '射', group: 'pattern', source: 'pattern', signalName: '射击之星', action: 'sell', color: '#4A90D9' },
   { key: 'pattern-inverted-hammer', label: '倒锤子线', abbr: '倒', group: 'pattern', source: 'pattern', signalName: '倒锤子线', action: 'buy', color: '#C44A3D' },
   // 破位事件（source=break，每条均线独立事件 + 独立 3 天窗口；signalName 与 getDayTagSet 的 label 一致）
-  // 动态生成 per-MA 条目：破{period}（新破位 sell）、真破位{period}（定论 sell）、假破位{period}（定论后回到均线上方 buy）
+  // 动态生成 per-MA 条目：破{period}（新破位 sell）、真破位{period}（3天未回上方定论 sell）
+  // 假破位不再产出标签——定论日价格回到均线上方本身就是"站{period}"，语义重合
   ...MARKET_MA_PERIODS.flatMap(p => ([
     { key: `break-${p}`, label: `破${p}`, abbr: `破${p}`, group: 'break' as const, source: 'break' as const, signalName: `破${p}`, action: 'sell' as const, color: '#4A90D9' },
     { key: `break-true-${p}`, label: `真破位${p}`, abbr: `真${p}`, group: 'break' as const, source: 'break' as const, signalName: `真破位${p}`, action: 'sell' as const, color: '#4A90D9' },
-    { key: `break-false-${p}`, label: `假破位${p}`, abbr: `假${p}`, group: 'break' as const, source: 'break' as const, signalName: `假破位${p}`, action: 'buy' as const, color: '#C44A3D' },
   ] as BacktestTagDef[])),
   // 每日量能（source=volume，signalName = classifyVolumeAt 5档返回值；弹窗量能 chip 同源）
   { key: 'volume-up-strong', label: '明显放量', abbr: '大放', group: 'volume', source: 'volume', signalName: '明显放量', action: 'buy', color: '#C44A3D' },
   { key: 'volume-up-mid', label: '温和放量', abbr: '小放', group: 'volume', source: 'volume', signalName: '温和放量', action: 'buy', color: '#C44A3D' },
   { key: 'volume-down-mid', label: '温和缩量', abbr: '小缩', group: 'volume', source: 'volume', signalName: '温和缩量', action: 'sell', color: '#4A90D9' },
   { key: 'volume-down-strong', label: '明显缩量', abbr: '大缩', group: 'volume', source: 'volume', signalName: '明显缩量', action: 'sell', color: '#4A90D9' },
+  // 站上均线事件（source=stand，当日收盘上穿某条均线；无观察窗口，当日判定当日完事）
+  // 动态生成 per-MA 条目：站{period}（上穿即偏多信号）
+  ...MARKET_MA_PERIODS.map(p => ({
+    key: `stand-${p}`, label: `站${p}`, abbr: `站${p}`, group: 'stand' as const, source: 'stand' as const, signalName: `站${p}`, action: 'buy' as const, color: '#C44A3D' as const,
+  })),
   // 位置(高位/低位)属于"环境前提"(ENV_TAG_CATALOG)，不作为每日信号——不在此列
 ];
 
@@ -836,6 +841,45 @@ export function analyzeMarketConditions(klines: BollKline[], lastDays = 5): Mark
   return events;
 }
 
+// ── 站上均线事件：当日收盘上穿某条均线（前收<前均线 → 今收≥今均线）
+// 无观察窗口，当日判定当日完事，偏多信号（buy）。
+export interface StandEvent {
+  date: string;     // 上穿当天日期 YYYY-MM-DD
+  period: number;   // 被站上的均线周期
+  standMa: number;  // 上穿当天该均线值
+  close: number;    // 上穿当天收盘价
+}
+
+export function analyzeStandEvents(klines: BollKline[], lastDays = 5): StandEvent[] {
+  const n = klines.length;
+  if (n < lastDays + 1) return [];
+  const closes = klines.map(k => k.close);
+  const maSeries = MARKET_MA_PERIODS.map(period => {
+    const res: (number | null)[] = new Array(n).fill(null);
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      sum += closes[i];
+      if (i >= period) sum -= closes[i - period];
+      if (i >= period - 1) res[i] = sum / period;
+    }
+    return res;
+  });
+  const evs: StandEvent[] = [];
+  for (let t = n - lastDays; t < n; t++) {
+    if (t - 1 < 0) continue;
+    for (let pi = 0; pi < MARKET_MA_PERIODS.length; pi++) {
+      const maT = maSeries[pi][t];
+      const maPrev = maSeries[pi][t - 1];
+      if (maT == null || maPrev == null) continue;
+      // 当日上穿：前收 < 前均线 && 今收 ≥ 今均线
+      if (!(closes[t] >= maT && closes[t - 1] < maPrev)) continue;
+      evs.push({ date: klines[t].date, period: MARKET_MA_PERIODS[pi], standMa: maT, close: closes[t] });
+    }
+  }
+  return evs;
+}
+
+
 // ── 交易环境标签体系：趋势结构 / 量价关系 / 动能背离 / 波动率 / 综合强弱周期 ──
 // 参考 docs/行情标签体系说明书.md 实现。打分制：均线40% + 量价40% + 波动(BOLL)20%（MACD 已移除，改由每日信号展示），
 // 总分 ≥0.6 强周期 / ≤-0.6 弱周期，中间为震荡/变盘期；强弱细分再叠加关键信号确认。
@@ -1135,19 +1179,20 @@ export function buildLatestShrinkTags(
   lastDate: string,
   latestVol: KlineVolume5 | null,
   volUp?: boolean | null,  // 当日涨跌：true=涨(红) / false=跌(绿) / null=沿用量增价涨旧配色
+  standEvents?: StandEvent[] | null,
 ): MktTag[] {
   // 破位类事件标签（不含“修复观察”）
   const breakTags: MktTag[] = [];
   if (events) {
     for (const ev of events) {
-      // 仅保留“观测窗口覆盖最新交易日”的事件标签（含当天新破位）
+      // 仅保留"观测窗口覆盖最新交易日"的事件标签（含当天新破位）
       if (!ev.window.some(w => w.date === lastDate)) continue;
       if (ev.date === lastDate) {
-        // 当天破位
-        breakTags.push({ key: `r-${lastDate}-${ev.period}`, text: `破${ev.period}`, cls: ENV_SINGLE_CLS.green });
-      } else if (ev.status !== 'confirming') {
-        // 观测窗口恰好在最新交易日收盘后定论（仍在观测中的“修”不展示）
-        breakTags.push({ key: `d-${ev.date}-${ev.period}`, text: `${ev.status === 'trueBreak' ? '真' : '假'}${ev.period}`, cls: ev.status === 'trueBreak' ? ENV_SINGLE_CLS.green : ENV_SINGLE_CLS.red });
+        // 当天破位 → 数字 + 绿
+        breakTags.push({ key: `r-${lastDate}-${ev.period}`, text: String(ev.period), cls: ENV_SINGLE_CLS.green });
+      } else if (ev.status === 'trueBreak') {
+        // 真破位定论 → "真{period}" + 绿（假破位静默，由站上接棒）
+        breakTags.push({ key: `d-${ev.date}-${ev.period}`, text: `真${ev.period}`, cls: ENV_SINGLE_CLS.green });
       }
     }
   }
@@ -1178,6 +1223,13 @@ export function buildLatestShrinkTags(
         text: bucket === '放量' ? '放' : '缩',
         cls: up ? ENV_SINGLE_CLS.red : ENV_SINGLE_CLS.green,
       });
+    }
+  }
+  // 站上均线：当日上穿某条均线即展示；无窗口，当天完事
+  if (standEvents) {
+    for (const se of standEvents) {
+      if (se.date !== lastDate) continue;
+      tags.push({ key: `stand-${se.period}`, text: String(se.period), cls: ENV_SINGLE_CLS.red });
     }
   }
   tags.push(...breakTags);
@@ -1211,8 +1263,9 @@ export function buildShrinkTagsForModule(
   lastDate: string,
   latestVol: KlineVolume5 | null,
   volUp?: boolean | null,
+  standEvents?: StandEvent[] | null,
 ): MktTag[] {
-  let tags = buildLatestShrinkTags(events, patterns, env, lastDate, latestVol, volUp);
+  let tags = buildLatestShrinkTags(events, patterns, env, lastDate, latestVol, volUp, standEvents);
   if (!SHRINK_TAG_INCLUDE_ENV[module]) tags = tags.filter(t => !t.key.startsWith('env-'));
   if (SHRINK_TAG_HIDE_VOL_FLAT[module]) tags = tags.filter(t => t.key !== 'vol-平量');
   return tags;
@@ -1223,6 +1276,7 @@ export function buildShrinkTagsForModule(
 // 再调 buildLatestShrinkTags 复用同一结果。此函数仅作独立快捷用途（含单测）。
 export function buildLatestDayTags(klines: BollKline[], fmt: (v: number) => string, cfg: TagParams = DEFAULT_TAG_PARAMS): MktTag[] {
   const events = analyzeMarketConditions(klines);
+  const standEvents = analyzeStandEvents(klines);
   const lastDate = klines[klines.length - 1].date;
   const patterns = analyzeKlinePatterns(klines, fmt, cfg);
   const allowVol = isTodayVolumeEligible(klines);
@@ -1231,7 +1285,7 @@ export function buildLatestDayTags(klines: BollKline[], fmt: (v: number) => stri
   const last = klines[klines.length - 1];
   const prevClose = klines.length >= 2 ? klines[klines.length - 2].close : last.close;
   const volUp = last.close >= prevClose;
-  return buildLatestShrinkTags(events, patterns, env, lastDate, latestVol, volUp);
+  return buildLatestShrinkTags(events, patterns, env, lastDate, latestVol, volUp, standEvents);
 }
 
 // 弹窗破位事件“判断依据”文案拼接（封装原 explainLines 中 selEv 分支）
@@ -1268,5 +1322,18 @@ export function buildBreakExplainLines(
     `参照均线 MA${ev.period}（破位日 ${fmt(ev.breakMa)}）`,
     `已观测 ${ev.window.length}/3 天，最新 ${fmtShort(last.date)} 收盘 ${fmt(last.close)} 仍低于 MA${ev.period} ${fmt(last.refMa)}`,
     `观测未满 3 天 → 修复观察`,
+  ];
+}
+
+// 弹窗"站上均线"事件判断依据文案拼接（当日判定，无窗口）
+export function buildStandExplainLines(
+  ev: StandEvent,
+  fmt: (v: number) => string,
+  fmtDay: (d: string) => string,
+): string[] {
+  return [
+    `${fmtDay(ev.date)} 收盘 ${fmt(ev.close)}`,
+    `当日上穿 MA${ev.period}（站上日该均线 ${fmt(ev.standMa)}）`,
+    `前收 < 前MA${ev.period} && 今收 ≥ 今MA${ev.period} → 站上均线，偏多信号`,
   ];
 }

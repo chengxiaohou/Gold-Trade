@@ -6,7 +6,7 @@ import { BACKTEST_TAG_CATALOG, runBacktest, scanTagOccurrences, getDaySignalLabe
 
 import { getDayTagSet } from '../signalTagDetail';
 
-import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeMarketConditions, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, volBucket, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags, PATTERN_CHIP_CLS, VOLUME5_CHIP_CLS, BREAK_CHIP_CLS, CHIP_CLS_INDIGO, CHIP_CLS_RED, MARKET_MA_PERIODS } from '../tagAnalyzers';
+import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeMarketConditions, analyzeEnvironment, envHasCondition, ENV_TAG_CATALOG, classifyVolumeAt, volBucket, DAILY_SIGNAL_CATALOG, selectEnvDisplayTags, PATTERN_CHIP_CLS, VOLUME5_CHIP_CLS, BREAK_CHIP_CLS, CHIP_CLS_INDIGO, CHIP_CLS_RED, CHIP_CLS_GREEN, MARKET_MA_PERIODS } from '../tagAnalyzers';
 
 import type { EnvTag } from '../tagAnalyzers';
 
@@ -198,17 +198,18 @@ describe('BACKTEST_TAG_CATALOG 与标签弹窗展示集同步', () => {
 
     // 破位：每条均线独立事件 + 独立 3 天窗口 → per-MA 条目
 
-    const perMABreak = MARKET_MA_PERIODS.flatMap(p => [`破${p}`, `真破位${p}`, `假破位${p}`]);
+    const perMABreak = MARKET_MA_PERIODS.flatMap(p => [`破${p}`, `真破位${p}`]);
+    const perMAStand = MARKET_MA_PERIODS.map(p => `站${p}`);
 
     const POPUP_SIGNALS = [
 
       '十字星', '金针探底', '放量金针', '吊颈线', '射击之星', '倒锤子线', // pattern
 
-      ...perMABreak,                                                    // break（每条均线独立事件）
+      ...perMABreak,                                                    // break（每条均线独立事件 + 独立3天窗口）
 
       '明显放量', '温和放量', '温和缩量', '明显缩量',                           // volume（量能5档，平量信息量低不进弹窗）
 
-
+      ...perMAStand,                                                    // stand（每条均线独立事件，无窗口）
 
     ];
 
@@ -953,38 +954,25 @@ describe('getDayTagSet（信号标签部唯一权威，当日行 = 底栏 = 标�
 
 
 
-    // 假破位：3 日 window 末收回 break 上方，status=falseBreak
-
+    // 假破位：3 日 window 末收回 break 上方，内部 status=falseBreak（保留给窗口逻辑判定）
+    // 但不再产出"假破位"chip——定论日本身就是"站{period}"事件，由站标签替代
     const kFalse = mkKlines(85, i => 200 - i * 0.5, {
-
       81: { close: 170 },
-
       82: { open: 165, high: 166, low: 90, close: 95 },  // 破位日 t
-
       83: { open: 95, high: 140, low: 94, close: 138 },
-
       84: { open: 138, high: 205, low: 138, close: 202 }, // t+2 定论日：假破位
-
     });
-
     const evFs = analyzeMarketConditions(kFalse, 10).filter(e => e.date === date(82));
-
     expect(evFs.length).toBeGreaterThan(0);
-
-    for (const evF of evFs) expect(evF.status).toBe('falseBreak');
-
+    for (const evF of evFs) expect(evF.status).toBe('falseBreak');  // 内部状态保留给窗口判定
     const tagFalse = getDayTagSet(kFalse.slice(0, 85), undefined, fmt, { events: analyzeMarketConditions(kFalse, 10) });
-
     for (const evF of evFs) {
-
       const falseChip = findBreakChip(tagFalse, `假破位${evF.period}`);
-
-      expect(falseChip).toBeTruthy();
-
-      expect(falseChip!.cls).toBe(CHIP_CLS_RED);          // 假破位 → 红
-
+      expect(falseChip).toBeUndefined();  // 假破位不再产出 chip——静默结束
     }
-
+    // 定论日应产出"站{period}"事件（上穿 MA{period}）
+    const standChips = tagFalse.filter(t => t.kind === 'stand');
+    expect(standChips.length).toBeGreaterThan(0);
   });
 
 });

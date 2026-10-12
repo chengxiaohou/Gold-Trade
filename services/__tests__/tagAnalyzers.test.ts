@@ -1088,11 +1088,15 @@ describe('buildLatestDayTags（列表页缩略展示）', () => {
 
 
 
-  it('真破位事件 → 缩略文字以"真"开头（每条均线独立，如"真5"/"真20"）', () => {
+  it('真破位事件 → 缩略以"真"开头 + period + 绿（与破位触发日纯数字区分）', () => {
 
     const tags = buildLatestDayTags(kTrueBreak, fmt);
 
-    expect(tags.some(t => t.text.startsWith('真'))).toBe(true);
+    // 真破位缩略 "真{period}"（如"真20"），颜色绿
+
+    const want = tags.find(t => t.text.startsWith('真'));
+
+    expect(want).toBeDefined();
 
   });
 

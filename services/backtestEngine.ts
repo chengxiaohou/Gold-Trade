@@ -1,7 +1,7 @@
 import type { BollKline } from './bollService';
 import { DEFAULT_TAG_PARAMS } from '../types';
 import type { TagParams, UserTagRule, BacktestRule, BacktestStrategy, BacktestTrade, BacktestResult, BacktestTagGroup } from '../types';
-import { analyzeKlinePatterns, analyzeMarketConditions, analyzeEnvironment, envHasCondition, buildBreakExplainLines, classifyVolumeAt, volBucket, analyzeUserTagRule, DAILY_SIGNAL_CATALOG } from './tagAnalyzers';
+import { analyzeKlinePatterns, analyzeMarketConditions, analyzeStandEvents, analyzeEnvironment, envHasCondition, buildBreakExplainLines, buildStandExplainLines, classifyVolumeAt, volBucket, analyzeUserTagRule, DAILY_SIGNAL_CATALOG } from './tagAnalyzers';
 import type { EnvResult, BacktestTagDef } from './tagAnalyzers';
 import { getDayTagSet } from './signalTagDetail';
 
@@ -27,7 +27,7 @@ export type { BacktestTagDef } from './tagAnalyzers';
 
 // 策略编辑器下拉的分组中文名（<optgroup> 标签）
 export const BT_GROUP_LABEL: Record<BacktestTagGroup, string> = {
-  'pattern': 'K线形态', 'break': '破位', 'volume': '量能', 'position': '位置',
+  'pattern': 'K线形态', 'break': '破位', 'volume': '量能', 'position': '位置', 'stand': '站上均线',
   'feng-add': '风系·加仓', 'feng-reduce': '风系·减仓', 'env': '环境', 'daily': '每日信号', 'custom': '自定义',
 };
 
@@ -41,9 +41,10 @@ export const fmtShort = (d: string) => d.slice(5).replace('-', '/');
 function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams, customTags: UserTagRule[] = [], dividendByYear?: Record<number, number>, currentYear?: number): { hits: Set<string>; env: EnvResult | null } {
   const hits = new Set<string>();
   const last = win[win.length - 1];
-  // 从中央标签分发部门 getDayTagSet 取当日所有 label（形态/量能/价格态/破位/自定义同源）
+  // 从中央标签分发部门 getDayTagSet 取当日所有 label（形态/量能/价格态/破位/站上/自定义同源）
   const events = analyzeMarketConditions(win, Math.min(10, win.length - 1));
-  const dayTags = getDayTagSet(win, cfg, fmtP, { events, customTags, dividendByYear });
+  const standEvents = analyzeStandEvents(win, Math.min(10, win.length - 1));
+  const dayTags = getDayTagSet(win, cfg, fmtP, { events, standEvents, customTags, dividendByYear });
   for (const t of dayTags) hits.add(t.label);
   // 环境状态：仅当 K 线足够长（≥130）才计算，供规则 envCondition 门控判定
   const env = win.length >= 130 ? analyzeEnvironment(win, fmtP, true, cfg) : null;
@@ -245,6 +246,10 @@ export function scanTagOccurrences(k: BollKline[], tagKey: string, envKey?: stri
       } else if (classifyVolumeAt(win, win.length - 1, cfg) === def.signalName && def.signalName === '平量') {
         detail = [`${fmtShort(last.date)} 平量：当日量/前5日均量处于放量与缩量阈值之间`];
       }
+    } else if (def.source === 'stand') {
+      // 站上均线事件：当日上穿某条均线即命中（无观察窗口）
+      const se = analyzeStandEvents(win, 1).find(x => x.date === last.date && `站${x.period}` === def.signalName);
+      if (se) detail = buildStandExplainLines(se, fmtP, fmtShort);
     }
 
     if (!detail) continue;

@@ -9,12 +9,12 @@ import type { TagParams, UserTagRule } from '../types';
 import { DEFAULT_TAG_PARAMS } from '../types';
 import {
   analyzeKlinePatternsAt, analyzeKlineCombo, classifyVolumeAt,
-  analyzeMarketConditions, buildBreakExplainLines, volBucket,
+  analyzeMarketConditions, analyzeStandEvents, buildBreakExplainLines, buildStandExplainLines, volBucket,
   analyzeUserTagRule,
   PATTERN_CHIP_CLS, VOLUME5_CHIP_CLS, BREAK_CHIP_CLS,
   CHIP_CLS_RED, CHIP_SEL_RED, CHIP_CLS_INDIGO, CHIP_SEL_INDIGO, CHIP_CLS_BLUE, CHIP_SEL_BLUE,
   CHIP_CLS_GREEN, CHIP_SEL_GREEN, CHIP_CLS_SLATE, CHIP_SEL_SLATE,
-  type KlineVolume5, type MarketEvent,
+  type KlineVolume5, type MarketEvent, type StandEvent,
 } from './tagAnalyzers';
 
 // cls/sel = 标签弹窗同款语义 chip 配色（单一数据源：tagAnalyzers）
@@ -61,10 +61,10 @@ const USER_CHIP_CLS: Record<string, { cls: string; sel: string }> = {
 const USER_REFERENCE = '用户自定义信号标签：依据设定数据点与目标（固定值或均线/BOLL动态值）判定触发，作观察信号辅助判断，结合仓位与市场环境综合决策。'
 
 // chip 种类：volume/pricestate/pattern = 原子信号；break = 破位触发；break-obs = 观察；break-status = 真/假破位定论；user = 用户自定义
-export type DayTagKind = 'volume' | 'pricestate' | 'pattern' | 'break' | 'break-obs' | 'break-status' | 'user';
+export type DayTagKind = 'volume' | 'pricestate' | 'pattern' | 'break' | 'break-obs' | 'break-status' | 'stand' | 'user';
 export interface DayTag extends SignalTagDetail { key: string; kind: DayTagKind; }
 
-export interface GetDayTagSetOptions { events?: MarketEvent[]; customTags?: UserTagRule[]; dividendByYear?: Record<number, number> }
+export interface GetDayTagSetOptions { events?: MarketEvent[]; standEvents?: StandEvent[]; customTags?: UserTagRule[]; dividendByYear?: Record<number, number> }
 
 // 判定某日命中的用户自定义标签（复用 analyzeUserTagRule），逐条装配 chip
 function collectUserTags(win: BollKline[], i: number, rules: UserTagRule[] | undefined, dividendByYear?: Record<number, number>): DayTag[] {
@@ -134,12 +134,19 @@ export function getDayTagSet(
     } else if (w === ev.window.length - 1) {
       if (ev.status === 'confirming') {
         out.push({ key: `obs-${ev.date}-${p}`, kind: 'break-obs', label: `观察${p}`, cls: OBS_CHIP_CLS.cls, sel: OBS_CHIP_CLS.sel, detail: buildBreakExplainLines(ev, 'repair', fmt, fmtDay, fmtShort), reference: '' });
-      } else {
-        const trueBreak = ev.status === 'trueBreak';
-        const stCls = trueBreak ? BREAK_CHIP_CLS : FALSE_CHIP_CLS;
-        out.push({ key: `status-${ev.date}-${p}`, kind: 'break-status', label: `${trueBreak ? '真破位' : '假破位'}${p}`, cls: stCls.cls, sel: stCls.sel, detail: buildBreakExplainLines(ev, 'status', fmt, fmtDay, fmtShort), reference: '' });
+      } else if (ev.status === 'trueBreak') {
+        out.push({ key: `status-${ev.date}-${p}`, kind: 'break-status', label: `真破位${p}`, cls: BREAK_CHIP_CLS.cls, sel: BREAK_CHIP_CLS.sel, detail: buildBreakExplainLines(ev, 'status', fmt, fmtDay, fmtShort), reference: '' });
       }
+      // falseBreak（3天内回到均线上方）静默结束——定论日本身就是站上事件，由站{period}替代
     }
+  }
+
+  // 站上均线事件：当日上穿即展示，无观察窗口
+  const standEvents = opts.standEvents ?? analyzeStandEvents(win, Math.min(10, win.length - 1));
+  for (const se of standEvents) {
+    if (se.date !== date) continue;
+    const p = se.period;
+    out.push({ key: `stand-${date}-${p}`, kind: 'stand', label: `站${p}`, cls: CHIP_CLS_RED, sel: CHIP_SEL_RED, detail: buildStandExplainLines(se, fmt, fmtDay), reference: '' });
   }
 
   // 用户自定义动态信号标签（追加在最后）
