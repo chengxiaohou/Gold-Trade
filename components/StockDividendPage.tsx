@@ -1221,12 +1221,12 @@ type SrRow =
   | { kind: 'cell'; name: string; color?: string; rest: string; price?: number };
 
 // 支撑/压力位弹窗的表格体 —— 单一实现：MA & BOLL 入口弹窗 与 列表/交易入口弹窗共用。
-// 组件自身不决定点击用途，只把点击到的价格通过 onPriceClick 抛给调用方；
+// 组件自身不决定点击用途，只把点击到的价格 + 名称通过 onPriceClick 抛给调用方；
 // 仅在外部传入了 onPriceClick（即确有消费方关心点击）时，悬停才出现整行下划线。
 const SupportResistanceRows: React.FC<{
   rows: SrRow[] | null;
   fallback: string | null;
-  onPriceClick?: (price: number) => void;
+  onPriceClick?: (price: number, name: string) => void;
 }> = ({ rows, fallback, onPriceClick }) => (
   <div className="px-2.5 py-1.5 font-mono text-[12px] text-app-rowtext whitespace-pre leading-[1.75] text-left">
     {rows && rows.length > 0 ? (
@@ -1239,7 +1239,7 @@ const SupportResistanceRows: React.FC<{
             className={`whitespace-pre rounded-sm${clickable ? ' cursor-pointer hover:bg-app-text/10 hover:underline transition-colors' : ''}`}
             style={row.color ? { color: row.color } : undefined}
             onMouseDown={clickable ? (e) => e.stopPropagation() : undefined}
-            onClick={clickable ? () => onPriceClick!(row.price as number) : undefined}
+            onClick={clickable ? () => onPriceClick!(row.price as number, row.name) : undefined}
           >
             <span>{row.name}</span>
             <span>{row.rest}</span>
@@ -1695,10 +1695,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
 
   // 支撑/压力位价格行点击：仅当由交易弹窗「挂单价格」图标呼出时，把点到的价格回填挂单价格输入框；
-  // 弹窗自身只负责抛出被点击的价格（见 SupportResistanceRows 的 onPriceClick），用途由调用方决定。
-  const handleSrPricePick = (price: number) => {
+  // 同时根据选中价格自动填充备注「网格{股息率} {支撑压力位名称}」，口径与备注 onFocus 自动填充一致。
+  // 备注为空或以"网格"开头时才自动覆盖，避免丢失用户手写的额外备注（如"网格5.72 日上 大涨 急卖"）。
+  const handleSrPricePick = (price: number, pickedName: string) => {
     if (listSrPricePickTo !== 'trade' || !(price > 0)) return;
     setAddTradePrice(formatPrice(price, listSrStock?.name));
+    // 清空弹窗状态
     listSrHoveredRef.current = false;
     listSrActiveIdRef.current = undefined;
     setListSrTooltipPinned(false);
@@ -1706,6 +1708,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setListSrPreviewRows(null);
     setListSrStock(null);
     setListSrPricePickTo(null);
+    // 备注自动填充：网格 + 支撑/压力位名称
+    const stock = listSrStock;
+    if (stock) {
+      const dividend = getDividendForYear(stock, getSelectedYear(stock)) || 0;
+      const divRate = dividend > 0 ? (dividend / price) * 100 : 0;
+      if (divRate > 0) {
+        const gridStr = `网格${String(parseFloat(divRate.toFixed(2)))}`;
+        const newNote = pickedName ? `${gridStr} ${pickedName} ` : `${gridStr} `;
+        if (!addTradeNote || addTradeNote.startsWith('网格')) {
+          setAddTradeNote(newNote);
+        }
+      }
+    }
   };
 
   // 悬停名称显示支撑/压力位（临时，不固定）
@@ -6050,10 +6065,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   value={addTradeNote}
                   onChange={(e) => setAddTradeNote(e.target.value)}
                   onFocus={() => {
-                    // 备注为空时，首次点击聚焦默认填入"网格{股息率}"，方便后继续编辑
+                    // 备注为空时，首次点击聚焦默认填入"网格{股息率} "，方便后继续编辑
                     // 口径与上方「股息率」展示一致：按挂单价格计算（分红/挂单价格）
                     if (!addTradeNote) {
-                      if (orderDivRate > 0) setAddTradeNote(`网格${String(parseFloat(orderDivRate.toFixed(2)))}`);
+                      if (orderDivRate > 0) setAddTradeNote(`网格${String(parseFloat(orderDivRate.toFixed(2)))} `);
                     }
                   }}
                   onKeyDown={(e) => { if (e.key === 'Enter') { editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending'); } }}
