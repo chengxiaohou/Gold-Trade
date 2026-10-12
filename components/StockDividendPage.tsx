@@ -6087,7 +6087,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   disabled={!addTradePrice || !addTradeShares}
                   className="h-10 text-sm font-bold rounded-lg border transition-all disabled:opacity-40 bg-indigo-500/90 text-white border-indigo-500 hover:opacity-90 shadow-sm"
                 >
-                  {editingTradeId ? '保存挂单' : (addTradeSide === 'buy' ? '买入挂单' : '卖出挂单')}
+                  {editingTradeId ? '保存挂单' : (addTradeSide === 'buy' ? '买入挂单' : '卖出挂单')}{import.meta.env.DEV ? ' (debug)' : ''}
                 </button>
                 <button
                   type="button"
@@ -6095,7 +6095,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   disabled={!addTradePrice || !addTradeShares}
                   className={`h-10 text-sm font-bold rounded-lg transition-all disabled:opacity-40 text-white shadow-sm ${addTradeSide === 'buy' ? 'bg-brand-red hover:opacity-90' : 'bg-brand-green hover:opacity-90'}`}
                 >
-                  {editingTradeId ? '保存成交' : (addTradeSide === 'buy' ? '买入成交' : '卖出成交')}
+                  {editingTradeId ? '保存成交' : (addTradeSide === 'buy' ? '买入成交' : '卖出成交')}{import.meta.env.DEV ? ' (debug)' : ''}
                 </button>
               </div>
 
