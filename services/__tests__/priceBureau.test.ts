@@ -68,6 +68,40 @@ describe('priceBureau 对外两形态（仅收盘 / 含未收盘）', () => {
     const live = priceBureau.getTodayDailyKlines('600000.SH');
     expect(live.some(k => k.date === '2026-09-24')).toBe(true);
   });
+
+  // ─── 非交易时段守卫（防回归：rt 残留 price/open 有效，但 marketStatus 非可交易，
+  //       getTodayDailyKlines 不得合成今日 bar）───
+
+  it('周末（full_day_closed）：getTodayDailyKlines 不合成今日 bar', () => {
+    // 切到周日 2026-09-27（full_day_closed），store 里 realtime 仍残留 2026-09-24 那份
+    vi.setSystemTime(new Date('2026-09-27T15:00:00+08:00')); // 周日
+    const live = priceBureau.getTodayDailyKlines('600000.SH');
+    // 末尾仍是上一个交易日 09-24，不应凭空多一根 09-27
+    expect(live.map(k => k.date)).toEqual(['2026-09-22', '2026-09-23', '2026-09-24']);
+    expect(live.some(k => k.date === '2026-09-27')).toBe(false);
+  });
+
+  it('盘前（pre_open）：getTodayDailyKlines 不合成今日 bar', () => {
+    // 切到周四 2026-09-24 早上 8:00（pre_open），store 里仍有 realtime 残留 price=99.5, open=102
+    vi.setSystemTime(new Date('2026-09-24T08:00:00+08:00'));
+    const live = priceBureau.getTodayDailyKlines('600000.SH');
+    // toClosedKlines 已剔除 09-24 那根（今日），mergeTodayBarToKlines 也因 pre_open 不追加
+    expect(live.map(k => k.date)).toEqual(['2026-09-22', '2026-09-23']);
+    expect(live.some(k => k.date === '2026-09-24')).toBe(false);
+  });
+
+  it('setRealtime 在非交易时段写入后，getTodayBoll 的 klines 仍不含今日 bar', () => {
+    vi.setSystemTime(new Date('2026-09-27T15:00:00+08:00')); // 周日 full_day_closed
+    priceBureau.setRealtime('600000.SH', {
+      code: 'sh600000', name: '浦发银行',
+      price: 95, changePercent: -5, high: 96, low: 94, open: 102, volume: 5000,
+    });
+    const boll = priceBureau.getTodayBoll('600000.SH', 'daily');
+    expect(boll).not.toBeNull();
+    const last = boll!.klines![boll!.klines!.length - 1];
+    // 末根应仍是 09-24，不是新合成的今日（09-27）
+    expect(last.date).toBe('2026-09-24');
+  });
 });
 
 describe('priceBureau.getTodayBoll：absorb + setRealtime 后 BOLL 三轨跟随实时价', () => {

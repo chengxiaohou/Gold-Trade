@@ -80,6 +80,36 @@ describe('mergeTodayBarToKlines（今日实时行情 merge 到 K 线）', () => 
   it('空数组：原样返回', () => {
     expect(mergeTodayBarToKlines([], { open: 100, price: 100 }, 'closed', NOW)).toEqual([]);
   });
+
+  // ─── 非交易时段守卫（防回归：rt 残留 price/open 但 marketStatus 非可交易，不得合成今日 bar）───
+
+  it('盘前(pre_open)：rt 残留 price/open 都 > 0，但不合成今日 K 线（原样返回）', () => {
+    // 典型残留：页面加载过一次后，realtime 里 price=上一交易日收盘价, open=上一交易日开盘价
+    const residualRt = { open: 100, high: 100.5, low: 99.5, price: 100, volume: 1_500_000 };
+    expect(residualRt.price).toBeGreaterThan(0);
+    expect(residualRt.open).toBeGreaterThan(0); // 两个有效性检查都通过
+
+    const merged = mergeTodayBarToKlines(base, residualRt, 'pre_open', NOW);
+    expect(merged).toEqual(base);                  // 原样返回，不追加今日 bar
+    expect(merged.map(k => k.date)).not.toContain(TODAY);
+  });
+
+  it('全天休市(full_day_closed)：rt 残留 price/open 都 > 0，不合成今日 K 线', () => {
+    const residualRt = { open: 100, high: 100.5, low: 99.5, price: 100, volume: 1_500_000 };
+    const merged = mergeTodayBarToKlines(base, residualRt, 'full_day_closed', NOW);
+    expect(merged).toEqual(base);
+    expect(merged.map(k => k.date)).not.toContain(TODAY);
+  });
+
+  it('可交易四态(closed/morning_session/midday_break/afternoon_session)：都正常追加今日 bar', () => {
+    const rt = { open: 100, high: 101, low: 99, price: 100.5, volume: 1_500_000 };
+    for (const status of ['closed', 'morning_session', 'midday_break', 'afternoon_session'] as const) {
+      const merged = mergeTodayBarToKlines(base, rt, status, NOW);
+      const last = merged[merged.length - 1];
+      expect(last.date, `status=${status} 应追加今日 bar`).toBe(TODAY);
+      expect(last.close, `status=${status}`).toBe(100.5);
+    }
+  });
 });
 
 describe('pickDegradedBoll（网络失败时降级到过期缓存）', () => {
