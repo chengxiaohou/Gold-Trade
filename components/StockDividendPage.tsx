@@ -12,7 +12,7 @@ import { fetchYearlyDividends, DividendRecord } from '../services/dividendServic
 import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
-import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, calcAvgPnlForTrades, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
+import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, calcAvgPnlForTrades, calcTradeFees, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
 import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, volBucket, buildLatestShrinkTags, buildShrinkTagsForModule, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, analyzeStandEvents, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5, type StandEvent } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
@@ -415,20 +415,19 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
       row.textContent = `${fmtPrice(p.price)} × ${p.shares} = ${fmtPrice(p.price * p.shares)}`;
       const h = headerDateRefs.current[i];
       if (h) {
-        // 将 YYYY-MM-DD 显示为 "M月D日"
         const parts = p.date.split('-');
         const dateLabel = parts.length === 3 ? `${parseInt(parts[1], 10)}月${parseInt(parts[2], 10)}日` : p.date;
         h.textContent = `T${pctLabel}  ${dateLabel}`;
       }
     });
-    // 估算高度后定位（触发器上方居中）
-    const estH = pairs.length * 24 + 26;
+    // 强制 reflow，读取真实尺寸再定位
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
     let x = triggerRect.left + triggerRect.width / 2;
-    let y = triggerRect.top - estH - 6;
-    const w = 170;
+    let y = triggerRect.top - h - 6;
     if (x - w / 2 < 8) x = w / 2 + 8;
     if (x + w / 2 > window.innerWidth - 8) x = window.innerWidth - w / 2 - 8;
-    if (y < 8) y = triggerRect.bottom + 14; // 上方放不下就翻到下方
+    if (y < 8) y = triggerRect.bottom + 14;
     el.style.transform = `translate(${x - w / 2}px, ${y}px)`;
     el.style.opacity = '1';
   };
@@ -437,6 +436,7 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
     const el = containerRef.current;
     if (!el) return;
     el.style.opacity = '0';
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
   };
 
   const requestShowAt = () => {
@@ -515,6 +515,250 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
   );
 };
 
+// 税费公式小浮窗：hover "税" 数字时展示，与 PairTip 同架构（骨架 DOM + transform + textContent，无 React 重渲染）。
+// 内容是一行公式：佣金5 + 其他0.05 + 印花7290×0.05%=3.65 = 8.70
+const FeeTip: React.FC<{ fees: ReturnType<typeof calcTradeFees>; grossAmount: number; side: 'buy' | 'sell'; children: React.ReactNode }> = ({ fees, grossAmount, side, children }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const formulaRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const pinnedRef = useRef(false);
+  const rafRef = useRef<number | null>(null);
+
+  if (!fees || fees.total === 0) return <>{children}</>;
+
+  const buildFormula = () => {
+    const parts: string[] = [`${fees.commission.toFixed(2)}`];
+    if (fees.stampDuty) parts.push(`${fees.stampDuty.toFixed(2)}`);
+    if (fees.otherFees) parts.push(`${fees.otherFees.toFixed(2)}`);
+    return `${parts.join(' + ')} = ${fees.total.toFixed(2)}`;
+  };
+
+  const showAt = (triggerRect: DOMRect) => {
+    const el = containerRef.current;
+    const fm = formulaRef.current;
+    if (!el || !fm) return;
+    fm.textContent = buildFormula();
+    // 强制 reflow，读取真实尺寸再定位
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    let x = triggerRect.left + triggerRect.width / 2;
+    let y = triggerRect.top - h - 6;
+    if (x - w / 2 < 8) x = w / 2 + 8;
+    if (x + w / 2 > window.innerWidth - 8) x = window.innerWidth - w / 2 - 8;
+    if (y < 8) y = triggerRect.bottom + 14;
+    el.style.transform = `translate(${x - w / 2}px, ${y}px)`;
+    el.style.opacity = '1';
+  };
+
+  const hide = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.style.opacity = '0';
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+  };
+
+  const requestShowAt = () => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => { rafRef.current = null; showAt(rect); });
+  };
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      if (!pinnedRef.current) return;
+      const t = e.target as Node;
+      const c = containerRef.current;
+      const tr = triggerRef.current;
+      if (c && c.contains(t)) return;
+      if (tr && tr.contains(t)) return;
+      pinnedRef.current = false;
+      hide();
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('touchstart', onDown);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('touchstart', onDown);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
+  const title = side === 'buy' ? '买入税费' : '卖出税费';
+  return (
+    <>
+      <span
+        ref={triggerRef}
+        className="inline-block cursor-default"
+        onMouseEnter={() => requestShowAt()}
+        onMouseLeave={() => { if (!pinnedRef.current) hide(); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          pinnedRef.current = !pinnedRef.current;
+          if (pinnedRef.current) requestShowAt(); else hide();
+        }}
+        onTouchStart={(e) => {
+          e.stopPropagation();
+          pinnedRef.current = !pinnedRef.current;
+          if (pinnedRef.current) requestShowAt(); else hide();
+        }}
+      >
+        {children}
+      </span>
+      {typeof document !== 'undefined' && createPortal(
+        <div
+          ref={containerRef}
+          style={{ opacity: 0 }}
+          className="fixed left-0 top-0 z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2.5 py-2 text-[10px] text-app-text max-w-[280px] whitespace-normal break-all transition-opacity duration-100 pointer-events-none select-none"
+        >
+          <div className="text-[9px] font-semibold text-app-subtext tracking-wide mb-1">{title}</div>
+          <span ref={formulaRef} className="block font-mono text-[11px] text-brand-green/90" />
+        </div>,
+        document.body
+      )}
+    </>
+  );
+};
+
+// ERR 详情小浮窗：hover/click ERR 徽标时展示，与 FeeTip 同架构。
+// 优先展示结构化数据（卖出详情 + 可用买入 + 缺口），无数据时 fallback 到 reason 字符串。
+const ErrTip: React.FC<{
+  reason?: string;
+  price?: number;
+  shares?: number;
+  amount?: number;
+  errShares?: number;
+  availableShares?: number;
+  dateLabel?: string;        // 如 "10月8日"
+  children: React.ReactNode;
+}> = ({ reason, price, shares, amount, errShares, availableShares, dateLabel, children }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLDivElement>(null);
+  const row1Ref = useRef<HTMLDivElement>(null);   // 卖出 72.90 × 200 = 14,580
+  const row2Ref = useRef<HTMLDivElement>(null);   // 此前可用买入 100 股
+  const row3Ref = useRef<HTMLDivElement>(null);   // 超出 100 股无法匹配
+  const fallbackRef = useRef<HTMLSpanElement>(null); // 兜底 reason
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const pinnedRef = useRef(false);
+  const rafRef = useRef<number | null>(null);
+
+  const hasDetail = errShares !== undefined || availableShares !== undefined || price !== undefined;
+
+  const showAt = (triggerRect: DOMRect) => {
+    const el = containerRef.current;
+    if (!el) return;
+    if (hasDetail) {
+      // 渲染结构化明细
+      if (titleRef.current) {
+        const head = dateLabel ? `卖出异常 · ${dateLabel}` : '卖出异常';
+        titleRef.current.textContent = head;
+      }
+      if (row1Ref.current && price !== undefined && shares !== undefined && amount !== undefined) {
+        row1Ref.current.textContent = `卖出 ${price.toFixed(2)} × ${shares} = ${amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`;
+      }
+      if (row2Ref.current) {
+        const avail = availableShares ?? (shares !== undefined && errShares !== undefined ? shares - errShares : 0);
+        row2Ref.current.textContent = avail > 0 ? `此前可用买入 ${avail} 股` : '此前无可用买入';
+      }
+      if (row3Ref.current && errShares !== undefined) {
+        row3Ref.current.textContent = errShares > 0 ? `超出 ${errShares} 股无法匹配` : '';
+      }
+      if (fallbackRef.current) fallbackRef.current.textContent = '';
+    } else {
+      if (titleRef.current) titleRef.current.textContent = '卖出异常';
+      if (fallbackRef.current) fallbackRef.current.textContent = reason ?? '';
+    }
+    // 强制 reflow，读取真实尺寸再定位
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    let x = triggerRect.left + triggerRect.width / 2;
+    let y = triggerRect.top - h - 6;
+    if (x - w / 2 < 8) x = w / 2 + 8;
+    if (x + w / 2 > window.innerWidth - 8) x = window.innerWidth - w / 2 - 8;
+    if (y < 8) y = triggerRect.bottom + 14;
+    el.style.transform = `translate(${x - w / 2}px, ${y}px)`;
+    el.style.opacity = '1';
+  };
+
+  const hide = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.style.opacity = '0';
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+  };
+
+  const requestShowAt = () => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => { rafRef.current = null; showAt(rect); });
+  };
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      if (!pinnedRef.current) return;
+      const t = e.target as Node;
+      const c = containerRef.current;
+      const tr = triggerRef.current;
+      if (c && c.contains(t)) return;
+      if (tr && tr.contains(t)) return;
+      pinnedRef.current = false;
+      hide();
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('touchstart', onDown);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('touchstart', onDown);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
+  return (
+    <>
+      <span
+        ref={triggerRef}
+        className="inline-block cursor-default"
+        onMouseEnter={() => requestShowAt()}
+        onMouseLeave={() => { if (!pinnedRef.current) hide(); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          pinnedRef.current = !pinnedRef.current;
+          if (pinnedRef.current) requestShowAt(); else hide();
+        }}
+        onTouchStart={(e) => {
+          e.stopPropagation();
+          pinnedRef.current = !pinnedRef.current;
+          if (pinnedRef.current) requestShowAt(); else hide();
+        }}
+      >
+        {children}
+      </span>
+      {typeof document !== 'undefined' && createPortal(
+        <div
+          ref={containerRef}
+          style={{ opacity: 0 }}
+          className="fixed left-0 top-0 z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2.5 py-2 text-[10px] text-app-text max-w-[280px] whitespace-normal break-all transition-opacity duration-100 pointer-events-none select-none"
+        >
+          <div ref={titleRef} className="text-[9px] font-semibold text-orange-400 tracking-wide mb-1">卖出异常</div>
+          {hasDetail ? (
+            <>
+              <div ref={row1Ref} className="block font-mono text-[11px] text-app-text/90 leading-snug" />
+              <div ref={row2Ref} className="block font-mono text-[10px] text-app-subtext/90 leading-snug" />
+              <div ref={row3Ref} className="block font-mono text-[10px] text-orange-400 leading-snug" />
+            </>
+          ) : (
+            <span ref={fallbackRef} className="block font-mono text-[10px] text-app-text/90" />
+          )}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+};
+
 interface TradeRecordRowProps {
   t: StockTrade; stock: StockEntry; pnlMap: Record<string, number>; pendingMap?: Record<string, number>;
   onToggle: (t: StockTrade) => void; onEdit: (t: StockTrade) => void; onDelete: (t: StockTrade) => void;
@@ -524,8 +768,10 @@ interface TradeRecordRowProps {
   pairMap?: Record<string, DtPair[]>;
   // 做T模式：买入 id → { original, matched }，matched >= original 表示该买入已被卖出全部对冲
   buyMatchMap?: Record<string, { original: number; matched: number }>;
+  // 是否计入税费（含税模式下每条记录展示税费详情）
+  taxEnabled?: boolean;
 }
-const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendingMap, onToggle, onEdit, onDelete, errIds, pairMap, buyMatchMap }) => {
+const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendingMap, onToggle, onEdit, onDelete, errIds, pairMap, buyMatchMap, taxEnabled }) => {
   const [confirming, setConfirming] = useState(false);
   const stockName = stock.name;
   const currentPrice = stock.price || 0;
@@ -575,9 +821,30 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
             {(price * shares).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
           </span>
         </span>
+        {/* 买入的税紧跟公式（买入没有盈亏数字） */}
+        {taxEnabled && t.side === 'buy' && (() => {
+          const fees = calcTradeFees(t, stockName);
+          if (fees.total === 0) return null;
+          const grossAmt = (t.amount ?? (price * shares)) || 0;
+          return (
+            <FeeTip fees={fees} grossAmount={grossAmt} side="buy">
+              <span className="shrink-0 font-mono text-[10px] text-brand-green/80">税 {fees.total.toFixed(2)}</span>
+            </FeeTip>
+          );
+        })()}
         {(() => {
+          const grossAmt = (t.amount ?? (price * shares)) || 0;
           const sellContent = isErrSell ? (
-            <span className="font-mono text-[10px] font-bold text-orange-400" title="卖出股数超过此前买入，疑似录入有误">ERR</span>
+            <ErrTip
+              price={price}
+              shares={shares}
+              amount={grossAmt}
+              errShares={shares}
+              availableShares={0}
+              dateLabel={`${new Date(t.filledAt ?? t.createdAt).getMonth() + 1}月${new Date(t.filledAt ?? t.createdAt).getDate()}日`}
+            >
+              <span className="font-mono text-[10px] font-bold text-orange-400">ERR</span>
+            </ErrTip>
           ) : t.side === 'sell' && pnlMap[t.id] !== undefined ? (
             <span className={`font-mono text-[10px] ${pnlMap[t.id] >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
               {`${pnlMap[t.id] >= 0 ? '+' : ''}${fmtProfit(pnlMap[t.id])}`}
@@ -592,6 +859,17 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
           return tradePairs && tradePairs.length > 0
             ? <PairTip pairs={tradePairs} fmtPrice={fmtP}>{sellContent}</PairTip>
             : sellContent;
+        })()}
+        {/* 卖出的税紧跟盈亏（ERR 或 pnl 数字） */}
+        {taxEnabled && t.side === 'sell' && (() => {
+          const fees = calcTradeFees(t, stockName);
+          if (fees.total === 0) return null;
+          const grossAmt = (t.amount ?? (price * shares)) || 0;
+          return (
+            <FeeTip fees={fees} grossAmount={grossAmt} side="sell">
+              <span className="shrink-0 font-mono text-[10px] text-brand-green/80">税 {fees.total.toFixed(2)}</span>
+            </FeeTip>
+          );
         })()}
         {t.isMerged ? (
           <span className="shrink-0 text-[8px] px-1 py-px rounded-full border font-bold ml-auto text-app-subtext/60 border-app-border/60 bg-app-text/5">
@@ -2633,6 +2911,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
   const [pnlCalcMode, setPnlCalcMode] = useState<PnlCalcMode>(getSavedPnlCalcMode);
 
+  const getSavedTaxEnabled = (): boolean => {
+    try {
+      const v = localStorage.getItem('stock_tax_enabled');
+      return v !== '0'; // 默认含税，只有显式存 '0' 才关掉
+    } catch { return true; }
+  };
+  const [taxEnabled, setTaxEnabled] = useState<boolean>(getSavedTaxEnabled);
+
   // 持久化到 localStorage
   useEffect(() => {
     try { localStorage.setItem('stock_bottom_bar_view', bottomBarView); } catch {}
@@ -2652,6 +2938,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     try { localStorage.setItem('stock_pnl_calc_mode', pnlCalcMode); } catch {}
   }, [pnlCalcMode]);
+  useEffect(() => {
+    try { localStorage.setItem('stock_tax_enabled', taxEnabled ? '1' : '0'); } catch {}
+  }, [taxEnabled]);
 
   // 盈利统计面板 wheel 接管：阻止滚轮在面板内滚动时串扰带动背后的股票大列表/页面。
   // 不用 React onWheel（被动监听 preventDefault 不可靠），改用原生 passive:false 监听，
@@ -2720,8 +3009,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return { startTs: start.getTime(), endTs: end.getTime() };
   }, [profitRangeMode, profitCustomStart, profitCustomEnd]);
   const profitResult = useMemo(
-    () => calcRealizedPnlForRange(effectiveLedger, profitStockNames, profitRange.startTs, profitRange.endTs, pnlCalcMode),
-    [effectiveLedger, profitStockNames, profitRange, pnlCalcMode]
+    () => calcRealizedPnlForRange(effectiveLedger, profitStockNames, profitRange.startTs, profitRange.endTs, pnlCalcMode, taxEnabled),
+    [effectiveLedger, profitStockNames, profitRange, pnlCalcMode, taxEnabled]
   );
   const fmtSignedAmount = (v: number) => `${v >= 0 ? '+' : ''}${v.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`;
   const fmtShortDate = (ts: number) => {
@@ -3642,6 +3931,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       // 交易浮窗
       closeTradeInfo();
       setTradeSimpleStock(null);
+      // 盈利统计全屏面板
+      setShowProfitPanel(false);
     };
     window.addEventListener('keydown', onEsc);
     return () => window.removeEventListener('keydown', onEsc);
@@ -5850,8 +6141,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         // 按成交顺序重算每笔卖出的已实现盈亏（不依赖可能为 0 的存储 positionCost/realizedPnL）；
         // 支持两种口径：均价（移动加权）/ 做T（卖出匹配最近买入）。
         const tradesOfS = getTrades(s);
-        const recalcPnL = calcAvgPnlForTrades(tradesOfS);
-        const dtPnL = calcDtPnlForTrades(tradesOfS);
+        const recalcPnL = calcAvgPnlForTrades(tradesOfS, taxEnabled, s.name);
+        const dtPnL = calcDtPnlForTrades(tradesOfS, taxEnabled, s.name);
         const modeIsDt = pnlCalcMode === 'dt';
         const shownPnl = modeIsDt ? dtPnL : recalcPnL;
         // 做T口径成本 = 剩余未匹配买入的加权均价；均价口径 = 移动加权成本
@@ -6097,19 +6388,38 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <div className="flex items-center justify-between px-0.5 pb-1.5">
                   <span className="text-[10px] uppercase font-bold text-app-subtext tracking-wider">历史记录</span>
                   {/* 盈利计算模式：T操作 / 均价盈亏（右对齐，全局切换） */}
-                  <div className="flex items-center rounded-md border border-app-border bg-app-input/40 p-0.5 shrink-0" title="盈利计算方式：均价盈亏 或 做T（卖出匹配最近买入）">
-                    {(['dt', 'avg'] as const).map(m => (
+                  <div className="flex items-center gap-1">
+                    <div className="flex items-center rounded-md border border-app-border bg-app-input/40 p-0.5 shrink-0" title="盈利计算方式：均价盈亏 或 做T（卖出匹配最近买入）">
+                      {(['dt', 'avg'] as const).map(m => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setPnlCalcMode(m)}
+                          className={`px-1.5 py-0.5 rounded text-[9px] whitespace-nowrap transition-colors leading-none ${
+                            pnlCalcMode === m ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'
+                          }`}
+                        >
+                          {m === 'dt' ? 'T操作' : '均价盈亏'}
+                        </button>
+                      ))}
+                    </div>
+                    {/* 含税 / 免税 切换 */}
+                    <div className="flex items-center rounded-md border border-app-border bg-app-input/40 p-0.5 shrink-0" title="盈利是否计入税费（佣金 5 元/笔、股票卖出 0.05% 印花税）">
                       <button
-                        key={m}
                         type="button"
-                        onClick={() => setPnlCalcMode(m)}
+                        onClick={() => setTaxEnabled(true)}
                         className={`px-1.5 py-0.5 rounded text-[9px] whitespace-nowrap transition-colors leading-none ${
-                          pnlCalcMode === m ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'
+                          taxEnabled ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'
                         }`}
-                      >
-                        {m === 'dt' ? 'T操作' : '均价盈亏'}
-                      </button>
-                    ))}
+                      >含税</button>
+                      <button
+                        type="button"
+                        onClick={() => setTaxEnabled(false)}
+                        className={`px-1.5 py-0.5 rounded text-[9px] whitespace-nowrap transition-colors leading-none ${
+                          !taxEnabled ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'
+                        }`}
+                      >免税</button>
+                    </div>
                   </div>
                 </div>
                 <div className="space-y-1 max-h-[210px] overflow-y-auto pr-0.5 custom-scrollbar" style={{ height: tradeBodyMaxH ? Math.min(210, tradeBodyMaxH) : 210, scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
@@ -6126,6 +6436,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       pairMap={modeIsDt ? dtPnL.pairMap : undefined}
                       buyMatchMap={modeIsDt ? dtPnL.buyMatchMap : undefined}
                       errIds={modeIsDt ? dtPnL.errIds : undefined}
+                      taxEnabled={taxEnabled}
                       onToggle={(x) => handleToggleTrade(s.id, x.id)}
                       onDelete={(x) => handleRemoveTrade(s.id, x.id)}
                       onEdit={(x) => startEditTrade(s, x)}
@@ -6144,8 +6455,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const trades = getTrades(s).filter(x => !x.isMerged).sort((a, b) => b.createdAt - a.createdAt);
         if (trades.length === 0) return null;
         // 与交易弹窗保持同一盈利口径：均价 / 做T
-        const simpleAvg = calcAvgPnlForTrades(getTrades(s));
-        const simpleDt = calcDtPnlForTrades(getTrades(s));
+        const simpleAvg = calcAvgPnlForTrades(getTrades(s), taxEnabled, s.name);
+        const simpleDt = calcDtPnlForTrades(getTrades(s), taxEnabled, s.name);
         return (
           <div
             ref={tradeSimpleRef}
@@ -6165,6 +6476,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   pairMap={pnlCalcMode === 'dt' ? simpleDt.pairMap : undefined}
                   buyMatchMap={pnlCalcMode === 'dt' ? simpleDt.buyMatchMap : undefined}
                   errIds={pnlCalcMode === 'dt' ? simpleDt.errIds : undefined}
+                  taxEnabled={taxEnabled}
                   onToggle={(x) => handleToggleTrade(s.id, x.id)}
                   onDelete={(x) => handleRemoveTrade(s.id, x.id)}
                   onEdit={(x) => { // 点击编辑：切换到交易窗口的编辑模式
@@ -6700,9 +7012,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           </div>
         )}
 
-        {/* 盈利明细面板（仅盈利视图） */}
+        {/* 盈利明细面板（仅盈利视图，全屏覆盖） */}
         {bottomBarView === 'profit' && showProfitPanel && (
-          <div ref={profitBodyRef} className="mt-2 pt-2 border-t border-app-border max-h-[66vh] flex flex-col overflow-y-auto custom-scrollbar" style={{ overscrollBehavior: 'contain' }}>
+          <div
+            ref={profitBodyRef}
+            className="fixed inset-0 z-[90] bg-app-bg flex flex-col overflow-y-auto custom-scrollbar"
+            style={{ overscrollBehavior: 'contain' }}
+          >
+            {/* 顶部关闭按钮 */}
+            <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-app-border bg-app-card/80 backdrop-blur">
+              <span className="text-sm font-semibold text-app-text">盈亏统计</span>
+              <button
+                type="button"
+                onClick={() => setShowProfitPanel(false)}
+                className="text-app-subtext hover:text-app-text transition-colors p-1 rounded"
+                title="关闭 (ESC)"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-4 flex-1 flex flex-col min-h-0">
             {/* 汇总区（非滚动）：周期选择 + 汇总卡片 + 个股小计 + 逐日明细标题 */}
             <div className="shrink-0 space-y-2">
             {/* 周期快捷选择 */}
@@ -6724,20 +7053,38 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </button>
                 ))}
               </div>
-              {/* 盈利计算模式：T操作 / 均价盈亏（紧贴周期控件右侧，全局切换） */}
-              <div className="flex items-center rounded-md border border-app-border bg-app-input/40 p-0.5 shrink-0" title="盈利计算方式：均价盈亏 或 做T（卖出匹配最近买入）">
-                {(['dt', 'avg'] as const).map(m => (
+              {/* 盈利计算模式 + 含税/免税（紧贴周期控件右侧，全局切换） */}
+              <div className="flex items-center gap-1">
+                <div className="flex items-center rounded-md border border-app-border bg-app-input/40 p-0.5 shrink-0" title="盈利计算方式：均价盈亏 或 做T（卖出匹配最近买入）">
+                  {(['dt', 'avg'] as const).map(m => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setPnlCalcMode(m)}
+                      className={`px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap transition-colors ${
+                        pnlCalcMode === m ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'
+                      }`}
+                    >
+                      {m === 'dt' ? 'T操作' : '均价盈亏'}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center rounded-md border border-app-border bg-app-input/40 p-0.5 shrink-0" title="盈利是否计入税费（佣金 5 元/笔、股票卖出 0.05% 印花税）">
                   <button
-                    key={m}
                     type="button"
-                    onClick={() => setPnlCalcMode(m)}
+                    onClick={() => setTaxEnabled(true)}
                     className={`px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap transition-colors ${
-                      pnlCalcMode === m ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'
+                      taxEnabled ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'
                     }`}
-                  >
-                    {m === 'dt' ? 'T操作' : '均价盈亏'}
-                  </button>
-                ))}
+                  >含税</button>
+                  <button
+                    type="button"
+                    onClick={() => setTaxEnabled(false)}
+                    className={`px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap transition-colors ${
+                      !taxEnabled ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'
+                    }`}
+                  >免税</button>
+                </div>
               </div>
               {/* 自定义起止（仅在选中“自定义”时显示） */}
               {profitRangeMode === 'custom' && (
@@ -6761,7 +7108,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             {/* 汇总卡片 + 个股小计（中间） */}
             <div className="bg-app-card/70 rounded-lg px-3 py-2 flex items-center gap-x-3 gap-y-1 border border-app-border">
               <div className="shrink-0">
-                <div className="text-[10px] text-app-subtext mb-1">周期已实现盈亏</div>
+                <div className="text-[10px] text-app-subtext mb-1 flex items-center gap-2">
+                  <span>周期已实现盈亏</span>
+                  {taxEnabled && profitResult.totalFees !== undefined && profitResult.totalFees > 0 && (
+                    <span className="font-mono text-brand-green/80 text-[10px]" title="周期内税费合计（佣金 + 其他费 + 印花税）">
+                      税 {profitResult.totalFees.toFixed(2)}
+                    </span>
+                  )}
+                </div>
                 <div className={`font-mono text-xl font-bold leading-none ${profitResult.total >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
                   {fmtSignedAmount(profitResult.total)}
                 </div>
@@ -6770,10 +7124,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <div className="flex-1 flex flex-wrap gap-1.5 justify-start">
                   {Object.keys(profitResult.byStock).map(sid => {
                     const v = profitResult.byStock[sid];
+                    const hasErr = profitResult.errStockIds?.has(sid);
                     return (
                       <span key={sid} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-app-border bg-app-input/50 text-[10px]">
                         <span className="text-app-subtext">{profitStockNames[sid] || sid}</span>
-                        <span className={`font-mono font-medium ${v >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(v)}</span>
+                        {hasErr ? (
+                          <ErrTip reason="该股票窗口内存在卖出股数超过此前买入的记录，疑似录入有误">
+                            <span className="font-mono font-bold text-orange-400 cursor-default">ERR</span>
+                          </ErrTip>
+                        ) : (
+                          <span className={`font-mono font-medium ${v >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(v)}</span>
+                        )}
                       </span>
                     );
                   })}
@@ -6834,9 +7195,24 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                   <span>=</span>
                                   <span>{tx.amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}</span>
                                 </span>
+                                {/* 买入的税紧跟公式 */}
+                                {!isSell && tx.fees && (
+                                  <FeeTip fees={tx.fees} grossAmount={tx.grossAmount ?? tx.amount} side="buy">
+                                    <span className="shrink-0 font-mono text-[10px] text-brand-green/80">税 {tx.fees.total.toFixed(2)}</span>
+                                  </FeeTip>
+                                )}
                                 {(() => {
                                   const sellPnl = isSell && tx.err ? (
-                                    <span className="shrink-0 font-mono text-[11px] font-bold text-orange-400" title="卖出股数超过此前买入，疑似录入有误">ERR</span>
+                                    <ErrTip
+                                      price={tx.price}
+                                      shares={tx.shares}
+                                      amount={tx.grossAmount ?? tx.amount}
+                                      errShares={tx.errShares}
+                                      availableShares={tx.shares - (tx.errShares ?? 0)}
+                                      dateLabel={`${new Date(tx.time).getMonth() + 1}月${new Date(tx.time).getDate()}日`}
+                                    >
+                                      <span className="shrink-0 font-mono text-[11px] font-bold text-orange-400">ERR</span>
+                                    </ErrTip>
                                   ) : isSell && tx.pnl !== 0 && (
                                     <span className={`shrink-0 font-mono text-[11px] font-bold ${(tx.pnl ?? 0) >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(tx.pnl!)}</span>
                                   );
@@ -6844,6 +7220,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                     ? <PairTip pairs={tx.pairs} fmtPrice={(v) => formatPrice(v, tx.stockName)}>{sellPnl}</PairTip>
                                     : sellPnl;
                                 })()}
+                                {/* 卖出的税紧跟盈亏 */}
+                                {isSell && tx.fees && (
+                                  <FeeTip fees={tx.fees} grossAmount={tx.grossAmount ?? tx.amount} side="sell">
+                                    <span className="shrink-0 font-mono text-[10px] text-brand-green/80">税 {tx.fees.total.toFixed(2)}</span>
+                                  </FeeTip>
+                                )}
                                 <span className="ml-auto shrink-0 font-mono text-[10px] text-app-subtext">{new Date(tx.time).toLocaleTimeString('zh-CN', { hour12: false })}</span>
                               </div>
                             );
@@ -6889,6 +7271,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               />
               <span className="ml-auto shrink-0 font-mono text-[10px] text-app-subtext">{profitRangeLabel}</span>
             </div>
+            </div> {/* 内层 p-4 flex-1 包裹 */}
           </div>
         )}
       </div>

@@ -1,6 +1,30 @@
 import type { StockTrade } from '../types';
 import type { StockLedgerMap } from './stockLedgerStore';
 
+// 判断一只股票是否为 ETF/基金（项目中多处复用此规则，集中到一处）
+export const isEtf = (name?: string): boolean =>
+  !!name && (name.includes('ETF') || name.includes('etf'));
+
+// 单笔交易的税费计算结果
+export interface TradeFees {
+  commission: number;  // 佣金（固定 5 元，双边）
+  otherFees: number;   // 其他费用（股票双边 0.05 元，ETF 无）
+  stampDuty: number;   // 印花税（仅股票卖出：成交金额 × 0.05%）
+  total: number;       // 三项合计
+}
+
+// 计算单笔买卖的税费。ETF 仅 5 元佣金双边；股票额外双边 0.05 其他费，卖出加收 0.05% 印花税。
+// 税费基（尤其印花税）统一用 trade.amount ?? price × shares，避免合并记录误差。
+export function calcTradeFees(trade: StockTrade, stockName?: string): TradeFees {
+  const etf = isEtf(stockName);
+  const commission = 5;
+  const otherFees = etf ? 0 : 0.05;
+  const grossAmount = (trade.amount ?? ((trade.price ?? 0) * (trade.shares ?? 0))) || 0;
+  const stampDuty = (!etf && trade.side === 'sell') ? grossAmount * 0.0005 : 0;
+  const total = commission + otherFees + stampDuty;
+  return { commission, otherFees, stampDuty, total };
+}
+
 // 统一持仓计算结果：剩余持股数 + 移动加权成本
 export interface PositionFromTrades {
   shares: number;
@@ -40,11 +64,14 @@ export interface PnlTx {
   stockName: string;
   price: number;
   shares: number;
-  amount: number;   // 成交金额 = price × shares
-  pnl?: number;     // 仅卖出：该笔已实现盈亏
-  err?: boolean;    // 仅做T模式：该笔卖出配不满买入（卖超），视为录入有误
-  pairs?: DtPair[]; // 仅做T模式：该笔卖出匹配到的买入记录明细
-  time: number;     // 有效时间（filledAt || createdAt）
+  amount: number;        // 成交金额（withTax 时为含税费的净金额：买入加税费、卖出扣税费）
+  grossAmount?: number;  // 原始成交金额 price × shares（不含税费；FeeTip 算印花税基数需要）
+  pnl?: number;          // 仅卖出：该笔已实现盈亏
+  err?: boolean;         // 仅做T模式：该笔卖出配不满买入（卖超），视为录入有误
+  errShares?: number;    // err=true 时：匹配失败的缺口股数（超出此前可用买入的部分）
+  pairs?: DtPair[];      // 仅做T模式：该笔卖出匹配到的买入记录明细
+  time: number;          // 有效时间（filledAt || createdAt）
+  fees?: TradeFees;      // 仅 withTax=true 时：该笔交易的税费明细
 }
 
 // 某一天的买卖操作与当天已实现盈亏
@@ -53,12 +80,15 @@ export interface PnlDay {
   buys: PnlTx[];
   sells: PnlTx[];
   dayRealized: number;  // 当天卖出实现的盈亏合计
+  dayFees?: number;     // 仅 withTax=true 时：当天税费合计
 }
 
 export interface RealizedPnlForRange {
   total: number;                            // 窗口内全部已实现盈亏
   byStock: Record<string, number>;          // 各股票已实现盈亏
   byDay: PnlDay[];                          // 逐日明细（按日期升序）
+  totalFees?: number;                       // 仅 withTax=true 时：窗口内税费合计
+  errStockIds?: Set<string>;                // 窗口内存在卖超（err=true）卖出的股票 id 集合
 }
 
 // 做T口径的一条配对明细：某笔卖出占用了哪一笔买入的多少份额
@@ -96,7 +126,8 @@ export interface AvgPnlResult {
 // 与做T口径 calcDtPnlForTrades 结构完全对称（返回 map/total/pendingMap/positionShares/positionCost/errIds）。
 // 与 StockDividendPage 历史记录里的本地 calcRealizedPnlMap 等价但补齐了 position 字段，
 // 时间排序用 effectiveTime（filledAt ?? createdAt），与做T口径/盈利统计窗口口径统一。
-export function calcAvgPnlForTrades(trades?: StockTrade[]): AvgPnlResult {
+// 税费：withTax=true 时，买入税费拉高成本基，卖出税费降低实收。
+export function calcAvgPnlForTrades(trades?: StockTrade[], withTax = false, stockName?: string): AvgPnlResult {
   const result: AvgPnlResult = { map: {}, total: 0, pendingMap: {}, positionShares: 0, positionCost: 0, errIds: new Set() };
   if (!trades || trades.length === 0) return result;
   const all = trades
@@ -105,7 +136,12 @@ export function calcAvgPnlForTrades(trades?: StockTrade[]): AvgPnlResult {
   let rs = 0, rc = 0; // 剩余持股、移动加权成本
   for (const t of all) {
     const shares = t.shares ?? 0;
-    const amt = (t.amount ?? ((t.price ?? 0) * shares)) || 0;
+    let amt = (t.amount ?? ((t.price ?? 0) * shares)) || 0;
+    if (withTax) {
+      const fees = calcTradeFees(t, stockName);
+      if (t.side === 'buy') amt += fees.total;       // 买入税费加进成本基
+      else amt -= fees.total;                         // 卖出税费从实收里扣
+    }
     if (t.side === 'buy') {
       if (t.status !== 'filled') continue; // 买入挂单尚未执行，不占持仓
       const prevRs = rs;
@@ -182,8 +218,8 @@ interface DtLot {
 
 // 从最近的未匹配买入开始倒序匹配一笔卖出，返回该卖出的做T已实现盈亏、逐笔配对明细，
 // 并扣减已用买入。数量不足时只匹配能覆盖的部分（部分匹配），剩余股数仍配不满即视为卖超（err=true）。
-function matchDtSell(lots: DtLot[], sellPrice: number, sellShares: number) {
-  let remaining = sellShares, pnl = 0;
+function matchDtSell(lots: DtLot[], sellPrice: number, sellShares: number, sellFeesTotal = 0) {
+  let remaining = sellShares, pnl = -sellFeesTotal; // 卖出税费直接从盈亏里扣
   const pairs: DtPair[] = [];
   while (remaining > 0 && lots.length > 0) {
     const lot = lots[lots.length - 1];
@@ -199,7 +235,8 @@ function matchDtSell(lots: DtLot[], sellPrice: number, sellShares: number) {
 
 // 做T口径：按成交顺序把每笔卖出匹配到「最近的一笔未匹配买入」，计算做T已实现盈亏，
 // 并得到剩余未匹配买入（即做T口径下的当前持仓）。与均价口径 differ：卖出成本取自所匹配买入价。
-export function calcDtPnlForTrades(trades?: StockTrade[]): DtPnlResult {
+// 税费：withTax=true 时，买入税费加进 lot 成本，卖出税费从 pnl 里扣。
+export function calcDtPnlForTrades(trades?: StockTrade[], withTax = false, stockName?: string): DtPnlResult {
   const result: DtPnlResult = { map: {}, total: 0, pendingMap: {}, pairMap: {}, buyMatchMap: {}, positionShares: 0, positionCost: 0, errIds: new Set() };
   if (!trades || trades.length === 0) return result;
   const all = trades
@@ -210,9 +247,15 @@ export function calcDtPnlForTrades(trades?: StockTrade[]): DtPnlResult {
     const shares = t.shares ?? 0;
     if (t.side === 'buy') {
       if (t.status !== 'filled') continue; // 买入挂单尚未执行，不进持仓
-      lots.push({ id: t.id, time: effectiveTime(t), originalCreatedAt: t.originalCreatedAt ?? t.createdAt, price: t.price ?? 0, total: shares, rest: shares });
+      let buyPrice = t.price ?? 0;
+      if (withTax) {
+        const fees = calcTradeFees(t, stockName);
+        buyPrice += fees.total / shares; // 买入税费摊到每股成本
+      }
+      lots.push({ id: t.id, time: effectiveTime(t), originalCreatedAt: t.originalCreatedAt ?? t.createdAt, price: buyPrice, total: shares, rest: shares });
     } else if (t.status === 'filled') {
-      const { pnl, pairs, err } = matchDtSell(lots, t.price ?? 0, shares);
+      const sellFeesTotal = withTax ? calcTradeFees(t, stockName).total : 0;
+      const { pnl, pairs, err } = matchDtSell(lots, t.price ?? 0, shares, sellFeesTotal);
       if (err) result.errIds.add(t.id);
       result.map[t.id] = pnl;
       result.pairMap[t.id] = pairs;
@@ -240,7 +283,8 @@ export function calcDtPnlForTrades(trades?: StockTrade[]): DtPnlResult {
   if (result.positionShares > 0) {
     for (const t of all) {
       if (t.side === 'sell' && t.status === 'pending' && !t.isDeleted) {
-        const { pnl, pairs } = matchDtSell(lots.map(l => ({ ...l })), t.price ?? 0, t.shares ?? 0);
+        const sellFeesTotal = withTax ? calcTradeFees(t, stockName).total : 0;
+        const { pnl, pairs } = matchDtSell(lots.map(l => ({ ...l })), t.price ?? 0, t.shares ?? 0, sellFeesTotal);
         result.pendingMap[t.id] = pnl;
         result.pairMap[t.id] = pairs;
       }
@@ -262,12 +306,14 @@ const dateKeyOf = (ts: number) => {
 // 1. 先按时间顺序扫描窗口前所有成交，建立各股票期初状态；
 // 2. 再扫窗口内成交，卖出按 dateKey 归属并计算已实现盈亏，忽略软删与挂单。
 // mode='avg'：移动加权成本结算（卖出按均价成本）；mode='dt'：做T匹配（卖出匹配最近买入）。
+// withTax=true：买入税费拉高成本基，卖出税费扣减实收。
 export function calcRealizedPnlForRange(
   ledger: StockLedgerMap,
   stockNames: Record<string, string>,
   startTs: number,
   endTs: number,
   mode: PnlCalcMode = 'avg',
+  withTax = false,
 ): RealizedPnlForRange {
   const byStock: Record<string, number> = {};
   const dayMap = new Map<string, PnlDay>();
@@ -281,7 +327,13 @@ export function calcRealizedPnlForRange(
     if (tx.pnl !== undefined) day.sells.push(tx);
     else day.buys.push(tx);
     if (tx.pnl !== undefined) day.dayRealized += tx.pnl;
+    if (withTax && tx.fees) {
+      day.dayFees = (day.dayFees ?? 0) + tx.fees.total;
+    }
   };
+
+  let totalFees = 0;
+  const errStockIds = new Set<string>();
 
   for (const [stockId, entry] of Object.entries(ledger)) {
     if (!entry || !entry.trades) continue;
@@ -298,37 +350,52 @@ export function calcRealizedPnlForRange(
     for (const t of trades) {
       const eff = effectiveTime(t);
       if (eff >= endTs) break;               // 窗口之后不再影响窗口内盈亏
-      const amt = t.amount ?? t.price * t.shares;
       const shares = t.shares;
+      const grossAmt = t.amount ?? t.price * t.shares; // 原始成交金额（price × shares 或合并记录的 amount）
+      let amt = grossAmt;
       if (t.side === 'buy') {
-        lots.push({ id: t.id, time: eff, originalCreatedAt: t.originalCreatedAt ?? t.createdAt, price: t.price, total: shares, rest: shares });
+        const buyFees = withTax ? calcTradeFees(t, name) : undefined;
+        if (withTax) amt += buyFees!.total;
+        let buyPrice = t.price;
+        if (withTax) buyPrice += buyFees!.total / shares;
+        lots.push({ id: t.id, time: eff, originalCreatedAt: t.originalCreatedAt ?? t.createdAt, price: buyPrice, total: shares, rest: shares });
         const prevRs = rs;
         rs += shares;
         rc = rs > 0 ? (rc * prevRs + amt) / rs : 0;
         if (eff >= startTs) {
-          addTx(dateKeyOf(eff), { stockId, stockName: name, price: t.price, shares, amount: amt, time: eff });
+          if (withTax) totalFees += buyFees!.total;
+          addTx(dateKeyOf(eff), { stockId, stockName: name, price: t.price, shares, amount: amt, grossAmount: grossAmt, time: eff, fees: buyFees });
         }
         continue;
       }
       // 卖出
       let pnl: number;
       let err = false;
+      let errShares = 0;
       let pairs: DtPair[] | undefined;
+      const sellFees = withTax ? calcTradeFees(t, name) : undefined;
+      const sellFeesTotal = sellFees?.total ?? 0;
+      if (withTax) amt -= sellFeesTotal;
       if (mode === 'dt') {
         // 做T：卖出匹配最近的未匹配买入（含窗口前买入），只计有匹配的部分
-        const r = matchDtSell(lots, t.price, shares);
+        const r = matchDtSell(lots, t.price, shares, sellFeesTotal);
         pnl = r.pnl;
         err = r.err;
+        errShares = r.err ? (t.shares ?? 0) - r.pairs.reduce((s, p) => s + p.take, 0) : 0;
         pairs = r.pairs;
       } else {
         // 均价：按移动加权成本结算
         pnl = rs > 0 ? amt - rc * shares : 0;
+        if (rs <= 0) { err = true; errShares = shares; }
+        else if (rs < shares) { err = true; errShares = shares - rs; }
         rs = Math.max(0, rs - shares);
         if (rs === 0) rc = 0;
       }
       if (eff >= startTs) {
         realized += pnl;
-        addTx(dateKeyOf(eff), { stockId, stockName: name, price: t.price, shares, amount: amt, time: eff, pnl, err: err || undefined, pairs });
+        if (withTax) totalFees += sellFeesTotal;
+        if (err) errStockIds.add(stockId);
+        addTx(dateKeyOf(eff), { stockId, stockName: name, price: t.price, shares, amount: amt, grossAmount: grossAmt, time: eff, pnl, err: err || undefined, errShares: errShares || undefined, pairs, fees: sellFees });
       }
     }
 
@@ -336,7 +403,10 @@ export function calcRealizedPnlForRange(
   }
 
   const byDay = Array.from(dayMap.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
-  return { total: byStockTotal(byStock), byStock, byDay };
+  const result: RealizedPnlForRange = { total: byStockTotal(byStock), byStock, byDay };
+  if (withTax) result.totalFees = totalFees;
+  result.errStockIds = errStockIds;
+  return result;
 }
 
 function byStockTotal(byStock: Record<string, number>): number {
