@@ -14,6 +14,7 @@ import {
   ensureBollCacheRestored,
   mergeTodayBarToKlines,
   projectBollAsOf,
+  buildBollDataFromKlines,
   type BollData,
   type BollPeriod,
   type BollAdjust,
@@ -184,6 +185,14 @@ export const priceBureau = {
     return lines && lines.length > 0 ? lines[lines.length - 1] : null;
   },
 
+  /** 含未收盘形态的完整 BOLL 数据（三轨+均线+区间高低+含今日实时价的 klines）。
+   *  所有周期统一从 store 取——daily 入 store 前已自动按"含未收盘"形态重算（absorb / setRealtime 都触发），
+   *  weekly/monthly 无 realtime merge，store 原始即完整。消费方拿 upper/mid/lower/ma 一律走这里。 */
+  getTodayBoll(code: string, period: BollPeriod): BollData | null {
+    if (asOfDate) return readEntry(code)?.[period] ?? null;
+    return store.get(code)?.[period] ?? null;
+  },
+
   // ── 历史展示模式：对外唯一开关与配套读取 ──
   /** 设置历史截止日（'YYYY-MM-DD'）；传 null 恢复正常实时模式。 */
   setAsOfDate(date: string | null): void {
@@ -233,7 +242,15 @@ export const priceBureau = {
   absorb(code: string, period: BollPeriod, result: { data: BollData | null }): void {
     const cur = store.get(code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
     if (result.data) {
-      store.set(code, { ...cur, [period]: result.data });
+      let dataToStore = result.data;
+      // daily：入 store 前自动按"含未收盘"形态重算一遍（buildBollDataFromKlines 唯一算法，避免接口原始 BollData 与今日实时价漂移）
+      // weekly/monthly 无 realtime merge，接口原始 BollData 即完整，不重算
+      if (period === 'daily' && !asOfDate) {
+        const liveKlines = priceBureau.getTodayDailyKlines(code);
+        const rebuilt = buildBollDataFromKlines(liveKlines, result.data.fetchedAt ?? Date.now());
+        if (rebuilt) dataToStore = rebuilt;
+      }
+      store.set(code, { ...cur, [period]: dataToStore });
       notify();
     }
   },
@@ -277,7 +294,17 @@ export const priceBureau = {
   setRealtime(code: string, q: TencentQuote): void {
     if (asOfDate) return;
     const cur = store.get(code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
-    store.set(code, { ...cur, realtime: { ...q, updatedAt: Date.now() } });
+    // 写入新 realtime 后，daily 里的 BOLL 三轨/均线/klines 也要同步重算（含未收盘形态）——
+    // 否则股价一变，三轨还停留在上次 fetchAndAbsorb 时的那份，BOLL 弹窗/缩略的数值就会漂
+    let dailyNext = cur.daily;
+    if (cur.daily) {
+      const withRt = { ...cur, realtime: { ...q, updatedAt: Date.now() } };
+      store.set(code, withRt); // 先把 realtime 写进去，getTodayDailyKlines 就能合成新今日 bar
+      const liveKlines = priceBureau.getTodayDailyKlines(code);
+      const rebuilt = buildBollDataFromKlines(liveKlines, cur.daily.fetchedAt ?? Date.now());
+      if (rebuilt) dailyNext = rebuilt;
+    }
+    store.set(code, { ...cur, realtime: { ...q, updatedAt: Date.now() }, daily: dailyNext });
     notify();
   },
 

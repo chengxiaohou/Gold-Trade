@@ -4711,7 +4711,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                               // 历史模式下数据中心直接返回按截止日投影（截断至该日）的数据，不发请求。
                               const popupLogCtx = requestLogService.beginBatch('打开 BOLL 弹窗：1 只股票 · 1 条请求');
                               priceBureau.fetchAndAbsorb(stock.code, key, apiSource, bollAdjust, popupLogCtx).then(result => {
-                                setBollData(result.data);
+                                setBollData(priceBureau.getTodayBoll(stock.code, key));
                                 setBollError(result.error || null);
                               });
                             }
@@ -4991,7 +4991,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           if (stock.bollHidden) return;
           const popupLogCtx = requestLogService.beginBatch('切换布林线周期/复权：1 只股票 · 1 条请求');
           priceBureau.fetchAndAbsorb(stock.code, period, apiSource, adjust, popupLogCtx).then(result => {
-            setBollData(result.data);
+            setBollData(priceBureau.getTodayBoll(stock.code, period));
             setBollError(result.error || null);
             setBollUnsupported(result.unsupported || false);
             // 恢复弹窗滚动位置
