@@ -24,6 +24,12 @@ import SignalTagsFooter from './SignalTagsFooter';
 import { getDayTagSet, type DayTag } from '../services/signalTagDetail';
 import { calcIndicators, formatPrice, formatVolume, type IndicatorResult } from '../services/indicators';
 
+/* 月份快捷选择：隐藏滚动条但保留滚动能力 */
+const MONTH_SCROLLER_CSS = `
+.profit-month-scroller::-webkit-scrollbar { display: none; }
+.profit-month-scroller { scrollbar-width: none; -ms-overflow-style: none; }
+`;
+
 const TAG_PALETTE = [
   { key: 'gray', label: '灰色', bg: 'bg-gray-500/10', text: 'text-gray-500', border: 'border-gray-500/20', hover: 'hover:border-gray-500/50' },
   { key: 'indigo', label: '默认', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500/20', hover: 'hover:border-indigo-500/50' },
@@ -828,7 +834,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
           const grossAmt = (t.amount ?? (price * shares)) || 0;
           return (
             <FeeTip fees={fees} grossAmount={grossAmt} side="buy">
-              <span className="shrink-0 font-mono text-[10px] text-brand-green/80">税 {fees.total.toFixed(2)}</span>
+              <span className="shrink-0 font-mono text-[10px] text-brand-green/60">税 {fees.total.toFixed(2)}</span>
             </FeeTip>
           );
         })()}
@@ -867,7 +873,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
           const grossAmt = (t.amount ?? (price * shares)) || 0;
           return (
             <FeeTip fees={fees} grossAmount={grossAmt} side="sell">
-              <span className="shrink-0 font-mono text-[10px] text-brand-green/80">税 {fees.total.toFixed(2)}</span>
+              <span className="shrink-0 font-mono text-[10px] text-brand-green/60">税 {fees.total.toFixed(2)}</span>
             </FeeTip>
           );
         })()}
@@ -1494,6 +1500,15 @@ const SupportResistanceRows: React.FC<{
 );
 
 export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, autoRefreshInterval = 60, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
+  // 注入月份滚动条隐藏样式
+  useEffect(() => {
+    const id = 'profit-month-scroller-style';
+    if (document.getElementById(id)) return;
+    const el = document.createElement('style');
+    el.id = id;
+    el.textContent = MONTH_SCROLLER_CSS;
+    document.head.appendChild(el);
+  }, []);
   // 全量备份导入用的隐藏文件选择（放入盈利统计面板）
   const fullBackupInputRef = useRef<HTMLInputElement>(null);
   const defaultVisibleColumns = ['code', 'name', 'price', 'changePercent', 'dividendLeft', 'dividendRight', 'position', 'dividendRate', 'dividendRates'];
@@ -7020,40 +7035,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             style={{ overscrollBehavior: 'contain' }}
           >
             {/* 顶部关闭按钮 */}
-            <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-app-border bg-app-card/80 backdrop-blur">
-              <span className="text-sm font-semibold text-app-text">盈亏统计</span>
-              <button
-                type="button"
-                onClick={() => setShowProfitPanel(false)}
-                className="text-app-subtext hover:text-app-text transition-colors p-1 rounded"
-                title="关闭 (ESC)"
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <div className="p-4 flex-1 flex flex-col min-h-0">
-            {/* 汇总区（非滚动）：周期选择 + 汇总卡片 + 个股小计 + 逐日明细标题 */}
-            <div className="shrink-0 space-y-2">
-            {/* 周期快捷选择 */}
-            <div className="flex items-center gap-1.5 flex-wrap text-xs py-0.5">
-              <div className="flex items-center rounded-md border border-app-border bg-app-input/40 p-0.5 shrink-0">
-                {PROFIT_RANGE_SEGS.map(seg => (
-                  <button
-                    key={seg.key}
-                    type="button"
-                    onClick={() => {
-                      setProfitRangeMode(seg.key);
-                      if (seg.key !== 'custom') setShowProfitPanel(true);
-                    }}
-                    className={`px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap transition-colors ${
-                      profitRangeMode === seg.key ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'
-                    }`}
-                  >
-                    {seg.label}
-                  </button>
-                ))}
-              </div>
-              {/* 盈利计算模式 + 含税/免税（紧贴周期控件右侧，全局切换） */}
+            <div
+              className="shrink-0 flex items-center gap-4 px-4 py-2 border-b border-app-border bg-app-card/80 backdrop-blur cursor-pointer"
+              onClick={(e) => { if (e.target === e.currentTarget) setShowProfitPanel(false); }}
+              title="点击收起 (ESC)"
+            >
+              <span className="text-sm font-semibold text-app-text shrink-0">盈亏统计</span>
+              {/* 盈利计算模式 + 含税/免税 */}
               <div className="flex items-center gap-1">
                 <div className="flex items-center rounded-md border border-app-border bg-app-input/40 p-0.5 shrink-0" title="盈利计算方式：均价盈亏 或 做T（卖出匹配最近买入）">
                   {(['dt', 'avg'] as const).map(m => (
@@ -7086,22 +7074,84 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   >免税</button>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setShowProfitPanel(false)}
+                className="ml-auto text-app-subtext hover:text-app-text transition-colors p-1 rounded"
+                title="关闭 (ESC)"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-4 flex-1 flex flex-col min-h-0">
+            {/* 汇总区（非滚动）：周期选择 + 汇总卡片 + 个股小计 + 逐日明细标题 */}
+            <div className="shrink-0 space-y-2">
+            {/* 周期快捷选择 */}
+            <div className="flex items-center gap-1.5 flex-wrap text-xs py-0.5">
+              <div className="flex items-center rounded-md border border-app-border bg-app-input/40 p-0.5 shrink-0">
+                {PROFIT_RANGE_SEGS.map(seg => (
+                  <button
+                    key={seg.key}
+                    type="button"
+                    onClick={() => {
+                      setProfitRangeMode(seg.key);
+                      if (seg.key !== 'custom') setShowProfitPanel(true);
+                    }}
+                    className={`px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap transition-colors ${
+                      profitRangeMode === seg.key ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'
+                    }`}
+                  >
+                    {seg.label}
+                  </button>
+                ))}
+              </div>
               {/* 自定义起止（仅在选中“自定义”时显示） */}
               {profitRangeMode === 'custom' && (
-              <div className="flex items-center gap-1 rounded-md border border-app-border bg-app-input/40 px-1.5 py-[3px] shrink-0">
-                <input
-                  type="date"
-                  value={profitCustomStart}
-                  onChange={e => { setProfitCustomStart(e.target.value); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
-                  className="w-[100px] shrink-0 bg-transparent text-[10px] text-app-text outline-none appearance-none"
-                />
-                <span className="text-app-subtext shrink-0">至</span>
-                <input
-                  type="date"
-                  value={profitCustomEnd}
-                  onChange={e => { setProfitCustomEnd(e.target.value); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
-                  className="w-[100px] shrink-0 bg-transparent text-[10px] text-app-text outline-none appearance-none"
-                />
+              <div className="flex items-center gap-1 shrink-0">
+                {/* 最近 6 个月快捷选择 */}
+                <div className="flex items-center rounded-md border border-app-border bg-app-input/40 p-0.5">
+                  {(() => {
+                    const now = new Date();
+                    const btns: { label: string; key: string; start: string; end: string }[] = [];
+                    for (let i = 0; i < 6; i++) {
+                      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                      const y = d.getFullYear();
+                      const m = d.getMonth() + 1;
+                      const first = `${y}-${String(m).padStart(2, '0')}-01`;
+                      const lastDay = new Date(y, m, 0).getDate();
+                      const last = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+                      const label = `${m}月`;
+                      btns.push({ label, key: first, start: first, end: last });
+                    }
+                    const isCustomMonth = (s: string) => btns.some(b => b.start === s);
+                    return btns.map(b => (
+                      <button
+                        key={b.key}
+                        type="button"
+                        onClick={() => { setProfitCustomStart(b.start); setProfitCustomEnd(b.end); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
+                        className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap transition-colors ${
+                          profitCustomStart === b.start && isCustomMonth(profitCustomStart)
+                            ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'
+                        }`}
+                      >{b.label}</button>
+                    ));
+                  })()}
+                </div>
+                <div className="flex items-center gap-1 rounded-md border border-app-border bg-app-input/40 px-1 py-[3px]">
+                  <input
+                    type="date"
+                    value={profitCustomStart}
+                    onChange={e => { setProfitCustomStart(e.target.value); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
+                    className="w-[66px] shrink-0 bg-transparent text-[10px] text-app-text outline-none appearance-none"
+                  />
+                  <span className="text-app-subtext shrink-0">至</span>
+                  <input
+                    type="date"
+                    value={profitCustomEnd}
+                    onChange={e => { setProfitCustomEnd(e.target.value); setProfitRangeMode('custom'); setShowProfitPanel(true); }}
+                    className="w-[66px] shrink-0 bg-transparent text-[10px] text-app-text outline-none appearance-none"
+                  />
+                </div>
               </div>
               )}
             </div>
@@ -7111,7 +7161,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <div className="text-[10px] text-app-subtext mb-1 flex items-center gap-2">
                   <span>周期已实现盈亏</span>
                   {taxEnabled && profitResult.totalFees !== undefined && profitResult.totalFees > 0 && (
-                    <span className="font-mono text-brand-green/80 text-[10px]" title="周期内税费合计（佣金 + 其他费 + 印花税）">
+                    <span className="font-mono text-brand-green/60 text-[10px]" title="周期内税费合计（佣金 + 其他费 + 印花税）">
                       税 {profitResult.totalFees.toFixed(2)}
                     </span>
                   )}
@@ -7176,6 +7226,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       {day.dayRealized !== 0 && (
                         <span className={`shrink-0 font-mono text-[11px] font-bold ${day.dayRealized >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(day.dayRealized)}</span>
                       )}
+                      {taxEnabled && day.dayFees !== undefined && day.dayFees > 0 && (
+                        <span className="shrink-0 font-mono text-[10px] text-brand-green/60">税 {day.dayFees.toFixed(2)}</span>
+                      )}
                       <span className="ml-auto shrink-0 whitespace-nowrap font-mono text-[11px] text-app-subtext">买 {day.buys.length} · 卖 {day.sells.length}</span>
                     </button>
                     {expanded && (
@@ -7196,9 +7249,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                   <span>{tx.amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}</span>
                                 </span>
                                 {/* 买入的税紧跟公式 */}
-                                {!isSell && tx.fees && (
+                                {taxEnabled && !isSell && tx.fees && (
                                   <FeeTip fees={tx.fees} grossAmount={tx.grossAmount ?? tx.amount} side="buy">
-                                    <span className="shrink-0 font-mono text-[10px] text-brand-green/80">税 {tx.fees.total.toFixed(2)}</span>
+                                    <span className="shrink-0 font-mono text-[10px] text-brand-green/60">税 {tx.fees.total.toFixed(2)}</span>
                                   </FeeTip>
                                 )}
                                 {(() => {
@@ -7221,9 +7274,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                     : sellPnl;
                                 })()}
                                 {/* 卖出的税紧跟盈亏 */}
-                                {isSell && tx.fees && (
+                                {taxEnabled && isSell && tx.fees && (
                                   <FeeTip fees={tx.fees} grossAmount={tx.grossAmount ?? tx.amount} side="sell">
-                                    <span className="shrink-0 font-mono text-[10px] text-brand-green/80">税 {tx.fees.total.toFixed(2)}</span>
+                                    <span className="shrink-0 font-mono text-[10px] text-brand-green/60">税 {tx.fees.total.toFixed(2)}</span>
                                   </FeeTip>
                                 )}
                                 <span className="ml-auto shrink-0 font-mono text-[10px] text-app-subtext">{new Date(tx.time).toLocaleTimeString('zh-CN', { hour12: false })}</span>
