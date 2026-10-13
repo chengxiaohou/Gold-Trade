@@ -82,6 +82,94 @@ export interface DtPnlResult {
   errIds: Set<string>;               // 卖超（配不满买入）的卖出记录 id
 }
 
+// 均价口径的计算结果（与 DtPnlResult 对称，逐笔盈亏 + 挂单预估 + 当前持仓）
+export interface AvgPnlResult {
+  map: Record<string, number>;       // 每笔卖出已实现盈亏（成交）
+  pendingMap: Record<string, number>; // 每笔卖出挂单预估盈亏
+  total: number;                       // 累计已实现盈亏
+  positionShares: number;              // 当前剩余持仓（均价口径）
+  positionCost: number;                // 当前持仓加权均价（每股）
+  errIds: Set<string>;                 // 无持仓时卖出（卖超）的记录 id
+}
+
+// 均价口径：按成交顺序累加买入、卖出按当时移动加权成本结算已实现盈亏，
+// 与做T口径 calcDtPnlForTrades 结构完全对称（返回 map/total/pendingMap/positionShares/positionCost/errIds）。
+// 与 StockDividendPage 历史记录里的本地 calcRealizedPnlMap 等价但补齐了 position 字段，
+// 时间排序用 effectiveTime（filledAt ?? createdAt），与做T口径/盈利统计窗口口径统一。
+export function calcAvgPnlForTrades(trades?: StockTrade[]): AvgPnlResult {
+  const result: AvgPnlResult = { map: {}, total: 0, pendingMap: {}, positionShares: 0, positionCost: 0, errIds: new Set() };
+  if (!trades || trades.length === 0) return result;
+  const all = trades
+    .filter(t => !t.isDeleted)
+    .sort((a, b) => effectiveTime(a) - effectiveTime(b));
+  let rs = 0, rc = 0; // 剩余持股、移动加权成本
+  for (const t of all) {
+    const shares = t.shares ?? 0;
+    const amt = (t.amount ?? ((t.price ?? 0) * shares)) || 0;
+    if (t.side === 'buy') {
+      if (t.status !== 'filled') continue; // 买入挂单尚未执行，不占持仓
+      const prevRs = rs;
+      rs += shares;
+      rc = rs > 0 ? (rc * prevRs + amt) / rs : 0;
+    } else {
+      if (rs <= 0) {
+        if (t.status === 'filled') result.errIds.add(t.id);
+        continue; // 无持仓时不估算（成交或挂单都一样）
+      }
+      const pnl = amt - rc * shares;
+      if (t.status === 'filled') {
+        result.map[t.id] = pnl;
+        result.total += pnl;
+        const take = Math.min(rs, shares);
+        rs -= take;
+        if (rs === 0) rc = 0;
+      } else {
+        // 卖出挂单：同一公式、同一实时成本预结算，仅入预估表（灰色），不扣减真实持仓
+        result.pendingMap[t.id] = pnl;
+      }
+    }
+  }
+  result.positionShares = rs;
+  result.positionCost = rc;
+  return result;
+}
+
+// 整只股票的「投入 → 现状」摘要（回测页初始态用）：
+// 一次扫描同时输出均价口径和做T口径两套 realized/unrealized，外加累计买入/卖出金额、
+// 期末市值、总收益率（收益率口径一致：(期末市值 − 累计买入) / 累计买入）。
+// SSOT：内部直接调 calcAvgPnlForTrades + calcDtPnlForTrades，以后改匹配逻辑只改 service 一处。
+export interface TradeStats {
+  buyAmt: number;              // 累计买入金额
+  sellAmt: number;             // 累计卖出金额
+  tradeCount: number;          // 已成交记录数
+  realizedAvg: number;         // 均价口径 已实现盈亏
+  unrealizedAvg: number;       // 均价口径 浮动盈亏（剩余持仓 × (现价 − 当前均价)）
+  realizedDt: number;          // 做T口径 已实现盈亏
+  unrealizedDt: number;        // 做T口径 浮动盈亏
+  finalValue: number;          // 期末市值 = 卖出总额 + 剩余持仓 × 现价
+  totalReturnPct: number;      // 总收益率（%）
+}
+export function calcTradeStats(trades: StockTrade[], curPrice: number): TradeStats {
+  const filled = trades.filter(t => t.status === 'filled' && !t.isDeleted);
+  let buyAmt = 0, sellAmt = 0;
+  for (const t of filled) {
+    const amt = (t.amount ?? ((t.price ?? 0) * (t.shares ?? 0))) || 0;
+    if (t.side === 'buy') buyAmt += amt; else sellAmt += amt;
+  }
+  const avg = calcAvgPnlForTrades(trades);
+  const dt = calcDtPnlForTrades(trades);
+  const unrealizedAvg = avg.positionShares * (curPrice - avg.positionCost);
+  const unrealizedDt = dt.positionShares * (curPrice - dt.positionCost);
+  const finalValue = sellAmt + avg.positionShares * curPrice; // 期末市值口径与均价持仓一致
+  const totalReturnPct = buyAmt > 0 ? (finalValue - buyAmt) / buyAmt * 100 : 0;
+  return {
+    buyAmt, sellAmt, tradeCount: filled.length,
+    realizedAvg: avg.total, unrealizedAvg,
+    realizedDt: dt.total, unrealizedDt,
+    finalValue, totalReturnPct,
+  };
+}
+
 // 做T匹配过程中的未匹配买入份额（可被后续卖出逐份占用）
 interface DtLot {
   id: string;

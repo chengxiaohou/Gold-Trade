@@ -10,7 +10,7 @@ import { getMarketStatus } from '../services/cacheService';
 import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL } from '../services/backtestEngine';
 import { ENV_TAG_CATALOG, dividendRateForDay } from '../services/tagAnalyzers';
 import { calcIndicators, formatPrice, type IndicatorResult } from '../services/indicators';
-import { calcPositionFromTrades } from '../services/realizedPnl';
+import { calcTradeStats } from '../services/realizedPnl';
 import PriceInfoPopover from './PriceInfoPopover';
 import SignalTagsFooter from './SignalTagsFooter';
 import { TAG_COLOR_HEX, TAG_PALETTE } from './CloudSettingsModal';
@@ -325,28 +325,24 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       })
       .filter(t => kDateSet.has(t.date)); // 过滤掉非交易日（周末/停牌），K线图上才有对应位置
   }, [stock?.stockTrades, klines]);
-  // 初始真实统计：一打开就展示真实交易的持仓市值、盈亏、交易次数。
+  // 初始真实统计：一打开就展示两套盈亏口径（均价 vs 做T），与列表页盈利统计同源。
   // 胜率/最大回撤属回测引擎特有概念，真实交易留 null → UI 显示 "—"。
   const initialStats = useMemo(() => {
     const trades = stock?.stockTrades ?? [];
-    const filled = trades.filter(t => t.status === 'filled' && !t.isDeleted);
-    if (filled.length === 0) return null;
-    let buyAmt = 0, sellAmt = 0;
-    for (const t of filled) {
-      const amt = (t.amount ?? (t.price ?? 0) * (t.shares ?? 0)) || 0;
-      if (t.side === 'buy') buyAmt += amt; else sellAmt += amt;
-    }
-    const pos = calcPositionFromTrades(filled);
-    const curPrice = stock?.price ?? 0;
-    const finalValue = sellAmt + pos.shares * curPrice;
-    const totalReturnPct = buyAmt > 0 ? (finalValue - buyAmt) / buyAmt * 100 : 0;
+    const filledCount = trades.filter(t => t.status === 'filled' && !t.isDeleted).length;
+    if (filledCount === 0) return null;
+    const s = calcTradeStats(trades, stock?.price ?? 0);
     return {
-      buyAmt,
-      finalValue,
-      totalReturnPct,
-      tradeCount: filled.length,
+      buyAmt: s.buyAmt,
+      finalValue: s.finalValue,
+      totalReturnPct: s.totalReturnPct,
+      tradeCount: s.tradeCount,
       winRate: null as number | null,
       maxDrawdownPct: null as number | null,
+      realizedAvg: s.realizedAvg,
+      unrealizedAvg: s.unrealizedAvg,
+      realizedDt: s.realizedDt,
+      unrealizedDt: s.unrealizedDt,
     };
   }, [stock?.stockTrades, stock?.price]);
   const [chartLoading, setChartLoading] = useState(true);
@@ -1188,7 +1184,16 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
             <div className="px-3 py-1.5 border-b border-app-border flex items-center gap-4 text-xs flex-wrap shrink-0">
               <Stat label="初始资金" value={result ? initialCapital.toLocaleString() : initialStats ? Math.round(initialStats.buyAmt).toLocaleString() : initialCapital.toLocaleString()} />
               <Stat label="期末市值" value={result ? Math.round(result.finalValue).toLocaleString() : initialStats ? Math.round(initialStats.finalValue).toLocaleString() : '—'} />
-              <Stat label="总收益" value={result ? `${result.totalReturnPct >= 0 ? '+' : ''}${result.totalReturnPct.toFixed(2)}%` : initialStats ? `${initialStats.totalReturnPct >= 0 ? '+' : ''}${initialStats.totalReturnPct.toFixed(2)}%` : '—'} className={(result ? result.totalReturnPct : initialStats?.totalReturnPct) !== undefined && (result?.totalReturnPct ?? initialStats?.totalReturnPct ?? 0) >= 0 ? 'text-brand-red' : 'text-green-500'} />
+              <Stat label={result ? '总收益' : '投入收益率'} value={result ? `${result.totalReturnPct >= 0 ? '+' : ''}${result.totalReturnPct.toFixed(2)}%` : initialStats ? `${initialStats.totalReturnPct >= 0 ? '+' : ''}${initialStats.totalReturnPct.toFixed(2)}%` : '—'} className={(result ? result.totalReturnPct : initialStats?.totalReturnPct) !== undefined && (result?.totalReturnPct ?? initialStats?.totalReturnPct ?? 0) >= 0 ? 'text-brand-red' : 'text-green-500'} title={!result && initialStats ? `(期末市值 − 累计买入) / 累计买入` : undefined} />
+              {!result && initialStats && (
+                <Stat label="总收益额" value={`${(initialStats.finalValue - initialStats.buyAmt) >= 0 ? '+' : ''}${Math.round(initialStats.finalValue - initialStats.buyAmt).toLocaleString()}`} className={(initialStats.finalValue - initialStats.buyAmt) >= 0 ? 'text-brand-red' : 'text-green-500'} title={`期末市值 − 累计买入 = ${Math.round(initialStats.finalValue)} − ${Math.round(initialStats.buyAmt)}`} />
+              )}
+              {!result && initialStats && (
+                <>
+                  <Stat label="均价盈亏" value={`${initialStats.realizedAvg >= 0 ? '+' : ''}${Math.round(initialStats.realizedAvg).toLocaleString()}`} className={initialStats.realizedAvg >= 0 ? 'text-brand-red' : 'text-green-500'} title={`均价口径 已实现：${Math.round(initialStats.realizedAvg)}；浮动：${Math.round(initialStats.unrealizedAvg)}；合计：${Math.round(initialStats.realizedAvg + initialStats.unrealizedAvg)}（= 总收益额）`} />
+                  <Stat label="T操作" value={`${initialStats.realizedDt >= 0 ? '+' : ''}${Math.round(initialStats.realizedDt).toLocaleString()}`} className={initialStats.realizedDt >= 0 ? 'text-brand-red' : 'text-green-500'} title={`做T口径 已实现：${Math.round(initialStats.realizedDt)}；浮动：${Math.round(initialStats.unrealizedDt)}；合计：${Math.round(initialStats.realizedDt + initialStats.unrealizedDt)}（与均价口径合计相等，属数学恒等式）`} />
+                </>
+              )}
               <Stat label="胜率" value={result ? `${(result.winRate * 100).toFixed(1)}%` : initialStats?.winRate != null ? `${(initialStats.winRate * 100).toFixed(1)}%` : '—'} />
               <Stat label="最大回撤" value={result ? `-${result.maxDrawdownPct.toFixed(2)}%` : initialStats?.maxDrawdownPct != null ? `-${initialStats.maxDrawdownPct.toFixed(2)}%` : '—'} />
               <Stat label="交易次数" value={result ? String(result.tradeCount) : initialStats ? String(initialStats.tradeCount) : '0'} />

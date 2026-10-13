@@ -12,7 +12,7 @@ import { fetchYearlyDividends, DividendRecord } from '../services/dividendServic
 import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
-import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
+import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, calcAvgPnlForTrades, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
 import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, volBucket, buildLatestShrinkTags, buildShrinkTagsForModule, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, analyzeStandEvents, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5, type StandEvent } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
@@ -385,43 +385,6 @@ const tradeStatusLabel = (t: StockTrade): string =>
 // 挂单剩余有效交易天数：创建/编辑当天为 PENDING_TTL_DAYS，每过一个交易日减 1，过期后为 0
 const pendingRemainingDays = (t: StockTrade, now: number): number =>
   t.status === 'pending' ? Math.max(0, PENDING_TTL_DAYS - (tradingDayIndex(t.createdAt, now) - 1)) : 0;
-
-// 按成交顺序用移动加权成本重算每笔卖出的已实现盈亏（不依赖存储字段）。
-// 统一口径：卖出获利一律 = 成交金额 − 移动加权成本 × 股数。
-// 同一个函数顺带给出「卖出挂单」的预估获利（按挂单价、用当前移动加权成本），
-// 与成交采用的是同一算法，绝不另写一套。
-const calcRealizedPnlMap = (trades: StockTrade[]) => {
-  // 单次遍历按时间顺序同时结算「成交」与「挂单」的卖出获利，二者用同一套实时移动加权成本，
-  // 同一笔卖出在挂单/成交间切换时数字不因状态改变而变化。
-  // 买入仅成交参与持仓累加（挂单未执行不占股）；卖出成交结算并扣持仓，卖出挂单同公式预结算但不扣持仓。
-  const all = trades.filter(t => !t.isDeleted).sort((a, b) => a.createdAt - b.createdAt);
-  let rs = 0, rc = 0, total = 0;
-  const map: Record<string, number> = {};
-  const pendingMap: Record<string, number> = {};
-  for (const t of all) {
-    const amt = (t.amount ?? ((t.price ?? 0) * (t.shares ?? 0))) || 0;
-    if (t.side === 'buy') {
-      if (t.status !== 'filled') continue; // 买入挂单尚未执行，不影响持仓与成本
-      const prevRs = rs;
-      rs += t.shares ?? 0;
-      rc = rs > 0 ? (rc * prevRs + amt) / rs : 0;
-    } else {
-      const shares = t.shares ?? 0;
-      if (rs <= 0) continue; // 无持仓时不估算（成交或挂单都一样）
-      const pnl = amt - rc * shares;
-      if (t.status === 'filled') {
-        map[t.id] = pnl;
-        total += pnl;
-        rs = Math.max(0, rs - shares);
-        if (rs === 0) rc = 0;
-      } else {
-        // 卖出挂单：同一公式、同一实时成本预结算，仅入预估表（灰色），不扣减真实持仓
-        pendingMap[t.id] = pnl;
-      }
-    }
-  }
-  return { map, total, pendingMap };
-};
 
 // 交易历史记录条目（两行布局：公式+盈亏+状态徽标 / 时间+撤单+编辑+备注），撤单带确认
 // 只接收单个 stock 对象，其余展示数据（stockName/currentPrice/avgCost）一律内部从 stock 派生，
@@ -5887,7 +5850,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         // 按成交顺序重算每笔卖出的已实现盈亏（不依赖可能为 0 的存储 positionCost/realizedPnL）；
         // 支持两种口径：均价（移动加权）/ 做T（卖出匹配最近买入）。
         const tradesOfS = getTrades(s);
-        const recalcPnL = calcRealizedPnlMap(tradesOfS);
+        const recalcPnL = calcAvgPnlForTrades(tradesOfS);
         const dtPnL = calcDtPnlForTrades(tradesOfS);
         const modeIsDt = pnlCalcMode === 'dt';
         const shownPnl = modeIsDt ? dtPnL : recalcPnL;
@@ -6181,7 +6144,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const trades = getTrades(s).filter(x => !x.isMerged).sort((a, b) => b.createdAt - a.createdAt);
         if (trades.length === 0) return null;
         // 与交易弹窗保持同一盈利口径：均价 / 做T
-        const simpleAvg = calcRealizedPnlMap(getTrades(s));
+        const simpleAvg = calcAvgPnlForTrades(getTrades(s));
         const simpleDt = calcDtPnlForTrades(getTrades(s));
         return (
           <div
