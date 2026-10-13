@@ -925,6 +925,11 @@ export function mergeTodayBarToKlines(
   const price = rt.price ?? 0;
   const open = rt.open ?? 0;
   if (price <= 0 || open <= 0) return klines; // 无有效实时行情时不修改
+  // 非交易时段（盘前 / 全天休市）不合成今日 K 线：toClosedKlines 已经剔除了今日 bar，
+  // 这里必须再兜一次——rt 在非交易时段仍会保留上一交易日的 price/open 残留，
+  // 若不加过滤会把虚假的今日 bar 追加回序列末尾，污染 MA/BOLL 等指标
+  const tradableStates = ['closed', 'morning_session', 'midday_break', 'afternoon_session'];
+  if (!tradableStates.includes(marketStatus)) return klines;
   const high = rt.high && rt.high > 0 ? rt.high : price;
   const low = rt.low && rt.low > 0 ? rt.low : price;
   const last = klines[klines.length - 1];
