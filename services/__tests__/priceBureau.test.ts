@@ -69,3 +69,79 @@ describe('priceBureau 对外两形态（仅收盘 / 含未收盘）', () => {
     expect(live.some(k => k.date === '2026-09-24')).toBe(true);
   });
 });
+
+describe('priceBureau.getTodayBoll：absorb + setRealtime 后 BOLL 三轨跟随实时价', () => {
+  // 生成 25 根历史 klines（2026-08-01 ~ 2026-09-03），收盘恒为 100
+  // —— 这样 mergeTodayBarToKlines 追加今日 bar 后，buildBollDataFromKlines 的最后 20 根以今日 realtime price 收尾
+  function mkHistoricalKlines(): BollData['klines'] {
+    const out: BollData['klines'] = [];
+    let d = new Date('2026-08-01T09:30:00+08:00');
+    const end = new Date('2026-09-04T09:30:00+08:00');
+    let idx = 0;
+    while (d < end) {
+      // 跳过周末
+      const dow = d.getDay();
+      if (dow === 0 || dow === 6) { d.setDate(d.getDate() + 1); continue; }
+      const close = 100 + (idx % 2 === 0 ? 1 : -1) * idx * 0.1;
+      out.push({
+        date: d.toISOString().slice(0, 10),
+        open: close - 0.5,
+        high: close + 1,
+        low: close - 1,
+        close,
+        volume: 1000 + idx * 10,
+      });
+      idx++;
+      d.setDate(d.getDate() + 1);
+    }
+    return out;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(TODAY_MSK); // 2026-09-24 10:30 盘中
+    priceBureau.clear();
+  });
+
+  afterEach(() => {
+    priceBureau.clear();
+    vi.useRealTimers();
+  });
+
+  it('absorb + setRealtime 后 getTodayBoll 的 klines 末根跟随实时行情（BOLL 三轨基于合成后的序列重算）', () => {
+    const histKlines = mkHistoricalKlines();
+    expect(histKlines.length).toBeGreaterThanOrEqual(20);
+    // 接口原始 BollData：只有历史 K 线，无今日 09-24（盘中接口行为）
+    const rawDaily = {
+      upper: 0, mid: 0, lower: 0, close: 0,
+      date: histKlines[histKlines.length - 1].date,
+      fetchedAt: Date.now(), rangeCount: histKlines.length,
+      rangePriceHigh: 0, rangePriceHighDate: '',
+      rangePriceLow: 0, rangePriceLowDate: '',
+      klines: histKlines,
+    };
+    priceBureau.absorb('600000.SH', 'daily', { data: rawDaily });
+    // 无 realtime → store daily 的 klines 还是原始 histKlines（不追加今日 bar）
+    const before = priceBureau.getTodayBoll('600000.SH', 'daily');
+    expect(before).not.toBeNull();
+    expect(before!.klines![before!.klines!.length - 1].close).not.toBe(95);
+
+    // setRealtime → store daily 同步重算：klines 追加今日 bar，BOLL 三轨基于新序列
+    priceBureau.setRealtime('600000.SH', {
+      code: 'sh600000', name: '浦发银行',
+      price: 95, changePercent: -5, high: 96, low: 94, open: 102, volume: 5000,
+    });
+    const after = priceBureau.getTodayBoll('600000.SH', 'daily');
+    expect(after).not.toBeNull();
+    // 核心保证：klines 末根 close/high/low 跟随实时行情
+    const last = after!.klines![after!.klines!.length - 1];
+    expect(last.close).toBe(95);
+    expect(last.high).toBe(96);
+    expect(last.low).toBe(94);
+    expect(last.date).toBe('2026-09-24');
+    // upper/mid/lower/ma 全量字段都非空（buildBollDataFromKlines 已完整重算）
+    expect(after!.mid).toBeGreaterThan(0);
+    expect(after!.upper).toBeGreaterThan(after!.mid);
+    expect(after!.lower).toBeLessThan(after!.mid);
+  });
+});

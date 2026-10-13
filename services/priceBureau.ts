@@ -242,11 +242,16 @@ export const priceBureau = {
   absorb(code: string, period: BollPeriod, result: { data: BollData | null }): void {
     const cur = store.get(code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
     if (result.data) {
-      let dataToStore = result.data;
-      // daily：入 store 前自动按"含未收盘"形态重算一遍（buildBollDataFromKlines 唯一算法，避免接口原始 BollData 与今日实时价漂移）
-      // weekly/monthly 无 realtime merge，接口原始 BollData 即完整，不重算
+      let dataToStore: BollData = result.data;
+      // daily：入 store 前自动按"含未收盘"形态重算一遍
+      // （不能调 getTodayDailyKlines——那时 store 里 daily 还是旧值；直接用 result.data.klines 合成再 buildBollDataFromKlines）
       if (period === 'daily' && !asOfDate) {
-        const liveKlines = priceBureau.getTodayDailyKlines(code);
+        const base = toClosedKlines(result.data.klines, getMarketStatus()) ?? [];
+        const rt = cur.realtime;
+        let liveKlines: BollKline[] = base;
+        if (rt && rt.price > 0 && rt.open > 0) {
+          liveKlines = mergeTodayBarToKlines(base, rtFromRealtime(rt), getMarketStatus());
+        }
         const rebuilt = buildBollDataFromKlines(liveKlines, result.data.fetchedAt ?? Date.now());
         if (rebuilt) dataToStore = rebuilt;
       }
