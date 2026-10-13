@@ -2523,7 +2523,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const last = a.klines[a.klines.length - 1];
     const prevClose = a.klines.length >= 2 ? a.klines[a.klines.length - 2].close : last.close;
     const volUp = last.close >= prevClose;
-    return buildShrinkTagsForModule('list', a.events, a.patterns, a.env, last.date, a.latestVol, volUp, a.standEvents);
+    return buildShrinkTagsForModule('list', a.events, a.patterns, a.env, last.date, a.latestVol, volUp, a.standEvents, a.allowVol);
   };
 
   // 列表当前显示顺序（按排序规则重排；默认顺序即 stocks 原序）

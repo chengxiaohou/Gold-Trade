@@ -10,7 +10,7 @@ import { DEFAULT_TAG_PARAMS } from '../types';
 import {
   analyzeKlinePatternsAt, analyzeKlineCombo, classifyVolumeAt,
   analyzeMarketConditions, analyzeStandEvents, buildBreakExplainLines, buildStandExplainLines, volBucket,
-  analyzeUserTagRule,
+  analyzeUserTagRule, isTodayVolumeEligible,
   PATTERN_CHIP_CLS, VOLUME5_CHIP_CLS, BREAK_CHIP_CLS,
   CHIP_CLS_RED, CHIP_SEL_RED, CHIP_CLS_INDIGO, CHIP_SEL_INDIGO, CHIP_CLS_BLUE, CHIP_SEL_BLUE,
   CHIP_CLS_GREEN, CHIP_SEL_GREEN, CHIP_CLS_SLATE, CHIP_SEL_SLATE,
@@ -95,14 +95,19 @@ export function getDayTagSet(
   const i = win.length - 1;
   const date = win[i].date;
 
-  // 量能5档（弹窗 volChip 同源）：平量信息量低 → 跳过；放量/缩量按当日涨跌方向着色（涨红/跌绿）
-  const vol = classifyVolumeAt(win, i, cfg);
-  if (vol !== '平量') {
+  // 量能5档（弹窗 volChip 同源）：
+  // 1. 平量信息量低 → 跳过；
+  // 2. 放量/缩量属日终信号，当日交易日 <14:30 未定型 → 跳过；历史行（i 非末根）不受影响。
+  const isLatest = i === win.length - 1;
+  if (!isLatest || isTodayVolumeEligible(win)) {
+    const vol = classifyVolumeAt(win, i, cfg);
+    if (vol !== '平量') {
     const prevClose = i >= 1 ? win[i - 1].close : win[i].close;
     const up = win[i].close >= prevClose;
     const cls = up ? CHIP_CLS_RED : CHIP_CLS_GREEN;
     const sel = up ? CHIP_SEL_RED : CHIP_SEL_GREEN;
-    out.push({ key: `vol-${vol}`, kind: 'volume', label: vol, cls, sel, detail: volumeDetail(win, i, vol), reference: VOL_REFERENCE });
+      out.push({ key: `vol-${vol}`, kind: 'volume', label: vol, cls, sel, detail: volumeDetail(win, i, vol), reference: VOL_REFERENCE });
+    }
   }
 
   // K线形态（弹窗 patternChip 同源）：每个命中形态一个 chip

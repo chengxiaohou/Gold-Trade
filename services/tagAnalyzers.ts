@@ -1180,6 +1180,7 @@ export function buildLatestShrinkTags(
   latestVol: KlineVolume5 | null,
   volUp?: boolean | null,  // 当日涨跌：true=涨(红) / false=跌(绿) / null=沿用量增价涨旧配色
   standEvents?: StandEvent[] | null,
+  allowVol?: boolean,      // 当日交易日 <14:30 量能未定型 → false 时跳过量能缩略
 ): MktTag[] {
   // 破位类事件标签（不含“修复观察”）
   const breakTags: MktTag[] = [];
@@ -1211,8 +1212,10 @@ export function buildLatestShrinkTags(
       tags.push({ key: `env-${t.key}`, text: t.single, cls: ENV_SINGLE_CLS[t.color] });
     }
   }
-  // 量能单字：平量信息量低 → 跳过；放量/缩量按当日涨跌方向着色（涨红/跌绿）
-  if (latestVol) {
+  // 量能单字：
+  // 1. 平量信息量低 → 跳过；
+  // 2. 放量/缩量属日终信号，当日交易日 <14:30 未定型 → allowVol=false 时跳过。
+  if (latestVol && (allowVol !== false)) {
     const bucket = volBucket(latestVol);
     if (bucket === '平量') {
       // skip — 平量信息量低，缩略不展示
@@ -1264,8 +1267,9 @@ export function buildShrinkTagsForModule(
   latestVol: KlineVolume5 | null,
   volUp?: boolean | null,
   standEvents?: StandEvent[] | null,
+  allowVol?: boolean,
 ): MktTag[] {
-  let tags = buildLatestShrinkTags(events, patterns, env, lastDate, latestVol, volUp, standEvents);
+  let tags = buildLatestShrinkTags(events, patterns, env, lastDate, latestVol, volUp, standEvents, allowVol);
   if (!SHRINK_TAG_INCLUDE_ENV[module]) tags = tags.filter(t => !t.key.startsWith('env-'));
   if (SHRINK_TAG_HIDE_VOL_FLAT[module]) tags = tags.filter(t => t.key !== 'vol-平量');
   return tags;
@@ -1285,7 +1289,7 @@ export function buildLatestDayTags(klines: BollKline[], fmt: (v: number) => stri
   const last = klines[klines.length - 1];
   const prevClose = klines.length >= 2 ? klines[klines.length - 2].close : last.close;
   const volUp = last.close >= prevClose;
-  return buildLatestShrinkTags(events, patterns, env, lastDate, latestVol, volUp, standEvents);
+  return buildLatestShrinkTags(events, patterns, env, lastDate, latestVol, volUp, standEvents, allowVol);
 }
 
 // 弹窗破位事件“判断依据”文案拼接（封装原 explainLines 中 selEv 分支）
