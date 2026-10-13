@@ -352,7 +352,15 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState<string | null>(null);
   // 图表指标模式：均线(默认) / 布林线
-  const [indicatorMode, setIndicatorMode] = useState<'ma' | 'boll'>('ma');
+  const [indicatorMode, setIndicatorMode] = useState<'ma' | 'boll'>(() => {
+    try {
+      const v = localStorage.getItem('bt_indicator_mode');
+      return v === 'boll' ? 'boll' : 'ma';
+    } catch { return 'ma'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('bt_indicator_mode', indicatorMode); } catch { /* ignore */ }
+  }, [indicatorMode]);
   // 各指标体系当前最新值：ma={5:x,...} boll={upper,mid,lower}
   const [latestInd, setLatestInd] = useState<{ ma: number[]; boll: { upper: number; mid: number; lower: number } | null }>({ ma: [], boll: null });
 
