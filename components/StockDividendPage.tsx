@@ -619,7 +619,7 @@ const FeeTip: React.FC<{ fees: ReturnType<typeof calcTradeFees>; grossAmount: nu
           className="fixed left-0 top-0 z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2.5 py-2 text-[10px] text-app-text max-w-[280px] whitespace-normal break-all transition-opacity duration-100 pointer-events-none select-none"
         >
           <div className="text-[9px] font-semibold text-app-subtext tracking-wide mb-1">{title}</div>
-          <span ref={formulaRef} className="block font-mono text-[11px] text-brand-green/90" />
+          <span ref={formulaRef} className="block font-mono text-[11px] text-app-subtext" />
         </div>,
         document.body
       )}
@@ -834,7 +834,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
           const grossAmt = (t.amount ?? (price * shares)) || 0;
           return (
             <FeeTip fees={fees} grossAmount={grossAmt} side="buy">
-              <span className="shrink-0 font-mono text-[10px] text-brand-green/60">税 {fees.total.toFixed(2)}</span>
+              <span className="shrink-0 font-mono text-[10px] text-app-subtext">税 {fees.total.toFixed(2)}</span>
             </FeeTip>
           );
         })()}
@@ -873,7 +873,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
           const grossAmt = (t.amount ?? (price * shares)) || 0;
           return (
             <FeeTip fees={fees} grossAmount={grossAmt} side="sell">
-              <span className="shrink-0 font-mono text-[10px] text-brand-green/60">税 {fees.total.toFixed(2)}</span>
+              <span className="shrink-0 font-mono text-[10px] text-app-subtext">税 {fees.total.toFixed(2)}</span>
             </FeeTip>
           );
         })()}
@@ -7161,13 +7161,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <div className="text-[10px] text-app-subtext mb-1 flex items-center gap-2">
                   <span>周期已实现盈亏</span>
                   {taxEnabled && profitResult.totalFees !== undefined && profitResult.totalFees > 0 && (
-                    <span className="font-mono text-brand-green/60 text-[10px]" title="周期内税费合计（佣金 + 其他费 + 印花税）">
+                    <span className="font-mono text-app-subtext text-[10px]" title="周期内税费合计（佣金 + 其他费 + 印花税）">
                       税 {profitResult.totalFees.toFixed(2)}
                     </span>
                   )}
                 </div>
-                <div className={`font-mono text-xl font-bold leading-none ${profitResult.total >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                  {fmtSignedAmount(profitResult.total)}
+                <div className="flex items-baseline">
+                  <span className={`font-mono text-xl font-bold leading-none ${profitResult.total >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                    {fmtSignedAmount(profitResult.total)}
+                  </span>
                 </div>
               </div>
               {Object.keys(profitResult.byStock).length > 0 && (
@@ -7223,11 +7225,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     >
                       <ChevronDown size={12} className={`shrink-0 text-app-subtext transition-transform ${expanded ? '' : '-rotate-90'}`} />
                       <span className="text-app-subtext shrink-0 font-mono text-[11px]">{day.date}</span>
+                      {taxEnabled && day.dayFees !== undefined && day.dayFees > 0 && (
+                        <span className="shrink-0 font-mono text-[10px] text-app-subtext">税 {day.dayFees.toFixed(2)}</span>
+                      )}
                       {day.dayRealized !== 0 && (
                         <span className={`shrink-0 font-mono text-[11px] font-bold ${day.dayRealized >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{fmtSignedAmount(day.dayRealized)}</span>
-                      )}
-                      {taxEnabled && day.dayFees !== undefined && day.dayFees > 0 && (
-                        <span className="shrink-0 font-mono text-[10px] text-brand-green/60">税 {day.dayFees.toFixed(2)}</span>
                       )}
                       <span className="ml-auto shrink-0 whitespace-nowrap font-mono text-[11px] text-app-subtext">买 {day.buys.length} · 卖 {day.sells.length}</span>
                     </button>
@@ -7251,7 +7253,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                 {/* 买入的税紧跟公式 */}
                                 {taxEnabled && !isSell && tx.fees && (
                                   <FeeTip fees={tx.fees} grossAmount={tx.grossAmount ?? tx.amount} side="buy">
-                                    <span className="shrink-0 font-mono text-[10px] text-brand-green/60">税 {tx.fees.total.toFixed(2)}</span>
+                                    <span className="shrink-0 font-mono text-[10px] text-app-subtext">税 {tx.fees.total.toFixed(2)}</span>
+                                  </FeeTip>
+                                )}
+                                {/* 卖出的税紧跟公式 */}
+                                {taxEnabled && isSell && tx.fees && (
+                                  <FeeTip fees={tx.fees} grossAmount={tx.grossAmount ?? tx.amount} side="sell">
+                                    <span className="shrink-0 font-mono text-[10px] text-app-subtext">税 {tx.fees.total.toFixed(2)}</span>
                                   </FeeTip>
                                 )}
                                 {(() => {
@@ -7273,12 +7281,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                     ? <PairTip pairs={tx.pairs} fmtPrice={(v) => formatPrice(v, tx.stockName)}>{sellPnl}</PairTip>
                                     : sellPnl;
                                 })()}
-                                {/* 卖出的税紧跟盈亏 */}
-                                {taxEnabled && isSell && tx.fees && (
-                                  <FeeTip fees={tx.fees} grossAmount={tx.grossAmount ?? tx.amount} side="sell">
-                                    <span className="shrink-0 font-mono text-[10px] text-brand-green/60">税 {tx.fees.total.toFixed(2)}</span>
-                                  </FeeTip>
-                                )}
                                 <span className="ml-auto shrink-0 font-mono text-[10px] text-app-subtext">{new Date(tx.time).toLocaleTimeString('zh-CN', { hour12: false })}</span>
                               </div>
                             );
