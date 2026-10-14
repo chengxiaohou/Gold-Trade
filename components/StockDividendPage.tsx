@@ -822,11 +822,11 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
         <span className="font-mono font-bold text-app-text whitespace-nowrap">
           {fmtP(price)}
           <span className="font-normal text-app-subtext text-[8px]"> × </span>
-          {Number.isInteger(shares) ? shares : shares.toFixed(2)}
+          <span className="font-normal text-app-subtext text-[10px]">{Number.isInteger(shares) ? shares : shares.toFixed(2)}</span>
           {fees && fees.total > 0 && (
             <FeeTip fees={fees} grossAmount={price * shares} side={t.side}>
-              <span className="font-normal text-app-subtext text-[8px]"> − </span>
-              <span className="font-normal text-app-subtext">{fees.total.toFixed(2)}</span>
+              <span className="font-normal text-app-subtext text-[8px] whitespace-pre"> − </span>
+              <span className="font-normal text-app-subtext text-[10px]">{fees.total.toFixed(2)}</span>
             </FeeTip>
           )}
           <span className="font-normal text-app-subtext text-[8px]"> = </span>
