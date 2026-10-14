@@ -1813,6 +1813,37 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       { key: 'ma500', label: '500' },
     ];
     const all: { price: number; name: string }[] = [];
+    // 多周期绝对最高最低价，不额外发请求：日线(500条≈2年)覆盖短窗口，周线(500条≈9.6年)覆盖中长期，月线(500条≈41年)覆盖长期
+    // 统一按周期长度从长到短收集，同价位只保留周期最长的（参考价值更高）
+    {
+      const srcs: Record<string, BollKline[] | undefined> = {
+        daily: dailyR.data?.klines,
+        weekly: weeklyR.data?.klines,
+        monthly: monthlyR.data?.klines,
+      };
+      const windows: { label: string; bars: number; source: 'daily' | 'weekly' | 'monthly' }[] = [
+        { label: '三月', bars: 60, source: 'daily' },
+        { label: '半年', bars: 120, source: 'daily' },
+        { label: '一年', bars: 250, source: 'daily' },
+        { label: '二年', bars: 104, source: 'weekly' },
+        { label: '三年', bars: 156, source: 'weekly' },
+        { label: '五年', bars: 260, source: 'weekly' },
+        { label: '十年', bars: 120, source: 'monthly' },
+      ];
+      const seenHigh = new Set<number>();
+      const seenLow = new Set<number>();
+      for (const w of [...windows].reverse()) {
+        const klines = srcs[w.source];
+        if (!klines || klines.length === 0) continue;
+        // 过滤掉 low/high <= 0 的脏数据（腾讯接口偶发返回负值）
+        const seg = klines.slice(-w.bars).filter(k => k.low > 0 && k.high > 0);
+        if (seg.length === 0) continue;
+        const segHigh = Math.max(...seg.map(k => k.high));
+        const segLow = Math.min(...seg.map(k => k.low));
+        if (!seenHigh.has(segHigh)) { seenHigh.add(segHigh); all.push({ price: segHigh, name: `${w.label}顶` }); }
+        if (!seenLow.has(segLow)) { seenLow.add(segLow); all.push({ price: segLow, name: `${w.label}底` }); }
+      }
+    }
     for (const { period, data } of periodLabels) {
       if (!data) continue;
       for (const t of trackKeys) {
@@ -1827,8 +1858,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       }
     }
     const sorted = all.sort((a, b) => b.price - a.price);
-    const resistances = sorted.filter(l => l.price > (stock.price || 0)).sort((a, b) => a.price - b.price).slice(0, 10).reverse();
-    const supports = sorted.filter(l => l.price < (stock.price || 0)).sort((a, b) => b.price - a.price).slice(0, 10);
+    const resistances = sorted.filter(l => l.price > (stock.price || 0)).sort((a, b) => a.price - b.price).slice(0, 15).reverse();
+    const supports = sorted.filter(l => l.price < (stock.price || 0)).sort((a, b) => b.price - a.price).slice(0, 15);
     const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
     // 彩虹色（红橙黄绿青蓝紫）用于「日5」~「日250」标题
     const maRainbow: Record<string, string> = {
@@ -1877,25 +1908,18 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       srTooltipMeasuredSize.current = { w, h };
       const gap = 24;
       const popupLeft = ratesPopupPos.left;
-      const popupTop = ratesPopupPos.top;
       let calcLeft = popupLeft - w - gap;
-      const mainPopupHeight = ratesPopupRef.current?.offsetHeight || 0;
-      let calcTop = popupTop + (mainPopupHeight - h) / 2;
       // 超出左边界时回退到弹窗右侧
       if (calcLeft < 10) {
         calcLeft = popupLeft + 340 + gap;
-        // 浏览器宽度不足以同时展示时，居中显示
         if (calcLeft + w > window.innerWidth - 10) {
           calcLeft = (window.innerWidth - w) / 2;
         }
       }
-      // 超出顶部/底部时调整
-      if (calcTop + h > window.innerHeight - 10) {
-        calcTop = window.innerHeight - h - 10;
-      }
-      if (calcTop < 10) {
-        calcTop = 10;
-      }
+      // 垂直优先居中，再 clamp 到上下 10px 安全区
+      let calcTop = (window.innerHeight - h) / 2;
+      if (calcTop < 10) calcTop = 10;
+      if (calcTop + h > window.innerHeight - 10) calcTop = window.innerHeight - h - 10;
       setSrTooltipOffset(calcLeft);
       setSrTooltipAbove(calcTop);
       setSrPreviewText(text);
@@ -1931,19 +1955,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       listSrTooltipMeasuredSize.current = { w, h };
       const gap = 8;
       let calcLeft = rect.left + rect.width + gap;
-      let calcTop = rect.top + rect.height / 2 - h / 2;
+      let calcTop = (window.innerHeight - h) / 2;
       if (calcLeft + w > window.innerWidth - 10) {
         calcLeft = rect.left - w - gap;
       }
       if (calcLeft < 10) {
         calcLeft = (window.innerWidth - w) / 2;
       }
-      if (calcTop + h > window.innerHeight - 10) {
-        calcTop = window.innerHeight - h - 10;
-      }
-      if (calcTop < 10) {
-        calcTop = 10;
-      }
+      if (calcTop < 10) calcTop = 10;
+      if (calcTop + h > window.innerHeight - 10) calcTop = window.innerHeight - h - 10;
       setListSrTooltipOffset(calcLeft);
       setListSrTooltipAbove(calcTop);
       setListSrPreviewText(text);
@@ -5456,8 +5476,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   {srPreviewText && (
                     <div
                       ref={srTooltipRef}
-                      className="fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg overflow-hidden text-[11px] shadow-[0_8px_30px_rgba(0,0,0,0.55)] text-left"
-                      style={{ top: srTooltipAbove, left: srTooltipOffset, tabSize: 8 }}
+                      className="fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg overflow-hidden text-[11px] shadow-[0_8px_30px_rgba(0,0,0,0.55)] text-left flex flex-col"
+                      style={{ top: srTooltipAbove, left: srTooltipOffset, tabSize: 8, maxHeight: 'calc(100vh - 20px)' }}
                     >
                       <PopoverTitleBar
                         title={stock.name}
@@ -5556,7 +5576,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         </button>
                         </>}
                       />
-                      <SupportResistanceRows rows={srPreviewRows} fallback={srPreviewText} />
+                      <div className="overflow-y-auto flex-1">
+                        <SupportResistanceRows rows={srPreviewRows} fallback={srPreviewText} />
+                      </div>
                     </div>
                   )}
                 </div>
@@ -6760,8 +6782,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {listSrPreviewText && listSrStock && (
         <div
           ref={listSrTooltipRef}
-          className={`fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg overflow-hidden text-[11px] shadow-[0_8px_30px_rgba(0,0,0,0.55)] text-left ${listSrTooltipHidden ? ' invisible' : ''}`}
-          style={{ top: listSrTooltipAbove, left: listSrTooltipOffset, tabSize: 8 }}
+          className={`fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg overflow-hidden text-[11px] shadow-[0_8px_30px_rgba(0,0,0,0.55)] text-left flex flex-col ${listSrTooltipHidden ? ' invisible' : ''}`}
+          style={{ top: listSrTooltipAbove, left: listSrTooltipOffset, tabSize: 8, maxHeight: 'calc(100vh - 20px)' }}
         >
           <PopoverTitleBar
             title={listSrStock.name}
@@ -6801,7 +6823,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   setTimeout(() => setListSrCopied(false), 1500);
                 };
                 if (navigator.clipboard?.writeText) {
-                  navigator.clipboard.writeText(text).then(done).catch(() => {});
+                  navigator.clipboard.writeText(text).then(done).catch(() => {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    done();
+                  });
+                } else {
+                  const ta = document.createElement('textarea');
+                  ta.value = text;
+                  document.body.appendChild(ta);
+                  ta.select();
+                  document.execCommand('copy');
+                  document.body.removeChild(ta);
+                  done();
                 }
               });
             }}
@@ -6828,11 +6866,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           </button>
             </>}
           />
-          <SupportResistanceRows
-            rows={listSrPreviewRows}
-            fallback={listSrPreviewText}
-            onPriceClick={listSrPricePickTo === 'trade' ? handleSrPricePick : undefined}
-          />
+          <div className="overflow-y-auto flex-1">
+            <SupportResistanceRows
+              rows={listSrPreviewRows}
+              fallback={listSrPreviewText}
+              onPriceClick={listSrPricePickTo === 'trade' ? handleSrPricePick : undefined}
+            />
+          </div>
         </div>
       )}
 
@@ -6970,7 +7010,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           onClick={(e) => {
                             e.stopPropagation();
                             const text = `${new Date(triggerAt).toLocaleString('zh-CN', { hour12: false })} ${group.reason}`;
-                            navigator.clipboard?.writeText(text).catch(() => {});
+                            if (navigator.clipboard?.writeText) {
+                              navigator.clipboard.writeText(text).catch(() => {
+                                const ta = document.createElement('textarea');
+                                ta.value = text;
+                                document.body.appendChild(ta);
+                                ta.select();
+                                document.execCommand('copy');
+                                document.body.removeChild(ta);
+                              });
+                            } else {
+                              const ta = document.createElement('textarea');
+                              ta.value = text;
+                              document.body.appendChild(ta);
+                              ta.select();
+                              document.execCommand('copy');
+                              document.body.removeChild(ta);
+                            }
                           }}
                           className="shrink-0 text-app-subtext hover:text-app-text transition-colors"
                           title=""
