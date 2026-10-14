@@ -64,7 +64,14 @@ const USER_REFERENCE = '用户自定义信号标签：依据设定数据点与�
 export type DayTagKind = 'volume' | 'pricestate' | 'pattern' | 'break' | 'break-obs' | 'break-status' | 'stand' | 'user';
 export interface DayTag extends SignalTagDetail { key: string; kind: DayTagKind; }
 
-export interface GetDayTagSetOptions { events?: MarketEvent[]; standEvents?: StandEvent[]; customTags?: UserTagRule[]; dividendByYear?: Record<number, number> }
+export interface GetDayTagSetOptions {
+  events?: MarketEvent[];
+  standEvents?: StandEvent[];
+  customTags?: UserTagRule[];
+  dividendByYear?: Record<number, number>;
+  /** 实时视图模式：盘中一律拦截量能（无论 K 线末根日期）；默认 false（历史/回测场景，仅"末根=今日"时卡 14:30）。 */
+  liveMode?: boolean;
+}
 
 // 判定某日命中的用户自定义标签（复用 analyzeUserTagRule），逐条装配 chip
 function collectUserTags(win: BollKline[], i: number, rules: UserTagRule[] | undefined, dividendByYear?: Record<number, number>): DayTag[] {
@@ -98,8 +105,9 @@ export function getDayTagSet(
   // 量能5档（弹窗 volChip 同源）：
   // 1. 平量信息量低 → 跳过；
   // 2. 放量/缩量属日终信号，当日交易日 <14:30 未定型 → 跳过；历史行（i 非末根）不受影响。
+  //    liveMode=true（实时视图）时，盘中一律拦截——不依赖 K 线末根是否为今日（行情未合并/停牌时末根可能停留在历史日）。
   const isLatest = i === win.length - 1;
-  if (!isLatest || isTodayVolumeEligible(win)) {
+  if (!isLatest || isTodayVolumeEligible(win, opts.liveMode === true)) {
     const vol = classifyVolumeAt(win, i, cfg);
     if (vol !== '平量') {
     const prevClose = i >= 1 ? win[i - 1].close : win[i].close;

@@ -27,7 +27,7 @@ const CHIP_BASE = 'inline-flex items-center justify-center rounded text-[9px] fo
 export default function SignalTagsFooter({ win, i, cfg, customTags, dividendByYear, fmt, onPin, envChips }: SignalTagsFooterProps) {
   // 权威接口：与标签弹窗"当日行"同一套；i 恒与 win 末根一致
   const tags: DayTag[] = useMemo(
-    () => getDayTagSet(win, cfg, fmt, { customTags, dividendByYear }),
+    () => getDayTagSet(win, cfg, fmt, { customTags, dividendByYear, liveMode: true }),
     [win, cfg, fmt, customTags, dividendByYear],
   );
   const [pinnedKey, setPinnedKey] = useState<string | null>(null);

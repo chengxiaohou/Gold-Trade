@@ -2740,7 +2740,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const key = `${base}::${price}::${latestBarFingerprint(klines)}::${JSON.stringify(tagParams)}`;
     const cached = analyzedCache.current.get(stock.id);
     if (cached && cached.key === key && cached.v === LATEST_TAG_VERSION) return cached.data;
-    const allowVol = isTodayVolumeEligible(klines);
+    const allowVol = isTodayVolumeEligible(klines, true); // 实时视图：盘中一律拦截（今日 bar 未合并/停牌时也生效）
     const patterns = analyzeKlinePatterns(klines, v => formatPrice(v, stock.name), tagParams);
     const data = {
       klines,
@@ -6546,7 +6546,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         };
         // 默认选中：无指向时展示最新交易日行首枚标签（由权威 getDayTagSet 产出）
         const lastK = klines && klines.length > 0 ? klines[klines.length - 1] : null;
-        const lastDayTags: DayTag[] = lastK ? getDayTagSet(klines!, tagParams, fp, { events: events ?? [], customTags, dividendByYear }) : [];
+        const lastDayTags: DayTag[] = lastK ? getDayTagSet(klines!, tagParams, fp, { events: events ?? [], customTags, dividendByYear, liveMode: true }) : [];
         const defaultSel = lastDayTags.length > 0
           ? { date: lastK!.date, kind: 'daytag' as const, tagKey: lastDayTags[0].key }
           : null;

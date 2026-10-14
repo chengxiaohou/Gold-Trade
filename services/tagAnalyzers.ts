@@ -575,23 +575,30 @@ export function calcBollSeries(klines: BollKline[]): { mid: number | null; upper
   return res;
 }
 
-// 量价判定资格：最新K线若是"未收盘的今日"，盘中（距收盘>30分钟）不给出任何量价关系标签，
-// 避免量价未定型误导；当日交易时间还剩最后半小时（14:30 后）才开始计算展示今日量价标签。
+// 量价判定资格：
+// - 实时视图（liveMode=true）：盘中一律拦截（morning / midday_break / afternoon_session 且 <14:30）。
+//   理由：盘中量能未定型；且今日 bar 可能未合并进 K 线数组（停牌/未刷新），
+//   此时若继续走"末根日期判断"会命中"末根=历史日 → 放行"分支，导致用户在盘中也看到量能标签。
+// - 历史视图（liveMode=false 默认）：末根=历史交易日（已收盘） → 放行；末根=今日 → 走 14:30 门槛。
+//   给回测引擎、弹窗历史行、单元测试复用。
 function canJudgeTodayVolume(date: Date = new Date()): boolean {
   const status = getMarketStatus(date);
-  if (status === 'closed') return true; // 15:00后已收盘
+  if (status === 'closed') return true;
   if (status === 'afternoon_session') {
     return date.getHours() + date.getMinutes() / 60 >= 14.5; // 13:00-15:00：仅最后半小时
   }
-  return false; // 盘前/上午时段/午间休市/全天休市
+  // 盘前 / 全天休市：量能天然已定型，放行；盘中（上午 / 午休）拦截
+  return status === 'pre_open' || status === 'full_day_closed';
 }
-export function isTodayVolumeEligible(klines: BollKline[]): boolean {
+export function isTodayVolumeEligible(klines: BollKline[] | null | undefined, liveMode = false): boolean {
   if (!klines || klines.length === 0) return false;
+  const now = new Date();
+  if (liveMode) return canJudgeTodayVolume(now); // 实时：只看"现在"的市场状态，不依赖 K 线末根日期
+  // 历史：末根日期是否为今日 → 决定是否卡 14:30
   const lastDate = klines[klines.length - 1].date;
-  const d = new Date();
-  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  if (lastDate !== today) return true; // 最新K线为历史交易日（已收盘）
-  return canJudgeTodayVolume(d);
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  if (lastDate !== today) return true; // 历史交易日（已收盘）
+  return canJudgeTodayVolume(now);
 }
 
 // 每日行情信号（近10日）：MACD 金叉/死叉 + 量价显著信号（放量≥1.5×/极度缩量≤0.5×，按涨跌红绿）。
