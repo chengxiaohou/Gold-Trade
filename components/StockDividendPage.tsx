@@ -795,6 +795,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
   const isSellFilled = t.side === 'sell' && t.status === 'filled';
   const isBuyFilled = t.side === 'buy' && t.status === 'filled';
   const isPending = t.status === 'pending';
+  const fees = taxEnabled ? calcTradeFees(t, stockName) : null;
   let likelyFill = false;
   if (isPending && currentPrice > 0 && price > 0) {
     likelyFill = t.side === 'buy' ? currentPrice <= price : currentPrice >= price;
@@ -822,22 +823,16 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
           {fmtP(price)}
           <span className="font-normal text-app-subtext"> × </span>
           {Number.isInteger(shares) ? shares : shares.toFixed(2)}
+          {fees && fees.total > 0 && (
+            <FeeTip fees={fees} grossAmount={price * shares} side={t.side}>
+              <span className="font-normal text-app-subtext"> − {fees.total.toFixed(2)}</span>
+            </FeeTip>
+          )}
           <span className="font-normal text-app-subtext"> = </span>
           <span className={`font-bold ${t.side === 'buy' ? 'text-blue-500' : 'text-red-500'} ${buyMatchStyle}`}>
-            {(price * shares).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
+            {(price * shares - (fees?.total ?? 0)).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
           </span>
         </span>
-        {/* 买入的税紧跟公式（买入没有盈亏数字） */}
-        {taxEnabled && t.side === 'buy' && (() => {
-          const fees = calcTradeFees(t, stockName);
-          if (fees.total === 0) return null;
-          const grossAmt = (t.amount ?? (price * shares)) || 0;
-          return (
-            <FeeTip fees={fees} grossAmount={grossAmt} side="buy">
-              <span className="shrink-0 font-mono text-[10px] text-app-subtext">税 {fees.total.toFixed(2)}</span>
-            </FeeTip>
-          );
-        })()}
         {(() => {
           const grossAmt = (t.amount ?? (price * shares)) || 0;
           const sellContent = isErrSell ? (
@@ -865,17 +860,6 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
           return tradePairs && tradePairs.length > 0
             ? <PairTip pairs={tradePairs} fmtPrice={fmtP}>{sellContent}</PairTip>
             : sellContent;
-        })()}
-        {/* 卖出的税紧跟盈亏（ERR 或 pnl 数字） */}
-        {taxEnabled && t.side === 'sell' && (() => {
-          const fees = calcTradeFees(t, stockName);
-          if (fees.total === 0) return null;
-          const grossAmt = (t.amount ?? (price * shares)) || 0;
-          return (
-            <FeeTip fees={fees} grossAmount={grossAmt} side="sell">
-              <span className="shrink-0 font-mono text-[10px] text-app-subtext">税 {fees.total.toFixed(2)}</span>
-            </FeeTip>
-          );
         })()}
         {t.isMerged ? (
           <span className="shrink-0 text-[8px] px-1 py-px rounded-full border font-bold ml-auto text-app-subtext/60 border-app-border/60 bg-app-text/5">
