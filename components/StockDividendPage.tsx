@@ -825,13 +825,13 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
           <span className="font-normal text-app-subtext">{Number.isInteger(shares) ? shares : shares.toFixed(2)}</span>
           {fees && fees.total > 0 && (
             <FeeTip fees={fees} grossAmount={price * shares} side={t.side}>
-              <span className="font-normal text-app-subtext text-[8px] whitespace-pre"> − </span>
+              <span className="font-normal text-app-subtext text-[8px] whitespace-pre"> {t.side === 'buy' ? '+' : '−'} </span>
               <span className="font-normal text-app-subtext text-[9px]">{fees.total.toFixed(2)}</span>
             </FeeTip>
           )}
           <span className="font-normal text-app-subtext text-[8px]"> = </span>
           <span className={`font-bold ${t.side === 'buy' ? 'text-blue-500' : 'text-red-500'} ${buyMatchStyle}`}>
-            {(price * shares - (fees?.total ?? 0)).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
+            {(t.side === 'buy' ? price * shares + (fees?.total ?? 0) : price * shares - (fees?.total ?? 0)).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
           </span>
         </span>
         {(() => {
@@ -7334,21 +7334,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                   <span>{tx.price}</span>
                                   <span>×</span>
                                   <span>{Number.isInteger(tx.shares) ? tx.shares : tx.shares.toFixed(2)}</span>
+                                  {taxEnabled && tx.fees && tx.fees.total > 0 && (
+                                    <>
+                                      <span>{isSell ? '−' : '+'}</span>
+                                      <FeeTip fees={tx.fees} grossAmount={tx.grossAmount ?? tx.amount} side={isSell ? 'sell' : 'buy'}>
+                                        <span>{tx.fees.total.toFixed(2)}</span>
+                                      </FeeTip>
+                                    </>
+                                  )}
                                   <span>=</span>
                                   <span>{tx.amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}</span>
                                 </span>
-                                {/* 买入的税紧跟公式 */}
-                                {taxEnabled && !isSell && tx.fees && (
-                                  <FeeTip fees={tx.fees} grossAmount={tx.grossAmount ?? tx.amount} side="buy">
-                                    <span className="shrink-0 font-mono text-[10px] text-app-subtext">税 {tx.fees.total.toFixed(2)}</span>
-                                  </FeeTip>
-                                )}
-                                {/* 卖出的税紧跟公式 */}
-                                {taxEnabled && isSell && tx.fees && (
-                                  <FeeTip fees={tx.fees} grossAmount={tx.grossAmount ?? tx.amount} side="sell">
-                                    <span className="shrink-0 font-mono text-[10px] text-app-subtext">税 {tx.fees.total.toFixed(2)}</span>
-                                  </FeeTip>
-                                )}
                                 {(() => {
                                   const sellPnl = isSell && tx.err ? (
                                     <ErrTip
