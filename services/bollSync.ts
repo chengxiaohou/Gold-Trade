@@ -1,8 +1,8 @@
 // 布林线缓存的"判定 / 使用 / 请求"决策纯函数，无副作用，便于单元测试。
 // 真实市场状态、当前时间、缓存内容均作为入参注入，函数内部不再 new Date()。
-// 盘中/午休/盘后/盘前 的新鲜度口径由调用方从 cacheService 的 getMarketStatus/getLastTradingOpen 注入。
+// 盘中/午休/盘后/盘前 的新鲜度口径由调用方从 cacheService 的 getMarketStatus/getLastTradingClose 注入。
 import type { ApiSource, MarketStatus } from '../types';
-import { getMarketStatus, getLastTradingOpen } from './cacheService';
+import { getMarketStatus, getLastTradingClose } from './cacheService';
 import type { BollData } from './bollService';
 
 const periods: BollPeriod[] = ['daily', 'weekly', 'monthly'];
@@ -29,24 +29,28 @@ export interface BollFreshnessParams {
   cachedAt: number | null; // 缓存时间戳；null 视为无缓存
   nowMs: number;
   tradingTTL: number; // 盘中判定用 TTL(ms)，由调用方从 getDynamicBollCacheTTL 注入
-  lastOpenMs: number | null; // 非盘中判定基准"最近一次数据基准开盘时间"，由调用方从 getLastTradingOpen 注入
+  lastCloseMs: number | null; // 非盘中判定基准"最近一次数据落定时点"(收盘/午休后的稳定时点)，由调用方从 getLastTradingClose 注入
   hasCompleteData?: boolean; // 是否含完整字段（ma.ma30）；缺失视为过期
 }
 
 /**
  * 单条缓存新鲜度：
  * - 盘中(morning/afternoon)：缓存年龄在 TTL 内视为新鲜。
- * - 非盘中(午休/盘后/盘前/全天休市)：K线数据不再变化，只要缓存是在
- *   "最近一次数据基准开盘时间"之后拉取的即视为新鲜（有效期到下次开盘）。
- * 注意：盘后基准用当天 9:30（而非 13:00），否则当天上午拉的缓存会被误判过期。
+ * - 非盘中(午休/盘后/盘前/全天休市)：只要缓存是在"最近一次数据落定时点"之后
+ *   拉取的即视为新鲜（接口已把当日 K 线最终值写死，到下次落定时点之间不会变）。
+ * 这个落定时点：
+ *   midday_break → 当天 11:31（早盘收盘后）
+ *   closed       → 当天 15:01（全天收盘后）
+ *   pre_open/full_day_closed → 最近一个交易日 15:01
+ * 保证：盘中 14:50 拉的缓存（today=15:01 之前）→ 非盘中判定会判 false，允许收盘后重拉拿到最终值。
  */
 export function isBollFresh(p: BollFreshnessParams): boolean {
   if (p.cachedAt == null || p.hasCompleteData === false) return false;
   if (p.marketStatus === 'morning_session' || p.marketStatus === 'afternoon_session') {
     return p.nowMs - p.cachedAt < p.tradingTTL;
   }
-  if (p.lastOpenMs == null) return false;
-  return p.cachedAt >= p.lastOpenMs;
+  if (p.lastCloseMs == null) return false;
+  return p.cachedAt >= p.lastCloseMs;
 }
 
 export interface BollPeriodData {
@@ -85,7 +89,7 @@ export interface PlanBollCacheInput {
 export function planBollCacheUse(input: PlanBollCacheInput): BollCachePlan {
   const marketStatus = getMarketStatus(input.now);
   const isTrading = marketStatus === 'morning_session' || marketStatus === 'afternoon_session';
-  const lastOpenMs = isTrading ? null : getLastTradingOpen(input.now).getTime();
+  const lastCloseMs = isTrading ? null : getLastTradingClose(input.now)?.getTime() ?? null;
   const nowMs = input.now.getTime();
   const hasComplete = input.hasComplete ?? ((e: BollCacheEntry) => Boolean(e.data?.ma?.ma30));
 
@@ -114,7 +118,7 @@ export function planBollCacheUse(input: PlanBollCacheInput): BollCachePlan {
             cachedAt: entry.timestamp,
             nowMs,
             tradingTTL: input.tradingTTL,
-            lastOpenMs,
+            lastCloseMs,
             hasCompleteData: hasComplete(entry),
           })
         : false;

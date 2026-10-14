@@ -104,21 +104,17 @@ export function getNextTradingOpen(date: Date = new Date()): Date {
 
 // 获取最近一次"数据基准开盘时间"（非交易时段判断缓存新鲜度用）
 // 午间休市：当天上午9:30开盘；已收盘：当天下午13:00开盘；盘前/全天休市：最近一个交易日9:30
+// 注意：此函数为旧逻辑保留；BOLL 缓存新鲜度现已改用 getLastTradingClose（以"收盘落定时点"为基准）
 export function getLastTradingOpen(date: Date = new Date()): Date {
   const status = getMarketStatus(date);
   const d = new Date(date);
 
   if (status === 'closed') {
-    // 已收盘：数据基准为"当天上午开盘(9:30)"。曾误用当天13:00(下午开盘)，
-    // 导致当天上午/午间拉取的缓存被误判过期、盘后仍逐只重拉（一格一格）。
-    // 改为当天9:30后：任何当天拉取的缓存盘后均视为新鲜（K线已不再变化），
-    // 与 fetchBollData 内部 TTL(距下次开盘)口径一致。
     d.setHours(9, 30, 0, 0);
     return d;
   }
 
   if (status === 'morning_session' || status === 'midday_break' || status === 'afternoon_session') {
-    // 当天已开盘：数据基准为当天上午9:30开盘后的数据
     d.setHours(9, 30, 0, 0);
     return d;
   }
@@ -128,6 +124,38 @@ export function getLastTradingOpen(date: Date = new Date()): Date {
     d.setDate(d.getDate() - 1);
   } while (!isTradingDay(d));
   d.setHours(9, 30, 0, 0);
+  return d;
+}
+
+// 获取最近一次"数据落定时点"（收盘/午休后的稳定时点，腾讯接口会在此时点后写入最终值）。
+// 作为 BOLL / 实时价缓存新鲜度判定的统一基准：
+//   midday_break   → 当天 11:31  （早盘收盘，接口落定）
+//   closed         → 当天 15:01  （全天收盘，接口落定）
+//   pre_open / full_day_closed → 最近一个交易日 15:01
+// 盘中（morning/afternoon）返回 null，调用方走盘中 TTL 判定。
+export function getLastTradingClose(date: Date = new Date()): Date | null {
+  const status = getMarketStatus(date);
+  const d = new Date(date);
+
+  if (status === 'morning_session' || status === 'afternoon_session') {
+    return null; // 盘中不走这个逻辑
+  }
+
+  if (status === 'midday_break') {
+    d.setHours(11, 31, 0, 0);
+    return d;
+  }
+
+  if (status === 'closed') {
+    d.setHours(15, 1, 0, 0);
+    return d;
+  }
+
+  // pre_open / full_day_closed：向前找最近交易日的 15:01
+  do {
+    d.setDate(d.getDate() - 1);
+  } while (!isTradingDay(d));
+  d.setHours(15, 1, 0, 0);
   return d;
 }
 

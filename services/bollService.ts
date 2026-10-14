@@ -1,5 +1,5 @@
 import { ApiSource } from '../types';
-import { getDynamicBollCacheTTL, getLastTradingOpen, getMarketStatus, setLastFetchTime } from './cacheService';
+import { getDynamicBollCacheTTL, getLastTradingClose, getMarketStatus, setLastFetchTime } from './cacheService';
 import { requestLogService, type LogBatchContext } from './requestLogService';
 import { getBollCacheFromStore, saveBollCacheToStore, clearBollCacheFromStore } from './bollCacheStore';
 import { planBollCacheUse, isBollFresh, type BollCacheEntry, type BollStockInput } from './bollSync';
@@ -275,12 +275,11 @@ function isBollCacheFresh(
     const age = now - cached.timestamp;
     fresh = age < dynamicTTL;
   } else {
-    // 非交易时段（午间休市/已收盘/盘前/全天休市）：K线数据不会变化，
-    // 只要缓存是在"最近一次数据基准开盘时间"之后拉取的即视为新鲜（有效期到下次开盘）。
-    // 不能用 getDynamicBollCacheTTL 返回的"剩余时长"与缓存年龄比较，
-    // 否则缓存越接近下次开盘越容易被误判过期（如 12:21 拉的缓存 12:44 就被误判过期）。
-    const lastOpen = getLastTradingOpen();
-    fresh = cached.timestamp >= lastOpen.getTime();
+    // 非交易时段（午间休市/已收盘/盘前/全天休市）：接口已把当日 K 线最终值写死，
+    // 只要缓存是在"最近一次数据落定时点"之后拉取的即视为新鲜。
+    // 落定时点：midday 11:31 / closed 15:01 / 前一交易日 15:01。
+    const lastClose = getLastTradingClose();
+    fresh = lastClose != null && cached.timestamp >= lastClose.getTime();
   }
 
   if (!fresh) {
@@ -618,10 +617,8 @@ export function setTencentDomain(domain: string): void {
 // 单条 BOLL 缓存新鲜度判定（统一数据部门）
 // 与全量加载 planBollCache → planBollCacheUse 同源，全部走 bollSync.isBollFresh：
 //   - 盘中：缓存年龄 < TTL 为新鲜；
-//   - 午休/盘后/盘前/全天休市：只要缓存是在"最近一次数据基准开盘时间"之后拉取的即新鲜
-//     （有效期到下次开盘），不能用 getDynamicBollCacheTTL 的"距下次开盘剩余时长"比对年龄，
-//     否则越接近下次开盘/午休越易被误判过期（如 12:21 拉取的缓存 12:44 就被误判），
-//     导致浮窗反复发请求、在数据源故障时产生失败日志而非使用本可用的缓存。
+//   - 午休/盘后/盘前/全天休市：只要缓存是在"最近一次数据落定时点"之后拉取的即新鲜
+//     （接口已把当日 K 线最终值写死），落定时点 = midday 11:31 / closed 15:01 / 前一交易日 15:01。
 function isBollEntryFresh(timestamp: number, data: BollData | undefined): boolean {
   const now = new Date();
   const marketStatus = getMarketStatus(now);
@@ -631,7 +628,7 @@ function isBollEntryFresh(timestamp: number, data: BollData | undefined): boolea
     cachedAt: timestamp,
     nowMs: now.getTime(),
     tradingTTL: getDynamicBollCacheTTL(),
-    lastOpenMs: isTrading ? null : getLastTradingOpen(now).getTime(),
+    lastCloseMs: isTrading ? null : getLastTradingClose(now)?.getTime() ?? null,
     hasCompleteData: Boolean(data?.ma?.ma30 && data?.klines),
   });
 }
