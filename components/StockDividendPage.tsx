@@ -821,14 +821,14 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
       <div className="flex items-center gap-1.5 text-[11px] leading-tight">
         <span className="font-mono font-bold text-app-text whitespace-nowrap">
           {fmtP(price)}
-          <span className="font-normal text-app-subtext"> × </span>
+          <span className="font-normal text-app-subtext">×</span>
           {Number.isInteger(shares) ? shares : shares.toFixed(2)}
           {fees && fees.total > 0 && (
             <FeeTip fees={fees} grossAmount={price * shares} side={t.side}>
-              <span className="font-normal text-app-subtext"> − {fees.total.toFixed(2)}</span>
+              <span className="font-normal text-app-subtext">−{fees.total.toFixed(2)}</span>
             </FeeTip>
           )}
-          <span className="font-normal text-app-subtext"> = </span>
+          <span className="font-normal text-app-subtext">=</span>
           <span className={`font-bold ${t.side === 'buy' ? 'text-blue-500' : 'text-red-500'} ${buyMatchStyle}`}>
             {(price * shares - (fees?.total ?? 0)).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
           </span>
