@@ -822,11 +822,11 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
         <span className="font-mono font-bold text-app-text whitespace-nowrap">
           {fmtP(price)}
           <span className="font-normal text-app-subtext text-[8px]"> × </span>
-          <span className="font-normal text-app-subtext text-[10px]">{Number.isInteger(shares) ? shares : shares.toFixed(2)}</span>
+          <span className="font-normal text-app-subtext">{Number.isInteger(shares) ? shares : shares.toFixed(2)}</span>
           {fees && fees.total > 0 && (
             <FeeTip fees={fees} grossAmount={price * shares} side={t.side}>
               <span className="font-normal text-app-subtext text-[8px] whitespace-pre"> − </span>
-              <span className="font-normal text-app-subtext text-[10px]">{fees.total.toFixed(2)}</span>
+              <span className="font-normal text-app-subtext text-[9px]">{fees.total.toFixed(2)}</span>
             </FeeTip>
           )}
           <span className="font-normal text-app-subtext text-[8px]"> = </span>
@@ -3824,7 +3824,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // 挂单价格默认预填当前现价（股票/ETF 分别 2/3 位小数）
     setAddTradePrice(stock.price > 0 ? formatPrice(stock.price, stock.name) : '');
     const rect = btn.getBoundingClientRect();
-    const popupW = 304;
+    const popupW = 324;
     const estH = 520;
     const gap = 8;
     let left = rect.right + gap;
@@ -6193,7 +6193,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div
             ref={tradeInfoRef}
             className={`fixed z-[60] bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl overflow-hidden text-app-text ${tradeInfoSettled ? '' : 'pointer-events-none'}`}
-            style={{ top: tradeInfoPos.top, left: tradeInfoPos.left, width: 304, opacity: tradeInfoSettled ? 1 : 0, transform: tradeInfoSettled ? 'none' : 'translate(0,0)' }}
+            style={{ top: tradeInfoPos.top, left: tradeInfoPos.left, width: 324, opacity: tradeInfoSettled ? 1 : 0, transform: tradeInfoSettled ? 'none' : 'translate(0,0)' }}
           >
             {/* 可拖拽头部 */}
             <div
@@ -6461,7 +6461,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div
             ref={tradeSimpleRef}
             className="fixed z-[59] bg-app-card border border-app-border rounded-lg px-2 py-2 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] text-app-text"
-            style={{ top: tradeSimplePos.top, left: tradeSimplePos.left, width: 304 }} // 宽度与交易窗口一致，保证备注完整展示
+            style={{ top: tradeSimplePos.top, left: tradeSimplePos.left, width: 324 }} // 宽度与交易窗口一致，保证备注完整展示
             onMouseEnter={cancelTradeSimpleClose}
             onMouseLeave={scheduleTradeSimpleClose}
           >
