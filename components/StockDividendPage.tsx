@@ -3888,6 +3888,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     tradeSettledOnceRef.current = false;
     // 挂单价格默认预填当前现价（股票/ETF 分别 2/3 位小数）
     setAddTradePrice(stock.price > 0 ? formatPrice(stock.price, stock.name) : '');
+    setAddTradeShares('100');
     const rect = btn.getBoundingClientRect();
     const popupW = 324;
     const estH = 520;
