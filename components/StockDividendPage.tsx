@@ -375,20 +375,24 @@ function pendingExpirySuffix(t: StockTrade, now: number): string {
   const ttl = t.ttlDays ?? PENDING_TTL_DAYS;
   const base = t.ttlUpdatedAt ?? t.createdAt;
   const idx = dayIndex(base, now);
-  if (idx >= ttl + 1) return '?'; // 已过期
-  if (idx === ttl) return '!';     // 最后一个有效日
+  if (idx >= ttl + 1) return '??'; // 已过期
+  if (idx === ttl) return '!!';     // 最后一个有效日
   return '';
 }
-// 生成挂单/成交的状态文字（含挂单过期标记）
-const tradeStatusLabel = (t: StockTrade): string =>
-  `${TRADE_STATUS_LABEL[`${t.side}-${t.status}`]}${pendingExpirySuffix(t, Date.now())}`;
+// 生成挂单/成交的状态文字（挂单状态内嵌剩余天数或 !! / ?? 标记）
+const tradeStatusLabel = (t: StockTrade): string => {
+  const base = TRADE_STATUS_LABEL[`${t.side}-${t.status}`];
+  if (t.status !== 'pending') return base;
+  const suffix = pendingExpirySuffix(t, Date.now());
+  if (suffix) return `${base}${suffix}`;
+  return `${base}${pendingRemainingDays(t, Date.now())}天`;
+};
 // 挂单剩余有效自然日：默认 PENDING_TTL_DAYS=5，用户改写后优先使用 t.ttlDays（从 t.ttlUpdatedAt 起算）
-// 过期则返回负数，表示已过期多少天（如 -3 表示过期 3 天）
 const pendingRemainingDays = (t: StockTrade, now: number): number => {
   if (t.status !== 'pending') return 0;
   const ttl = t.ttlDays ?? PENDING_TTL_DAYS;
   const base = t.ttlUpdatedAt ?? t.createdAt;
-  return ttl - (dayIndex(base, now) - 1);
+  return Math.max(0, ttl - (dayIndex(base, now) - 1));
 };
 
 // 交易历史记录条目（两行布局：公式+盈亏+状态徽标 / 时间+撤单+编辑+备注），撤单带确认
@@ -780,11 +784,11 @@ interface TradeRecordRowProps {
 }
 const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendingMap, onToggle, onEdit, onDelete, onSetTTL, errIds, pairMap, buyMatchMap, taxEnabled }) => {
   const [confirming, setConfirming] = useState(false);
-  const [ttlMenuOpen, setTtlMenuOpen] = useState(false);
-  const [ttlMenuLeft, setTtlMenuLeft] = useState<number | null>(null);
-  const [ttlTipOpen, setTtlTipOpen] = useState(false);
+  const [ttlPanelOpen, setTtlPanelOpen] = useState(false);
+  const [ttlPanelPinned, setTtlPanelPinned] = useState(false);
   const ttlBtnRef = useRef<HTMLButtonElement>(null);
-  const ttlMenuRef = useRef<HTMLDivElement>(null);
+  const ttlPanelRef = useRef<HTMLDivElement>(null);
+  const ttlHideTimer = useRef<number | null>(null);
   const stockName = stock.name;
   const currentPrice = stock.price || 0;
   const fmtP = (v: number) => formatPrice(v, stockName);
@@ -821,18 +825,27 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
     const d = new Date(ts);
     return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
-  // 点击按钮外部自动关闭 TTL 下拉菜单
+  const clearHideTimer = () => {
+    if (ttlHideTimer.current != null) { clearTimeout(ttlHideTimer.current); ttlHideTimer.current = null; }
+  };
+  const scheduleHide = (delay = 200) => {
+    if (ttlPanelPinned) return; // 固定状态下不自动关
+    clearHideTimer();
+    ttlHideTimer.current = window.setTimeout(() => setTtlPanelOpen(false), delay);
+  };
+  const closePanel = () => {
+    clearHideTimer();
+    setTtlPanelOpen(false);
+    setTtlPanelPinned(false);
+  };
+  // 固定模式下：点浮窗外部自动关闭
   useEffect(() => {
-    if (!ttlMenuOpen) return;
+    if (!ttlPanelPinned) return;
     const onDown = (e: MouseEvent | TouchEvent) => {
       const t = e.target as Node;
-      const btn = ttlBtnRef.current;
-      if (btn && btn.contains(t)) return;
-      // 菜单挂在 document.body 上，通过 role=menu 特征判断
-      const menu = (document.querySelectorAll('[role="menu"]') as NodeListOf<HTMLElement>);
-      let hit = false;
-      menu.forEach(m => { if (m.contains(t)) hit = true; });
-      if (!hit) { setTtlMenuOpen(false); setTtlMenuLeft(null); }
+      if (ttlBtnRef.current?.contains(t)) { closePanel(); return; }
+      if (ttlPanelRef.current?.contains(t)) return;
+      closePanel();
     };
     window.addEventListener('mousedown', onDown);
     window.addEventListener('touchstart', onDown);
@@ -840,7 +853,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
       window.removeEventListener('mousedown', onDown);
       window.removeEventListener('touchstart', onDown);
     };
-  }, [ttlMenuOpen]);
+  }, [ttlPanelPinned]);
   return (
     <div className="bg-app-input rounded-lg px-2 py-1.5 space-y-1">
       {/* 第一行：公式 + 已实现盈亏 + 状态徽标 */}
@@ -894,103 +907,102 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
           </span>
         ) : (
           <span className="ml-auto shrink-0 flex items-center gap-1.5">
-            {t.status === 'pending' && (
-              <>
-                <button
-                  ref={ttlBtnRef}
-                  type="button"
-                  onMouseEnter={() => { if (!ttlMenuOpen) setTtlTipOpen(true); }}
-                  onMouseLeave={() => setTtlTipOpen(false)}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setTtlTipOpen(false);
-                    if (!ttlMenuOpen) {
-                      // 打开前先渲染再测宽——用 rAF 拿到真实 menu 元素后算出居中点
-                      setTtlMenuOpen(true);
-                      requestAnimationFrame(() => {
-                        const btnRect = ttlBtnRef.current?.getBoundingClientRect();
-                        const menu = ttlMenuRef.current;
-                        if (!btnRect || !menu) return;
-                        const center = btnRect.left + btnRect.width / 2;
-                        let left = center - menu.offsetWidth / 2;
-                        // 边界保护：避免贴边或溢出
-                        left = Math.max(4, Math.min(left, window.innerWidth - menu.offsetWidth - 4));
-                        setTtlMenuLeft(left);
-                      });
-                    } else {
-                      setTtlMenuOpen(false);
-                      setTtlMenuLeft(null);
-                    }
-                  }}
-                  className={`shrink-0 font-mono text-[8px] whitespace-nowrap cursor-pointer select-none leading-none ${pendingRemainingDays(t, Date.now()) <= 0 ? 'text-red-500 hover:text-red-400' : 'text-orange-400 hover:text-orange-300'}`}
-                >
-                  {pendingRemainingDays(t, Date.now())}天
-                </button>
-                {ttlMenuOpen && (() => {
-                  const rect = ttlBtnRef.current?.getBoundingClientRect();
-                  if (!rect) return null;
-                  const opts = [5, 10, 20, 30];
-                  const cur = t.ttlDays ?? PENDING_TTL_DAYS;
-                  const left = ttlMenuLeft ?? rect.left;
-                  return createPortal(
-                    <div
-                      ref={ttlMenuRef}
-                      role="menu"
-                      style={{ top: rect.bottom + 4, left }}
-                      className="fixed z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.55)] py-1 text-[10px] text-app-text"
-                      onMouseDown={(e) => e.stopPropagation()}
-                    >
-                      {opts.map(n => (
-                        <button
-                          key={n}
-                          type="button"
-                          onClick={() => { if (onSetTTL) onSetTTL(t, n); setTtlMenuOpen(false); }}
-                          className={`text-left px-2.5 py-1 cursor-pointer select-none hover:bg-app-text/10 leading-none ${n === cur ? 'font-bold text-app-text' : 'text-app-subtext'}`}
-                        >
-                          {n} 天
-                        </button>
-                      ))}
-                    </div>,
-                    document.body
-                  );
-                })()}
-                {ttlTipOpen && (() => {
-                  const rect = ttlBtnRef.current?.getBoundingClientRect();
-                  if (!rect) return null;
-                  const base = t.ttlUpdatedAt ?? t.createdAt;
-                  const ttl = t.ttlDays ?? PENDING_TTL_DAYS;
-                  const deadline = new Date(base);
-                  deadline.setHours(0, 0, 0, 0);
-                  deadline.setDate(deadline.getDate() + ttl - 1);
-                  const deadlineStr = `${deadline.getFullYear()}/${deadline.getMonth() + 1}/${deadline.getDate()}`;
-                  const remain = pendingRemainingDays(t, Date.now());
-                  const label = remain < 0 ? `已过期 ${-remain} 天 · 截止 ${deadlineStr}` : `截止 ${deadlineStr}`;
-                  return createPortal(
-                    <div
-                      role="tooltip"
-                      style={{ top: rect.top - 4, left: rect.left + rect.width / 2, transform: 'translate(-50%, -100%)' }}
-                      className="fixed z-[9999] pointer-events-none select-none bg-app-card border border-app-border rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2 py-1.5 text-[10px] text-app-text whitespace-nowrap"
-                    >
-                      {label}
-                    </div>,
-                    document.body
-                  );
-                })()}
-              </>
-            )}
             {diffNum != null && (
               <span className={`font-mono text-[8px] font-semibold whitespace-nowrap ${pctColor} ${buyMatchStyle}`}>
                 {`${diffNum >= 0 ? '+' : ''}${diffNum.toFixed(2)}%`}
               </span>
             )}
             <button
+              ref={ttlBtnRef}
               type="button"
-              onClick={() => onToggle(t)}
-              title={t.status === 'filled' ? '取消成交（恢复挂单）' : '标记为成交（联动持仓）'}
+              onMouseEnter={() => { if (t.status === 'pending') { clearHideTimer(); setTtlPanelOpen(true); } }}
+              onMouseLeave={() => { if (t.status === 'pending') scheduleHide(); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (t.status === 'pending') {
+                  if (!ttlPanelOpen) {
+                    // 未打开：打开并固定
+                    clearHideTimer();
+                    setTtlPanelOpen(true);
+                    setTtlPanelPinned(true);
+                  } else if (!ttlPanelPinned) {
+                    // hover 打开的：升级为固定（不关闭）
+                    clearHideTimer();
+                    setTtlPanelPinned(true);
+                  } else {
+                    // 已固定：关闭
+                    closePanel();
+                  }
+                } else {
+                  onToggle(t);
+                }
+              }}
               className={`shrink-0 text-[8px] px-1 py-px rounded-full border font-bold cursor-pointer ${t.status === 'pending' ? 'text-orange-400 border-orange-400/40 bg-orange-400/10' : t.side === 'buy' ? 'text-brand-red border-brand-red/40 bg-brand-red/10' : 'text-brand-green border-brand-green/40 bg-brand-green/10'}`}
             >
               {tradeStatusLabel(t)}
             </button>
+            {ttlPanelOpen && t.status === 'pending' && (() => {
+              const rect = ttlBtnRef.current?.getBoundingClientRect();
+              if (!rect) return null;
+              const base = t.ttlUpdatedAt ?? t.createdAt;
+              const ttl = t.ttlDays ?? PENDING_TTL_DAYS;
+              const remain = pendingRemainingDays(t, Date.now());
+              const deadline = new Date(base);
+              deadline.setHours(0, 0, 0, 0);
+              deadline.setDate(deadline.getDate() + ttl - 1);
+              const deadlineStr = `${deadline.getFullYear()}/${deadline.getMonth() + 1}/${deadline.getDate()}`;
+              const opts = [5, 10, 20, 30];
+              const suffix = pendingExpirySuffix(t, Date.now());
+              const panelW = 160;
+              let left = rect.right - panelW;
+              left = Math.max(4, left); // 避免贴左边
+              return createPortal(
+                <div
+                  ref={ttlPanelRef}
+                  role="dialog"
+                  style={{ top: rect.bottom + 4, left }}
+                  className="fixed z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.55)] py-2 px-2 text-[10px] text-app-text w-[160px]"
+                  onMouseEnter={() => clearHideTimer()}
+                  onMouseLeave={() => scheduleHide()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  {/* 顶部：截止日期在前，剩余天数在后（一行） */}
+                  <div className="text-center text-[9px] text-app-subtext leading-none">
+                    <span>截止 {deadlineStr}</span>
+                    <span className="mx-1 text-app-border">·</span>
+                    {suffix ? (
+                      <span className="text-orange-400 font-bold">{suffix === '!!' ? '最后一天' : '已过期'}</span>
+                    ) : (
+                      <span>剩 {remain} 天</span>
+                    )}
+                  </div>
+                  <div className="my-1.5 h-px bg-app-border" />
+                  {/* 中间：TTL 天数选择 */}
+                  <div className="grid grid-cols-4 gap-1">
+                    {opts.map(n => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => { if (onSetTTL) onSetTTL(t, n); }}
+                        className={`py-1 text-[10px] rounded cursor-pointer select-none hover:bg-app-text/10 leading-none ${n === ttl ? 'text-app-text font-bold bg-app-text/10' : 'text-app-subtext'}`}
+                      >
+                        {n}天
+                      </button>
+                    ))}
+                  </div>
+                  <div className="my-1.5 h-px bg-app-border" />
+                  {/* 底部：成交按钮（买红卖绿） */}
+                  <button
+                    type="button"
+                    onClick={() => { closePanel(); onToggle(t); }}
+                    className={`w-full py-1 rounded text-[10px] font-bold border cursor-pointer select-none leading-none ${t.side === 'buy' ? 'text-brand-red border-brand-red/40 bg-brand-red/10 hover:bg-brand-red/20' : 'text-brand-green border-brand-green/40 bg-brand-green/10 hover:bg-brand-green/20'}`}
+                  >
+                    {t.side === 'buy' ? '买入成交' : '卖出成交'}
+                  </button>
+                </div>,
+                document.body
+              );
+            })()}
           </span>
         )}
       </div>
