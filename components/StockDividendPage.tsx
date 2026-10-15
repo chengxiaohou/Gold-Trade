@@ -407,6 +407,7 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
   const containerRef = useRef<HTMLDivElement>(null);
   const rowsRef = useRef<HTMLSpanElement[]>([]);
   const headerDateRefs = useRef<HTMLSpanElement[]>([]);
+  const diffPctRefs = useRef<HTMLSpanElement[]>([]);
   const triggerRef = useRef<HTMLSpanElement>(null);
   const pinnedRef = useRef(false);
   const rafRef = useRef<number | null>(null);
@@ -416,13 +417,16 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
   const showAt = (triggerRect: DOMRect) => {
     const el = containerRef.current;
     if (!el) return;
-    // 写内容：公式还原该笔买入的完整原始份额（price × shares），右上角百分比再表达本次占用比例
+    // 写内容：公式还原该笔买入的完整原始份额（price × shares），右上角百分比再表达本次占用比例，
+    // 行尾差价百分比表达本次做T的买卖差价（卖出价相对买入价的涨跌幅）
     pairs.forEach((p, i) => {
       const row = rowsRef.current[i];
       if (!row) return;
       const pct = p.shares > 0 ? (p.take / p.shares) * 100 : 0;
       const pctLabel = pct >= 100 ? '100%' : `${pct.toFixed(0)}%`;
       row.textContent = `${fmtPrice(p.price)} × ${p.shares} = ${fmtPrice(p.price * p.shares)}`;
+      const dp = diffPctRefs.current[i];
+      if (dp) dp.textContent = `${p.diffPct > 0 ? '+' : ''}${p.diffPct.toFixed(2)}%`;
       const h = headerDateRefs.current[i];
       if (h) {
         const parts = p.date.split('-');
@@ -481,7 +485,6 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
     };
   }, []);
 
-  const w = 170;
   return (
     <>
       <span
@@ -507,7 +510,7 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
       {typeof document !== 'undefined' && createPortal(
         <div
           ref={containerRef}
-          style={{ width: w, opacity: 0 }}
+          style={{ width: 'max-content', minWidth: 170, opacity: 0 }}
           className="fixed left-0 top-0 z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2.5 py-2 text-[10px] text-app-text whitespace-nowrap transition-opacity duration-100 pointer-events-none select-none"
         >
           {pairs.map((p, i) => (
@@ -515,7 +518,13 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
               <div className="pb-1 text-[9px] font-semibold text-app-subtext tracking-wide flex items-center">
                 <span ref={(el) => { if (el) headerDateRefs.current[i] = el; }} className="text-app-subtext/80 font-normal" />
               </div>
-              <span ref={(el) => { if (el) rowsRef.current[i] = el; }} className="block font-mono" />
+              <div className="flex items-baseline justify-between gap-2">
+                <span ref={(el) => { if (el) rowsRef.current[i] = el; }} className="font-mono" />
+                <span
+                  ref={(el) => { if (el) diffPctRefs.current[i] = el; }}
+                  className={`font-mono font-semibold ${p.diffPct > 0 ? 'text-brand-red' : p.diffPct < 0 ? 'text-brand-green' : 'text-app-subtext'}`}
+                />
+              </div>
             </div>
           ))}
         </div>,

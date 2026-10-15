@@ -98,6 +98,7 @@ export interface DtPair {
   price: number;   // 买入单价
   shares: number;  // 该笔买入的原始总份额
   take: number;    // 本次卖出占用的份额
+  diffPct: number; // 本次做T的差价百分比：(卖出价 − 买入价) / 买入价 × 100
 }
 
 // 做T口径的整只股票计算结果
@@ -227,7 +228,9 @@ function matchDtSell(lots: DtLot[], sellPrice: number, sellShares: number, sellF
     pnl += (sellPrice - lot.price) * take;
     lot.rest -= take;
     remaining -= take;
-    pairs.push({ buyId: lot.id, date: dateKeyOf(lot.originalCreatedAt), price: lot.price, shares: lot.total, take });
+    // 差价百分比同源出自「卖出价 − 买入价」，基准为买入价：与本笔配对的盈亏口径一致（盈亏 = 差价 × take）
+    const diffPct = lot.price > 0 ? (sellPrice - lot.price) / lot.price * 100 : 0;
+    pairs.push({ buyId: lot.id, date: dateKeyOf(lot.originalCreatedAt), price: lot.price, shares: lot.total, take, diffPct });
     if (lot.rest <= 0) lots.pop();
   }
   return { pnl, pairs, err: remaining > 0 };
