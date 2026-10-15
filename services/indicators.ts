@@ -103,3 +103,36 @@ export function formatVolume(v: number | null): string {
   if (v >= 1e4) return `${(v / 1e4).toFixed(2)}万手`;
   return `${Math.round(v)}手`;
 }
+
+// 昨收价推导（单一来源）：昨收 = 现价 / (1 + 涨跌幅%)；现价或涨跌幅无效返回 null。
+// 列表页价格列、行情浮窗「开/现/低/高」着色共用这一份推导，不得各处另算一遍。
+export function prevCloseFromChange(price: number | null | undefined, changePercent: number | null | undefined): number | null {
+  if (price == null || changePercent == null || !(price > 0) || !Number.isFinite(changePercent)) return null;
+  return price / (1 + changePercent / 100);
+}
+
+// 价格相对「前一交易日收盘价」的位置判定（单一来源判定）：高于 / 低于 / 相等 / 参考价缺失。
+// 判定只此一份，各消费方按自身展示形态映射颜色，不得各自另写一套比较逻辑。
+export type PriceVsPrev = 'above' | 'below' | 'equal' | 'unknown';
+
+export function priceVsPrevClose(v: number | null | undefined, prevClose: number | null | undefined): PriceVsPrev {
+  if (v == null || !Number.isFinite(v) || prevClose == null || !Number.isFinite(prevClose)) return 'unknown';
+  if (v > prevClose) return 'above';
+  if (v < prevClose) return 'below';
+  return 'equal';
+}
+
+// 「高于红、低于绿、相等或参考价缺失灰」的统一着色：行情浮窗「近10交易日」最高价/最低价 与 列表页价格列 共用。
+export function priceVsPrevCloseCls(v: number | null | undefined, prevClose: number | null | undefined): string {
+  const pos = priceVsPrevClose(v, prevClose);
+  return pos === 'above' ? 'text-red-500' : pos === 'below' ? 'text-green-500' : 'text-app-rowtext';
+}
+
+// 同一判定下的 brand 配色展示方案：价格列现价行（涨跌色）与行情浮窗「开/现/低/高」共用这一套。
+export function priceVsPrevCloseBrandCls(v: number | null | undefined, prevClose: number | null | undefined): string {
+  const pos = priceVsPrevClose(v, prevClose);
+  return pos === 'above' ? 'text-brand-red'
+    : pos === 'below' ? 'text-brand-green'
+      : pos === 'equal' ? 'text-app-rowtext'
+        : 'text-app-subtext';
+}

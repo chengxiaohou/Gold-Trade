@@ -23,7 +23,7 @@ import { BacktestModal } from './BacktestModal';
 import PriceInfoPopover, { PriceIndicatorSection, PopoverTitleBar, usePopoverDrag } from './PriceInfoPopover';
 import SignalTagsFooter from './SignalTagsFooter';
 import { getDayTagSet, type DayTag } from '../services/signalTagDetail';
-import { calcIndicators, formatPrice, formatVolume, type IndicatorResult } from '../services/indicators';
+import { calcIndicators, formatPrice, formatVolume, prevCloseFromChange, priceVsPrevCloseCls, priceVsPrevCloseBrandCls, type IndicatorResult } from '../services/indicators';
 
 /* 月份快捷选择：隐藏滚动条但保留滚动能力 */
 const MONTH_SCROLLER_CSS = `
@@ -2939,6 +2939,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 名称列第二行展示模式：默认"状态标签"，点击"代码"表头切换为展示代码
   const [nameSubMode, setNameSubMode] = useState<'tags' | 'code'>('tags');
+  // 价格列第二行展示模式：默认"最低-最高"区间，点击"价格"表头切换为相对现价/收盘价的差值（低多少-高多少）
+  const [priceSubMode, setPriceSubMode] = useState<'range' | 'diff'>('range');
   // 首次判定的统一数据源：对"同一组（实时价覆盖后的）K 线"只计算一遍 破位/形态/环境，
   // 列表缩略标签（buildLatestShrinkTags）与行情浮窗详细展示共用这份结果，杜绝两套判定喂不同数据。
   const LATEST_TAG_VERSION = 19; // 判定/展示逻辑变更时 +1，避免 HMR 保留旧缓存导致缩略与弹窗不一致
@@ -4721,7 +4723,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     股息率
                   </th>
                 )}
-                {cols.includes('price') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap">价格</th>}
+                {cols.includes('price') && <th
+                  className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none"
+                  onClick={() => setPriceSubMode(m => m === 'range' ? 'diff' : 'range')}
+                  title="点击切换下方展示：最低-最高 / 相对现价（收盘价）的差值"
+                >价格</th>}
                 {cols.includes('changePercent') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none" onClick={() => handleChangePctSortClick()}>涨跌幅</th>}
                 {cols.includes('position') && <th
                   colSpan={4}
@@ -5042,14 +5048,38 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
-                    <div className="flex items-center justify-center gap-0.5">
-                      <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                        {formatPrice(stock.price, stock.name)}
-                      </span>
-                      {refreshFailed.has(stock.id) && (
-                            <span onClick={(e) => { e.stopPropagation(); handleRefreshPrice(stock.id); }} className="cursor-pointer text-brand-yellow hover:opacity-80" title="重新刷新股价"><RefreshCw size={10} /></span>
-                          )}
-                    </div>
+                    {(() => {
+                      // 昨收价：由展示口径的现价/涨跌幅推导（历史模式下随截止日同步），与行情浮窗同一参考价
+                      const prevClose = prevCloseFromChange(stock.price, stock.changePercent);
+                      return (
+                        <div className="flex flex-col items-center leading-tight gap-px">
+                          {/* 第一行：现价/收盘价（字号最大，带涨跌色与刷新失败图标） */}
+                          <div className="flex items-center justify-center gap-0.5">
+                            <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                              {formatPrice(stock.price, stock.name)}
+                            </span>
+                            {refreshFailed.has(stock.id) && (
+                                  <span onClick={(e) => { e.stopPropagation(); handleRefreshPrice(stock.id); }} className="cursor-pointer text-brand-yellow hover:opacity-80" title="重新刷新股价"><RefreshCw size={10} /></span>
+                                )}
+                          </div>
+                          {/* 第二行：当日最高价（差值模式下为高于现价/收盘价的幅度），历史模式下 high 由 displayStocks 按截止日投影；
+                              着色判定复用「价格 vs 前一交易日收盘价」，配色方案与第一行现价行一致（brand 红绿）。
+                              字重 800（extrabold）：Roboto Mono 字重上限为 700，超出档位会被浏览器回落到最接近的 700 */}
+                          <span className={`font-mono font-extrabold text-[9px] ${priceVsPrevCloseBrandCls(stock.high, prevClose)}`}>
+                            {priceSubMode === 'diff'
+                              ? formatPrice(stock.high - stock.price, stock.name)
+                              : formatPrice(stock.high, stock.name)}
+                          </span>
+                          {/* 第三行：当日最低价（差值模式下为低于现价/收盘价的幅度，与第二行合起来即当日的上下波动幅度），着色同一判定；
+                              字重 normal(400)，比第二行轻，形成视觉层级 */}
+                          <span className={`font-mono font-normal text-[8px] ${priceVsPrevCloseBrandCls(stock.low, prevClose)}`}>
+                            {priceSubMode === 'diff'
+                              ? formatPrice(stock.price - stock.low, stock.name)
+                              : formatPrice(stock.low, stock.name)}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </td>}
                   {cols.includes('changePercent') && <td
                     onMouseEnter={(e) => handleListSrHoverEnter(e, stock)}
@@ -6797,9 +6827,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           const p = klines[i - 1]?.close;
           const pct = p != null && p > 0 ? ((c - p) / p) * 100 : null;
           const pctCls = pct != null ? (pct > 0 ? 'text-red-500' : pct < 0 ? 'text-green-500' : 'text-app-rowtext') : 'text-app-rowtext';
-          const col = (v: number) => (p != null ? (v > p ? 'text-red-500' : v < p ? 'text-green-500' : 'text-app-rowtext') : 'text-app-rowtext');
-          const hCls = col(k.high);
-          const lCls = col(k.low);
+          const hCls = priceVsPrevCloseCls(k.high, p);
+          const lCls = priceVsPrevCloseCls(k.low, p);
           return (
             <React.Fragment>
               <span className={`text-[10px] font-mono font-bold shrink-0 w-[30px] text-right ${pctCls}`}>{pct != null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : ''}</span>
@@ -6928,8 +6957,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 const k = klines[i];
                 const c = date === latestDate && mktInfoStock.price > 0 ? mktInfoStock.price : k.close;
                 const p = klines[i - 1]?.close;
-                const col = (v: number) => (p != null ? (v > p ? 'text-red-500' : v < p ? 'text-green-500' : 'text-app-rowtext') : 'text-app-rowtext');
-                return <span className={`text-[10px] font-mono font-bold w-[30px] shrink-0 text-right ${col(c)}`}>{fp(c)}</span>;
+                return <span className={`text-[10px] font-mono font-bold w-[30px] shrink-0 text-right ${priceVsPrevCloseCls(c, p)}`}>{fp(c)}</span>;
               };
               // 每日行情行日期顺序：固定取最后10根 klines，每日都展示（无标签则 chip 区留空）
               // 不能用 byDate.keys() 做日期来源——某些日子没有任何标签（如泸州老窖 10/8~10/12）就会被跳过，

@@ -5,7 +5,7 @@
 import React from 'react';
 import { GripHorizontal } from 'lucide-react';
 import type { IndicatorResult } from '../services/indicators';
-import { formatPrice, formatVolume } from '../services/indicators';
+import { formatPrice, formatVolume, prevCloseFromChange, priceVsPrevCloseBrandCls } from '../services/indicators';
 
 // 价格弹窗的「两组数据」渲染：
 //   第一组：开/现/低/高/额/幅/量/量比（8 项）
@@ -15,15 +15,10 @@ export function PriceIndicatorSection({ name, price, data }: { name: string; pri
   const d = data;
   const fmt = (v: number | null) => v == null ? '-' : formatPrice(v, name);
   const pctColor = d.changePct == null ? 'text-app-subtext' : d.changePct >= 0 ? 'text-brand-red' : 'text-brand-green';
-  // 昨收价：现价 / (1 + 涨跌幅)
-  const prevClose = (d.changePct == null || price == null || price <= 0) ? null : price / (1 + d.changePct / 100);
-  // 开/现/低/高 各自与昨收价比较着色（符合正规交易软件规则）
-  const priceColor = (v: number | null) => {
-    if (v == null || prevClose == null) return 'text-app-subtext';
-    if (v > prevClose) return 'text-brand-red';
-    if (v < prevClose) return 'text-brand-green';
-    return 'text-app-rowtext';
-  };
+  // 昨收价：现价 / (1 + 涨跌幅)，复用共享推导（与列表页价格列同一来源）
+  const prevClose = prevCloseFromChange(price, d.changePct);
+  // 开/现/低/高 各自与昨收价比较着色（符合正规交易软件规则）；判定与配色方案均复用共享实现
+  const priceColor = (v: number | null) => priceVsPrevCloseBrandCls(v, prevClose);
   const fmtPct = (v: number | null) => v == null ? '-' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
   const numFmt = (v: number | null, dec = 2) => v == null ? '-' : v.toFixed(dec);
   const cell2 = (label: string, val: React.ReactNode, colorClass = 'text-app-rowtext') => (
