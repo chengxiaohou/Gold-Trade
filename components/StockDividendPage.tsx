@@ -4994,7 +4994,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         if (maxPrice === null && minPrice === null) return null;
                         return (
                           <span className="font-mono text-[8px] text-app-rowtext">
-                            {maxPrice !== null ? formatPrice(maxPrice, stock.name) : '-'}-{minPrice !== null ? formatPrice(minPrice, stock.name) : '-'}
+                            {minPrice !== null ? formatPrice(minPrice, stock.name) : '-'}-{maxPrice !== null ? formatPrice(maxPrice, stock.name) : '-'}
                           </span>
                         );
                       })()}
