@@ -5685,9 +5685,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <div className="grid grid-cols-3 gap-1">
                     {(() => {
                       const bandLabels: { band: string; label: string; value: number | undefined; labelColor: string; valueColor: string }[] = [
+                        { band: 'lower', label: getBollBandLabel(bollPeriod, 'lower'), value: bollData?.lower, labelColor: 'text-brand-green', valueColor: 'text-brand-green' },
                         { band: 'mid', label: getBollBandLabel(bollPeriod, 'mid'), value: bollData?.mid, labelColor: 'text-blue-500', valueColor: 'text-blue-500' },
                         { band: 'upper', label: getBollBandLabel(bollPeriod, 'upper'), value: bollData?.upper, labelColor: 'text-brand-red', valueColor: 'text-red-500' },
-                        { band: 'lower', label: getBollBandLabel(bollPeriod, 'lower'), value: bollData?.lower, labelColor: 'text-brand-green', valueColor: 'text-brand-green' },
                       ];
                       const pos = bollData && stock.price ? getBollPosition(bollData, stock.price) : null;
                       const absPct = pos ? Math.abs(pos.percent) : 0;
