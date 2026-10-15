@@ -4768,18 +4768,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </th>}
                 {cols.includes('position') && <>
                   <th
+                    className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border select-none"
+                  >
+                    股息率
+                  </th>
+                  <th
                     className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
                     onClick={handleCostPctSortClick}
                     title="点击切换排序：成本下方盈亏%高→低 / 低→高"
                   >
                     成本
-                  </th>
-                  <th
-                    className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
-                    onClick={handleTradePctSortClick}
-                    title="点击切换排序：成交价涨跌%高→低 / 低→高"
-                  >
-                    交易
                   </th>
                   <th
                     className="w-[64px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
@@ -4789,9 +4787,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     仓位
                   </th>
                   <th
-                    className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border select-none"
+                    className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
+                    onClick={handleTradePctSortClick}
+                    title="点击切换排序：成交价涨跌%高→低 / 低→高"
                   >
-                    股息率
+                    交易
                   </th>
                 </>}
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('daily')}>日线</th>
@@ -5111,10 +5111,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     );
                     return (
                       <React.Fragment key="position-cols">
-                        {col2}
-                        {col3}
-                        {colHold}
                         {col1}
+                        {col2}
+                        {colHold}
+                        {col3}
                       </React.Fragment>
                     );
                   })()}
