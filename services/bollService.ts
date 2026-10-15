@@ -505,6 +505,72 @@ export function projectBollAsOf(data: BollData | null | undefined, asOfDate: str
   return buildBollDataFromKlines(sliced, data.fetchedAt);
 }
 
+/** SSOT：给定 BOLL 三轨和一个价格，判定 band + percent。
+ *  页面和 countBollBandStreak 都必须复用这里，不能各自写一套。 */
+export interface BollBandInfo {
+  band: 'upper' | 'mid' | 'lower';
+  percent: number;
+}
+
+export function getBollPosition(data: BollData | null | undefined, currentPrice: number): BollBandInfo | null {
+  if (!data || !currentPrice) return null;
+  const { upper, mid, lower } = data;
+  // edge case：2σ=0（upper=mid=lower），BOLL 三轨重合 → 任何 price 都算 mid，避免 upper 先抢
+  if (upper === mid && mid === lower) return { band: 'mid', percent: ((currentPrice - mid) / mid) * 100 };
+  if (currentPrice >= upper) return { band: 'upper', percent: ((currentPrice - upper) / upper) * 100 };
+  if (currentPrice <= lower) return { band: 'lower', percent: ((currentPrice - lower) / lower) * 100 };
+  // mid 区间：谁近归谁
+  const dU = Math.abs(currentPrice - upper), dM = Math.abs(currentPrice - mid), dL = Math.abs(currentPrice - lower);
+  if (dU <= dM && dU <= dL) return { band: 'upper', percent: ((currentPrice - upper) / upper) * 100 };
+  if (dM <= dL) return { band: 'mid', percent: ((currentPrice - mid) / mid) * 100 };
+  return { band: 'lower', percent: ((currentPrice - lower) / lower) * 100 };
+}
+
+/**
+ * 连续 N 天处于 BOLL 同方向轨道的天数（仅日线）。
+ * 对每个历史 bar，独立用该 bar 及其之前 19 根（共 20 根 close）算它当时的 BOLL 轨道，
+ * 然后用 classifyBollBand（SSOT，与页面 getBollPosition 同款 relative 判据）判定该 bar 处于哪个 band。
+ *
+ * 规则（仅处理两种场景）：
+ *   target='upper'：close 处于 upper band（含 mid 区间里离 upper 更近的场景）→ 累计
+ *   target='lower'：close 处于 lower band（含 mid 区间里离 lower 更近的场景）→ 累计
+ * 断开条件：band 切换到 mid / 另一 band、数据不足、超过 maxDays。
+ *
+ * @returns 连续天数（从 1 计起），或 null（klines 不足 20 根 / 当日无 BOLL 数据）
+ */
+export function countBollBandStreak(
+  klines: BollKline[] | undefined | null,
+  target: 'upper' | 'lower',
+  maxDays = 10,
+): number | null {
+  if (!klines || klines.length < 20) return null;
+
+  // 从最后一条（今日）往前数，最多 maxDays 条
+  let count = 0;
+  const startIdx = klines.length - 1;
+
+  for (let offset = 0; offset < maxDays; offset++) {
+    const idx = startIdx - offset;
+    if (idx < 19) break; // 往前不足 20 根算 BOLL
+
+    // 取 klines[0..idx]（含当前 bar），重算"当天收盘后"的 BOLL
+    const slice = klines.slice(0, idx + 1);
+    const boll = buildBollDataFromKlines(slice, 0);
+    if (!boll) break;
+
+    const close = klines[idx].close;
+    const info = getBollPosition(boll, close);
+    const band = info?.band ?? null;
+    if (band === target) {
+      count++;
+    } else {
+      break;
+    }
+  }
+
+  return count >= 1 ? count : null;
+}
+
 interface SinaKline {
   day: string;
   open: string;

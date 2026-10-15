@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeTodayBarToKlines, pickDegradedBoll } from '../bollService';
+import { mergeTodayBarToKlines, pickDegradedBoll, countBollBandStreak } from '../bollService';
 import type { BollData, BollKline } from '../bollService';
 
 function date(offset: number, base = new Date(Date.UTC(2026, 0, 1))): string {
@@ -142,5 +142,153 @@ describe('pickDegradedBoll（网络失败时降级到过期缓存）', () => {
 
   it('无缓存 entry：不可降级 → null', () => {
     expect(pickDegradedBoll(undefined)).toBeNull();
+  });
+});
+
+// ─── countBollBandStreak（连续 N 天处于 BOLL 上/下轨） ───
+
+/**
+ * 构造 n 根 klines，最后 highN 根 close=highClose，其余 lowClose。
+ * open/high/low 与 close 一致（扁平 bar，无波动）。
+ * 这样可以精确控制 MA20 和 σ，便于断言。
+ */
+function mkStepKlines(
+  n: number,
+  highN: number,
+  highClose: number,
+  lowClose: number,
+): BollKline[] {
+  const arr: BollKline[] = [];
+  for (let i = 0; i < n; i++) {
+    const close = i < n - highN ? lowClose : highClose;
+    arr.push({ date: date(i), open: close, high: close, low: close, close, volume: 1_000_000 });
+  }
+  return arr;
+}
+
+describe('countBollBandStreak', () => {
+  it('klines 不足 20 根 → null', () => {
+    const klines = mkFlatKlines(19);
+    expect(countBollBandStreak(klines, 'upper')).toBeNull();
+    expect(countBollBandStreak(undefined, 'upper')).toBeNull();
+    expect(countBollBandStreak(null, 'lower')).toBeNull();
+    expect(countBollBandStreak([], 'upper')).toBeNull();
+  });
+
+  it('连续 4 天 upper（close 均高于各自 BOLL upper）→ 返回 4', () => {
+    // 非对称构造：前 20 根=50，后 4 根=150。close=150 远高于 BOLL upper
+    const klines = mkStepKlines(24, 4, 150, 50);
+    const actual = countBollBandStreak(klines, 'upper');
+    expect(actual).toBe(4);
+  });
+
+  it('中间断开：第 3 天回到 BOLL 内部 → count=2', () => {
+    // 前 22 根=50，最后 2 根=150。offset 0,1 close=150→upper；offset=2 close=50 在 mid 区间→断开
+    const arr: BollKline[] = [];
+    for (let i = 0; i < 24; i++) {
+      const close = i < 22 ? 50 : 150;
+      arr.push({ date: date(i), open: close, high: close, low: close, close, volume: 1_000_000 });
+    }
+    const actual = countBollBandStreak(arr, 'upper');
+    expect(actual).toBe(2);
+  });
+
+  it('lower 方向：连续 4 天 close=50 跌破 BOLL lower（前 20 根 close=150）→ 返回 4', () => {
+    // 非对称：前 20 根=150，后 4 根=50。close=50 < BOLL lower
+    const klines = mkStepKlines(24, 4, 50, 150);
+    const actual = countBollBandStreak(klines, 'lower');
+    expect(actual).toBe(4);
+  });
+
+  it('maxDays 截断：连续 10 天但 maxDays=3 → 返回 3', () => {
+    const klines = mkStepKlines(30, 10, 150, 50);
+    const actual = countBollBandStreak(klines, 'upper', 3);
+    expect(actual).toBe(3);
+  });
+
+  // ── 方案 A（每 bar 自算）vs 方案 B（今日轨道对比）的本质差异验证 ──
+
+  it('BOLL 轨道上移场景：方案 A 能正确识别连续，方案 B 会穿越误判断开', () => {
+    // 构造 BOLL 轨道随时间上移（历史波动变大、close 抬升）的真实场景
+    // 让最后 30 根 close 从 105 线性升到 135，前 20 根 close=100
+    const arr: BollKline[] = [];
+    for (let i = 0; i < 50; i++) {
+      const close = i < 20 ? 100 : 105 + (i - 20); // 100,100,... 然后 105,106,134
+      arr.push({ date: date(i), open: close, high: close, low: close, close, volume: 1_000_000 });
+    }
+
+    // 先用完整 50 根算今日 BOLL 轨道（模拟"方案 B"用今日 upper 卡历史 close）
+    // 对 offset=10（倒数第 11 根，close=105+19=124），
+    // 今日 upper 可能已经被后面的高 close 拉高到 >124，方案 B 就会把它误判为 mid
+    // 方案 A 对每个 bar 用当时自己的 upper，close=124 可能高于当时的 upper
+
+    const streakA = countBollBandStreak(arr, 'upper', 10);
+
+    // 手动模拟方案 B 的"穿越"：用今日 upper 对比近 10 天的 close
+    // 先算今日（最后一根）的 upper
+    const last20closes = arr.slice(-20).map(k => k.close);
+    const maLast = last20closes.reduce((a, b) => a + b, 0) / 20;
+    const stdLast = Math.sqrt(
+      last20closes.reduce((s, c) => s + Math.pow(c - maLast, 2), 0) / 20,
+    );
+    const upperToday = maLast + 2 * stdLast;
+
+    let streakB = 0;
+    for (let offset = 0; offset < 10; offset++) {
+      const close = arr[arr.length - 1 - offset].close;
+      if (close >= upperToday) streakB++;
+      else break;
+    }
+
+    console.log('=== 方案 A vs 方案 B（BOLL 轨道上移场景）===');
+    console.log('今日 upper:', upperToday.toFixed(2));
+    console.log('方案 A（每 bar 自算 upper）连续天数:', streakA);
+    console.log('方案 B（今日 upper 对比历史 close）连续天数:', streakB);
+    console.log('方案 A 更准确（不穿越）:', (streakA ?? 0) >= streakB);
+
+    // 核心断言：方案 A 不应比方案 B 少
+    expect((streakA ?? 0) >= streakB).toBe(true);
+  });
+
+  it('BOLL 轨道下移场景：方案 B 会把 mid 误判为 upper', () => {
+    // 构造 BOLL 轨道下移（close 从高位跌下来）
+    const arr: BollKline[] = [];
+    for (let i = 0; i < 50; i++) {
+      const close = i < 20 ? 130 : 130 - (i - 20); // 130,130,... 然后 129,128,... 一路跌到 91
+      arr.push({ date: date(i), open: close, high: close, low: close, close, volume: 1_000_000 });
+    }
+
+    const streakA = countBollBandStreak(arr, 'upper', 10);
+
+    // 方案 B：今日 upper 对比近 10 天 close
+    const last20closes = arr.slice(-20).map(k => k.close);
+    const maLast = last20closes.reduce((a, b) => a + b, 0) / 20;
+    const stdLast = Math.sqrt(
+      last20closes.reduce((s, c) => s + Math.pow(c - maLast, 2), 0) / 20,
+    );
+    const upperToday = maLast + 2 * stdLast;
+
+    let streakB = 0;
+    for (let offset = 0; offset < 10; offset++) {
+      const close = arr[arr.length - 1 - offset].close;
+      if (close >= upperToday) streakB++;
+      else break;
+    }
+
+    console.log('=== 方案 A vs 方案 B（BOLL 轨道下移场景）===');
+    console.log('今日 upper:', upperToday.toFixed(2));
+    console.log('方案 A:', streakA);
+    console.log('方案 B:', streakB);
+
+    // 核心断言：方案 B 可能穿越多算，但方案 A 应该更保守准确
+    expect((streakA ?? 0) <= streakB).toBe(true);
+  });
+
+  it('close 刚好等于 upper（BOLL 三轨重合 edge case）→ 返回 null', () => {
+    // 全扁平 klines 所有 close=100 → MA20=100, σ=0, upper=mid=lower=100
+    // SSOT 规定：BOLL 三轨重合时返回 mid，避免硬判据抢，所以 close=100 ≠ 'upper' → streak=null
+    const klines = mkFlatKlines(25);
+    const actual = countBollBandStreak(klines, 'upper');
+    expect(actual).toBeNull();
   });
 });

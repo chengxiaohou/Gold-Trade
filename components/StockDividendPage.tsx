@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
-import type { BollData, BollPeriod, BollAdjust, BollKline } from '../services/bollService';
+import { countBollBandStreak, getBollPosition } from '../services/bollService';
+import type { BollData, BollPeriod, BollAdjust, BollKline, BollBandInfo } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime } from '../services/cacheService';
 import { priceBureau } from '../services/priceBureau';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
@@ -1043,36 +1044,7 @@ const formatFetchTime = (timestamp: number): string => {
   return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 };
 
-interface BollPosition {
-  band: 'upper' | 'mid' | 'lower';
-  percent: number;
-}
-
-const getBollPosition = (data: BollData | null, currentPrice: number): BollPosition | null => {
-  if (!data || !currentPrice) return null;
-  
-  const { upper, mid, lower } = data;
-  
-  if (currentPrice >= upper) {
-    return { band: 'upper', percent: ((currentPrice - upper) / upper) * 100 };
-  } else if (currentPrice <= lower) {
-    return { band: 'lower', percent: ((currentPrice - lower) / lower) * 100 };
-  } else {
-    const distToUpper = Math.abs(currentPrice - upper);
-    const distToMid = Math.abs(currentPrice - mid);
-    const distToLower = Math.abs(currentPrice - lower);
-    
-    if (distToUpper <= distToMid && distToUpper <= distToLower) {
-      return { band: 'upper', percent: ((currentPrice - upper) / upper) * 100 };
-    } else if (distToMid <= distToLower) {
-      return { band: 'mid', percent: ((currentPrice - mid) / mid) * 100 };
-    } else {
-      return { band: 'lower', percent: ((currentPrice - lower) / lower) * 100 };
-    }
-  }
-};
-
-const getBollBandLabel = (period: BollPeriod, band: BollPosition['band']): string => {
+const getBollBandLabel = (period: BollPeriod, band: BollBandInfo['band']): string => {
   const periodMap: Record<BollPeriod, string> = { daily: '日', weekly: '周', monthly: '月' };
   const bandMap = { upper: '上', mid: '中', lower: '下' };
   return `${periodMap[period]}${bandMap[band]}`;
@@ -5174,6 +5146,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       const arrow = pos ? (arrowCount === 0 ? '' : (pos.percent >= 0 ? '↑' : '↓').repeat(arrowCount)) : '';
                       // 上轨+下箭头 或 下轨+上箭头 → 箭头放左边避免反直觉
                       const isCounterArrow = pos && ((pos.band === 'upper' && pos.percent < 0) || (pos.band === 'lower' && pos.percent >= 0));
+                      // 连续天数计数（仅日线）：守卫条件是"**没有可见的反方向箭头**"。
+                      // 注意不能用 raw percent 符号——getBollPosition 在 mid 区间里按"离哪轨更近"
+                      // 判定 band，会出现 band='lower' 但 price>lower（percent>0）的 relative 场景，
+                      // 此时 percent 符号反了但 arrowCount 可能=0（贴轨道无可见箭头），仍应纳入计数。
+                      // 所以统一以 arrowCount 来判断"有无可见反方向箭头"：
+                      const hasVisibleCounterArrow = pos && arrowCount >= 1 && (
+                        (pos.band === 'upper' && pos.percent < 0) ||
+                        (pos.band === 'lower' && pos.percent >= 0)
+                      );
+                      let streak: number | null = null;
+                      if (key === 'daily' && pos && !hasVisibleCounterArrow) {
+                        if (pos.band === 'upper') {
+                          streak = countBollBandStreak(data?.klines, 'upper', 10);
+                        } else if (pos.band === 'lower') {
+                          streak = countBollBandStreak(data?.klines, 'lower', 10);
+                        }
+                      }
                       return (
                         <td key={key} className={`px-1 py-1.5 text-center cursor-pointer ${draggedId ? '' : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
                           onClick={(e) => {
@@ -5208,7 +5197,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         >
                           {pos ? (
                             <div className="flex flex-col items-center leading-tight">
-                              <span className={`text-[11px] font-bold ${bandColor}`}>{isCounterArrow ? arrow : ''}{getBollBandLabel(key, pos.band)}{!isCounterArrow ? arrow : ''}</span>
+                              <span className={`text-[11px] font-bold ${bandColor}`}>{streak && streak > 1 ? <span className="text-[10px] font-semibold mr-0.5">{streak}</span> : ''}{isCounterArrow ? arrow : ''}{getBollBandLabel(key, pos.band)}{!isCounterArrow ? arrow : ''}</span>
                               <span className="font-mono text-[10px] text-app-rowtext">{percentStr}</span>
                             </div>
                           ) : (

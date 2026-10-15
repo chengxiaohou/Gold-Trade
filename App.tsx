@@ -194,7 +194,8 @@ export default function App() {
   }, [currentPage]);
 
   useEffect(() => {
-    document.title = currentPage === 'gold' ? '黄金' : '股息';
+    const base = currentPage === 'gold' ? '黄金' : '股息';
+    document.title = import.meta.env.DEV ? `${base} (debug)` : base;
   }, [currentPage]);
 
   // 全局 wheel 截断：滚轮落在 fixed 弹窗/浮层上时，若弹窗内部没有能承接滚动的容器，
