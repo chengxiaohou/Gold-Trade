@@ -1849,6 +1849,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         monthly: monthlyR.data?.klines,
       };
       const windows: { label: string; bars: number; source: 'daily' | 'weekly' | 'monthly' }[] = [
+        { label: '一月', bars: 20, source: 'daily' },
+        { label: '二月', bars: 40, source: 'daily' },
         { label: '三月', bars: 60, source: 'daily' },
         { label: '半年', bars: 120, source: 'daily' },
         { label: '一年', bars: 250, source: 'daily' },
