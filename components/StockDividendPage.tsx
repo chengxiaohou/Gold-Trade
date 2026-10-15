@@ -383,11 +383,12 @@ function pendingExpirySuffix(t: StockTrade, now: number): string {
 const tradeStatusLabel = (t: StockTrade): string =>
   `${TRADE_STATUS_LABEL[`${t.side}-${t.status}`]}${pendingExpirySuffix(t, Date.now())}`;
 // 挂单剩余有效自然日：默认 PENDING_TTL_DAYS=5，用户改写后优先使用 t.ttlDays（从 t.ttlUpdatedAt 起算）
+// 过期则返回负数，表示已过期多少天（如 -3 表示过期 3 天）
 const pendingRemainingDays = (t: StockTrade, now: number): number => {
   if (t.status !== 'pending') return 0;
   const ttl = t.ttlDays ?? PENDING_TTL_DAYS;
   const base = t.ttlUpdatedAt ?? t.createdAt;
-  return Math.max(0, ttl - (dayIndex(base, now) - 1));
+  return ttl - (dayIndex(base, now) - 1);
 };
 
 // 交易历史记录条目（两行布局：公式+盈亏+状态徽标 / 时间+撤单+编辑+备注），撤单带确认
@@ -781,6 +782,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
   const [confirming, setConfirming] = useState(false);
   const [ttlMenuOpen, setTtlMenuOpen] = useState(false);
   const [ttlMenuLeft, setTtlMenuLeft] = useState<number | null>(null);
+  const [ttlTipOpen, setTtlTipOpen] = useState(false);
   const ttlBtnRef = useRef<HTMLButtonElement>(null);
   const ttlMenuRef = useRef<HTMLDivElement>(null);
   const stockName = stock.name;
@@ -897,8 +899,11 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
                 <button
                   ref={ttlBtnRef}
                   type="button"
+                  onMouseEnter={() => { if (!ttlMenuOpen) setTtlTipOpen(true); }}
+                  onMouseLeave={() => setTtlTipOpen(false)}
                   onClick={(e) => {
                     e.stopPropagation();
+                    setTtlTipOpen(false);
                     if (!ttlMenuOpen) {
                       // 打开前先渲染再测宽——用 rAF 拿到真实 menu 元素后算出居中点
                       setTtlMenuOpen(true);
@@ -917,7 +922,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
                       setTtlMenuLeft(null);
                     }
                   }}
-                  className="shrink-0 font-mono text-[8px] text-orange-400 whitespace-nowrap cursor-pointer select-none hover:text-orange-300 leading-none"
+                  className={`shrink-0 font-mono text-[8px] whitespace-nowrap cursor-pointer select-none leading-none ${pendingRemainingDays(t, Date.now()) <= 0 ? 'text-red-500 hover:text-red-400' : 'text-orange-400 hover:text-orange-300'}`}
                 >
                   {pendingRemainingDays(t, Date.now())}天
                 </button>
@@ -945,6 +950,28 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
                           {n} 天
                         </button>
                       ))}
+                    </div>,
+                    document.body
+                  );
+                })()}
+                {ttlTipOpen && (() => {
+                  const rect = ttlBtnRef.current?.getBoundingClientRect();
+                  if (!rect) return null;
+                  const base = t.ttlUpdatedAt ?? t.createdAt;
+                  const ttl = t.ttlDays ?? PENDING_TTL_DAYS;
+                  const deadline = new Date(base);
+                  deadline.setHours(0, 0, 0, 0);
+                  deadline.setDate(deadline.getDate() + ttl - 1);
+                  const deadlineStr = `${deadline.getFullYear()}/${deadline.getMonth() + 1}/${deadline.getDate()}`;
+                  const remain = pendingRemainingDays(t, Date.now());
+                  const label = remain < 0 ? `已过期 ${-remain} 天 · 截止 ${deadlineStr}` : `截止 ${deadlineStr}`;
+                  return createPortal(
+                    <div
+                      role="tooltip"
+                      style={{ top: rect.top - 4, left: rect.left + rect.width / 2, transform: 'translate(-50%, -100%)' }}
+                      className="fixed z-[9999] pointer-events-none select-none bg-app-card border border-app-border rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2 py-1.5 text-[10px] text-app-text whitespace-nowrap"
+                    >
+                      {label}
                     </div>,
                     document.body
                   );
