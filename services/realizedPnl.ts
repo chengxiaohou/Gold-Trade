@@ -296,6 +296,35 @@ export function calcDtPnlForTrades(trades?: StockTrade[], withTax = false, stock
   return result;
 }
 
+// 未落库的卖出挂单（下单预览）收益预估：与已落库的挂卖记录完全同口径——
+// 直接复用 calcDtPnlForTrades / calcAvgPnlForTrades，把「这笔假设挂单」并入现有交易后取 pendingMap / pairMap 结果。
+// SSOT：不另写近似算法，口径变更只需改上面两个共享函数一处；无持仓或参数不合法时返回 null（不展示）。
+export interface PendingSellEstimate {
+  pnl: number;     // 预估收益（与「挂卖」记录同一口径，含税费开关）
+  pairs: DtPair[]; // 做T口径的配对明细（均价口径无配对概念，为空数组）
+}
+
+export function estimatePendingSell(
+  trades: StockTrade[] | undefined,
+  order: { price: number; shares: number },
+  mode: PnlCalcMode = 'avg',
+  withTax = false,
+  stockName?: string,
+): PendingSellEstimate | null {
+  if (!trades || trades.length === 0 || !(order.price > 0) || !(order.shares > 0)) return null;
+  const id = '__order_preview__';
+  // createdAt 取当前时刻：保证这笔假设挂单排在全部历史交易之后，与「新下单」的顺序一致
+  const preview: StockTrade = { id, side: 'sell', price: order.price, shares: order.shares, status: 'pending', createdAt: Date.now() };
+  if (mode === 'dt') {
+    const result = calcDtPnlForTrades([...trades, preview], withTax, stockName);
+    const pnl = result.pendingMap[id];
+    return pnl === undefined ? null : { pnl, pairs: result.pairMap[id] ?? [] };
+  }
+  const result = calcAvgPnlForTrades([...trades, preview], withTax, stockName);
+  const pnl = result.pendingMap[id];
+  return pnl === undefined ? null : { pnl, pairs: [] };
+}
+
 const effectiveTime = (t: StockTrade) => t.filledAt ?? t.createdAt;
 
 const dateKeyOf = (ts: number) => {

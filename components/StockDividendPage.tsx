@@ -13,7 +13,7 @@ import { fetchYearlyDividends, DividendRecord } from '../services/dividendServic
 import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
-import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, calcAvgPnlForTrades, calcTradeFees, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
+import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, calcAvgPnlForTrades, calcTradeFees, estimatePendingSell, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
 import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, volBucket, buildLatestShrinkTags, buildShrinkTagsForModule, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, analyzeStandEvents, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5, type StandEvent } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
@@ -489,7 +489,10 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
     <>
       <span
         ref={triggerRef}
-        className="inline-block cursor-default"
+        // 用 inline（而非 inline-block）：让触发器与相邻文字处于同一个行内格式化上下文，
+        // 行框高度与基线完全一致，框选高亮不会出现高度断层（inline-block 会独立成一个盒子）。
+        // 另两个调用点（交易行、逐日明细）中该 span 是 flex 子项，会被 blockify 为 block，不受影响。
+        className="cursor-default"
         onMouseEnter={() => requestShowAt()}
         onMouseLeave={() => { if (!pinnedRef.current) hide(); }}
         onClick={(e) => {
@@ -869,7 +872,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
       {/* 第一行：公式 + 已实现盈亏 + 状态徽标 */}
       <div className="flex items-center gap-1.5 text-[11px] leading-tight">
         <span className="font-mono font-bold text-app-text whitespace-nowrap">
-          {fmtP(price)}
+          <span className={t.side === 'buy' ? 'text-blue-500' : 'text-red-500'}>{fmtP(price)}</span>
           <span className="font-normal text-app-subtext text-[8px]"> × </span>
           <span className="font-normal text-app-subtext">{Number.isInteger(shares) ? shares : shares.toFixed(2)}</span>
           {fees && fees.total > 0 && (
@@ -879,7 +882,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
             </FeeTip>
           )}
           <span className="font-normal text-app-subtext text-[8px]"> = </span>
-          <span className={`font-bold ${t.side === 'buy' ? 'text-blue-500' : 'text-red-500'} ${buyMatchStyle}`}>
+          <span className={`font-bold text-app-subtext ${buyMatchStyle}`}>
             {(t.side === 'buy' ? price * shares + (fees?.total ?? 0) : price * shares - (fees?.total ?? 0)).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
           </span>
         </span>
@@ -901,8 +904,8 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
               {`${pnlMap[t.id] >= 0 ? '+' : ''}${fmtProfit(pnlMap[t.id])}`}
             </span>
           ) : t.side === 'sell' && t.status === 'pending' && !!pendingMap && pendingMap[t.id] !== undefined ? (
-            // 卖出挂单：预估获利（灰色）同样来自同一移动加权/做T口径，与成交共用一套算法，仅颜色区分
-            <span className="font-mono text-[10px] text-app-subtext">
+            // 卖出挂单：预估获利（橙色，与「挂卖」状态徽标同色）同样来自同一移动加权/做T口径，与成交共用一套算法，仅颜色区分
+            <span className="font-mono text-[10px] text-orange-400">
               {`${pendingMap[t.id] >= 0 ? '+' : ''}${fmtProfit(pendingMap[t.id])}`}
             </span>
           ) : null;
@@ -6410,6 +6413,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const divDiffValid = orderPriceNum > 0 && costDivRate > 0;
         // 差值 = 当前股息率 − 成本股息率（百分点），如 8.17% − 7.56% ≈ +0.61%
         const divDiffPct = divDiffValid ? (orderDivRate - costDivRate) : 0;
+        // 卖出挂单收益预估：与历史记录里「挂卖」条目的预估同一口径（做T匹配 / 移动加权 + 含税开关），
+        // 复用共享函数 estimatePendingSell，不另写近似算法；买入方向不展示。
+        // pairs 为做T口径的配对明细，供这个数字悬停时复用同一套 T 操作浮窗。
+        const orderSellEstimate = addTradeSide === 'sell'
+          ? estimatePendingSell(tradesOfS, { price: orderPriceNum, shares: parseFloat(addTradeShares) || 0 }, pnlCalcMode, taxEnabled, s.name)
+          : null;
         const totalCost = posShares * costBasis;
         const breakEven = posShares > 0 ? Math.max(0, (totalCost - realizedPnl) / posShares) : 0;
         const floatingPnl = marketPrice > 0 && posShares > 0 ? (marketPrice - costBasis) * posShares : 0;
@@ -6582,14 +6591,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <div className="grid grid-cols-2 gap-x-3 px-0.5 pt-0.5" style={{ marginTop: 2 }}>
                 <div className="flex items-center justify-start gap-1">
                   <span className="text-[10px] font-medium text-app-subtext translate-y-px">股息率</span>
-                  <span className="font-mono font-bold text-[10px] text-app-subtext">
-                    {orderDivRate > 0 ? orderDivRate.toFixed(2) : '-'}%{divDiffValid ? ` (${divDiffPct > 0 ? '+' : ''}${divDiffPct.toFixed(2)}%)` : ''}
+                  {/* 数据一侧同样下移 1px：label 已有 translate-y-px，原先数据未加导致数值相对 label 偏上 */}
+                  <span className="font-mono font-bold text-[10px] text-app-subtext translate-y-px">
+                    {orderDivRate > 0 ? orderDivRate.toFixed(2) : '-'}%{divDiffValid ? `｜${divDiffPct > 0 ? '+' : ''}${divDiffPct.toFixed(2)}%` : ''}
                   </span>
                 </div>
                 <div className="flex items-center justify-start gap-1">
-                  <span className="text-[10px] font-medium text-app-subtext translate-y-px">挂单金额</span>
-                  <span className="font-mono font-bold text-[11px] text-app-subtext">
+                  <span className="text-[10px] font-medium text-app-subtext translate-y-px">交易额</span>
+                  {/* 与股息率完全同一套字体样式（font-mono font-bold text-[10px] text-app-subtext translate-y-px）：金额 + 收益预估共用「交易额」这一个 label */}
+                  <span className="font-mono font-bold text-[10px] text-app-subtext translate-y-px">
                     ¥{orderAmountText}
+                    {/* 卖出方向：紧跟「｜」分割的收益预估（同色同字号、取整到元、无额外空格），悬停复用 T 操作浮窗 */}
+                    {orderSellEstimate && (
+                      <PairTip pairs={orderSellEstimate.pairs} fmtPrice={fmtP}>
+                        <span>{`｜${fmtPnl(Math.round(orderSellEstimate.pnl))}`}</span>
+                      </PairTip>
+                    )}
                   </span>
                 </div>
               </div>
