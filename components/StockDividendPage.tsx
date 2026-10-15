@@ -386,7 +386,7 @@ const tradeStatusLabel = (t: StockTrade): string => {
   if (t.status !== 'pending') return base;
   const suffix = pendingExpirySuffix(t, Date.now());
   if (suffix) return `${base}${suffix}`;
-  return `${base}${pendingRemainingDays(t, Date.now())}天`;
+  return `${base}${pendingRemainingDays(t, Date.now())}`;
 };
 // 挂单剩余有效自然日：默认 PENDING_TTL_DAYS=5，用户改写后优先使用 t.ttlDays（从 t.ttlUpdatedAt 起算）
 const pendingRemainingDays = (t: StockTrade, now: number): number => {
