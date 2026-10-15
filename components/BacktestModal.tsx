@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, GripHorizontal, Play, Pin, Tag, Eye, EyeOff } from 'lucide-react';
+import { X, Plus, GripHorizontal, Play, Pin, Tag, Eye, EyeOff, Link, SquarePen } from 'lucide-react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, MouseEventParams, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams, UserTagRule } from '../types';
@@ -124,6 +124,26 @@ function formatChartTime(time: Time): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${y}-${pad(m)}-${pad(d)}`;
 }
+
+// ── 公告链接跳转（与交易弹窗 StockDividendPage 同源）──
+const buildAmihexinUrl = (raw: string): string => {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('amihexin://')) return trimmed;
+  const seqMatch = trimmed.match(/#seq=(\d+)/);
+  const seq = seqMatch ? seqMatch[1] : '';
+  let newUrl = trimmed.replace('/tapp/notice.html', '/tapp/app/noticebasic/index.html');
+  const base = newUrl.split('#')[0].split('?')[0];
+  const finalUrl = seq ? `${base}?seq=${seq}` : base;
+  return `amihexin://url=${encodeURIComponent(finalUrl)}`;
+};
+const openScheme = (url: string): void => {
+  const a = document.createElement('a');
+  a.href = url;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+};
 
 export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, customTags }: BacktestModalProps) {
   // 按下 ESC 关闭回测弹窗（挂载期内只挂一次监听；onClose 用 ref 取最新，
@@ -1012,7 +1032,15 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
         <div className="bg-app-bg/90 backdrop-blur-md px-3 py-2 flex items-center justify-between border-b border-app-border select-none shrink-0">
           <div className="flex items-center gap-2 text-app-subtext">
             <GripHorizontal size={15} className="opacity-80" />
-            <h4 className="text-[13px] font-bold text-app-text">回测 · {stock.name}</h4>
+            <button
+              type="button"
+              onClick={() => { if (stock.link) { const url = buildAmihexinUrl(stock.link); if (url) openScheme(url); } }}
+              className="inline-flex items-center gap-1 text-app-subtext/70 hover:text-indigo-400 transition-colors min-w-0"
+              title={stock.link ? '打开公告链接' : '未设置公告链接'}
+            >
+              <h4 className="text-[13px] font-bold text-app-text truncate">回测 · {stock.name}</h4>
+              {stock.link ? <Link size={13} className="shrink-0" /> : <SquarePen size={13} className="shrink-0 opacity-30" />}
+            </button>
           </div>
           <div className="flex items-center gap-1.5">
             <button type="button" onClick={onClose} className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1.5" title="关闭">
