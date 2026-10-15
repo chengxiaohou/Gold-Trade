@@ -779,6 +779,8 @@ interface TradeRecordRowProps {
 }
 const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendingMap, onToggle, onEdit, onDelete, onSetTTL, errIds, pairMap, buyMatchMap, taxEnabled }) => {
   const [confirming, setConfirming] = useState(false);
+  const [ttlMenuOpen, setTtlMenuOpen] = useState(false);
+  const ttlBtnRef = useRef<HTMLButtonElement>(null);
   const stockName = stock.name;
   const currentPrice = stock.price || 0;
   const fmtP = (v: number) => formatPrice(v, stockName);
@@ -815,6 +817,26 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
     const d = new Date(ts);
     return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
+  // 点击按钮外部自动关闭 TTL 下拉菜单
+  useEffect(() => {
+    if (!ttlMenuOpen) return;
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      const t = e.target as Node;
+      const btn = ttlBtnRef.current;
+      if (btn && btn.contains(t)) return;
+      // 菜单挂在 document.body 上，通过 role=menu 特征判断
+      const menu = (document.querySelectorAll('[role="menu"]') as NodeListOf<HTMLElement>);
+      let hit = false;
+      menu.forEach(m => { if (m.contains(t)) hit = true; });
+      if (!hit) setTtlMenuOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('touchstart', onDown);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('touchstart', onDown);
+    };
+  }, [ttlMenuOpen]);
   return (
     <div className="bg-app-input rounded-lg px-2 py-1.5 space-y-1">
       {/* 第一行：公式 + 已实现盈亏 + 状态徽标 */}
@@ -869,17 +891,42 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
         ) : (
           <span className="ml-auto shrink-0 flex items-center gap-1.5">
             {t.status === 'pending' && (
-              <select
-                aria-label="修改挂单剩余天数"
-                value={String(t.ttlDays ?? PENDING_TTL_DAYS)}
-                onChange={(e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v) && onSetTTL) onSetTTL(t, v); }}
-                className="shrink-0 font-mono text-[8px] text-orange-400 whitespace-nowrap bg-transparent border-0 cursor-pointer focus:outline-none focus:ring-0 px-0.5 py-0 leading-none"
-              >
-                <option value={5} className="bg-app-card text-app-text">5天</option>
-                <option value={10} className="bg-app-card text-app-text">10天</option>
-                <option value={20} className="bg-app-card text-app-text">20天</option>
-                <option value={30} className="bg-app-card text-app-text">30天</option>
-              </select>
+              <>
+                <button
+                  ref={ttlBtnRef}
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setTtlMenuOpen(v => !v); }}
+                  className="shrink-0 font-mono text-[8px] text-orange-400 whitespace-nowrap cursor-pointer select-none hover:text-orange-300 leading-none"
+                >
+                  {pendingRemainingDays(t, Date.now())}天
+                </button>
+                {ttlMenuOpen && (() => {
+                  const rect = ttlBtnRef.current?.getBoundingClientRect();
+                  if (!rect) return null;
+                  const opts = [5, 10, 20, 30];
+                  const cur = t.ttlDays ?? PENDING_TTL_DAYS;
+                  return createPortal(
+                    <div
+                      role="menu"
+                      style={{ top: rect.bottom + 4, left: rect.left }}
+                      className="fixed z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.55)] py-1 text-[10px] text-app-text min-w-[72px]"
+                      onMouseDown={(e) => e.stopPropagation()}
+                    >
+                      {opts.map(n => (
+                        <button
+                          key={n}
+                          type="button"
+                          onClick={() => { if (onSetTTL) onSetTTL(t, n); setTtlMenuOpen(false); }}
+                          className={`w-full text-left px-2.5 py-1 cursor-pointer select-none hover:bg-app-text/10 leading-none ${n === cur ? 'font-bold text-app-text' : 'text-app-subtext'}`}
+                        >
+                          {n}天
+                        </button>
+                      ))}
+                    </div>,
+                    document.body
+                  );
+                })()}
+              </>
             )}
             {diffNum != null && (
               <span className={`font-mono text-[8px] font-semibold whitespace-nowrap ${pctColor} ${buyMatchStyle}`}>
