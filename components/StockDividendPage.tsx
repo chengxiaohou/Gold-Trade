@@ -2835,6 +2835,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [histPickerPos, setHistPickerPos] = useState<{ top: number; left: number } | null>(null);
   const [histPickerDates, setHistPickerDates] = useState<string[]>([]);
 
+  // 下拉弹出后自动滚动到当前选中行（实时模式 → 滚到顶部「最新」按钮；历史模式 → 滚到对应日期）
+  useEffect(() => {
+    if (!histPickerPos) return;
+    requestAnimationFrame(() => {
+      const picker = document.querySelector('[data-hist-picker="1"]');
+      if (!picker) return;
+      const target = histDate
+        ? picker.querySelector(`button[data-date="${histDate}"]`)
+        : picker.querySelector('button[data-date="__latest__"]');
+      (target as HTMLElement | null)?.scrollIntoView({ block: 'center' });
+    });
+  }, [histPickerPos, histDate]);
+
   useEffect(() => {
     priceBureau.setAsOfDate(histDate);
   }, [histDate]);
@@ -6196,25 +6209,28 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         <>
           <div className="fixed inset-0 z-[9998]" onClick={() => setHistPickerPos(null)} />
           <div
+            data-hist-picker="1"
             className="fixed z-[9999] bg-app-card border border-app-border rounded-lg shadow-xl py-1 text-[11px]"
             style={{ top: histPickerPos.top, left: histPickerPos.left, width: 168 }}
           >
             <button
               type="button"
+              data-date="__latest__"
               onClick={() => pickHistDate(null)}
-              className={`w-full text-left px-3 py-1.5 hover:bg-app-input transition-colors ${!histDate ? 'text-indigo-400 font-bold' : 'text-app-text'}`}
+              className={`w-full text-center px-3 py-1.5 hover:bg-app-input transition-colors ${!histDate ? 'text-indigo-400 font-bold' : 'text-app-text'}`}
             >最新（恢复实时）</button>
             <div className="my-1 border-t border-app-border" />
             <div className="max-h-[210px] overflow-y-auto custom-scrollbar">
               {histPickerDates.length === 0 && (
-                <div className="px-3 py-2 text-app-subtext">缓存中暂无历史数据</div>
+                <div className="px-3 py-2 text-center text-app-subtext">缓存中暂无历史数据</div>
               )}
               {histPickerDates.map(d => (
                 <button
                   key={d}
                   type="button"
+                  data-date={d}
                   onClick={() => pickHistDate(d)}
-                  className={`w-full text-left px-3 py-1.5 font-mono hover:bg-app-input transition-colors ${histDate === d ? 'text-indigo-400 font-bold' : 'text-app-text'}`}
+                  className={`w-full text-center px-3 py-1.5 font-mono hover:bg-app-input transition-colors ${histDate === d ? 'text-indigo-400 font-bold' : 'text-app-text'}`}
                 >{d}</button>
               ))}
             </div>

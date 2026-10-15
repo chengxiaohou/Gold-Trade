@@ -206,13 +206,21 @@ export const priceBureau = {
     return asOfDate;
   },
 
-  /** 缓存中所有股票日线覆盖到的交易日（倒序，最新在前），作为历史模式的日期选择来源。 */
+  /** 缓存中所有股票日线覆盖到的交易日（倒序，最新在前），作为历史模式的日期选择来源。
+   *  自动剔除"全市场最新那根 K 线日期"——它等价于实时模式（histDate=null），
+   *  由顶部「最新（恢复实时）」按钮承担，避免下拉里出现冗余选项。 */
   getAvailableDates(): string[] {
     const dates = new Set<string>();
+    let latest = '';
     for (const e of store.values()) {
-      for (const k of e.daily?.klines ?? []) dates.add(k.date);
+      for (const k of e.daily?.klines ?? []) {
+        dates.add(k.date);
+        if (k.date > latest) latest = k.date;
+      }
     }
-    return [...dates].sort().reverse();
+    const sorted = [...dates].sort().reverse();
+    // 去掉最新日期（它就是实时模式）
+    return sorted.length > 0 && sorted[0] === latest ? sorted.slice(1) : sorted;
   },
 
   /** 历史模式的"当日限价数据"：取截止日（或之前最近一个交易日）那根日 K，
