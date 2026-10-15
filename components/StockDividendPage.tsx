@@ -360,42 +360,34 @@ const openScheme = (url: string): void => {
   document.body.removeChild(a);
 };
 
-// ---- 挂单有效期判断：写死 5 个交易日（不含周末） ----
+// ---- 挂单有效期判断：写死 5 个自然日 ----
 const PENDING_TTL_DAYS = 5;
-const isWeekend = (d: Date) => d.getDay() === 0 || d.getDay() === 6;
-// 计算从创建日到今天经过了第几个交易日（首日计 1）。非交易时段/周末被视为"停牌日"，不计入。
-function tradingDayIndex(createTime: number, now: number): number {
-  const start = new Date(createTime); start.setHours(0, 0, 0, 0);
+// 计算从起始日到今天经过了第几个自然日（首日计 1）。整天 24h 为一单位，跨零点即 +1。
+function dayIndex(baseTime: number, now: number): number {
+  const start = new Date(baseTime); start.setHours(0, 0, 0, 0);
   const end = new Date(now); end.setHours(0, 0, 0, 0);
   if (end.getTime() <= start.getTime()) return 1;
-  let count = 1;
-  const cursor = new Date(start);
-  cursor.setDate(cursor.getDate() + 1);
-  while (cursor.getTime() <= end.getTime()) {
-    if (!isWeekend(cursor)) count++;
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return count;
+  return Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
 }
-// 挂单是否处于最后一个交易日（返回 '!'）、已过期（返回 '?'）或正常（返回 ''）
+// 挂单是否处于最后一个有效日（返回 '!'）、已过期（返回 '?'）或正常（返回 ''）
 function pendingExpirySuffix(t: StockTrade, now: number): string {
   if (t.status !== 'pending') return '';
   const ttl = t.ttlDays ?? PENDING_TTL_DAYS;
   const base = t.ttlUpdatedAt ?? t.createdAt;
-  const idx = tradingDayIndex(base, now);
+  const idx = dayIndex(base, now);
   if (idx >= ttl + 1) return '?'; // 已过期
-  if (idx === ttl) return '!';     // 最后一个有效交易日
+  if (idx === ttl) return '!';     // 最后一个有效日
   return '';
 }
 // 生成挂单/成交的状态文字（含挂单过期标记）
 const tradeStatusLabel = (t: StockTrade): string =>
   `${TRADE_STATUS_LABEL[`${t.side}-${t.status}`]}${pendingExpirySuffix(t, Date.now())}`;
-// 挂单剩余有效交易天数：默认 PENDING_TTL_DAYS=5，用户改写后优先使用 t.ttlDays（从 t.ttlUpdatedAt 起算）
+// 挂单剩余有效自然日：默认 PENDING_TTL_DAYS=5，用户改写后优先使用 t.ttlDays（从 t.ttlUpdatedAt 起算）
 const pendingRemainingDays = (t: StockTrade, now: number): number => {
   if (t.status !== 'pending') return 0;
   const ttl = t.ttlDays ?? PENDING_TTL_DAYS;
   const base = t.ttlUpdatedAt ?? t.createdAt;
-  return Math.max(0, ttl - (tradingDayIndex(base, now) - 1));
+  return Math.max(0, ttl - (dayIndex(base, now) - 1));
 };
 
 // 交易历史记录条目（两行布局：公式+盈亏+状态徽标 / 时间+撤单+编辑+备注），撤单带确认
