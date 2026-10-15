@@ -780,7 +780,9 @@ interface TradeRecordRowProps {
 const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendingMap, onToggle, onEdit, onDelete, onSetTTL, errIds, pairMap, buyMatchMap, taxEnabled }) => {
   const [confirming, setConfirming] = useState(false);
   const [ttlMenuOpen, setTtlMenuOpen] = useState(false);
+  const [ttlMenuLeft, setTtlMenuLeft] = useState<number | null>(null);
   const ttlBtnRef = useRef<HTMLButtonElement>(null);
+  const ttlMenuRef = useRef<HTMLDivElement>(null);
   const stockName = stock.name;
   const currentPrice = stock.price || 0;
   const fmtP = (v: number) => formatPrice(v, stockName);
@@ -828,7 +830,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
       const menu = (document.querySelectorAll('[role="menu"]') as NodeListOf<HTMLElement>);
       let hit = false;
       menu.forEach(m => { if (m.contains(t)) hit = true; });
-      if (!hit) setTtlMenuOpen(false);
+      if (!hit) { setTtlMenuOpen(false); setTtlMenuLeft(null); }
     };
     window.addEventListener('mousedown', onDown);
     window.addEventListener('touchstart', onDown);
@@ -895,7 +897,26 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
                 <button
                   ref={ttlBtnRef}
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); setTtlMenuOpen(v => !v); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!ttlMenuOpen) {
+                      // 打开前先渲染再测宽——用 rAF 拿到真实 menu 元素后算出居中点
+                      setTtlMenuOpen(true);
+                      requestAnimationFrame(() => {
+                        const btnRect = ttlBtnRef.current?.getBoundingClientRect();
+                        const menu = ttlMenuRef.current;
+                        if (!btnRect || !menu) return;
+                        const center = btnRect.left + btnRect.width / 2;
+                        let left = center - menu.offsetWidth / 2;
+                        // 边界保护：避免贴边或溢出
+                        left = Math.max(4, Math.min(left, window.innerWidth - menu.offsetWidth - 4));
+                        setTtlMenuLeft(left);
+                      });
+                    } else {
+                      setTtlMenuOpen(false);
+                      setTtlMenuLeft(null);
+                    }
+                  }}
                   className="shrink-0 font-mono text-[8px] text-orange-400 whitespace-nowrap cursor-pointer select-none hover:text-orange-300 leading-none"
                 >
                   {pendingRemainingDays(t, Date.now())}天
@@ -905,10 +926,12 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
                   if (!rect) return null;
                   const opts = [5, 10, 20, 30];
                   const cur = t.ttlDays ?? PENDING_TTL_DAYS;
+                  const left = ttlMenuLeft ?? rect.left;
                   return createPortal(
                     <div
+                      ref={ttlMenuRef}
                       role="menu"
-                      style={{ top: rect.bottom + 4, left: rect.left }}
+                      style={{ top: rect.bottom + 4, left }}
                       className="fixed z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.55)] py-1 text-[10px] text-app-text"
                       onMouseDown={(e) => e.stopPropagation()}
                     >
