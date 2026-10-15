@@ -2858,8 +2858,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const openHistPicker = (e: React.MouseEvent<HTMLElement>) => {
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
-    const panelW = 168;
-    const panelH = 264;
+    // 先按估算尺寸定位，portal 渲染完后自适应修正
+    const panelW = 128;
+    const panelH = 240;
     let left = rect.left + rect.width / 2 - panelW / 2;
     left = Math.max(8, Math.min(left, window.innerWidth - panelW - 8));
     let top = rect.bottom + 6;
@@ -2867,6 +2868,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setHistPickerDates(priceBureau.getAvailableDates());
     setHistPickerPos({ top, left });
   };
+
+  // portal 渲染完后，量实际尺寸修正定位（避免自适应宽度/高度后出屏）
+  useEffect(() => {
+    if (!histPickerPos) return;
+    requestAnimationFrame(() => {
+      const picker = document.querySelector('[data-hist-picker="1"]') as HTMLElement | null;
+      if (!picker) return;
+      const r = picker.getBoundingClientRect();
+      let left = histPickerPos.left;
+      let top = histPickerPos.top;
+      if (left + r.width + 8 > window.innerWidth) left = Math.max(8, window.innerWidth - r.width - 8);
+      if (top + r.height + 8 > window.innerHeight) top = Math.max(8, window.innerHeight - r.height - 8);
+      if (left !== histPickerPos.left || top !== histPickerPos.top) setHistPickerPos({ top, left });
+    });
+  }, [histPickerPos]);
   const pickHistDate = (date: string | null) => {
     setHistDate(date);
     setHistPickerPos(null);
@@ -6210,19 +6226,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div className="fixed inset-0 z-[9998]" onClick={() => setHistPickerPos(null)} />
           <div
             data-hist-picker="1"
-            className="fixed z-[9999] bg-app-card border border-app-border rounded-lg shadow-xl py-1 text-[11px]"
-            style={{ top: histPickerPos.top, left: histPickerPos.left, width: 168 }}
+            className="fixed z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] py-1 text-[11px] w-[128px]"
+            style={{ top: histPickerPos.top, left: histPickerPos.left }}
           >
             <button
               type="button"
               data-date="__latest__"
               onClick={() => pickHistDate(null)}
-              className={`w-full text-center px-3 py-1.5 hover:bg-app-input transition-colors ${!histDate ? 'text-indigo-400 font-bold' : 'text-app-text'}`}
-            >最新（恢复实时）</button>
+              className={`w-full text-center px-2 py-1.5 hover:bg-app-input transition-colors ${!histDate ? 'text-indigo-400 font-bold' : 'text-app-text'}`}
+            >最新</button>
             <div className="my-1 border-t border-app-border" />
             <div className="max-h-[210px] overflow-y-auto custom-scrollbar">
               {histPickerDates.length === 0 && (
-                <div className="px-3 py-2 text-center text-app-subtext">缓存中暂无历史数据</div>
+                <div className="px-2 py-2 text-center text-app-subtext">暂无数据</div>
               )}
               {histPickerDates.map(d => (
                 <button
@@ -6230,7 +6246,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   type="button"
                   data-date={d}
                   onClick={() => pickHistDate(d)}
-                  className={`w-full text-center px-3 py-1.5 font-mono hover:bg-app-input transition-colors ${histDate === d ? 'text-indigo-400 font-bold' : 'text-app-text'}`}
+                  className={`w-full text-center px-2 py-1.5 font-mono hover:bg-app-input transition-colors ${histDate === d ? 'text-indigo-400 font-bold' : 'text-app-text'}`}
                 >{d}</button>
               ))}
             </div>

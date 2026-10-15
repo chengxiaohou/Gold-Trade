@@ -219,8 +219,9 @@ export const priceBureau = {
       }
     }
     const sorted = [...dates].sort().reverse();
-    // 去掉最新日期（它就是实时模式）
-    return sorted.length > 0 && sorted[0] === latest ? sorted.slice(1) : sorted;
+    // 去掉最新日期（它就是实时模式），但剔除后至少得留一条，否则下拉空了
+    if (sorted.length > 1 && sorted[0] === latest) return sorted.slice(1);
+    return sorted;
   },
 
   /** 历史模式的"当日限价数据"：取截止日（或之前最近一个交易日）那根日 K，
