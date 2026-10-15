@@ -4714,7 +4714,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 {dividendYearCols.length > 0 && <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap w-[62px]">登记日</th>}
               </tr>
             </thead>
-            <tbody>
+            <tbody className="[&>tr>td]:!h-[55px]">
               {sortedStocks.map(stock => (
                 <tr 
                     key={stock.id} 
@@ -4926,7 +4926,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     // 子列1：恒常展示股息率
                     const col1 = (
                       <td
-                        className="w-[56px] px-1 py-1.5 text-center border-r border-app-border"
+                            className="w-[56px] px-1 py-1.5 text-center border-r border-app-border"
                       >
                         {hasPosition ? (
                           <div className="flex flex-col items-center leading-tight gap-px">
@@ -4941,7 +4941,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     // 子列2：恒常展示仓位（总金额 + 份额 + 仓位占比）
                     const colHold = (
                       <td
-                        className="w-[64px] px-1 py-1.5 text-center border-r border-app-border"
+                            className="w-[64px] px-1 py-1.5 text-center border-r border-app-border"
                       >
                         {hasPosition ? (
                           <div className="flex flex-col items-center leading-tight gap-px">
@@ -4957,7 +4957,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     // 子列3：固定展示成本
                     const col2 = (
                       <td
-                        className="w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
+                            className="w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer"
                         onMouseEnter={(e) => { if (editingId !== stock.id && hasPosition) handlePositionInfoEnter(e, stock); }}
                         onMouseLeave={handlePositionInfoLeave}
                         onTouchStart={handlePositionInfoTouchStart}
@@ -4975,7 +4975,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     );
                     const col3 = (
                       <td
-                        className="w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
+                            className="w-[56px] px-1 py-1.5 text-center border-r border-app-border cursor-pointer hover:bg-app-input/50 transition-colors"
                         onMouseEnter={(e) => { if (editingId !== stock.id) handleTradeSimpleEnter(e, stock); }}
                         onMouseLeave={handleTradeSimpleLeave}
                         onTouchStart={handleTradeTouchStart}
