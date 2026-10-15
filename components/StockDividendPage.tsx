@@ -380,17 +380,23 @@ function tradingDayIndex(createTime: number, now: number): number {
 // 挂单是否处于最后一个交易日（返回 '!'）、已过期（返回 '?'）或正常（返回 ''）
 function pendingExpirySuffix(t: StockTrade, now: number): string {
   if (t.status !== 'pending') return '';
-  const idx = tradingDayIndex(t.createdAt, now);
-  if (idx >= PENDING_TTL_DAYS + 1) return '?'; // 已过期（第 6 个交易日及以后）
-  if (idx === PENDING_TTL_DAYS) return '!';     // 最后一个有效交易日
+  const ttl = t.ttlDays ?? PENDING_TTL_DAYS;
+  const base = t.ttlUpdatedAt ?? t.createdAt;
+  const idx = tradingDayIndex(base, now);
+  if (idx >= ttl + 1) return '?'; // 已过期
+  if (idx === ttl) return '!';     // 最后一个有效交易日
   return '';
 }
 // 生成挂单/成交的状态文字（含挂单过期标记）
 const tradeStatusLabel = (t: StockTrade): string =>
   `${TRADE_STATUS_LABEL[`${t.side}-${t.status}`]}${pendingExpirySuffix(t, Date.now())}`;
-// 挂单剩余有效交易天数：创建/编辑当天为 PENDING_TTL_DAYS，每过一个交易日减 1，过期后为 0
-const pendingRemainingDays = (t: StockTrade, now: number): number =>
-  t.status === 'pending' ? Math.max(0, PENDING_TTL_DAYS - (tradingDayIndex(t.createdAt, now) - 1)) : 0;
+// 挂单剩余有效交易天数：默认 PENDING_TTL_DAYS=5，用户改写后优先使用 t.ttlDays（从 t.ttlUpdatedAt 起算）
+const pendingRemainingDays = (t: StockTrade, now: number): number => {
+  if (t.status !== 'pending') return 0;
+  const ttl = t.ttlDays ?? PENDING_TTL_DAYS;
+  const base = t.ttlUpdatedAt ?? t.createdAt;
+  return Math.max(0, ttl - (tradingDayIndex(base, now) - 1));
+};
 
 // 交易历史记录条目（两行布局：公式+盈亏+状态徽标 / 时间+撤单+编辑+备注），撤单带确认
 // 只接收单个 stock 对象，其余展示数据（stockName/currentPrice/avgCost）一律内部从 stock 派生，
@@ -768,6 +774,8 @@ const ErrTip: React.FC<{
 interface TradeRecordRowProps {
   t: StockTrade; stock: StockEntry; pnlMap: Record<string, number>; pendingMap?: Record<string, number>;
   onToggle: (t: StockTrade) => void; onEdit: (t: StockTrade) => void; onDelete: (t: StockTrade) => void;
+  // 修改挂单剩余有效天数（用户点击天数下拉触发）
+  onSetTTL?: (t: StockTrade, ttlDays: number) => void;
   // 做T模式：卖超记录的 id 集合（仅成交卖出的 ERR 徽标；不参与获利预估）
   errIds?: Set<string>;
   // 做T模式：卖出记录 id → 与其配对的买入记录明细（盈利数字悬停/点击可追溯）
@@ -777,7 +785,7 @@ interface TradeRecordRowProps {
   // 是否计入税费（含税模式下每条记录展示税费详情）
   taxEnabled?: boolean;
 }
-const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendingMap, onToggle, onEdit, onDelete, errIds, pairMap, buyMatchMap, taxEnabled }) => {
+const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendingMap, onToggle, onEdit, onDelete, onSetTTL, errIds, pairMap, buyMatchMap, taxEnabled }) => {
   const [confirming, setConfirming] = useState(false);
   const stockName = stock.name;
   const currentPrice = stock.price || 0;
@@ -869,9 +877,17 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
         ) : (
           <span className="ml-auto shrink-0 flex items-center gap-1.5">
             {t.status === 'pending' && (
-              <span className="font-mono text-[8px] text-orange-400 whitespace-nowrap">
-                {pendingRemainingDays(t, Date.now())}天
-              </span>
+              <select
+                aria-label="修改挂单剩余天数"
+                value={String(t.ttlDays ?? PENDING_TTL_DAYS)}
+                onChange={(e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v) && onSetTTL) onSetTTL(t, v); }}
+                className="shrink-0 font-mono text-[8px] text-orange-400 whitespace-nowrap bg-transparent border-0 cursor-pointer focus:outline-none focus:ring-0 px-0.5 py-0 leading-none"
+              >
+                <option value={5} className="bg-app-card text-app-text">5天</option>
+                <option value={10} className="bg-app-card text-app-text">10天</option>
+                <option value={20} className="bg-app-card text-app-text">20天</option>
+                <option value={30} className="bg-app-card text-app-text">30天</option>
+              </select>
             )}
             {diffNum != null && (
               <span className={`font-mono text-[8px] font-semibold whitespace-nowrap ${pctColor} ${buyMatchStyle}`}>
@@ -4323,6 +4339,18 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     } : s));
   }, [stocks, onStocksChange, pushLedger]);
 
+  // 修改挂单剩余有效天数（用户在历史记录条目点击天数下拉触发）
+  const handleSetTradeTTL = useCallback((stockId: string, tradeId: string, ttlDays: number) => {
+    const target = stocks.find(s => s.id === stockId);
+    if (!target) return;
+    const trade = (target.stockTrades || []).find(t => t.id === tradeId && !t.isMerged);
+    if (!trade) return;
+    const updated: StockTrade = { ...trade, ttlDays, ttlUpdatedAt: Date.now() };
+    const newTrades = (target.stockTrades || []).map(t => t.id === tradeId ? updated : t);
+    pushLedger(stockId, newTrades);
+    onStocksChange(stocks.map(s => s.id === stockId ? { ...s, stockTrades: newTrades } : s));
+  }, [stocks, onStocksChange, pushLedger]);
+
   // 标记挂单成交：买入加权成本、卖出结算已实现盈亏；并控制已成交记录条数上限
   const handleToggleTrade = useCallback((stockId: string, tradeId: string) => {
     const target = stocks.find(s => s.id === stockId);
@@ -6511,6 +6539,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       onToggle={(x) => handleToggleTrade(s.id, x.id)}
                       onDelete={(x) => handleRemoveTrade(s.id, x.id)}
                       onEdit={(x) => startEditTrade(s, x)}
+                      onSetTTL={(x, ttlDays) => handleSetTradeTTL(s.id, x.id, ttlDays)}
                     />
                   ))}
                 </div>

@@ -127,6 +127,8 @@ export interface StockTrade {
   isMerged?: boolean;        // 是否为超出上限后自动合并的汇总记录（只读，不计入上限）
   amount?: number;           // 合并记录该段成交总金额（用于精确追溯成本链）
   isDeleted?: boolean;       // 软删标记：不展示、不计入持仓/盈亏/统计，仅保留在流水账中做墓碑锚点
+  ttlDays?: number;          // 挂单剩余交易天数快照（由用户点击天数下拉改写；未设置时沿用 PENDING_TTL_DAYS=5）
+  ttlUpdatedAt?: number;     // 该 ttlDays 的生效时间戳（用 tradingDayIndex 从这一刻起算剩余天数）
 }
 
 export interface DividendRateColorRange {
