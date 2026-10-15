@@ -2073,15 +2073,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       listSrTooltipMeasuredSize.current = { w, h };
       const gap = 8;
       let calcLeft = rect.left + rect.width + gap;
-      let calcTop = (window.innerHeight - h) / 2;
+      // 垂直对齐所在行中心（与股息率/价格/持仓列弹窗同一套定位口径），先按测量高度粗定位；
+      // 渲染后再由 useLayoutEffect 按真实尺寸精确钳制（测量值不含标题栏，直接用于钳制会导致下沿超出窗口）
+      let calcTop = rect.top + rect.height / 2 - h / 2;
       if (calcLeft + w > window.innerWidth - 10) {
         calcLeft = rect.left - w - gap;
       }
       if (calcLeft < 10) {
         calcLeft = (window.innerWidth - w) / 2;
       }
-      if (calcTop < 10) calcTop = 10;
       if (calcTop + h > window.innerHeight - 10) calcTop = window.innerHeight - h - 10;
+      if (calcTop < 10) calcTop = 10;
       setListSrTooltipOffset(calcLeft);
       setListSrTooltipAbove(calcTop);
       setListSrPreviewText(text);
@@ -2201,6 +2203,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 支撑/压力位弹窗标题栏拖拽：与价格弹窗共用同一套实现
   const srDrag = usePopoverDrag(srTooltipRef, setSrTooltipAbove, setSrTooltipOffset);
   const listSrDrag = usePopoverDrag(listSrTooltipRef, setListSrTooltipAbove, setListSrTooltipOffset);
+
+  // 列表页支撑/压力位弹窗：渲染后按真实尺寸再做一次视口钳制（与行情浮窗 openMktInfo 同一套处理口径）。
+  // 真实尺寸含标题栏，比预先测量的内容高度大，用它钳制才能保证下沿不超出窗口；
+  // 真实高度超过可用视口时，容器 maxHeight（calc(100vh - 20px)）+ 内容区 overflow-y-auto 负责高度上限与内部滚动。
+  useLayoutEffect(() => {
+    if (!listSrStock || !listSrTooltipRef.current) return;
+    const el = listSrTooltipRef.current;
+    const pad = 10;
+    const r = el.getBoundingClientRect();
+    let top = r.top;
+    let left = r.left;
+    if (top + r.height > window.innerHeight - pad) top = Math.max(pad, window.innerHeight - r.height - pad);
+    if (top < pad) top = pad;
+    if (left + r.width > window.innerWidth - pad) left = Math.max(pad, window.innerWidth - r.width - pad);
+    if (left < pad) left = pad;
+    if (top !== r.top || left !== r.left) {
+      setListSrTooltipAbove(top);
+      setListSrTooltipOffset(left);
+    }
+  }, [listSrStock, listSrPreviewText, listSrTooltipAbove, listSrTooltipOffset]);
 
   // 价格技术指标浮窗（复用现有K线数据，不额外请求）
   const [priceInfoData, setPriceInfoData] = useState<IndicatorResult | null>(null);
