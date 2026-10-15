@@ -909,7 +909,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
                     <div
                       role="menu"
                       style={{ top: rect.bottom + 4, left: rect.left }}
-                      className="fixed z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.55)] py-1 text-[10px] text-app-text min-w-[72px]"
+                      className="fixed z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.55)] py-1 text-[10px] text-app-text"
                       onMouseDown={(e) => e.stopPropagation()}
                     >
                       {opts.map(n => (
@@ -917,9 +917,9 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
                           key={n}
                           type="button"
                           onClick={() => { if (onSetTTL) onSetTTL(t, n); setTtlMenuOpen(false); }}
-                          className={`w-full text-left px-2.5 py-1 cursor-pointer select-none hover:bg-app-text/10 leading-none ${n === cur ? 'font-bold text-app-text' : 'text-app-subtext'}`}
+                          className={`text-left px-2.5 py-1 cursor-pointer select-none hover:bg-app-text/10 leading-none ${n === cur ? 'font-bold text-app-text' : 'text-app-subtext'}`}
                         >
-                          {n}天
+                          {n} 天
                         </button>
                       ))}
                     </div>,
