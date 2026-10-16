@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
-import { countBollBandStreak, getBollPosition } from '../services/bollService';
-import type { BollData, BollPeriod, BollAdjust, BollKline, BollBandInfo } from '../services/bollService';
+import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition } from '../services/bollService';
+import type { BollData, BollPeriod, BollAdjust, BollKline, BollBandInfo, BollStreakExplain } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime } from '../services/cacheService';
 import { priceBureau } from '../services/priceBureau';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
@@ -18,6 +18,7 @@ import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, anal
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
 import { InputGroup } from './InputGroup';
+import BollStreakTip from './BollStreakTip';
 import { useStepWheel } from '../hooks/useStepWheel';
 import { BacktestModal } from './BacktestModal';
 import PriceInfoPopover, { PriceIndicatorSection, PopoverTitleBar, usePopoverDrag } from './PriceInfoPopover';
@@ -5234,28 +5235,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       const pos = getBollPosition(data, price);
                       const bandColor = pos?.band === 'upper' ? 'text-brand-red' : pos?.band === 'lower' ? 'text-brand-green' : 'text-blue-500';
                       const percentStr = pos ? `${pos.percent >= 0 ? '+' : ''}${pos.percent.toFixed(2)}%` : '-';
-                      const absPct = pos ? Math.abs(pos.percent) : 0;
-                      const arrowCount = absPct <= 0.5 ? 0 : absPct <= 3 ? 1 : absPct <= 6 ? 2 : 3;
-                      const arrow = pos ? (arrowCount === 0 ? '' : (pos.percent >= 0 ? '↑' : '↓').repeat(arrowCount)) : '';
+                      // 箭头档位 / 反向箭头判定统一走 bollService 的共享实现（SSOT），此处不再重复阈值判定
+                      const display = pos ? classifyBollBandDisplay(pos.band, pos.percent) : null;
+                      const arrow = display && display.arrowCount > 0 ? (display.dir === 'up' ? '↑' : '↓').repeat(display.arrowCount) : '';
                       // 上轨+下箭头 或 下轨+上箭头 → 箭头放左边避免反直觉
-                      const isCounterArrow = pos && ((pos.band === 'upper' && pos.percent < 0) || (pos.band === 'lower' && pos.percent >= 0));
-                      // 连续天数计数（仅日线）：守卫条件是"**没有可见的反方向箭头**"。
-                      // 注意不能用 raw percent 符号——getBollPosition 在 mid 区间里按"离哪轨更近"
-                      // 判定 band，会出现 band='lower' 但 price>lower（percent>0）的 relative 场景，
-                      // 此时 percent 符号反了但 arrowCount 可能=0（贴轨道无可见箭头），仍应纳入计数。
-                      // 所以统一以 arrowCount 来判断"有无可见反方向箭头"：
-                      const hasVisibleCounterArrow = pos && arrowCount >= 1 && (
-                        (pos.band === 'upper' && pos.percent < 0) ||
-                        (pos.band === 'lower' && pos.percent >= 0)
-                      );
-                      let streak: number | null = null;
-                      if (key === 'daily' && pos && !hasVisibleCounterArrow) {
-                        if (pos.band === 'upper') {
-                          streak = countBollBandStreak(data?.klines, 'upper', 10);
-                        } else if (pos.band === 'lower') {
-                          streak = countBollBandStreak(data?.klines, 'lower', 10);
-                        }
-                      }
+                      const isCounterArrow = display?.counterArrow ?? false;
+                      // 连续天数（仅日线）：数字展示与悬停解释同源，都来自 explainBollBandStreak。
+                      // 最新一根出现可见反向箭头时 streak 归零（展示守卫）；band 为日中时不参与统计。
+                      const explain: BollStreakExplain | null = key === 'daily' && pos && pos.band !== 'mid'
+                        ? explainBollBandStreak(data?.klines, pos.band)
+                        : null;
+                      const streak = explain?.streak ?? 0;
+                      const cellInner = pos ? (
+                        <div className="flex flex-col items-center leading-tight">
+                          <span className={`text-[11px] font-bold ${bandColor}`}>{streak > 1 ? <span className="text-[10px] font-semibold mr-0.5">{streak}</span> : ''}{isCounterArrow ? arrow : ''}{getBollBandLabel(key, pos.band)}{!isCounterArrow ? arrow : ''}</span>
+                          <span className="font-mono text-[10px] text-app-rowtext">{percentStr}</span>
+                        </div>
+                      ) : null;
                       return (
                         <td key={key} className={`px-1 py-1.5 text-center cursor-pointer ${draggedId ? '' : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
                           onClick={(e) => {
@@ -5289,10 +5285,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           }}
                         >
                           {pos ? (
-                            <div className="flex flex-col items-center leading-tight">
-                              <span className={`text-[11px] font-bold ${bandColor}`}>{streak && streak > 1 ? <span className="text-[10px] font-semibold mr-0.5">{streak}</span> : ''}{isCounterArrow ? arrow : ''}{getBollBandLabel(key, pos.band)}{!isCounterArrow ? arrow : ''}</span>
-                              <span className="font-mono text-[10px] text-app-rowtext">{percentStr}</span>
-                            </div>
+                            // 仅日线单元格挂解释浮窗：长按展示"为什么是这个计数 / 为什么没有计数"的带数据说明
+                            key === 'daily' ? (
+                              <BollStreakTip explain={explain} pos={pos} periodPrefix="日" fmtPrice={(v) => formatPrice(v, stock.name)}>
+                                {cellInner}
+                              </BollStreakTip>
+                            ) : cellInner
                           ) : (
                             <span className="text-app-subtext text-[11px]">-</span>
                           )}
@@ -5902,10 +5900,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         { band: 'upper', label: getBollBandLabel(bollPeriod, 'upper'), value: bollData?.upper, labelColor: 'text-brand-red', valueColor: 'text-red-500' },
                       ];
                       const pos = bollData && stock.price ? getBollPosition(bollData, stock.price) : null;
-                      const absPct = pos ? Math.abs(pos.percent) : 0;
-                      const arrowCount = absPct <= 0.5 ? 0 : absPct <= 3 ? 1 : absPct <= 6 ? 2 : 3;
-                      const arrow = pos && arrowCount > 0 ? (pos.percent >= 0 ? '↑' : '↓').repeat(arrowCount) : '';
-                      const isCounter = pos && ((pos.band === 'upper' && pos.percent < 0) || (pos.band === 'lower' && pos.percent >= 0));
+                      // 与列表单元格共用同一套展示口径（SSOT）：阈值与反向箭头判定不在弹窗里另写一份
+                      const display = pos ? classifyBollBandDisplay(pos.band, pos.percent) : null;
+                      const arrowCount = display?.arrowCount ?? 0;
+                      const arrow = display && display.arrowCount > 0 ? (display.dir === 'up' ? '↑' : '↓').repeat(display.arrowCount) : '';
+                      const isCounter = display?.counterArrow ?? false;
                       return bandLabels.map(({ band, label, value, labelColor, valueColor }) => {
                         const isClosest = pos && pos.band === band;
                         const showArrow = isClosest && arrowCount > 0 && arrow;

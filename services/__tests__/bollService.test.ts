@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeTodayBarToKlines, pickDegradedBoll, countBollBandStreak } from '../bollService';
+import { mergeTodayBarToKlines, pickDegradedBoll, countBollBandStreak, classifyBollBandDisplay, explainBollBandStreak } from '../bollService';
 import type { BollData, BollKline } from '../bollService';
 
 function date(offset: number, base = new Date(Date.UTC(2026, 0, 1))): string {
@@ -290,5 +290,124 @@ describe('countBollBandStreak', () => {
     const klines = mkFlatKlines(25);
     const actual = countBollBandStreak(klines, 'upper');
     expect(actual).toBeNull();
+  });
+});
+
+// ─── classifyBollBandDisplay（箭头展示口径 SSOT） ───
+
+describe('classifyBollBandDisplay', () => {
+  it('箭头档位按 |percent| 阈值 0.5 / 3 / 6 分档', () => {
+    expect(classifyBollBandDisplay('upper', 0.4).arrowCount).toBe(0);
+    expect(classifyBollBandDisplay('upper', 0.5).arrowCount).toBe(0);
+    expect(classifyBollBandDisplay('upper', 0.6).arrowCount).toBe(1);
+    expect(classifyBollBandDisplay('upper', 3).arrowCount).toBe(1);
+    expect(classifyBollBandDisplay('upper', 3.1).arrowCount).toBe(2);
+    expect(classifyBollBandDisplay('upper', 6).arrowCount).toBe(2);
+    expect(classifyBollBandDisplay('upper', 6.1).arrowCount).toBe(3);
+  });
+
+  it('方向由 percent 符号决定；上轨 percent<0 / 下轨 percent>=0 才算反向箭头', () => {
+    expect(classifyBollBandDisplay('upper', 1).dir).toBe('up');
+    expect(classifyBollBandDisplay('upper', -1).dir).toBe('down');
+
+    // 上轨却向下 → counterArrow
+    expect(classifyBollBandDisplay('upper', -1).counterArrow).toBe(true);
+    // 上轨向上 → 正常
+    expect(classifyBollBandDisplay('upper', 1).counterArrow).toBe(false);
+    // 下轨却向上 → counterArrow
+    expect(classifyBollBandDisplay('lower', 1).counterArrow).toBe(true);
+    // 下轨向下 → 正常
+    expect(classifyBollBandDisplay('lower', -1).counterArrow).toBe(false);
+    // 贴轨道无箭头（arrowCount=0）不算反向
+    expect(classifyBollBandDisplay('upper', -0.3).counterArrow).toBe(false);
+    expect(classifyBollBandDisplay('lower', 0.3).counterArrow).toBe(false);
+    // 中轨永不反向
+    expect(classifyBollBandDisplay('mid', -5).counterArrow).toBe(false);
+    expect(classifyBollBandDisplay('mid', 5).counterArrow).toBe(false);
+  });
+});
+
+// ─── explainBollBandStreak（连续天数的带解释版本） ───
+
+describe('explainBollBandStreak', () => {
+  it('klines 不足 20 根 / 空 → null', () => {
+    expect(explainBollBandStreak(mkFlatKlines(19), 'upper')).toBeNull();
+    expect(explainBollBandStreak(undefined, 'upper')).toBeNull();
+    expect(explainBollBandStreak([], 'lower')).toBeNull();
+  });
+
+  it('无守卫时 streak 与 countBollBandStreak 完全一致，且断点那根带原因', () => {
+    const klines = mkStepKlines(24, 4, 150, 50);
+    const explain = explainBollBandStreak(klines, 'upper');
+    expect(explain).not.toBeNull();
+    expect(explain!.streak).toBe(countBollBandStreak(klines, 'upper'));
+    expect(explain!.streak).toBe(4);
+    expect(explain!.blockedByCounterArrow).toBe(false);
+
+    // 明细：最近一根在最前，共 4 根计入 + 1 根打断（第 5 根是纯 50 的中轨）
+    expect(explain!.steps).toHaveLength(5);
+    expect(explain!.steps[0].date).toBe(date(23));
+    expect(explain!.steps[0].reason).toBe('counted');
+    expect(explain!.steps[0].counted).toBe(true);
+    expect(explain!.steps[4].reason).toBe('band-mid');
+    expect(explain!.steps[4].counted).toBe(false);
+    // 反向时间顺序
+    expect(explain!.steps.map(s => s.date)).toEqual([date(23), date(22), date(21), date(20), date(19)]);
+  });
+
+  it('最新一根为反向箭头（上轨 percent<0）→ streak 归零，与纯轨道口径不同', () => {
+    // 19 根低成本 K 线（15×100 + 4×95）+ 最新一根 102：
+    // 该根 102 位于 mid 与 upper 之间、离 upper 更近 → band=upper、percent≈-1.25%
+    // → 命中"上轨却向下"的可见反向箭头守卫
+    const closes = [...Array(15).fill(100), ...Array(4).fill(95), 102];
+    const klines: BollKline[] = closes.map((close, i) => ({ date: date(i), open: close, high: close, low: close, close, volume: 1_000_000 }));
+
+    const explain = explainBollBandStreak(klines, 'upper');
+    expect(explain).not.toBeNull();
+    expect(explain!.blockedByCounterArrow).toBe(true);
+    expect(explain!.steps[0].band).toBe('upper');
+    expect(explain!.steps[0].counterArrow).toBe(true);
+    expect(explain!.steps[0].percent!).toBeLessThan(0); // 上轨但价格低于上轨
+    expect(explain!.steps[0].reason).toBe('counter-arrow');
+    expect(explain!.steps[0].counted).toBe(false);
+
+    // 展示口径归零，明细只保留这一根（说明"为什么没有计数"）
+    expect(explain!.streak).toBe(0);
+    expect(explain!.steps).toHaveLength(1);
+
+    // 对照：纯轨道口径仍会把这根算作 1（这就是展示守卫的差别）
+    expect(explain!.consecutive).toBe(1);
+    expect(countBollBandStreak(klines, 'upper')).toBe(1);
+  });
+
+  it('最新一根落到另一条轨道 → reason=band-flip，streak=0', () => {
+    const klines = mkStepKlines(20, 1, 50, 150); // 最后一根 50 远低于下轨
+    const explain = explainBollBandStreak(klines, 'upper');
+    expect(explain).not.toBeNull();
+    expect(explain!.blockedByCounterArrow).toBe(false);
+    expect(explain!.streak).toBe(0);
+    expect(explain!.steps[0].band).toBe('lower');
+    expect(explain!.steps[0].reason).toBe('band-flip');
+  });
+
+  it('连续段走到不足 20 根处 → 末尾补一根 insufficient 明细', () => {
+    // 倒数第 1 根 150（计入），其之前的 bar 只有 19 根算不出 BOLL
+    const klines = mkStepKlines(20, 1, 150, 50);
+    const explain = explainBollBandStreak(klines, 'upper');
+    expect(explain).not.toBeNull();
+    expect(explain!.streak).toBe(1);
+    expect(explain!.steps).toHaveLength(2);
+    expect(explain!.steps[0].reason).toBe('counted');
+    expect(explain!.steps[1].date).toBe(date(18));
+    expect(explain!.steps[1].reason).toBe('insufficient');
+  });
+
+  it('maxDays 截断：连续段被窗口截断时 streak 不超过 maxDays', () => {
+    const klines = mkStepKlines(24, 4, 150, 50);
+    const explain = explainBollBandStreak(klines, 'upper', 3);
+    expect(explain!.streak).toBe(3);
+    expect(explain!.consecutive).toBe(3);
+    expect(explain!.steps).toHaveLength(3);
+    expect(explain!.steps.filter(s => s.counted)).toHaveLength(3);
   });
 });
