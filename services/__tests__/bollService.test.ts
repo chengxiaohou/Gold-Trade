@@ -336,13 +336,12 @@ describe('explainBollBandStreak', () => {
     expect(explainBollBandStreak([], 'lower')).toBeNull();
   });
 
-  it('无守卫时 streak 与 countBollBandStreak 完全一致，且断点那根带原因', () => {
+  it('无反向箭头时 streak 与纯轨道口径一致，且断点那根带原因', () => {
     const klines = mkStepKlines(24, 4, 150, 50);
     const explain = explainBollBandStreak(klines, 'upper');
     expect(explain).not.toBeNull();
     expect(explain!.streak).toBe(countBollBandStreak(klines, 'upper'));
     expect(explain!.streak).toBe(4);
-    expect(explain!.blockedByCounterArrow).toBe(false);
 
     // 明细：最近一根在最前，共 4 根计入 + 1 根打断（第 5 根是纯 50 的中轨）
     expect(explain!.steps).toHaveLength(5);
@@ -355,7 +354,36 @@ describe('explainBollBandStreak', () => {
     expect(explain!.steps.map(s => s.date)).toEqual([date(23), date(22), date(21), date(20), date(19)]);
   });
 
-  it('最新一根为反向箭头（上轨 percent<0）→ streak 归零，与纯轨道口径不同', () => {
+  it('历史根出现可见反向箭头（日上↓）→ 展示连续段在该根中断，且该根不计入', () => {
+    // 还原真实场景：最新一根 106 只比上轨高 0.1%（贴轨无箭头 → 计入），
+    // 前一根 106.5 位于"离上轨比离中轨更近"的位置 → band=upper 但偏离 -0.59% → 显示「日上↓」→ 不计入并中断
+    const closes = [...Array(10).fill(100), ...Array(18).fill(105), 106.5, 106];
+    const klines: BollKline[] = closes.map((close, i) => ({ date: date(i), open: close, high: close, low: close, close, volume: 1_000_000 }));
+
+    const explain = explainBollBandStreak(klines, 'upper');
+    expect(explain).not.toBeNull();
+
+    // 最新一根计入
+    expect(explain!.steps[0].reason).toBe('counted');
+    expect(explain!.steps[0].counted).toBe(true);
+    expect(explain!.steps[0].counterArrow).toBe(false);
+    // 前一根：同属上轨，但出现可见反向箭头 → 不计入，并成为断点
+    expect(explain!.steps[1].band).toBe('upper');
+    expect(explain!.steps[1].counterArrow).toBe(true);
+    expect(explain!.steps[1].percent!).toBeLessThan(0);
+    expect(Math.abs(explain!.steps[1].percent!)).toBeGreaterThan(0.5);
+    expect(explain!.steps[1].reason).toBe('counter-arrow');
+    expect(explain!.steps[1].counted).toBe(false);
+
+    // 展示口径 = 1（只有最新一根），明细到断点为止
+    expect(explain!.streak).toBe(1);
+    expect(explain!.steps).toHaveLength(2);
+
+    // 对照：纯轨道口径（不看箭头）仍会把这两根都算上 → 2
+    expect(countBollBandStreak(klines, 'upper')).toBe(2);
+  });
+
+  it('最新一根为反向箭头（上轨 percent<0）→ 无计数，与纯轨道口径不同', () => {
     // 19 根低成本 K 线（15×100 + 4×95）+ 最新一根 102：
     // 该根 102 位于 mid 与 upper 之间、离 upper 更近 → band=upper、percent≈-1.25%
     // → 命中"上轨却向下"的可见反向箭头守卫
@@ -364,7 +392,6 @@ describe('explainBollBandStreak', () => {
 
     const explain = explainBollBandStreak(klines, 'upper');
     expect(explain).not.toBeNull();
-    expect(explain!.blockedByCounterArrow).toBe(true);
     expect(explain!.steps[0].band).toBe('upper');
     expect(explain!.steps[0].counterArrow).toBe(true);
     expect(explain!.steps[0].percent!).toBeLessThan(0); // 上轨但价格低于上轨
@@ -375,8 +402,7 @@ describe('explainBollBandStreak', () => {
     expect(explain!.streak).toBe(0);
     expect(explain!.steps).toHaveLength(1);
 
-    // 对照：纯轨道口径仍会把这根算作 1（这就是展示守卫的差别）
-    expect(explain!.consecutive).toBe(1);
+    // 对照：纯轨道口径仍会把这根算作 1（这就是两种口径的差别）
     expect(countBollBandStreak(klines, 'upper')).toBe(1);
   });
 
@@ -384,7 +410,6 @@ describe('explainBollBandStreak', () => {
     const klines = mkStepKlines(20, 1, 50, 150); // 最后一根 50 远低于下轨
     const explain = explainBollBandStreak(klines, 'upper');
     expect(explain).not.toBeNull();
-    expect(explain!.blockedByCounterArrow).toBe(false);
     expect(explain!.streak).toBe(0);
     expect(explain!.steps[0].band).toBe('lower');
     expect(explain!.steps[0].reason).toBe('band-flip');
@@ -406,7 +431,6 @@ describe('explainBollBandStreak', () => {
     const klines = mkStepKlines(24, 4, 150, 50);
     const explain = explainBollBandStreak(klines, 'upper', 3);
     expect(explain!.streak).toBe(3);
-    expect(explain!.consecutive).toBe(3);
     expect(explain!.steps).toHaveLength(3);
     expect(explain!.steps.filter(s => s.counted)).toHaveLength(3);
   });

@@ -563,28 +563,30 @@ export interface BollStreakStep {
   reason: BollStreakReason;
 }
 
-/** 连续天数的解释结果：结论 + 逐根原因，供悬停浮窗直接展示。 */
+/** 连续天数的解释结果：结论 + 逐根原因，供长按浮窗直接展示。 */
 export interface BollStreakExplain {
   target: 'upper' | 'lower';
-  /** 展示口径连续天数（0 = 不计数）；最新一根出现可见反向箭头时整体不计数 */
+  /** 展示口径连续天数（0 = 不计数）：连续段在「出现可见反向箭头」或「离开目标轨道」的当根处中断 */
   streak: number;
-  /** 纯轨道口径的连续天数（与 countBollBandStreak 完全一致，不含反向箭头守卫） */
-  consecutive: number;
-  blockedByCounterArrow: boolean;
-  /** 从最新一根往前的逐根明细（含打断计数的那一根）；命中反向箭头守卫时只保留最新一根 */
+  /** 从最新一根往前的逐根明细（含打断计数的那一根） */
   steps: BollStreakStep[];
 }
 
 /** 连续天数回溯的唯一实现：从最新一根往前，逐根用"该根及其之前 19 根"（共 20 根 close）
- *  重算该根当时的 BOLL 轨道并判定 band。countBollBandStreak 与 explainBollBandStreak 都走这条回溯。 */
+ *  重算该根当时的 BOLL 轨道并判定 band。countBollBandStreak 与 explainBollBandStreak 都走这条回溯。
+ *
+ *  @param excludeCounterArrow true = 展示口径：出现可见反向箭头（「日上↓」「日下↑」）的当根不计入，连续段在该根中断；
+ *                             false = 纯轨道口径：只看 band 是否等于 target，不看箭头。
+ */
 function walkBollBandStreak(
   klines: BollKline[] | undefined | null,
   target: 'upper' | 'lower',
   maxDays: number,
-): { consecutive: number; steps: BollStreakStep[] } | null {
+  excludeCounterArrow: boolean,
+): { count: number; steps: BollStreakStep[] } | null {
   if (!klines || klines.length < 20) return null;
 
-  let consecutive = 0;
+  let count = 0;
   const steps: BollStreakStep[] = [];
   const startIdx = klines.length - 1;
 
@@ -612,27 +614,31 @@ function walkBollBandStreak(
     }
 
     const display = classifyBollBandDisplay(info.band, info.percent);
-    const counted = info.band === target;
-    const reason: BollStreakReason = counted ? 'counted' : info.band === 'mid' ? 'band-mid' : 'band-flip';
+    const onTarget = info.band === target;
+    // 展示口径下：处于目标轨但出现可见反向箭头（如「日上↓」）的当根也不计入
+    const counted = onTarget && !(excludeCounterArrow && display.counterArrow);
+    const reason: BollStreakReason = !onTarget
+      ? (info.band === 'mid' ? 'band-mid' : 'band-flip')
+      : counted ? 'counted' : 'counter-arrow';
     steps.push({
       date: bar.date, close: bar.close, band: info.band, percent: info.percent,
       arrowCount: display.arrowCount, dir: display.dir, counterArrow: display.counterArrow,
       counted, reason,
     });
-    if (counted) consecutive++;
-    else break;
+    if (!counted) break;
+    count++;
   }
 
-  return { consecutive, steps };
+  return { count, steps };
 }
 
 /**
- * 连续 N 天处于 BOLL 同方向轨道的天数（仅日线）。
+ * 连续 N 天处于 BOLL 同方向轨道的天数（仅日线）——纯轨道口径。
  * 规则：从最新一根往前，逐根用"该根及其之前 19 根"（共 20 根 close）算当时的 BOLL，
  * 判定该根是否处于 target 轨道（含 mid 区间里离该轨更近的 relative 场景）→ 连续则累计。
  * 断开条件：band 切换到 mid / 另一轨道、数据不足 20 根、超过 maxDays。
- * 注意：本函数只按"轨道连续"计数，不施加"最新一根反向箭头"的展示守卫
- * （展示守卫体现在 explainBollBandStreak 的 streak 上）。
+ * 注意：本函数**不看箭头**，只按 band 连续计数（展示口径见 explainBollBandStreak.streak，
+ * 会把「日上↓」「日下↑」这类出现可见反向箭头的当根排除并中断）。
  *
  * @returns 连续天数（从 1 计起），或 null（klines 不足 20 根 / 无 BOLL 数据）
  */
@@ -641,37 +647,24 @@ export function countBollBandStreak(
   target: 'upper' | 'lower',
   maxDays = 20,
 ): number | null {
-  const walk = walkBollBandStreak(klines, target, maxDays);
-  return walk && walk.consecutive >= 1 ? walk.consecutive : null;
+  const walk = walkBollBandStreak(klines, target, maxDays, false);
+  return walk && walk.count >= 1 ? walk.count : null;
 }
 
 /**
- * 连续天数的"带解释"版本：与 countBollBandStreak 走同一条回溯，
- * 额外给出逐根明细与每根"计入 / 不计数"的原因，并把最新一根的
- * "可见反向箭头"展示守卫体现在 streak 上（命中守卫则 streak=0）。
- * 供列表页日线单元格的悬停浮窗直接展示。
+ * 连续天数的"带解释"版本（展示口径）：与 countBollBandStreak 走同一条回溯，
+ * 但逐根生效反向箭头守卫——出现可见反向箭头（「日上↓」「日下↑」）的当根不计入，
+ * 连续段在该根处中断；同时给出逐根明细与每根"计入 / 不计入"的原因。
+ * 供列表页日线单元格的长按浮窗与数字展示直接使用。
  */
 export function explainBollBandStreak(
   klines: BollKline[] | undefined | null,
   target: 'upper' | 'lower',
   maxDays = 20,
 ): BollStreakExplain | null {
-  const walk = walkBollBandStreak(klines, target, maxDays);
+  const walk = walkBollBandStreak(klines, target, maxDays, true);
   if (!walk || walk.steps.length === 0) return null;
-
-  const top = walk.steps[0];
-  const blockedByCounterArrow = top.band === target && top.counterArrow;
-  const steps = blockedByCounterArrow
-    ? [{ ...top, counted: false, reason: 'counter-arrow' as const }]
-    : walk.steps;
-
-  return {
-    target,
-    streak: blockedByCounterArrow ? 0 : walk.consecutive,
-    consecutive: walk.consecutive,
-    blockedByCounterArrow,
-    steps,
-  };
+  return { target, streak: walk.count, steps: walk.steps };
 }
 
 interface SinaKline {

@@ -80,9 +80,9 @@ const BollStreakTip: React.FC<Props> = ({ explain, pos, periodPrefix, fmtPrice, 
     if (!explain) {
       return { text: '无计数 · K线不足 20 根，无法回溯计算连续天数', cls: 'text-app-rowtext' };
     }
-    if (explain.blockedByCounterArrow) {
+    if (explain.steps[0]?.reason === 'counter-arrow') {
       return {
-        text: `无计数 · 最新一根归入${bandName}（${pos.percent >= 0 ? '+' : ''}${pos.percent.toFixed(2)}%），但收盘未越轨、出现反向箭头，按展示规则不计入`,
+        text: `无计数 · 最新一根归入${bandName}（${pos.percent >= 0 ? '+' : ''}${pos.percent.toFixed(2)}%），但收盘未越轨、出现反向箭头，按规则不计入`,
         cls: 'text-app-rowtext',
       };
     }
@@ -283,7 +283,7 @@ const BollStreakTip: React.FC<Props> = ({ explain, pos, periodPrefix, fmtPrice, 
           <div ref={headRef} className="mt-1.5" style={{ display: 'none' }} />
           <div ref={bodyRef} className="flex flex-col gap-px" style={{ display: 'none' }} />
           <div className="mt-1.5 pt-1 border-t border-app-border/60 text-[9px] text-app-subtext leading-snug max-w-[280px]">
-            规则：从最新一根往前，逐根用「该根及之前 19 根」重算当时的 BOLL 轨道；连续处于同一轨道才计数，某根落到日中/另一轨或当根出现反向箭头即中断，第 1 天不显示数字。
+            规则：从最新一根往前，逐根用「该根及之前 19 根」重算当时的 BOLL 轨道；连续处于同一轨道才计数，某根出现反向箭头（日上↓／日下↑）或落到日中／另一轨即中断且该根不计入，第 1 天不显示数字。
           </div>
         </div>,
         document.body
