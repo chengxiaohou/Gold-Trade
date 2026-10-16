@@ -362,6 +362,89 @@ const openScheme = (url: string): void => {
   document.body.removeChild(a);
 };
 
+// 弹窗标题栏（带公告链接）——单一实现：交易弹窗与股票详情弹窗共用。
+// 点击名称：已有链接直接跳转，无链接进入编辑态；编辑态提供「用当前链接跳转」「保存链接」，关闭键变为「取消编辑」。
+// 编辑态为组件内部局部状态，各弹窗互不影响。
+function StockLinkTitleBar({
+  title,
+  link,
+  onPointerDown,
+  onSaveLink,
+  onClose,
+  closeTitle = '关闭',
+}: {
+  title: React.ReactNode;
+  link?: string;
+  onPointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onSaveLink: (link: string | undefined) => void;
+  onClose: () => void;
+  closeTitle?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [input, setInput] = useState('');
+
+  const openLink = () => {
+    if (link) {
+      const finalUrl = buildAmihexinUrl(link);
+      // 用 openScheme 触发 amihexin:// 跳转：避免 window.open 新开空白标签页，也规避部分 WebView 拦截 location.href
+      if (finalUrl) openScheme(finalUrl);
+    } else {
+      setInput(link || '');
+      setEditing(true);
+    }
+  };
+  const save = () => { onSaveLink(input.trim() || undefined); setEditing(false); setInput(''); };
+  const cancel = () => { setEditing(false); setInput(''); };
+
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      className={`bg-app-bg/80 backdrop-blur-md px-3 py-2 flex items-center justify-between border-b border-app-border${onPointerDown ? ' cursor-grab active:cursor-grabbing touch-none select-none group' : ''}`}
+    >
+      <div className="flex items-center gap-2 flex-1 min-w-0 text-app-subtext">
+        <GripHorizontal size={15} className="opacity-80 shrink-0 pointer-events-none" />
+        {editing ? (
+          <input
+            autoFocus
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') save(); }}
+            onPointerDown={(e) => e.stopPropagation()}
+            placeholder="输入公告链接"
+            className="flex-1 min-w-0 mr-1 no-spinners bg-app-input border border-app-border rounded px-2 py-0.5 text-[11px] text-app-text outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all placeholder:text-app-subtext/40"
+          />
+        ) : (
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={openLink}
+            className="inline-flex items-center gap-1 text-app-subtext/70 hover:text-indigo-400 transition-colors min-w-0"
+            title={link ? '打开公告链接' : '添加公告链接'}
+          >
+            <span className="inline-flex items-baseline gap-2 min-w-0 text-[13px] font-bold tracking-wider truncate">{title}</span>
+            {link ? <Link size={13} className="shrink-0" /> : <SquarePen size={13} className="shrink-0" />}
+          </button>
+        )}
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        {editing && (
+          <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={() => openScheme('amihexin://')} className="text-app-subtext hover:text-indigo-400 transition-colors p-1 rounded shrink-0" title="用当前链接跳转">
+            <Link size={15} />
+          </button>
+        )}
+        {editing && (
+          <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={save} className="text-brand-green hover:opacity-80 p-1 rounded shrink-0" title="保存链接">
+            <Check size={15} />
+          </button>
+        )}
+        <button type="button" onClick={editing ? cancel : onClose} onPointerDown={(e) => e.stopPropagation()} className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1 shrink-0" title={editing ? '取消编辑' : closeTitle}>
+          <X size={15} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---- 挂单有效期判断：写死 5 个自然日 ----
 const PENDING_TTL_DAYS = 5;
 // 计算从起始日到今天经过了第几个自然日（首日计 1）。整天 24h 为一单位，跨零点即 +1。
@@ -4032,10 +4115,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
   // 内容区高度上限（px）：空间不足时压缩+内部滚动，null 表示不限制（保持原生 max-h 由 CSS 决定）
   const [tradeBodyMaxH, setTradeBodyMaxH] = useState<number | null>(null);
-  // 标题栏公告链接：编辑模式 + 输入值（保存到股票 link 字段）
-  const [linkEditing, setLinkEditing] = useState(false);
-  const [linkInput, setLinkInput] = useState('');
-
   const openTradeInfo = (btn: HTMLElement, stock: StockEntry) => {
     tradeInfoBtnRef.current = btn as unknown as HTMLTableCellElement;
     setTradeInfoStock(stock);
@@ -4065,43 +4144,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setEditingTradeId(null);
     setAddTradeNote('' as string);
     setTradeBodyMaxH(null);
-    setLinkEditing(false);
-    setLinkInput('');
-  }, []);
-
-  // 标题栏公告链接按钮：已有 link 则转成 amihexin 链接用浏览器打开；没有则进入编辑模式
-  // 注意必须从 stocks 实时取当前股票，不能用 tradeInfoStock（那是打开弹窗时捕获的旧引用，保存 link 后不会更新）
-  const handleOpenStockLink = () => {
-    if (!tradeInfoStock) return;
-    const cur = stocks.find(x => x.id === tradeInfoStock.id) || tradeInfoStock;
-    if (cur.link) {
-      const finalUrl = buildAmihexinUrl(cur.link);
-      // 用 openScheme 触发 amihexin:// 跳转：避免 window.open 新开空白标签页，也规避部分 WebView 拦截 location.href
-      if (finalUrl) openScheme(finalUrl);
-    } else {
-      setLinkInput(cur.link || '');
-      setLinkEditing(true);
-    }
-  };
-
-  // 保存链接到股票 link 字段（空值当作清除）
-  const saveStockLink = useCallback(() => {
-    if (!tradeInfoStock) return;
-    const trimmed = linkInput.trim();
-    onStocksChange(stocks.map(s => s.id === tradeInfoStock.id ? { ...s, link: trimmed || undefined } : s));
-    setLinkEditing(false);
-    setLinkInput('');
-  }, [tradeInfoStock, linkInput, stocks, onStocksChange]);
-
-  // 取消编辑：直接还原标题栏，不改动 link
-  const cancelStockLink = useCallback(() => {
-    setLinkEditing(false);
-    setLinkInput('');
-  }, []);
-
-  // 编辑模式下跳转按钮：固定触发 amihexin:// 协议跳转，与输入框内容无关
-  const handleTestLinkJump = useCallback(() => {
-    openScheme('amihexin://');
   }, []);
 
   // 统一 ESC 关闭：无论临时(hover)还是固定(click)悬浮窗，按 ESC 一律关闭
@@ -5637,28 +5679,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               style={{ top: ratesPopupPos.top, left: ratesPopupPos.left, maxHeight: window.innerHeight * 0.9 }}
             >
               <div className="shrink-0">
-                <PopoverTitleBar
-                  title={
-                    <span className="inline-flex items-baseline gap-2">
-                      {stock.name}
-                      {stock.price > 0 && (
-                        <span className={`font-mono text-[11px] ${stock.changePercent >= 0 ? 'text-red-500' : 'text-brand-green'}`}>
-                          {formatPrice(stock.price, stock.name)}
-                        </span>
-                      )}
-                    </span>
-                  }
+                <StockLinkTitleBar
+                  title={stock.name}
+                  link={stock.link}
                   onPointerDown={ratesDrag.onPointerDown}
-                  right={
-                    <button
-                      onClick={() => setShowRatesId(null)}
-                      onPointerDown={(e) => e.stopPropagation()}
-                      className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1 shrink-0"
-                      title="关闭"
-                    >
-                      <X size={15} className="text-app-subtext" />
-                    </button>
-                  }
+                  onSaveLink={(v) => onStocksChange(stocks.map(s => s.id === stock.id ? { ...s, link: v } : s))}
+                  onClose={() => setShowRatesId(null)}
                 />
               </div>
             <div ref={popupContentRef} className="flex-1 overflow-y-auto px-3 pt-2" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
@@ -6485,52 +6511,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             className={`fixed z-[60] bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl overflow-hidden text-app-text ${tradeInfoSettled ? '' : 'pointer-events-none'}`}
             style={{ top: tradeInfoPos.top, left: tradeInfoPos.left, width: 324, opacity: tradeInfoSettled ? 1 : 0, transform: tradeInfoSettled ? 'none' : 'translate(0,0)' }}
           >
-            {/* 可拖拽头部 */}
-            <div
+            {/* 可拖拽头部（复用 StockLinkTitleBar，与股票详情弹窗同一实现） */}
+            <StockLinkTitleBar
+              title={s.name}
+              link={s.link}
               onPointerDown={handleTradeDragStart}
-              className="bg-app-bg/80 backdrop-blur-md px-3 py-2.5 flex items-center justify-between border-b border-app-border cursor-grab active:cursor-grabbing touch-none select-none group"
-            >
-              <div className="flex items-center gap-2 flex-1 min-w-0 text-app-subtext">
-                <GripHorizontal size={15} className="opacity-80 shrink-0" />
-                {linkEditing ? (
-                  <input
-                    autoFocus
-                    value={linkInput}
-                    onChange={(e) => setLinkInput(e.target.value)}
-                    onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') saveStockLink(); }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    placeholder="输入公告链接"
-                    className="flex-1 min-w-0 mr-1 no-spinners bg-app-input border border-app-border rounded px-2 py-0.5 text-[11px] text-app-text outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all placeholder:text-app-subtext/40"
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={handleOpenStockLink}
-                    className="inline-flex items-center gap-1 text-app-subtext/70 hover:text-indigo-400 transition-colors min-w-0"
-                    title={s.link ? '打开公告链接' : '添加公告链接'}
-                  >
-                    <span className="text-[13px] font-bold tracking-wider min-w-0 truncate">{s.name}</span>
-                    {s.link ? <Link size={13} className="shrink-0" /> : <SquarePen size={13} className="shrink-0" />}
-                  </button>
-                )}
-              </div>
-              <div className="flex items-center gap-1">
-                {linkEditing && (
-                  <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={handleTestLinkJump} className="text-app-subtext hover:text-indigo-400 transition-colors p-1 rounded shrink-0" title="用当前链接跳转">
-                    <Link size={15} />
-                  </button>
-                )}
-                {linkEditing && (
-                  <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={saveStockLink} className="text-brand-green hover:opacity-80 p-1 rounded shrink-0" title="保存链接">
-                    <Check size={15} />
-                  </button>
-                )}
-                <button type="button" onClick={linkEditing ? cancelStockLink : closeTradeInfo} onPointerDown={(e) => e.stopPropagation()} className="text-app-subtext hover:text-app-text transition-colors bg-app-text/5 hover:bg-app-text/10 rounded p-1" title={linkEditing ? '取消编辑' : '关闭'}>
-                  <X size={15} />
-                </button>
-              </div>
-            </div>
+              onSaveLink={(v) => onStocksChange(stocks.map(x => x.id === s.id ? { ...x, link: v } : x))}
+              onClose={closeTradeInfo}
+            />
 
             <div className="px-3 py-3 space-y-3 bg-app-card overflow-y-auto custom-scrollbar" style={{ maxHeight: tradeBodyMaxH ?? undefined }}>
               {/* 当前持仓概要 */}
