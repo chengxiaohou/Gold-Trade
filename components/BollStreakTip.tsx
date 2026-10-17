@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import type { BollBandInfo, BollStreakExplain, BollStreakStep } from '../services/bollService';
+import { bollBandLabel, buildBollBandTextParts } from '../services/bollService';
+import type { BollBandInfo, BollPeriod, BollStreakExplain, BollStreakStep } from '../services/bollService';
 
 /**
  * 布林线「连续天数」解释浮窗：长按日线单元格触发，无论是否有计数都给出带数据的解释。
@@ -11,7 +12,6 @@ import type { BollBandInfo, BollStreakExplain, BollStreakStep } from '../service
  * 内容全部来自 bollService 的 explainBollBandStreak（SSOT），本组件不做任何计数判定。
  */
 
-const BAND_TEXT: Record<BollBandInfo['band'], string> = { upper: '上', mid: '中', lower: '下' };
 const BAND_CLS: Record<BollBandInfo['band'], string> = {
   upper: 'text-brand-red',
   mid: 'text-blue-500',
@@ -21,7 +21,6 @@ const REASON_TEXT: Record<BollStreakStep['reason'], string> = {
   counted: '计入',
   'counter-arrow': '反向箭头',
   'band-mid': '日中',
-  'band-flip': '另一轨',
   'no-boll': '无BOLL',
   insufficient: '不足20根',
 };
@@ -40,10 +39,15 @@ function fmtDate(d: string): string {
   return parts.length === 3 ? `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}` : d;
 }
 
-function trackText(step: BollStreakStep, periodPrefix: string): string {
+/** 轨道列文字：与列表单元格同一套拼装（SSOT）——连续天数数字写在「日上/日下」前面 */
+function trackText(step: BollStreakStep, period: BollPeriod): string {
   if (!step.band) return '-';
-  const arrow = step.arrowCount > 0 ? (step.dir === 'up' ? '↑' : '↓').repeat(step.arrowCount) : '';
-  return `${periodPrefix}${BAND_TEXT[step.band]}${arrow}`;
+  const parts = buildBollBandTextParts(
+    period, step.band,
+    { arrowCount: step.arrowCount, dir: step.dir, counterArrow: step.counterArrow },
+    step.streak,
+  );
+  return `${parts.streakText}${parts.arrowBefore}${parts.label}${parts.arrowAfter}`;
 }
 
 interface Props {
@@ -51,17 +55,18 @@ interface Props {
   explain: BollStreakExplain | null;
   /** 当前单元格的轨道判定（来自 getBollPosition） */
   pos: BollBandInfo | null;
-  /** 周期前缀，日线为「日」 */
-  periodPrefix: string;
+  /** 周期（日线为 daily）：轨道标签与展示口径统一由 bollService 的共享实现产出 */
+  period: BollPeriod;
   fmtPrice: (v: number) => string;
   children: React.ReactNode;
 }
 
-const BollStreakTip: React.FC<Props> = ({ explain, pos, periodPrefix, fmtPrice, children }) => {
+const BollStreakTip: React.FC<Props> = ({ explain, pos, period, fmtPrice, children }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const conclusionRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLSpanElement>(null);
   const rafRef = useRef<number | null>(null);
   const pressTimerRef = useRef<number | null>(null);
@@ -73,7 +78,7 @@ const BollStreakTip: React.FC<Props> = ({ explain, pos, periodPrefix, fmtPrice, 
   // 结论行文案 + 配色（有计数用轨道色，无计数用正文色）
   const buildConclusion = (): { text: string; cls: string } => {
     if (!pos) return { text: '无数据', cls: 'text-app-subtext' };
-    const bandName = `${periodPrefix}${BAND_TEXT[pos.band]}`;
+    const bandName = bollBandLabel(period, pos.band);
     if (pos.band === 'mid') {
       return { text: `无计数 · 最新一根为${bandName}，不参与连续天数统计`, cls: 'text-app-rowtext' };
     }
@@ -89,7 +94,6 @@ const BollStreakTip: React.FC<Props> = ({ explain, pos, periodPrefix, fmtPrice, 
     if (explain.streak <= 0) {
       const r = explain.steps[0]?.reason;
       const why = r === 'band-mid' ? '最新一根位于日中区间'
-        : r === 'band-flip' ? '最新一根不在该轨道上'
         : r === 'insufficient' ? 'K线不足 20 根'
         : r === 'no-boll' ? '该根无法算出 BOLL 轨道'
         : r === 'counter-arrow' ? '最新一根出现反向箭头'
@@ -126,7 +130,7 @@ const BollStreakTip: React.FC<Props> = ({ explain, pos, periodPrefix, fmtPrice, 
     row.appendChild(mk(fmtDate(step.date), `${COL_DATE} font-mono text-app-subtext`));
     row.appendChild(mk(fmtPrice(step.close), `${COL_CLOSE} font-mono text-app-rowtext`));
     row.appendChild(mk(
-      trackText(step, periodPrefix),
+      trackText(step, period),
       `${COL_TRACK} font-semibold ${step.band ? BAND_CLS[step.band] : 'text-app-subtext'}`
     ));
     row.appendChild(mk(
@@ -168,7 +172,17 @@ const BollStreakTip: React.FC<Props> = ({ explain, pos, periodPrefix, fmtPrice, 
       }
     }
 
-    // 2) 强制 reflow 读取真实尺寸后再定位（上下左右各留 10px）
+    // 2) 明细区夹到视口内：先量出「非滚动部分」高度（结论行 + 规则行 + 内外边距），
+    //    再把明细区限制在剩余高度内，超出的 60 根明细走内部滚动
+    const scroll = scrollRef.current;
+    if (scroll) {
+      scroll.style.maxHeight = '';
+      const chromeH = el.offsetHeight - scroll.offsetHeight;
+      const avail = window.innerHeight - 20 - chromeH;
+      if (scroll.scrollHeight > avail) scroll.style.maxHeight = `${Math.max(60, avail)}px`;
+    }
+
+    // 3) 强制 reflow 读取真实尺寸后再定位（上下左右各留 10px）
     const w = el.offsetWidth;
     const h = el.offsetHeight;
     let x = rect.left + rect.width / 2;
@@ -277,13 +291,16 @@ const BollStreakTip: React.FC<Props> = ({ explain, pos, periodPrefix, fmtPrice, 
         <div
           ref={containerRef}
           style={{ width: 'max-content', minWidth: 240, opacity: 0, pointerEvents: 'none' }}
-          className="fixed left-0 top-0 z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2.5 py-2 text-[10px] text-app-text transition-opacity duration-100 select-text"
+          className="fixed left-0 top-0 z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2.5 py-2 text-[10px] text-app-text transition-opacity duration-100 select-text flex flex-col"
         >
           <div ref={conclusionRef} className="text-[10px] font-semibold text-app-rowtext whitespace-nowrap" />
-          <div ref={headRef} className="mt-1.5" style={{ display: 'none' }} />
-          <div ref={bodyRef} className="flex flex-col gap-px" style={{ display: 'none' }} />
+          {/* 明细区：60 根可能超出视口，由 showAt 按可用高度夹住并内部滚动（结论行与规则行固定） */}
+          <div ref={scrollRef} className="mt-1.5 overflow-y-auto custom-scrollbar">
+            <div ref={headRef} style={{ display: 'none' }} />
+            <div ref={bodyRef} className="flex flex-col gap-px" style={{ display: 'none' }} />
+          </div>
           <div className="mt-1.5 pt-1 border-t border-app-border/60 text-[9px] text-app-subtext leading-snug max-w-[280px]">
-            规则：从最新一根往前，逐根用「该根及之前 19 根」重算当时的 BOLL 轨道；连续处于同一轨道才计数，某根出现反向箭头（日上↓／日下↑）或落到日中／另一轨即中断且该根不计入，第 1 天不显示数字。
+            规则：回溯最近 60 根（表格可滚动查看），从最新一根往前逐根用「该根及之前 19 根」重算当时的 BOLL 轨道，并按该根自己当时的轨道计段——上轨段与下轨段各计各的，落到日中、切到另一轨或出现反向箭头（日上↓／日下↑）都会开启新的一段且该根不计入。「轨道」列即该根当日列表里的显示内容：连续天数数字写在轨道前面（仅 &gt;1 时显示，段首日为 1、按规则不显示）。
           </div>
         </div>,
         document.body

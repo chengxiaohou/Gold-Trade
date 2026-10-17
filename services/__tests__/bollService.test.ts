@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeTodayBarToKlines, pickDegradedBoll, countBollBandStreak, classifyBollBandDisplay, explainBollBandStreak } from '../bollService';
+import { mergeTodayBarToKlines, pickDegradedBoll, countBollBandStreak, classifyBollBandDisplay, explainBollBandStreak, bollBandLabel, buildBollBandTextParts } from '../bollService';
 import type { BollData, BollKline } from '../bollService';
 
 function date(offset: number, base = new Date(Date.UTC(2026, 0, 1))): string {
@@ -165,6 +165,39 @@ function mkStepKlines(
   }
   return arr;
 }
+
+// ─── bollBandLabel / buildBollBandTextParts（单元格文本 SSOT） ───
+
+describe('buildBollBandTextParts', () => {
+  const text = (p: { streakText: string; arrowBefore: string; label: string; arrowAfter: string }) =>
+    `${p.streakText}${p.arrowBefore}${p.label}${p.arrowAfter}`;
+
+  it('轨道标签来自共享映射（周期前缀 + 上/中/下）', () => {
+    expect(bollBandLabel('daily', 'upper')).toBe('日上');
+    expect(bollBandLabel('weekly', 'mid')).toBe('周中');
+    expect(bollBandLabel('monthly', 'lower')).toBe('月下');
+  });
+
+  it('连续天数数字写在「日上/日下」前面，仅 >1 时显示；正常方向箭头放标签后', () => {
+    const d = classifyBollBandDisplay('upper', 1); // 上轨且向上 → 正常 1 个箭头
+    const p3 = buildBollBandTextParts('daily', 'upper', d, 3);
+    expect(p3.streakText).toBe('3');
+    expect(p3.label).toBe('日上');
+    expect(text(p3)).toBe('3日上↑');
+
+    // 段首日（1）/ 未计入（0）：不显示数字，轨道与箭头照常
+    expect(text(buildBollBandTextParts('daily', 'upper', d, 1))).toBe('日上↑');
+    expect(text(buildBollBandTextParts('daily', 'upper', d, 0))).toBe('日上↑');
+  });
+
+  it('反向箭头（日上↓／日下↑）放标签前', () => {
+    const cd = buildBollBandTextParts('daily', 'upper', classifyBollBandDisplay('upper', -1), 2);
+    expect(text(cd)).toBe('2↓日上');
+
+    const cu = buildBollBandTextParts('daily', 'lower', classifyBollBandDisplay('lower', 1), 5);
+    expect(text(cu)).toBe('5↑日下');
+  });
+});
 
 describe('countBollBandStreak', () => {
   it('klines 不足 20 根 → null', () => {
@@ -343,15 +376,20 @@ describe('explainBollBandStreak', () => {
     expect(explain!.streak).toBe(countBollBandStreak(klines, 'upper'));
     expect(explain!.streak).toBe(4);
 
-    // 明细：最近一根在最前，共 4 根计入 + 1 根打断（第 5 根是纯 50 的中轨）
-    expect(explain!.steps).toHaveLength(5);
+    // 明细：最近一根在最前，共 4 根计入 + 1 根打断（第 5 根是纯 50 的中轨）+ 1 根不足 20 根
+    expect(explain!.steps).toHaveLength(6);
     expect(explain!.steps[0].date).toBe(date(23));
     expect(explain!.steps[0].reason).toBe('counted');
     expect(explain!.steps[0].counted).toBe(true);
     expect(explain!.steps[4].reason).toBe('band-mid');
     expect(explain!.steps[4].counted).toBe(false);
-    // 反向时间顺序
-    expect(explain!.steps.map(s => s.date)).toEqual([date(23), date(22), date(21), date(20), date(19)]);
+    expect(explain!.steps[5].reason).toBe('insufficient');
+    // 逐根带出"该根当时在列表里会显示的数字"：4/3/2/1，断点及不足处为 0
+    expect(explain!.steps.map(s => s.streak)).toEqual([4, 3, 2, 1, 0, 0]);
+    // 反向时间顺序（走满窗口，不足 20 根处收尾）
+    expect(explain!.steps.map(s => s.date)).toEqual([
+      date(23), date(22), date(21), date(20), date(19), date(18),
+    ]);
   });
 
   it('历史根出现可见反向箭头（日上↓）→ 展示连续段在该根中断，且该根不计入', () => {
@@ -375,9 +413,14 @@ describe('explainBollBandStreak', () => {
     expect(explain!.steps[1].reason).toBe('counter-arrow');
     expect(explain!.steps[1].counted).toBe(false);
 
-    // 展示口径 = 1（只有最新一根），明细到断点为止
+    // 展示口径 = 1（只有最新一根），但明细不再到断点截止，而是继续走满窗口给出后续每根的判定
     expect(explain!.streak).toBe(1);
-    expect(explain!.steps).toHaveLength(2);
+    expect(explain!.steps.length).toBeGreaterThan(2);
+    expect(explain!.steps[0].streak).toBe(1);
+    expect(explain!.steps[1].streak).toBe(0);
+    expect(explain!.steps[2].band).toBe('mid');
+    expect(explain!.steps[2].reason).toBe('band-mid');
+    expect(explain!.steps[explain!.steps.length - 1].reason).toBe('insufficient');
 
     // 对照：纯轨道口径（不看箭头）仍会把这两根都算上 → 2
     expect(countBollBandStreak(klines, 'upper')).toBe(2);
@@ -398,21 +441,48 @@ describe('explainBollBandStreak', () => {
     expect(explain!.steps[0].reason).toBe('counter-arrow');
     expect(explain!.steps[0].counted).toBe(false);
 
-    // 展示口径归零，明细只保留这一根（说明"为什么没有计数"）
+    // 展示口径归零，明细保留最新一根（说明"为什么没有计数"）+ 窗口末尾的不足 20 根
     expect(explain!.streak).toBe(0);
-    expect(explain!.steps).toHaveLength(1);
+    expect(explain!.steps).toHaveLength(2);
+    expect(explain!.steps[0].streak).toBe(0);
+    expect(explain!.steps[1].reason).toBe('insufficient');
 
     // 对照：纯轨道口径仍会把这根算作 1（这就是两种口径的差别）
     expect(countBollBandStreak(klines, 'upper')).toBe(1);
   });
 
-  it('最新一根落到另一条轨道 → reason=band-flip，streak=0', () => {
-    const klines = mkStepKlines(20, 1, 50, 150); // 最后一根 50 远低于下轨
+  it('最新一根落到另一条轨道 → 该根按自己那一轨计入，但目标轨口径仍为 0', () => {
+    const klines = mkStepKlines(20, 1, 50, 150); // 最后一根 50 跌破下轨（前一轨是上轨）
     const explain = explainBollBandStreak(klines, 'upper');
     expect(explain).not.toBeNull();
+    // 目标轨（上轨）口径：最新一根不在上轨 → 0
     expect(explain!.streak).toBe(0);
+    // 逐根口径：它自己那一段（下轨）= 第 1 天 → 计入、streak=1（列表按规则不显示数字）
     expect(explain!.steps[0].band).toBe('lower');
-    expect(explain!.steps[0].reason).toBe('band-flip');
+    expect(explain!.steps[0].reason).toBe('counted');
+    expect(explain!.steps[0].counted).toBe(true);
+    expect(explain!.steps[0].streak).toBe(1);
+    // 纯轨道口径：target 换成下轨就是 1
+    expect(countBollBandStreak(klines, 'lower')).toBe(1);
+    expect(countBollBandStreak(klines, 'upper')).toBeNull();
+  });
+
+  it('双轨互不干扰：上轨目标下，下轨段仍给出它自己那一轨的当日数字', () => {
+    // 20×150 + 4×50（跌破下轨）：下轨段是 4 连，最新一根在下轨
+    const klines = mkStepKlines(24, 4, 50, 150);
+    const asUpper = explainBollBandStreak(klines, 'upper');
+    const asLower = explainBollBandStreak(klines, 'lower');
+    expect(asUpper).not.toBeNull();
+
+    // 逐根数字只看该根自己所属的轨道 → 两种 target 下完全一致
+    expect(asUpper!.steps.map(s => s.streak)).toEqual(asLower!.steps.map(s => s.streak));
+    expect(asUpper!.steps.slice(0, 4).map(s => s.streak)).toEqual([4, 3, 2, 1]);
+    expect(asUpper!.steps[0].reason).toBe('counted');
+    expect(asUpper!.steps[4].reason).toBe('band-mid');
+
+    // 结论行/列表数字仍按 target：上轨目标 0（最新一根不在上轨），下轨目标 4
+    expect(asUpper!.streak).toBe(0);
+    expect(asLower!.streak).toBe(4);
   });
 
   it('连续段走到不足 20 根处 → 末尾补一根 insufficient 明细', () => {
@@ -433,5 +503,26 @@ describe('explainBollBandStreak', () => {
     expect(explain!.streak).toBe(3);
     expect(explain!.steps).toHaveLength(3);
     expect(explain!.steps.filter(s => s.counted)).toHaveLength(3);
+  });
+
+  it('默认窗口 60 根：明细覆盖最近 60 根，逐根 streak 最新为 60 递减到 1', () => {
+    // 前 20 根 100，之后逐日 +0.1（从 200 起）：最近 60 根都贴在上轨（|percent| ≤ 0.5% 无箭头）→ 全部计入，
+    // 真实连续段比窗口更长，因此 streak 会被 60 根窗口截断到 60
+    const closes = Array.from({ length: 100 }, (_, i) => (i < 20 ? 100 : 200 + (i - 20) * 0.1));
+    const klines: BollKline[] = closes.map((close, i) => ({ date: date(i), open: close, high: close, low: close, close, volume: 1_000_000 }));
+
+    const explain = explainBollBandStreak(klines, 'upper');
+    expect(explain).not.toBeNull();
+    // 明细恰好覆盖最近 60 根（BOLL_STREAK_WINDOW），最新一根在最前
+    expect(explain!.steps).toHaveLength(60);
+    expect(explain!.steps[0].date).toBe(date(99));
+    expect(explain!.steps[59].date).toBe(date(40));
+    // 逐根 streak = 该根当时的连续计数（最新一根 60，往前递减到 1）
+    expect(explain!.steps.map(s => s.streak)).toEqual(Array.from({ length: 60 }, (_, i) => 60 - i));
+    // 列表展示数字 = 最新一根的 streak，同样被窗口限制
+    expect(explain!.streak).toBe(60);
+
+    // countBollBandStreak 与展示口径同窗口、同结果（无反向箭头时两者一致）
+    expect(countBollBandStreak(klines, 'upper')).toBe(60);
   });
 });

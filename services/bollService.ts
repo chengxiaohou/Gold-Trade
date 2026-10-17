@@ -546,8 +546,42 @@ export function classifyBollBandDisplay(band: BollBandInfo['band'], percent: num
   };
 }
 
+/** 周期前缀与轨道文字（展示口径 SSOT）：列表单元格、BOLL 弹窗三轨、连续天数浮窗共用一份映射。 */
+export const BOLL_PERIOD_PREFIX: Record<BollPeriod, string> = { daily: '日', weekly: '周', monthly: '月' };
+export const BOLL_BAND_TEXT: Record<BollBandInfo['band'], string> = { upper: '上', mid: '中', lower: '下' };
+
+/** 轨道标签（如「日上」「周下」）：所有展示入口都必须从这里取，不得各自拼一份。 */
+export function bollBandLabel(period: BollPeriod, band: BollBandInfo['band']): string {
+  return `${BOLL_PERIOD_PREFIX[period]}${BOLL_BAND_TEXT[band]}`;
+}
+
+/** 单元格文本的组成（展示口径 SSOT）：连续天数数字 + 轨道标签 + 箭头及其位置。
+ *  数字写在「日上／日下」前面，且仅连续天数 >1 时出现（第 1 天、未计入不显示数字）；
+ *  出现反向箭头（日上↓／日下↑）时箭头放标签前，正常方向放标签后。 */
+export interface BollBandTextParts {
+  streakText: string;
+  label: string;
+  arrowBefore: string;
+  arrowAfter: string;
+}
+
+export function buildBollBandTextParts(
+  period: BollPeriod,
+  band: BollBandInfo['band'],
+  display: BollBandDisplay,
+  streak: number,
+): BollBandTextParts {
+  const arrow = display.arrowCount > 0 ? (display.dir === 'up' ? '↑' : '↓').repeat(display.arrowCount) : '';
+  return {
+    streakText: streak > 1 ? String(streak) : '',
+    label: bollBandLabel(period, band),
+    arrowBefore: display.counterArrow ? arrow : '',
+    arrowAfter: display.counterArrow ? '' : arrow,
+  };
+}
+
 /** 连续天数回溯中的一根 bar：既有判定结果，也有"为什么计入 / 为什么打断"的原因。 */
-export type BollStreakReason = 'counted' | 'counter-arrow' | 'band-mid' | 'band-flip' | 'no-boll' | 'insufficient';
+export type BollStreakReason = 'counted' | 'counter-arrow' | 'band-mid' | 'no-boll' | 'insufficient';
 
 export interface BollStreakStep {
   date: string;
@@ -558,25 +592,36 @@ export interface BollStreakStep {
   dir: 'up' | 'down';
   /** 该根是否出现可见的反方向箭头 */
   counterArrow: boolean;
-  /** 该根是否贡献于"展示口径"的连续计数 */
+  /** 该根是否计入"它自己所在轨道"的那一段（日中 / 反向箭头 / 不足 20 根 都不计入） */
   counted: boolean;
+  /** 该根当日"列表里会显示的数字"：它自己轨道的连续段长度（含本根）；0 = 本根未计入。
+   *  段首日（=1）在列表里按规则不显示数字，因此只有 >1 才会真的显示出来。 */
+  streak: number;
   reason: BollStreakReason;
 }
 
 /** 连续天数的解释结果：结论 + 逐根原因，供长按浮窗直接展示。 */
 export interface BollStreakExplain {
   target: 'upper' | 'lower';
-  /** 展示口径连续天数（0 = 不计数）：连续段在「出现可见反向箭头」或「离开目标轨道」的当根处中断 */
+  /** 目标轨口径的连续天数（0 = 不计数）：从最新一根起连续"处于 target 轨且未出现可见反向箭头"的根数，
+   *  即列表单元格当前显示的那个数字；与逐根明细里各根"自己那一段"的数字互相独立 */
   streak: number;
-  /** 从最新一根往前的逐根明细（含打断计数的那一根） */
+  /** 从最新一根往前的逐根明细，覆盖整个回溯窗口（默认 60 根，含每根当时的 streak） */
   steps: BollStreakStep[];
 }
+
+/** 明细回溯的默认窗口：最近 60 根（用户确认的展示范围） */
+export const BOLL_STREAK_WINDOW = 60;
 
 /** 连续天数回溯的唯一实现：从最新一根往前，逐根用"该根及其之前 19 根"（共 20 根 close）
  *  重算该根当时的 BOLL 轨道并判定 band。countBollBandStreak 与 explainBollBandStreak 都走这条回溯。
  *
- *  @param excludeCounterArrow true = 展示口径：出现可见反向箭头（「日上↓」「日下↑」）的当根不计入，连续段在该根中断；
- *                             false = 纯轨道口径：只看 band 是否等于 target，不看箭头。
+ *  完整走满 maxDays（不再在断点处提前退出），并且**逐根按它自己当时的轨道**计段：
+ *  上轨段与下轨段各计各的（轨道切换、落到日中、出现可见反向箭头都会开启新的一段）。
+ *  因此每根都能拿到"它当日会显示的数字"，浮窗可以直接把整段窗口里需要数字的日期全部列出来。
+ *
+ *  @param excludeCounterArrow true = 展示口径：出现可见反向箭头（「日上↓」「日下↑」）的当根不计入；
+ *                             false = 纯轨道口径：只看 band 是不是上/下轨，不看箭头。
  */
 function walkBollBandStreak(
   klines: BollKline[] | undefined | null,
@@ -586,7 +631,6 @@ function walkBollBandStreak(
 ): { count: number; steps: BollStreakStep[] } | null {
   if (!klines || klines.length < 20) return null;
 
-  let count = 0;
   const steps: BollStreakStep[] = [];
   const startIdx = klines.length - 1;
 
@@ -596,37 +640,53 @@ function walkBollBandStreak(
       // 更早的 bar 不足 20 根 K 线，无法算它当时的 BOLL → 回溯到此为止
       steps.push({
         date: klines[idx].date, close: klines[idx].close, band: null, percent: null,
-        arrowCount: 0, dir: 'up', counterArrow: false, counted: false, reason: 'insufficient',
+        arrowCount: 0, dir: 'up', counterArrow: false, counted: false, streak: 0, reason: 'insufficient',
       });
       break;
     }
 
-    // 取 klines[0..idx]（含当前 bar），重算"当天收盘后"的 BOLL
+    // 取该根及其之前 19 根（共 20 根）算它当时的 BOLL：与传入整段前缀结果完全一致
+    // （buildBollDataFromKlines 内部同样只取最近 20 根 close），但避免长序列的重复计算
     const bar = klines[idx];
-    const boll = buildBollDataFromKlines(klines.slice(0, idx + 1), 0);
+    const boll = buildBollDataFromKlines(klines.slice(idx - 19, idx + 1), 0);
     const info = boll ? getBollPosition(boll, bar.close) : null;
     if (!info) {
       steps.push({
         date: bar.date, close: bar.close, band: null, percent: null,
-        arrowCount: 0, dir: 'up', counterArrow: false, counted: false, reason: 'no-boll',
+        arrowCount: 0, dir: 'up', counterArrow: false, counted: false, streak: 0, reason: 'no-boll',
       });
       break;
     }
 
     const display = classifyBollBandDisplay(info.band, info.percent);
-    const onTarget = info.band === target;
-    // 展示口径下：处于目标轨但出现可见反向箭头（如「日上↓」）的当根也不计入
-    const counted = onTarget && !(excludeCounterArrow && display.counterArrow);
-    const reason: BollStreakReason = !onTarget
-      ? (info.band === 'mid' ? 'band-mid' : 'band-flip')
-      : counted ? 'counted' : 'counter-arrow';
+    // 逐根判定：处于上/下轨、且未出现可见反向箭头（如「日上↓」「日下↑」）→ 计入"它自己那一段"。
+    // 途中落到日中、轨道切换、出现反向箭头，都会让该根不计数并开启新的一段。
+    const counted = info.band !== 'mid' && !(excludeCounterArrow && display.counterArrow);
+    const reason: BollStreakReason = counted
+      ? 'counted'
+      : info.band === 'mid' ? 'band-mid' : 'counter-arrow';
     steps.push({
       date: bar.date, close: bar.close, band: info.band, percent: info.percent,
       arrowCount: display.arrowCount, dir: display.dir, counterArrow: display.counterArrow,
-      counted, reason,
+      counted, streak: 0, reason,
     });
-    if (!counted) break;
-    count++;
+  }
+
+  // 回填每根的"当日数字"：同一轨道且连续计入的根组成一段，段首（最早那根）为 1，越靠近最新越大。
+  for (let i = 0; i < steps.length; ) {
+    if (!steps[i].counted) { i++; continue; }
+    let len = 1;
+    while (i + len < steps.length && steps[i + len].counted && steps[i + len].band === steps[i].band) len++;
+    for (let k = 0; k < len; k++) steps[i + k].streak = len - k;
+    i += len;
+  }
+
+  // 目标轨口径（列表显示的数字 / 结论行）：从最新一根起连续处于 target 轨且计入的根数。
+  // 只有在调用方传入的 target == 最新一根自己的轨道时，它才等于 steps[0].streak。
+  let count = 0;
+  for (const s of steps) {
+    if (s.band === target && !(excludeCounterArrow && s.counterArrow)) count++;
+    else break;
   }
 
   return { count, steps };
@@ -638,14 +698,14 @@ function walkBollBandStreak(
  * 判定该根是否处于 target 轨道（含 mid 区间里离该轨更近的 relative 场景）→ 连续则累计。
  * 断开条件：band 切换到 mid / 另一轨道、数据不足 20 根、超过 maxDays。
  * 注意：本函数**不看箭头**，只按 band 连续计数（展示口径见 explainBollBandStreak.streak，
- * 会把「日上↓」「日下↑」这类出现可见反向箭头的当根排除并中断）。
+ * 会把「日上↓」「日下↑」这类出现可见反向箭头的当根排除）。
  *
  * @returns 连续天数（从 1 计起），或 null（klines 不足 20 根 / 无 BOLL 数据）
  */
 export function countBollBandStreak(
   klines: BollKline[] | undefined | null,
   target: 'upper' | 'lower',
-  maxDays = 20,
+  maxDays = BOLL_STREAK_WINDOW,
 ): number | null {
   const walk = walkBollBandStreak(klines, target, maxDays, false);
   return walk && walk.count >= 1 ? walk.count : null;
@@ -653,14 +713,14 @@ export function countBollBandStreak(
 
 /**
  * 连续天数的"带解释"版本（展示口径）：与 countBollBandStreak 走同一条回溯，
- * 但逐根生效反向箭头守卫——出现可见反向箭头（「日上↓」「日下↑」）的当根不计入，
- * 连续段在该根处中断；同时给出逐根明细与每根"计入 / 不计入"的原因。
- * 供列表页日线单元格的长按浮窗与数字展示直接使用。
+ * 但逐根生效反向箭头守卫——出现可见反向箭头（「日上↓」「日下↑」）的当根不计入。
+ * steps 覆盖最近 BOLL_STREAK_WINDOW（60）根的全部明细，每根带 streak（该根当时的连续计数），
+ * 供列表页日线单元格的长按浮窗展示"每一天的计数与原因"。
  */
 export function explainBollBandStreak(
   klines: BollKline[] | undefined | null,
   target: 'upper' | 'lower',
-  maxDays = 20,
+  maxDays = BOLL_STREAK_WINDOW,
 ): BollStreakExplain | null {
   const walk = walkBollBandStreak(klines, target, maxDays, true);
   if (!walk || walk.steps.length === 0) return null;

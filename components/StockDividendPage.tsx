@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
-import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition } from '../services/bollService';
+import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition, bollBandLabel, buildBollBandTextParts } from '../services/bollService';
 import type { BollData, BollPeriod, BollAdjust, BollKline, BollBandInfo, BollStreakExplain } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime } from '../services/cacheService';
 import { priceBureau } from '../services/priceBureau';
@@ -1138,12 +1138,6 @@ const formatFetchTime = (timestamp: number): string => {
   
   const date = new Date(timestamp);
   return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-};
-
-const getBollBandLabel = (period: BollPeriod, band: BollBandInfo['band']): string => {
-  const periodMap: Record<BollPeriod, string> = { daily: '日', weekly: '周', monthly: '月' };
-  const bandMap = { upper: '上', mid: '中', lower: '下' };
-  return `${periodMap[period]}${bandMap[band]}`;
 };
 
 const getDividendRateColor = (rate: number, colorRanges: DividendRateColorRange[]): string => {
@@ -5279,18 +5273,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       const percentStr = pos ? `${pos.percent >= 0 ? '+' : ''}${pos.percent.toFixed(2)}%` : '-';
                       // 箭头档位 / 反向箭头判定统一走 bollService 的共享实现（SSOT），此处不再重复阈值判定
                       const display = pos ? classifyBollBandDisplay(pos.band, pos.percent) : null;
-                      const arrow = display && display.arrowCount > 0 ? (display.dir === 'up' ? '↑' : '↓').repeat(display.arrowCount) : '';
-                      // 上轨+下箭头 或 下轨+上箭头 → 箭头放左边避免反直觉
-                      const isCounterArrow = display?.counterArrow ?? false;
                       // 连续天数（仅日线）：数字展示与悬停解释同源，都来自 explainBollBandStreak。
                       // 最新一根出现可见反向箭头时 streak 归零（展示守卫）；band 为日中时不参与统计。
                       const explain: BollStreakExplain | null = key === 'daily' && pos && pos.band !== 'mid'
                         ? explainBollBandStreak(data?.klines, pos.band)
                         : null;
                       const streak = explain?.streak ?? 0;
+                      // 数字 + 轨道标签 + 箭头位置统一由共享实现拼装（SSOT）：数字写在「日上/日下」前面
+                      const parts = pos && display ? buildBollBandTextParts(key, pos.band, display, streak) : null;
                       const cellInner = pos ? (
                         <div className="flex flex-col items-center leading-tight">
-                          <span className={`text-[11px] font-bold ${bandColor}`}>{streak > 1 ? <span className="text-[10px] font-semibold mr-0.5">{streak}</span> : ''}{isCounterArrow ? arrow : ''}{getBollBandLabel(key, pos.band)}{!isCounterArrow ? arrow : ''}</span>
+                          <span className={`text-[11px] font-bold ${bandColor}`}>{parts?.streakText ? <span className="text-[10px] font-semibold mr-0.5">{parts.streakText}</span> : ''}{parts?.arrowBefore}{parts?.label}{parts?.arrowAfter}</span>
                           <span className="font-mono text-[10px] text-app-rowtext">{percentStr}</span>
                         </div>
                       ) : null;
@@ -5329,7 +5322,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           {pos ? (
                             // 仅日线单元格挂解释浮窗：长按展示"为什么是这个计数 / 为什么没有计数"的带数据说明
                             key === 'daily' ? (
-                              <BollStreakTip explain={explain} pos={pos} periodPrefix="日" fmtPrice={(v) => formatPrice(v, stock.name)}>
+                              <BollStreakTip explain={explain} pos={pos} period={key} fmtPrice={(v) => formatPrice(v, stock.name)}>
                                 {cellInner}
                               </BollStreakTip>
                             ) : cellInner
@@ -5920,24 +5913,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 </div>
                 <div className="grid grid-cols-3 gap-1">
                     {(() => {
-                      const bandLabels: { band: string; label: string; value: number | undefined; labelColor: string; valueColor: string }[] = [
-                        { band: 'lower', label: getBollBandLabel(bollPeriod, 'lower'), value: bollData?.lower, labelColor: 'text-brand-green', valueColor: 'text-brand-green' },
-                        { band: 'mid', label: getBollBandLabel(bollPeriod, 'mid'), value: bollData?.mid, labelColor: 'text-blue-500', valueColor: 'text-blue-500' },
-                        { band: 'upper', label: getBollBandLabel(bollPeriod, 'upper'), value: bollData?.upper, labelColor: 'text-brand-red', valueColor: 'text-red-500' },
+                      const bandLabels: { band: BollBandInfo['band']; label: string; value: number | undefined; labelColor: string; valueColor: string }[] = [
+                        { band: 'lower', label: bollBandLabel(bollPeriod, 'lower'), value: bollData?.lower, labelColor: 'text-brand-green', valueColor: 'text-brand-green' },
+                        { band: 'mid', label: bollBandLabel(bollPeriod, 'mid'), value: bollData?.mid, labelColor: 'text-blue-500', valueColor: 'text-blue-500' },
+                        { band: 'upper', label: bollBandLabel(bollPeriod, 'upper'), value: bollData?.upper, labelColor: 'text-brand-red', valueColor: 'text-red-500' },
                       ];
                       const pos = bollData && stock.price ? getBollPosition(bollData, stock.price) : null;
-                      // 与列表单元格共用同一套展示口径（SSOT）：阈值与反向箭头判定不在弹窗里另写一份
+                      // 与列表单元格共用同一套展示口径（SSOT）：阈值、反向箭头判定与箭头位置都不在弹窗里另写一份
                       const display = pos ? classifyBollBandDisplay(pos.band, pos.percent) : null;
                       const arrowCount = display?.arrowCount ?? 0;
-                      const arrow = display && display.arrowCount > 0 ? (display.dir === 'up' ? '↑' : '↓').repeat(display.arrowCount) : '';
-                      const isCounter = display?.counterArrow ?? false;
                       return bandLabels.map(({ band, label, value, labelColor, valueColor }) => {
                         const isClosest = pos && pos.band === band;
-                        const showArrow = isClosest && arrowCount > 0 && arrow;
+                        const showArrow = isClosest && arrowCount > 0;
                         // 价格非常接近该轨道（≤0.5%）→ 不加箭头，加下划线
                         const showUnderline = isClosest && arrowCount === 0;
-                        const displayArrow = showArrow ? (isCounter ? arrow : '') : '';
-                        const displayArrowAfter = showArrow ? (!isCounter ? arrow : '') : '';
+                        const parts = display ? buildBollBandTextParts(bollPeriod, band, display, 0) : null;
+                        const displayArrow = showArrow ? (parts?.arrowBefore ?? '') : '';
+                        const displayArrowAfter = showArrow ? (parts?.arrowAfter ?? '') : '';
                         return (
                           <div key={band} className="flex flex-col items-center p-1 rounded bg-app-input">
                             <span className={`text-[11px] font-bold ${labelColor}`}>
