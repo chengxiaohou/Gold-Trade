@@ -111,6 +111,14 @@ export function prevCloseFromChange(price: number | null | undefined, changePerc
   return price / (1 + changePercent / 100);
 }
 
+// 某价格相对「前一交易日收盘价」的涨跌幅（单一来源计算）：与 prevCloseFromChange 共用同一参考价口径。
+// 列表页涨跌幅列的「最高价涨幅 / 最低价跌幅」等派生百分比统一走这里，展示层不得另写一份算式。
+// 价格或参考价无效（缺失/非有限/参考价 ≤ 0）返回 null，交由各消费方按自身形态渲染占位符。
+export function changePctVsPrevClose(v: number | null | undefined, prevClose: number | null | undefined): number | null {
+  if (v == null || !Number.isFinite(v) || prevClose == null || !Number.isFinite(prevClose) || prevClose <= 0) return null;
+  return ((v - prevClose) / prevClose) * 100;
+}
+
 // 价格相对「前一交易日收盘价」的位置判定（单一来源判定）：高于 / 低于 / 相等 / 参考价缺失。
 // 判定只此一份，各消费方按自身展示形态映射颜色，不得各自另写一套比较逻辑。
 export type PriceVsPrev = 'above' | 'below' | 'equal' | 'unknown';

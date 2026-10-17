@@ -24,7 +24,7 @@ import { BacktestModal } from './BacktestModal';
 import PriceInfoPopover, { PriceIndicatorSection, PopoverTitleBar, usePopoverDrag } from './PriceInfoPopover';
 import SignalTagsFooter from './SignalTagsFooter';
 import { getDayTagSet, type DayTag } from '../services/signalTagDetail';
-import { calcIndicators, formatPrice, formatVolume, prevCloseFromChange, priceVsPrevCloseCls, priceVsPrevCloseBrandCls, type IndicatorResult } from '../services/indicators';
+import { calcIndicators, formatPrice, formatVolume, prevCloseFromChange, changePctVsPrevClose, priceVsPrevCloseCls, priceVsPrevCloseBrandCls, type IndicatorResult } from '../services/indicators';
 
 /* 月份快捷选择：隐藏滚动条但保留滚动能力 */
 const MONTH_SCROLLER_CSS = `
@@ -5108,8 +5108,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                               : formatPrice(stock.high, stock.name)}
                           </span>
                           {/* 第三行：当日最低价（差值模式下为低于现价/收盘价的幅度，与第二行合起来即当日的上下波动幅度），着色同一判定；
-                              字重 normal(400)，比第二行轻，形成视觉层级 */}
-                          <span className={`font-mono font-normal text-[8px] ${priceVsPrevCloseBrandCls(stock.low, prevClose)}`}>
+                              字号与第二行一致（9px），字重 normal(400) 比第二行轻，形成视觉层级 */}
+                          <span className={`font-mono font-normal text-[9px] ${priceVsPrevCloseBrandCls(stock.low, prevClose)}`}>
                             {priceSubMode === 'diff'
                               ? formatPrice(stock.price - stock.low, stock.name)
                               : formatPrice(stock.low, stock.name)}
@@ -5126,9 +5126,30 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
-                    <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                      {stock.changePercent >= 0 ? '+' : ''}{formatPercent(stock.changePercent)}
-                    </span>
+                    {(() => {
+                      // 昨收价：与价格列同一参考价口径（由展示口径的现价/涨跌幅推导，历史模式下随截止日同步）
+                      const prevClose = prevCloseFromChange(stock.price, stock.changePercent);
+                      // 最高价涨幅 / 最低价跌幅：派生百分比统一走 indicators 的共享计算（SSOT），不在此另写算式
+                      const highPct = changePctVsPrevClose(stock.high, prevClose);
+                      const lowPct = changePctVsPrevClose(stock.low, prevClose);
+                      const pctText = (p: number | null) => p == null ? '-' : `${p >= 0 ? '+' : ''}${formatPercent(p)}`;
+                      return (
+                        <div className="flex flex-col items-center leading-tight gap-px">
+                          {/* 第一行：现价/收盘价涨跌幅（字号最大） */}
+                          <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                            {stock.changePercent >= 0 ? '+' : ''}{formatPercent(stock.changePercent)}
+                          </span>
+                          {/* 第二行：当日最高价的涨幅（着色判定与价格列第二行同源，字重 800 → Roboto Mono 回落至 700） */}
+                          <span className={`font-mono font-extrabold text-[9px] ${priceVsPrevCloseBrandCls(stock.high, prevClose)}`}>
+                            {pctText(highPct)}
+                          </span>
+                          {/* 第三行：当日最低价的跌幅（着色判定与价格列第三行同源，字号与第二行一致，字重 normal(400) 形成层级） */}
+                          <span className={`font-mono font-normal text-[9px] ${priceVsPrevCloseBrandCls(stock.low, prevClose)}`}>
+                            {pctText(lowPct)}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </td>}
                   {cols.includes('position') && (() => {
                     const shares = stock.positionShares || 0;
