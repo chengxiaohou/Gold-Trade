@@ -13,7 +13,7 @@ import { fetchYearlyDividends, DividendRecord } from '../services/dividendServic
 import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
-import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, calcAvgPnlForTrades, calcTradeFees, estimatePendingSell, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
+import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, calcAvgPnlForTrades, calcTradeFees, tradeAmountFormula, estimatePendingSell, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
 import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, volBucket, buildLatestShrinkTags, buildShrinkTagsForModule, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, analyzeStandEvents, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5, type StandEvent } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
@@ -495,6 +495,10 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
   const triggerRef = useRef<HTMLSpanElement>(null);
   const pinnedRef = useRef(false);
   const rafRef = useRef<number | null>(null);
+  // 触摸点按保护：触屏上 touchstart 会先固定浮窗，随后浏览器再合成一次幽灵 click，
+  // 若不拦截会与本次触摸相互抵消（表现为点开即消失）。此标记用于吞掉该合成 click。
+  const touchGuardRef = useRef(false);
+  const touchGuardTimerRef = useRef<number | undefined>(undefined);
 
   if (!pairs || pairs.length === 0) return <>{children}</>;
 
@@ -508,7 +512,11 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
       if (!row) return;
       const pct = p.shares > 0 ? (p.take / p.shares) * 100 : 0;
       const pctLabel = pct >= 100 ? '100%' : `${pct.toFixed(0)}%`;
-      row.textContent = `${fmtPrice(p.price)} × ${p.shares} = ${fmtPrice(p.price * p.shares)}`;
+      // 公式与成交记录同一口径（SSOT：tradeAmountFormula）：原价 × 股数 ± 税费 = 含税总额
+      const f = tradeAmountFormula(p.price, p.shares, p.feeTotal, 'buy');
+      row.textContent = f.feeTotal > 0
+        ? `${fmtPrice(p.price)} × ${p.shares} ${f.sign} ${f.feeTotal.toFixed(2)} = ${fmtPrice(f.total)}`
+        : `${fmtPrice(p.price)} × ${p.shares} = ${fmtPrice(f.total)}`;
       const dp = diffPctRefs.current[i];
       if (dp) dp.textContent = `${p.diffPct > 0 ? '+' : ''}${p.diffPct.toFixed(2)}%`;
       const h = headerDateRefs.current[i];
@@ -577,16 +585,20 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
         // 行框高度与基线完全一致，框选高亮不会出现高度断层（inline-block 会独立成一个盒子）。
         // 另两个调用点（交易行、逐日明细）中该 span 是 flex 子项，会被 blockify 为 block，不受影响。
         className="cursor-default"
-        onMouseEnter={() => requestShowAt()}
-        onMouseLeave={() => { if (!pinnedRef.current) hide(); }}
+        onMouseEnter={() => { if (touchGuardRef.current) return; requestShowAt(); }}
+        onMouseLeave={() => { if (!pinnedRef.current && !touchGuardRef.current) hide(); }}
         onClick={(e) => {
           e.stopPropagation();
+          if (touchGuardRef.current) { touchGuardRef.current = false; return; } // 吞掉触摸后合成的幽灵 click
           pinnedRef.current = !pinnedRef.current;
           if (pinnedRef.current) requestShowAt();
           else hide();
         }}
         onTouchStart={(e) => {
           e.stopPropagation();
+          touchGuardRef.current = true;
+          if (touchGuardTimerRef.current !== undefined) clearTimeout(touchGuardTimerRef.current);
+          touchGuardTimerRef.current = window.setTimeout(() => { touchGuardRef.current = false; touchGuardTimerRef.current = undefined; }, 400);
           pinnedRef.current = !pinnedRef.current;
           if (pinnedRef.current) requestShowAt();
           else hide();
@@ -629,6 +641,10 @@ const FeeTip: React.FC<{ fees: ReturnType<typeof calcTradeFees>; grossAmount: nu
   const triggerRef = useRef<HTMLSpanElement>(null);
   const pinnedRef = useRef(false);
   const rafRef = useRef<number | null>(null);
+  // 触摸点按保护：触屏上 touchstart 会先固定浮窗，随后浏览器再合成一次幽灵 click，
+  // 若不拦截会与本次触摸相互抵消（表现为点开即消失）。此标记用于吞掉该合成 click。
+  const touchGuardRef = useRef(false);
+  const touchGuardTimerRef = useRef<number | undefined>(undefined);
 
   if (!fees || fees.total === 0) return <>{children}</>;
 
@@ -697,15 +713,19 @@ const FeeTip: React.FC<{ fees: ReturnType<typeof calcTradeFees>; grossAmount: nu
       <span
         ref={triggerRef}
         className="inline-block cursor-default"
-        onMouseEnter={() => requestShowAt()}
-        onMouseLeave={() => { if (!pinnedRef.current) hide(); }}
+        onMouseEnter={() => { if (touchGuardRef.current) return; requestShowAt(); }}
+        onMouseLeave={() => { if (!pinnedRef.current && !touchGuardRef.current) hide(); }}
         onClick={(e) => {
           e.stopPropagation();
+          if (touchGuardRef.current) { touchGuardRef.current = false; return; } // 吞掉触摸后合成的幽灵 click
           pinnedRef.current = !pinnedRef.current;
           if (pinnedRef.current) requestShowAt(); else hide();
         }}
         onTouchStart={(e) => {
           e.stopPropagation();
+          touchGuardRef.current = true;
+          if (touchGuardTimerRef.current !== undefined) clearTimeout(touchGuardTimerRef.current);
+          touchGuardTimerRef.current = window.setTimeout(() => { touchGuardRef.current = false; touchGuardTimerRef.current = undefined; }, 400);
           pinnedRef.current = !pinnedRef.current;
           if (pinnedRef.current) requestShowAt(); else hide();
         }}
@@ -748,6 +768,10 @@ const ErrTip: React.FC<{
   const triggerRef = useRef<HTMLSpanElement>(null);
   const pinnedRef = useRef(false);
   const rafRef = useRef<number | null>(null);
+  // 触摸点按保护：触屏上 touchstart 会先固定浮窗，随后浏览器再合成一次幽灵 click，
+  // 若不拦截会与本次触摸相互抵消（表现为点开即消失）。此标记用于吞掉该合成 click。
+  const touchGuardRef = useRef(false);
+  const touchGuardTimerRef = useRef<number | undefined>(undefined);
 
   const hasDetail = errShares !== undefined || availableShares !== undefined || price !== undefined;
 
@@ -827,15 +851,19 @@ const ErrTip: React.FC<{
       <span
         ref={triggerRef}
         className="inline-block cursor-default"
-        onMouseEnter={() => requestShowAt()}
-        onMouseLeave={() => { if (!pinnedRef.current) hide(); }}
+        onMouseEnter={() => { if (touchGuardRef.current) return; requestShowAt(); }}
+        onMouseLeave={() => { if (!pinnedRef.current && !touchGuardRef.current) hide(); }}
         onClick={(e) => {
           e.stopPropagation();
+          if (touchGuardRef.current) { touchGuardRef.current = false; return; } // 吞掉触摸后合成的幽灵 click
           pinnedRef.current = !pinnedRef.current;
           if (pinnedRef.current) requestShowAt(); else hide();
         }}
         onTouchStart={(e) => {
           e.stopPropagation();
+          touchGuardRef.current = true;
+          if (touchGuardTimerRef.current !== undefined) clearTimeout(touchGuardTimerRef.current);
+          touchGuardTimerRef.current = window.setTimeout(() => { touchGuardRef.current = false; touchGuardTimerRef.current = undefined; }, 400);
           pinnedRef.current = !pinnedRef.current;
           if (pinnedRef.current) requestShowAt(); else hide();
         }}
@@ -903,6 +931,8 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
   const isBuyFilled = t.side === 'buy' && t.status === 'filled';
   const isPending = t.status === 'pending';
   const fees = taxEnabled ? calcTradeFees(t, stockName) : null;
+  // 成交金额公式：与做T配对浮窗共用 tradeAmountFormula（SSOT），税费来自 calcTradeFees
+  const amtFormula = tradeAmountFormula(price, shares, fees?.total ?? 0, t.side);
   let likelyFill = false;
   if (isPending && currentPrice > 0 && price > 0) {
     likelyFill = t.side === 'buy' ? currentPrice <= price : currentPrice >= price;
@@ -960,14 +990,14 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
           <span className="font-normal text-app-subtext text-[8px]"> × </span>
           <span className="font-normal text-app-subtext">{Number.isInteger(shares) ? shares : shares.toFixed(2)}</span>
           {fees && fees.total > 0 && (
-            <FeeTip fees={fees} grossAmount={price * shares} side={t.side}>
-              <span className="font-normal text-app-subtext text-[8px] whitespace-pre"> {t.side === 'buy' ? '+' : '−'} </span>
-              <span className="font-normal text-app-subtext text-[9px]">{fees.total.toFixed(2)}</span>
+            <FeeTip fees={fees} grossAmount={amtFormula.gross} side={t.side}>
+              <span className="font-normal text-app-subtext text-[8px] whitespace-pre"> {amtFormula.sign} </span>
+              <span className="font-normal text-app-subtext text-[9px]">{amtFormula.feeTotal.toFixed(2)}</span>
             </FeeTip>
           )}
           <span className="font-normal text-app-subtext text-[8px]"> = </span>
           <span className={`font-bold text-app-subtext ${buyMatchStyle}`}>
-            {(t.side === 'buy' ? price * shares + (fees?.total ?? 0) : price * shares - (fees?.total ?? 0)).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
+            {amtFormula.total.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
           </span>
         </span>
         {(() => {

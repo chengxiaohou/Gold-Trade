@@ -25,6 +25,21 @@ export function calcTradeFees(trade: StockTrade, stockName?: string): TradeFees 
   return { commission, otherFees, stampDuty, total };
 }
 
+// 成交金额公式的单一实现（SSOT）：成交记录行与做T配对浮窗共用同一套「原价 × 股数 ± 税费 = 含税总额」口径。
+// 买入税费计入成本（+），卖出税费从实收扣除（−）。feeTotal 由 calcTradeFees 提供，调用方不得另算税费。
+export interface AmountFormula {
+  gross: number;      // 原价 × 股数（不含税费）
+  feeTotal: number;   // 税费合计
+  total: number;      // 含税费总额（买入=加税费，卖出=扣税费）
+  sign: '+' | '−';    // 公式中连接税费的运算符
+}
+export function tradeAmountFormula(price: number, shares: number, feeTotal: number, side: 'buy' | 'sell'): AmountFormula {
+  const gross = price * shares;
+  const sign: '+' | '−' = side === 'buy' ? '+' : '−';
+  const total = side === 'buy' ? gross + feeTotal : gross - feeTotal;
+  return { gross, feeTotal, total, sign };
+}
+
 // 统一持仓计算结果：剩余持股数 + 移动加权成本
 export interface PositionFromTrades {
   shares: number;
@@ -95,9 +110,10 @@ export interface RealizedPnlForRange {
 export interface DtPair {
   buyId: string;   // 被匹配买入记录 id
   date: string;    // 买入日期 yyyy-MM-dd
-  price: number;   // 买入单价
+  price: number;   // 买入单价（原价，不含税费；税费单列于 feeTotal，与成交记录公式口径一致）
   shares: number;  // 该笔买入的原始总份额
   take: number;    // 本次卖出占用的份额
+  feeTotal: number; // 该笔买入的税费总额（含税模式，来源 calcTradeFees；不含税模式为 0）
   diffPct: number; // 本次做T的差价百分比：(卖出价 − 买入价) / 买入价 × 100
 }
 
@@ -212,7 +228,9 @@ interface DtLot {
   id: string;
   time: number;       // 成交/生效时间（filledAt ?? createdAt，用于排序与配对顺序）
   originalCreatedAt: number; // 买入记录的原始创建时间（不受 toggleTradeStatus 覆盖），用于 PairTip 展示真实买入日期
-  price: number;
+  price: number;      // 含税费的每股成本（买入税费已摊入，供盈亏/差价计算）
+  origPrice: number;  // 原价（不含税费的买入单价，供公式展示）
+  feeTotal: number;   // 该笔买入的税费总额（含税模式，来源 calcTradeFees）
   total: number;   // 该笔买入的原始总份额
   rest: number;    // 仍未被占用的剩余份额
 }
@@ -230,7 +248,7 @@ function matchDtSell(lots: DtLot[], sellPrice: number, sellShares: number, sellF
     remaining -= take;
     // 差价百分比同源出自「卖出价 − 买入价」，基准为买入价：与本笔配对的盈亏口径一致（盈亏 = 差价 × take）
     const diffPct = lot.price > 0 ? (sellPrice - lot.price) / lot.price * 100 : 0;
-    pairs.push({ buyId: lot.id, date: dateKeyOf(lot.originalCreatedAt), price: lot.price, shares: lot.total, take, diffPct });
+    pairs.push({ buyId: lot.id, date: dateKeyOf(lot.originalCreatedAt), price: lot.origPrice, shares: lot.total, take, feeTotal: lot.feeTotal, diffPct });
     if (lot.rest <= 0) lots.pop();
   }
   return { pnl, pairs, err: remaining > 0 };
@@ -250,12 +268,10 @@ export function calcDtPnlForTrades(trades?: StockTrade[], withTax = false, stock
     const shares = t.shares ?? 0;
     if (t.side === 'buy') {
       if (t.status !== 'filled') continue; // 买入挂单尚未执行，不进持仓
-      let buyPrice = t.price ?? 0;
-      if (withTax) {
-        const fees = calcTradeFees(t, stockName);
-        buyPrice += fees.total / shares; // 买入税费摊到每股成本
-      }
-      lots.push({ id: t.id, time: effectiveTime(t), originalCreatedAt: t.originalCreatedAt ?? t.createdAt, price: buyPrice, total: shares, rest: shares });
+      const origPrice = t.price ?? 0;
+      const feeTotal = withTax ? calcTradeFees(t, stockName).total : 0; // 含税模式才计算；不含税为 0
+      const buyPrice = origPrice + (shares > 0 ? feeTotal / shares : 0); // 买入税费摊到每股成本
+      lots.push({ id: t.id, time: effectiveTime(t), originalCreatedAt: t.originalCreatedAt ?? t.createdAt, price: buyPrice, origPrice, feeTotal, total: shares, rest: shares });
     } else if (t.status === 'filled') {
       const sellFeesTotal = withTax ? calcTradeFees(t, stockName).total : 0;
       const { pnl, pairs, err } = matchDtSell(lots, t.price ?? 0, shares, sellFeesTotal);
@@ -388,9 +404,10 @@ export function calcRealizedPnlForRange(
       if (t.side === 'buy') {
         const buyFees = withTax ? calcTradeFees(t, name) : undefined;
         if (withTax) amt += buyFees!.total;
-        let buyPrice = t.price;
-        if (withTax) buyPrice += buyFees!.total / shares;
-        lots.push({ id: t.id, time: eff, originalCreatedAt: t.originalCreatedAt ?? t.createdAt, price: buyPrice, total: shares, rest: shares });
+        const origPrice = t.price;
+        const feeTotal = withTax ? buyFees!.total : 0;
+        const buyPrice = origPrice + (shares > 0 ? feeTotal / shares : 0);
+        lots.push({ id: t.id, time: eff, originalCreatedAt: t.originalCreatedAt ?? t.createdAt, price: buyPrice, origPrice, feeTotal, total: shares, rest: shares });
         const prevRs = rs;
         rs += shares;
         rc = rs > 0 ? (rc * prevRs + amt) / rs : 0;
