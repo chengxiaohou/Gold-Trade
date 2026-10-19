@@ -5325,11 +5325,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       // 箭头档位 / 反向箭头判定统一走 bollService 的共享实现（SSOT），此处不再重复阈值判定
                       const display = pos ? classifyBollBandDisplay(pos.band, pos.percent) : null;
                       // 连续天数（仅日线）：数字展示与悬停解释同源，都来自 explainBollBandStreak。
-                      // 最新一根出现可见反向箭头时 streak 归零（展示守卫）；band 为日中时不参与统计。
-                      const explain: BollStreakExplain | null = key === 'daily' && pos && pos.band !== 'mid'
-                        ? explainBollBandStreak(data?.klines, pos.band)
+                      // 最新一根出现可见反向箭头时 streak 归零（展示守卫）；band 为日中时不参与统计，
+                      // 但 steps 明细与 target 无关，仍算出 explain 供浮窗无条件展示明细（target 传 'upper' 占位）。
+                      const explain: BollStreakExplain | null = key === 'daily' && pos
+                        ? explainBollBandStreak(data?.klines, pos.band === 'mid' ? 'upper' : pos.band)
                         : null;
-                      const streak = explain?.streak ?? 0;
+                      // 日中不参与统计：单元格数字恒为 0（explain 仅供浮窗明细，不进单元格展示）
+                      const streak = pos && pos.band !== 'mid' ? explain?.streak ?? 0 : 0;
                       // 数字 + 轨道标签 + 箭头位置统一由共享实现拼装（SSOT）：数字写在「日上/日下」前面
                       const parts = pos && display ? buildBollBandTextParts(key, pos.band, display, streak) : null;
                       const cellInner = pos ? (

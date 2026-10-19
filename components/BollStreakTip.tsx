@@ -75,19 +75,19 @@ const BollStreakTip: React.FC<Props> = ({ explain, pos, period, fmtPrice, childr
   /** 浮窗是否已固定（固定后点击外部收起） */
   const pinnedRef = useRef(false);
 
-  // 结论行文案 + 配色（有计数用轨道色，无计数用正文色）
+  // 结论行文案 + 配色（有计数用轨道色，不计入用正文色）
   const buildConclusion = (): { text: string; cls: string } => {
     if (!pos) return { text: '无数据', cls: 'text-app-subtext' };
     const bandName = bollBandLabel(period, pos.band);
     if (pos.band === 'mid') {
-      return { text: `无计数 · 最新一根为${bandName}，不参与连续天数统计`, cls: 'text-app-rowtext' };
+      return { text: `不计入 · 最新一根为${bandName}，不参与连续天数统计`, cls: 'text-app-rowtext' };
     }
     if (!explain) {
-      return { text: '无计数 · K线不足 20 根，无法回溯计算连续天数', cls: 'text-app-rowtext' };
+      return { text: '不计入 · K线不足 20 根，无法回溯计算连续天数', cls: 'text-app-rowtext' };
     }
     if (explain.steps[0]?.reason === 'counter-arrow') {
       return {
-        text: `无计数 · 最新一根归入${bandName}（${pos.percent >= 0 ? '+' : ''}${pos.percent.toFixed(2)}%），但收盘未越轨、出现反向箭头，按规则不计入`,
+        text: `不计入 · 最新一根归入${bandName}（${pos.percent >= 0 ? '+' : ''}${pos.percent.toFixed(2)}%），但收盘未越轨、出现反向箭头，按规则不计入`,
         cls: 'text-app-rowtext',
       };
     }
@@ -98,7 +98,7 @@ const BollStreakTip: React.FC<Props> = ({ explain, pos, period, fmtPrice, childr
         : r === 'no-boll' ? '该根无法算出 BOLL 轨道'
         : r === 'counter-arrow' ? '最新一根出现反向箭头'
         : '最新一根不满足计数条件';
-      return { text: `无计数 · ${why}`, cls: 'text-app-rowtext' };
+      return { text: `不计入 · ${why}`, cls: 'text-app-rowtext' };
     }
     if (explain.streak === 1) {
       return { text: `连续 1 天 · ${bandName}（第 1 天按展示规则不显示数字）`, cls: BAND_CLS[pos.band] };
@@ -155,7 +155,7 @@ const BollStreakTip: React.FC<Props> = ({ explain, pos, period, fmtPrice, childr
       conclusionRef.current.className = `text-[10px] font-semibold ${c.cls} whitespace-nowrap`;
     }
 
-    const steps = explain && pos && pos.band !== 'mid' ? explain.steps : [];
+    const steps = explain ? explain.steps : [];
     const head = headRef.current;
     const body = bodyRef.current;
     if (head && body) {
@@ -252,7 +252,7 @@ const BollStreakTip: React.FC<Props> = ({ explain, pos, period, fmtPrice, childr
     }
   };
 
-  // 全局点外部收起已固定的浮窗
+  // 全局点外部收起已固定的浮窗；ESC 同样收起
   useEffect(() => {
     const onGlobalDown = (e: MouseEvent | TouchEvent) => {
       if (!pinnedRef.current) return;
@@ -264,11 +264,18 @@ const BollStreakTip: React.FC<Props> = ({ explain, pos, period, fmtPrice, childr
       pinnedRef.current = false;
       hide();
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || !pinnedRef.current) return;
+      pinnedRef.current = false;
+      hide();
+    };
     window.addEventListener('mousedown', onGlobalDown);
     window.addEventListener('touchstart', onGlobalDown);
+    window.addEventListener('keydown', onKeyDown);
     return () => {
       window.removeEventListener('mousedown', onGlobalDown);
       window.removeEventListener('touchstart', onGlobalDown);
+      window.removeEventListener('keydown', onKeyDown);
       cancelPressTimer();
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
