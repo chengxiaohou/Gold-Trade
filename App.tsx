@@ -19,7 +19,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.107';
+const APP_VERSION = 'v2.18.108';
 
 // 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
 const ERRLOG_KEY = 'gold_trade_error_log';
@@ -438,10 +438,11 @@ export default function App() {
       const popW = pop.offsetWidth;
       const vw = window.innerWidth;
       const idealCenter = wrapRect.left + wrapRect.width / 2;
-      let left = idealCenter - popW / 2;
-      left = Math.max(12, Math.min(left, vw - popW - 12));
-      setPopoverLeft(left);
-      setArrowLeft(idealCenter - left);
+      // 视口坐标系下先钳制，再换算为相对父容器（relative wrapper）的 left
+      let leftVp = idealCenter - popW / 2;
+      leftVp = Math.max(12, Math.min(leftVp, vw - popW - 12));
+      setPopoverLeft(leftVp - wrapRect.left);
+      setArrowLeft(idealCenter - leftVp);
     };
     calc();
     window.addEventListener('resize', calc);
