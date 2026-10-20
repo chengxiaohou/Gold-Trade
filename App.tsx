@@ -19,7 +19,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.108';
+const APP_VERSION = 'v2.18.110';
 
 // 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
 const ERRLOG_KEY = 'gold_trade_error_log';
@@ -1663,7 +1663,7 @@ export default function App() {
           }}
         >
            <div className="bg-app-card border border-app-border shadow-[0_8px_30px_rgba(0,0,0,0.5)] rounded-xl p-3 flex flex-col items-center text-center w-max min-w-[160px] max-w-[200px] pointer-events-auto">
-              <div className="text-brand-yellow mb-1.5">
+              <div className="text-indigo-400 mb-1.5">
                  <AlertTriangle size={18} />
               </div>
               <h4 className="text-xs font-bold text-app-text mb-0.5 whitespace-nowrap">
@@ -1683,7 +1683,7 @@ export default function App() {
                  </button>
                  <button 
                    onClick={cloudConfirm === 'upload' ? handleCloudUpload : handleCloudDownload}
-                   className={`py-1 rounded-lg text-[10px] text-white font-bold transition-opacity hover:opacity-90 ${cloudConfirm === 'upload' ? 'bg-brand-yellow' : 'bg-indigo-600'}`}
+                   className="py-1 rounded-lg text-[10px] text-white font-bold transition-opacity hover:opacity-90 bg-indigo-600"
                  >
                    确定
                  </button>
@@ -1779,7 +1779,7 @@ export default function App() {
           style={popoverLeft !== null ? { left: popoverLeft, maxWidth: 'calc(100vw - 24px)' } : { left: '50%', transform: 'translateX(-50%)', maxWidth: 'calc(100vw - 24px)' }}
         >
            <div className={`bg-app-card border border-app-border shadow-[0_8px_30px_rgba(0,0,0,0.5)] rounded-xl p-3 flex flex-col items-center text-center pointer-events-auto ${cloudConfirm === 'upload' ? 'w-[320px] max-w-full' : 'w-[200px] max-w-full'}`}>
-              <div className="text-brand-yellow mb-1">
+              <div className="text-indigo-400 mb-1">
                  <AlertTriangle size={18} />
               </div>
               <h4 className="text-xs font-bold text-app-text mb-0.5 whitespace-nowrap">
@@ -1792,7 +1792,7 @@ export default function App() {
               </p>
               {/* 上传前展示与上次同步基线的具体差异（复用下载确认浮窗） */}
               {cloudConfirm === 'upload' && (
-                <div className="w-full max-h-[220px] overflow-y-auto custom-scrollbar text-left mb-2 border border-app-border/40 rounded-lg bg-black/20">
+                <div className="w-full max-h-[220px] overflow-y-auto custom-scrollbar text-left mb-2 border border-app-border rounded-lg bg-app-input divide-y divide-app-border">
                   {cloudDiff === null ? (
                     <div className="text-[11px] text-app-subtext leading-relaxed px-2 py-3 text-center">首次上传，暂无可对比的历史备份</div>
                   ) : cloudDiff.length === 0 ? (
@@ -1801,9 +1801,9 @@ export default function App() {
                     cloudDiff.map((d, i) => (
                       <div
                         key={i}
-                        className="flex gap-2 items-start px-2 py-1.5 border-b border-app-border/20 last:border-0"
+                        className="flex gap-2 items-start px-2 py-1.5"
                       >
-                        <span className={`mt-[5px] w-[6px] h-[6px] rounded-full shrink-0 ${d.kind === 'add' ? 'bg-brand-green' : d.kind === 'remove' ? 'bg-brand-red' : 'bg-brand-yellow'}`}></span>
+                        <span className={`mt-[5px] w-[6px] h-[6px] rounded-full shrink-0 ${d.kind === 'add' ? 'bg-brand-green' : d.kind === 'remove' ? 'bg-brand-red' : 'bg-indigo-400'}`}></span>
                         <div className={`text-[11px] leading-relaxed whitespace-pre-line break-words ${d.kind === 'add' ? 'text-brand-green' : d.kind === 'remove' ? 'text-brand-red' : 'text-app-rowtext'}`}>
                           {d.text}
                         </div>
@@ -1821,7 +1821,7 @@ export default function App() {
                  </button>
                  <button
                    onClick={cloudConfirm === 'upload' ? handleStockCloudUpload : handleCloudDownload}
-                   className={`py-1.5 rounded-lg text-[11px] text-white font-bold transition-opacity hover:opacity-90 ${cloudConfirm === 'upload' ? 'bg-brand-yellow' : 'bg-indigo-600'}`}
+                   className="py-1.5 rounded-lg text-[11px] text-white font-bold transition-opacity hover:opacity-90 bg-indigo-600"
                  >
                    确定
                  </button>
@@ -1843,7 +1843,7 @@ export default function App() {
               title="上传到云端"
             >
               {isSyncing ? (
-                <div className="w-3.5 h-3.5 border-2 border-brand-yellow border-t-transparent rounded-full animate-spin"></div>
+                <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
               ) : uploadSuccess ? (
                 <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
               ) : (
