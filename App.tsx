@@ -14,7 +14,8 @@ import type { StockLedgerMap } from './services/stockLedgerStore';
 import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { calcPositionFromTrades } from './services/realizedPnl';
-import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, buildStockCloudFingerprint, isStockCloudDirty, resolveMemoUpdatedAt } from './services/stockSync';
+import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, buildStockCloudFingerprint, isStockCloudDirty, resolveMemoUpdatedAt, diffStockCloudSnapshots } from './services/stockSync';
+import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
@@ -419,6 +420,8 @@ export default function App() {
   
   // Localized Cloud Confirmation Popover State
   const [cloudConfirm, setCloudConfirm] = useState<'upload' | 'download' | null>(null);
+  // 股息页上传前展示的"与上次同步基线"的具体差异；null = 无基线（首次上传）或非上传场景
+  const [cloudDiff, setCloudDiff] = useState<CloudDiffItem[] | null>(null);
 
   const [githubConfig, setGithubConfig] = useState<GithubConfig>(() => {
     const saved = localStorage.getItem('gold_github_config');
@@ -966,6 +969,7 @@ export default function App() {
         openSettings('cloud');
         return;
     }
+    setCloudDiff(null);
     setCloudConfirm(action);
   };
 
@@ -1074,10 +1078,18 @@ export default function App() {
     setIsSyncing(false);
   };
 
-  // 股息页"上传到云端"直接上传：仅在有改动需要上传时按钮才存在，因此无需二次确认
+  // 股息页"上传到云端"：点击先算出与上次同步基线的具体差异，在确认浮窗里展示，确认后才真正上传
+  const requestStockUpload = () => {
+    if (isSyncing) return;
+    setCloudDiff(diffStockCloudSnapshots(stockCloudBaseline, cloudFingerprint));
+    setCloudConfirm('upload');
+  };
+
+  // 股息页"上传到云端"实际执行：由确认浮窗的"确定"触发
   const handleStockCloudUpload = async () => {
     if (isSyncing) return;
     setCloudConfirm(null);
+    setCloudDiff(null);
     setIsSyncing(true);
     setUploadSuccess(false);
     const ok = await performStockCloudUpload();
@@ -1114,6 +1126,7 @@ export default function App() {
 
   const handleCloudDownload = async () => {
     setCloudConfirm(null);
+    setCloudDiff(null);
     setIsDownloading(true);
     setDownloadSuccess(false);
     try {
@@ -1739,27 +1752,46 @@ export default function App() {
             transform: 'translateX(-50%)'
           }}
         >
-           <div className="bg-app-card border border-app-border shadow-[0_8px_30px_rgba(0,0,0,0.5)] rounded-xl p-3 flex flex-col items-center text-center w-max min-w-[160px] max-w-[200px] pointer-events-auto">
+           <div className={`bg-app-card border border-app-border shadow-[0_8px_30px_rgba(0,0,0,0.5)] rounded-xl p-3 flex flex-col items-center text-center w-max min-w-[160px] ${cloudConfirm === 'upload' ? 'max-w-[320px]' : 'max-w-[200px]'} pointer-events-auto`}>
               <div className="text-brand-yellow mb-1.5">
                  <AlertTriangle size={18} />
               </div>
               <h4 className="text-xs font-bold text-app-text mb-0.5 whitespace-nowrap">
                 {cloudConfirm === 'upload' ? '确定上传？' : '确定下载？'}
               </h4>
-              <p className="text-[10px] text-app-subtext mb-3 leading-tight">
+              <p className="text-[10px] text-app-subtext mb-2 leading-tight">
                 {cloudConfirm === 'upload' 
                    ? '覆盖云端备份数据' 
                    : '覆盖本地交易记录'}
               </p>
+              {/* 上传前展示与上次同步基线的具体差异（复用下载确认浮窗） */}
+              {cloudConfirm === 'upload' && (
+                <div className="w-full max-h-[220px] overflow-y-auto custom-scrollbar text-left mb-2 space-y-0.5">
+                  {cloudDiff === null ? (
+                    <div className="text-[10px] text-app-subtext leading-tight">首次上传，暂无可对比的历史备份</div>
+                  ) : cloudDiff.length === 0 ? (
+                    <div className="text-[10px] text-app-subtext leading-tight">与上次同步相比无差异</div>
+                  ) : (
+                    cloudDiff.map((d, i) => (
+                      <div
+                        key={i}
+                        className={`text-[10px] leading-tight break-all ${d.kind === 'add' ? 'text-brand-green' : d.kind === 'remove' ? 'text-brand-red' : 'text-app-rowtext'}`}
+                      >
+                        {d.text}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-1.5 w-full">
                  <button 
-                   onClick={() => setCloudConfirm(null)}
+                   onClick={() => { setCloudConfirm(null); setCloudDiff(null); }}
                    className="py-1 rounded-lg border border-app-border text-[10px] text-app-subtext hover:bg-app-input transition-colors font-medium"
                  >
                    取消
                  </button>
                  <button 
-                   onClick={cloudConfirm === 'upload' ? handleCloudUpload : handleCloudDownload}
+                   onClick={cloudConfirm === 'upload' ? handleStockCloudUpload : handleCloudDownload}
                    className={`py-1 rounded-lg text-[10px] text-white font-bold transition-opacity hover:opacity-90 ${cloudConfirm === 'upload' ? 'bg-brand-yellow' : 'bg-indigo-600'}`}
                  >
                    确定
@@ -1775,7 +1807,7 @@ export default function App() {
       <div className="flex gap-1.5 lg:gap-2">
           {stockCloudDirty && (
             <button 
-              onClick={handleStockCloudUpload}
+              onClick={requestStockUpload}
               disabled={isSyncing || uploadSuccess}
               className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-app-subtext hover:text-indigo-400 hover:border-indigo-500'} disabled:opacity-30`}
               title="上传到云端"

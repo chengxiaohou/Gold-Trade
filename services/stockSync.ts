@@ -155,3 +155,211 @@ export function resolveMemoUpdatedAt(
 export function isStockCloudDirty(baseline: string | null, current: string): boolean {
   return baseline === null || baseline !== current;
 }
+
+// ===== 上传前"具体差异"对比（纯函数）=====
+// 输入：基线指纹（上次成功上传/下载时写入的 buildStockCloudFingerprint 结果，本身即一份完整快照 JSON）
+//      与当前指纹。输出：人类可读的差异条目；基线缺失/无法解析时返回 null（首次上传，无可对比的历史备份）。
+export type CloudDiffKind = 'add' | 'remove' | 'change';
+export interface CloudDiffItem {
+  kind: CloudDiffKind;
+  text: string;
+}
+
+// 空值统一（'' / null / undefined 视为同一语义），避免"空 → 空"这类误报
+function norm(v: unknown): unknown {
+  return v === undefined || v === null || v === '' ? null : v;
+}
+
+// 递归按键排序后序列化：避免对象 key 顺序不同导致误报差异
+function stableStringify(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`;
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o).sort()
+      .map(k => `${JSON.stringify(k)}:${stableStringify(o[k])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(v ?? null) ?? 'null';
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  return stableStringify(norm(a)) === stableStringify(norm(b));
+}
+
+// 差异行里展示的字段值（空值显示为"空"）
+function displayValue(v: unknown): string {
+  if (v === undefined || v === null || v === '') return '空';
+  if (typeof v === 'boolean') return v ? '开' : '关';
+  return String(v);
+}
+
+interface CloudSnapshot {
+  stocks?: StockEntry[];
+  stockSettings?: Record<string, unknown>;
+  backtestStrategyPresets?: BacktestStrategyPreset[];
+  appSettings?: Record<string, unknown>;
+}
+
+function parseCloudSnapshot(raw: string | null): CloudSnapshot | null {
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === 'object' ? (o as CloudSnapshot) : null;
+  } catch {
+    return null;
+  }
+}
+
+// 股票标量字段（展示为 旧 → 新）
+const STOCK_SCALAR_FIELDS: Array<[string, string]> = [
+  ['name', '名称'],
+  ['nickname', '代号'],
+  ['positionShares', '持仓股数'],
+  ['positionCost', '持仓成本'],
+  ['dividend2024', '2024分红'],
+  ['dividend2025', '2025分红'],
+  ['registerDate', '登记日'],
+  ['link', '链接'],
+  ['tag', '标签'],
+  ['selectedDividendYear', '选中分红年'],
+  ['bollHidden', '隐藏BOLL'],
+];
+// 结构较复杂、只提示"已更新"的字段
+const STOCK_OBJECT_FIELDS: Array<[string, string]> = [
+  ['dividendByYear', '历年分红'],
+  ['dividendRates', '股息率档位'],
+];
+
+const STOCK_SETTINGS_LABELS: Record<string, string> = {
+  visibleColumns: '可见列',
+  dividendRateColumns: '股息率档位列',
+  dividendRateColorRanges: '股息率配色',
+  tagColors: '标签颜色',
+  tagParams: '标签参数',
+  customTags: '自定义标签',
+  buyOrderPlaceholder: '买入占位文字',
+  sellOrderPlaceholder: '卖出占位文字',
+};
+
+const APP_SETTINGS_LABELS: Record<string, string> = {
+  priceStep: '价格步进',
+  gramsStep: '克数步进',
+  tagColors: '标签颜色',
+  touchMode: '触控模式',
+  priceDisplayMode: '价格显示',
+  totalCapital: '黄金页总资金',
+  dividendTotalCapital: '分红页总资金',
+  visibleColumns: '可见列',
+  buyTaxFee: '买入税费',
+  sellTaxFee: '卖出税费',
+  apiSource: '行情源',
+  cacheTTLMinutes: '行情缓存时长',
+  bollCacheTTLMinutes: 'BOLL缓存时长',
+  dividendYearLeft: '左分红年份',
+  dividendYearRight: '右分红年份',
+  manualFxRate: '手动汇率',
+};
+
+function stockLabel(s: StockEntry): string {
+  const name = s.nickname || s.name || s.code;
+  return s.code && name !== s.code ? `${name}(${s.code})` : name;
+}
+
+function diffStocks(base: StockEntry[], cur: StockEntry[]): CloudDiffItem[] {
+  const out: CloudDiffItem[] = [];
+  const bMap = new Map(base.map(s => [s.id, s]));
+  const cMap = new Map(cur.map(s => [s.id, s]));
+
+  for (const s of cur) if (!bMap.has(s.id)) out.push({ kind: 'add', text: `新增股票「${stockLabel(s)}」` });
+  for (const s of base) if (!cMap.has(s.id)) out.push({ kind: 'remove', text: `删除股票「${stockLabel(s)}」` });
+
+  for (const [id, b] of bMap) {
+    const c = cMap.get(id);
+    if (!c) continue;
+    const label = `「${stockLabel(b)}」`;
+
+    // 交易记录：按 id 统计 增/删/改
+    const bt = new Map((b.stockTrades || []).map(t => [t.id, t]));
+    const ct = new Map((c.stockTrades || []).map(t => [t.id, t]));
+    let added = 0, removed = 0, changed = 0;
+    for (const [tid, t] of ct) {
+      const o = bt.get(tid);
+      if (!o) added++;
+      else if (!sameValue(o, t)) changed++;
+    }
+    for (const tid of bt.keys()) if (!ct.has(tid)) removed++;
+    if (added) out.push({ kind: 'add', text: `${label}新增 ${added} 笔交易记录` });
+    if (removed) out.push({ kind: 'remove', text: `${label}删除 ${removed} 笔交易记录` });
+    if (changed) out.push({ kind: 'change', text: `${label}修改 ${changed} 笔交易记录` });
+
+    for (const [key, name] of STOCK_SCALAR_FIELDS) {
+      const bv = (b as unknown as Record<string, unknown>)[key];
+      const cv = (c as unknown as Record<string, unknown>)[key];
+      if (!sameValue(bv, cv)) out.push({ kind: 'change', text: `${label}${name} ${displayValue(bv)} → ${displayValue(cv)}` });
+    }
+    for (const [key, name] of STOCK_OBJECT_FIELDS) {
+      if (!sameValue((b as unknown as Record<string, unknown>)[key], (c as unknown as Record<string, unknown>)[key])) {
+        out.push({ kind: 'change', text: `${label}${name}已更新` });
+      }
+    }
+  }
+  return out;
+}
+
+function diffSettings(
+  base: Record<string, unknown> | undefined,
+  cur: Record<string, unknown> | undefined,
+  labels: Record<string, string>,
+): CloudDiffItem[] {
+  const out: CloudDiffItem[] = [];
+  const keys = new Set([...Object.keys(base || {}), ...Object.keys(cur || {})]);
+  for (const key of keys) {
+    const bv = (base || {})[key];
+    const cv = (cur || {})[key];
+    if (!sameValue(bv, cv)) {
+      out.push({ kind: 'change', text: `设置「${labels[key] || key}」${displayValue(bv)} → ${displayValue(cv)}` });
+    }
+  }
+  return out;
+}
+
+function diffPresets(base: BacktestStrategyPreset[], cur: BacktestStrategyPreset[]): CloudDiffItem[] {
+  const out: CloudDiffItem[] = [];
+  const bMap = new Map(base.map(p => [p.id, p]));
+  const cMap = new Map(cur.map(p => [p.id, p]));
+  for (const p of cur) if (!bMap.has(p.id)) out.push({ kind: 'add', text: `新增策略组「${p.name}」` });
+  for (const p of base) if (!cMap.has(p.id)) out.push({ kind: 'remove', text: `删除策略组「${p.name}」` });
+  for (const [id, b] of bMap) {
+    const c = cMap.get(id);
+    if (!c || sameValue(b, c)) continue;
+    if (b.name !== c.name) out.push({ kind: 'change', text: `策略组「${b.name}」改名为「${c.name}」` });
+    else out.push({ kind: 'change', text: `策略组「${b.name}」已修改` });
+  }
+  return out;
+}
+
+export function diffStockCloudSnapshots(baseline: string | null, current: string): CloudDiffItem[] | null {
+  const b = parseCloudSnapshot(baseline);
+  if (b === null) return null; // 无基线：首次上传，无可对比的历史备份
+  const c: CloudSnapshot = parseCloudSnapshot(current) || {};
+
+  const items: CloudDiffItem[] = [
+    ...diffStocks(b.stocks || [], c.stocks || []),
+  ];
+
+  // 备忘录单独提示（memoUpdatedAt 属噪声，不展示）
+  if (!sameValue((b.stockSettings || {}).memo, (c.stockSettings || {}).memo)) {
+    items.push({ kind: 'change', text: '备忘录内容已修改' });
+  }
+  const bSettings = { ...(b.stockSettings || {}) };
+  const cSettings = { ...(c.stockSettings || {}) };
+  delete bSettings.memo; delete bSettings.memoUpdatedAt;
+  delete cSettings.memo; delete cSettings.memoUpdatedAt;
+  items.push(...diffSettings(bSettings, cSettings, STOCK_SETTINGS_LABELS));
+
+  items.push(...diffSettings(b.appSettings, c.appSettings, APP_SETTINGS_LABELS));
+
+  items.push(...diffPresets(b.backtestStrategyPresets || [], c.backtestStrategyPresets || []));
+
+  return items;
+}
