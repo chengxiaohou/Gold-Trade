@@ -157,12 +157,40 @@ export function isStockCloudDirty(baseline: string | null, current: string): boo
 }
 
 // ===== 上传前"具体差异"对比（纯函数）=====
+// 设计目标：以后新增"上云字段"时，本模块无需改动即可自动展示差异。
+//   引擎对快照做递归结构比对：对象逐字段、数组按 id 匹配或集合差异、深层嵌套自动下钻。
+//   任何新增字段都会自动出现在结果里；下方的 labels / valueLabels / describe / display
+//   只是"可选的展示美化"，缺失时自动回退到原始字段名与原始值——因此新增字段无需改这里。
 // 输入：基线指纹（上次成功上传/下载时写入的 buildStockCloudFingerprint 结果，本身即一份完整快照 JSON）
 //      与当前指纹。输出：人类可读的差异条目；基线缺失/无法解析时返回 null（首次上传，无可对比的历史备份）。
 export type CloudDiffKind = 'add' | 'remove' | 'change';
 export interface CloudDiffItem {
   kind: CloudDiffKind;
   text: string;
+}
+
+type AnyObj = Record<string, unknown>;
+
+/** 展示提示：全部可选，仅用于美化；不提供时引擎仍能自动比对并展示（用原始字段名/原始值） */
+interface DiffHints {
+  /** 实体名词：用于"新增/删除 X「…」" */
+  noun?: string;
+  /** 数组匹配键：按该字段匹配元素（缺省按对象数组索引 / 标量数组集合差） */
+  idKey?: string;
+  /** 实体摘要（拼进「…」）；缺省取 idKey 的值 */
+  describe?: (item: AnyObj) => string;
+  /** 数组元素内部的字段提示 */
+  item?: DiffHints;
+  /** 字段中文名（缺失回退原字段名） */
+  labels?: Record<string, string>;
+  /** 段落前缀：下钻到该字段时直接用此文案作前缀（如"全局设置："），而非拼字段名 */
+  sectionPrefix?: string;
+  /** 单值展示覆盖（如把长文本折成字数） */
+  display?: (v: unknown) => string;
+  /** 枚举值中文名 */
+  valueLabels?: Record<string, string>;
+  /** 子字段提示 */
+  fields?: Record<string, DiffHints>;
 }
 
 // 空值统一（'' / null / undefined 视为同一语义），避免"空 → 空"这类误报
@@ -174,7 +202,7 @@ function norm(v: unknown): unknown {
 function stableStringify(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`;
   if (v && typeof v === 'object') {
-    const o = v as Record<string, unknown>;
+    const o = v as AnyObj;
     return `{${Object.keys(o).sort()
       .map(k => `${JSON.stringify(k)}:${stableStringify(o[k])}`)
       .join(',')}}`;
@@ -186,18 +214,55 @@ function sameValue(a: unknown, b: unknown): boolean {
   return stableStringify(norm(a)) === stableStringify(norm(b));
 }
 
-// 差异行里展示的字段值（空值显示为"空"）
+function isPlainObject(v: unknown): v is AnyObj {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function fmtDate(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+// 时间戳 → "YYYY-MM-DD HH:mm"
+function fmtDateTime(ts: number): string {
+  const d = new Date(ts);
+  return `${fmtDate(ts)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+// 差异行里展示的单个值：空值→"空"；布尔→开/关；疑似时间戳→日期时间；长文本→截断
 function displayValue(v: unknown): string {
   if (v === undefined || v === null || v === '') return '空';
   if (typeof v === 'boolean') return v ? '开' : '关';
+  if (typeof v === 'number') return Math.abs(v) >= 1e12 ? fmtDateTime(v) : String(v);
+  if (typeof v === 'string') return v.length > 60 ? `${v.slice(0, 60)}…（共 ${v.length} 字）` : v;
+  if (Array.isArray(v)) return `[${v.length} 项]`;
+  if (typeof v === 'object') return '对象';
   return String(v);
+}
+
+// 叶子值的最终展示：display 覆盖 > 枚举中文名 > 默认
+function leafText(v: unknown, hints: DiffHints): string {
+  if (hints.display) return hints.display(v);
+  if (hints.valueLabels) {
+    const hit = hints.valueLabels[String(v)];
+    if (hit !== undefined) return hit;
+  }
+  return displayValue(v);
 }
 
 interface CloudSnapshot {
   stocks?: StockEntry[];
-  stockSettings?: Record<string, unknown>;
+  stockSettings?: AnyObj;
   backtestStrategyPresets?: BacktestStrategyPreset[];
-  appSettings?: Record<string, unknown>;
+  appSettings?: AnyObj;
 }
 
 function parseCloudSnapshot(raw: string | null): CloudSnapshot | null {
@@ -210,156 +275,208 @@ function parseCloudSnapshot(raw: string | null): CloudSnapshot | null {
   }
 }
 
-// 股票标量字段（展示为 旧 → 新）
-const STOCK_SCALAR_FIELDS: Array<[string, string]> = [
-  ['name', '名称'],
-  ['nickname', '代号'],
-  ['positionShares', '持仓股数'],
-  ['positionCost', '持仓成本'],
-  ['dividend2024', '2024分红'],
-  ['dividend2025', '2025分红'],
-  ['registerDate', '登记日'],
-  ['link', '链接'],
-  ['tag', '标签'],
-  ['selectedDividendYear', '选中分红年'],
-  ['bollHidden', '隐藏BOLL'],
-];
-// 结构较复杂、只提示"已更新"的字段
-const STOCK_OBJECT_FIELDS: Array<[string, string]> = [
-  ['dividendByYear', '历年分红'],
-  ['dividendRates', '股息率档位'],
-];
-
-const STOCK_SETTINGS_LABELS: Record<string, string> = {
-  visibleColumns: '可见列',
-  dividendRateColumns: '股息率档位列',
-  dividendRateColorRanges: '股息率配色',
-  tagColors: '标签颜色',
-  tagParams: '标签参数',
-  customTags: '自定义标签',
-  buyOrderPlaceholder: '买入占位文字',
-  sellOrderPlaceholder: '卖出占位文字',
-};
-
-const APP_SETTINGS_LABELS: Record<string, string> = {
-  priceStep: '价格步进',
-  gramsStep: '克数步进',
-  tagColors: '标签颜色',
-  touchMode: '触控模式',
-  priceDisplayMode: '价格显示',
-  totalCapital: '黄金页总资金',
-  dividendTotalCapital: '分红页总资金',
-  visibleColumns: '可见列',
-  buyTaxFee: '买入税费',
-  sellTaxFee: '卖出税费',
-  apiSource: '行情源',
-  cacheTTLMinutes: '行情缓存时长',
-  bollCacheTTLMinutes: 'BOLL缓存时长',
-  dividendYearLeft: '左分红年份',
-  dividendYearRight: '右分红年份',
-  manualFxRate: '手动汇率',
-};
-
-function stockLabel(s: StockEntry): string {
-  const name = s.nickname || s.name || s.code;
-  return s.code && name !== s.code ? `${name}(${s.code})` : name;
-}
-
-function diffStocks(base: StockEntry[], cur: StockEntry[]): CloudDiffItem[] {
-  const out: CloudDiffItem[] = [];
-  const bMap = new Map(base.map(s => [s.id, s]));
-  const cMap = new Map(cur.map(s => [s.id, s]));
-
-  for (const s of cur) if (!bMap.has(s.id)) out.push({ kind: 'add', text: `新增股票「${stockLabel(s)}」` });
-  for (const s of base) if (!cMap.has(s.id)) out.push({ kind: 'remove', text: `删除股票「${stockLabel(s)}」` });
-
-  for (const [id, b] of bMap) {
-    const c = cMap.get(id);
-    if (!c) continue;
-    const label = `「${stockLabel(b)}」`;
-
-    // 交易记录：按 id 统计 增/删/改
-    const bt = new Map((b.stockTrades || []).map(t => [t.id, t]));
-    const ct = new Map((c.stockTrades || []).map(t => [t.id, t]));
-    let added = 0, removed = 0, changed = 0;
-    for (const [tid, t] of ct) {
-      const o = bt.get(tid);
-      if (!o) added++;
-      else if (!sameValue(o, t)) changed++;
-    }
-    for (const tid of bt.keys()) if (!ct.has(tid)) removed++;
-    if (added) out.push({ kind: 'add', text: `${label}新增 ${added} 笔交易记录` });
-    if (removed) out.push({ kind: 'remove', text: `${label}删除 ${removed} 笔交易记录` });
-    if (changed) out.push({ kind: 'change', text: `${label}修改 ${changed} 笔交易记录` });
-
-    for (const [key, name] of STOCK_SCALAR_FIELDS) {
-      const bv = (b as unknown as Record<string, unknown>)[key];
-      const cv = (c as unknown as Record<string, unknown>)[key];
-      if (!sameValue(bv, cv)) out.push({ kind: 'change', text: `${label}${name} ${displayValue(bv)} → ${displayValue(cv)}` });
-    }
-    for (const [key, name] of STOCK_OBJECT_FIELDS) {
-      if (!sameValue((b as unknown as Record<string, unknown>)[key], (c as unknown as Record<string, unknown>)[key])) {
-        out.push({ kind: 'change', text: `${label}${name}已更新` });
+/** 通用递归比对：对象逐字段下钻；数组交 diffArray；标量不同则产出一条差异 */
+function diffNode(a: unknown, b: unknown, prefix: string, hints: DiffHints, out: CloudDiffItem[]): void {
+  if (isPlainObject(a) || isPlainObject(b)) {
+    const ao: AnyObj = isPlainObject(a) ? a : {};
+    const bo: AnyObj = isPlainObject(b) ? b : {};
+    for (const key of new Set([...Object.keys(ao), ...Object.keys(bo)])) {
+      const label = hints.labels?.[key] ?? key;
+      const child = hints.fields?.[key] ?? {};
+      const av = ao[key];
+      const bv = bo[key];
+      if (isPlainObject(av) || isPlainObject(bv) || Array.isArray(av) || Array.isArray(bv)) {
+        // 复杂子节点：sectionPrefix 直接作段落前缀；label 为空表示顺延当前前缀（如 stockTrades）
+        const nextPrefix = child.sectionPrefix
+          ? `${prefix}${child.sectionPrefix}`
+          : (label ? `${prefix}${label}·` : prefix);
+        diffNode(av, bv, nextPrefix, child, out);
+      } else if (!sameValue(av, bv)) {
+        out.push({ kind: 'change', text: `${prefix}${label} ${leafText(av, child)} → ${leafText(bv, child)}` });
       }
     }
+    return;
   }
-  return out;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    diffArray(Array.isArray(a) ? a : [], Array.isArray(b) ? b : [], prefix, hints, out);
+    return;
+  }
+  if (!sameValue(a, b)) out.push({ kind: 'change', text: `${prefix} ${leafText(a, hints)} → ${leafText(b, hints)}` });
 }
 
-function diffSettings(
-  base: Record<string, unknown> | undefined,
-  cur: Record<string, unknown> | undefined,
-  labels: Record<string, string>,
-): CloudDiffItem[] {
-  const out: CloudDiffItem[] = [];
-  const keys = new Set([...Object.keys(base || {}), ...Object.keys(cur || {})]);
-  for (const key of keys) {
-    const bv = (base || {})[key];
-    const cv = (cur || {})[key];
-    if (!sameValue(bv, cv)) {
-      out.push({ kind: 'change', text: `设置「${labels[key] || key}」${displayValue(bv)} → ${displayValue(cv)}` });
+function diffArray(a: unknown[], b: unknown[], prefix: string, hints: DiffHints, out: CloudDiffItem[]): void {
+  const base = prefix.endsWith('·') ? prefix.slice(0, -1) : prefix;
+  const noun = hints.noun ?? '';
+
+  // 按 id 匹配的实体数组：识别新增/删除，并对同 id 的元素继续下钻
+  if (hints.idKey) {
+    const key = hints.idKey;
+    const describe = hints.describe ?? ((o: AnyObj) => String(o[key] ?? ''));
+    const itemHints = hints.item ?? {};
+    const aMap = new Map<string, AnyObj>();
+    const bMap = new Map<string, AnyObj>();
+    for (const o of a) if (isPlainObject(o)) aMap.set(String(o[key]), o);
+    for (const o of b) if (isPlainObject(o)) bMap.set(String(o[key]), o);
+
+    for (const [k, o] of bMap) if (!aMap.has(k)) out.push({ kind: 'add', text: `${base}新增${noun}「${describe(o)}」` });
+    for (const [k, o] of aMap) if (!bMap.has(k)) out.push({ kind: 'remove', text: `${base}删除${noun}「${describe(o)}」` });
+    for (const [k, oa] of aMap) {
+      const ob = bMap.get(k);
+      if (!ob || sameValue(oa, ob)) continue;
+      diffNode(oa, ob, `${base}${noun}「${describe(ob)}」`, itemHints, out);
     }
+    return;
   }
-  return out;
+
+  // 标量数组：按集合差异给出新增/移除的具体元素
+  const allPrimitive = [...a, ...b].every(v => !isPlainObject(v) && !Array.isArray(v));
+  if (allPrimitive) {
+    const aSet = new Map(a.map(v => [stableStringify(norm(v)), v]));
+    const bSet = new Map(b.map(v => [stableStringify(norm(v)), v]));
+    for (const [k, v] of bSet) if (!aSet.has(k)) out.push({ kind: 'add', text: `${base}新增 ${displayValue(v)}` });
+    for (const [k, v] of aSet) if (!bSet.has(k)) out.push({ kind: 'remove', text: `${base}移除 ${displayValue(v)}` });
+    return;
+  }
+
+  // 无匹配键的对象数组：按索引下钻
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    if (i >= a.length) out.push({ kind: 'add', text: `${base}[${i + 1}] 新增` });
+    else if (i >= b.length) out.push({ kind: 'remove', text: `${base}[${i + 1}] 移除` });
+    else diffNode(a[i], b[i], `${base}[${i + 1}]`, hints.item ?? {}, out);
+  }
 }
 
-function diffPresets(base: BacktestStrategyPreset[], cur: BacktestStrategyPreset[]): CloudDiffItem[] {
-  const out: CloudDiffItem[] = [];
-  const bMap = new Map(base.map(p => [p.id, p]));
-  const cMap = new Map(cur.map(p => [p.id, p]));
-  for (const p of cur) if (!bMap.has(p.id)) out.push({ kind: 'add', text: `新增策略组「${p.name}」` });
-  for (const p of base) if (!cMap.has(p.id)) out.push({ kind: 'remove', text: `删除策略组「${p.name}」` });
-  for (const [id, b] of bMap) {
-    const c = cMap.get(id);
-    if (!c || sameValue(b, c)) continue;
-    if (b.name !== c.name) out.push({ kind: 'change', text: `策略组「${b.name}」改名为「${c.name}」` });
-    else out.push({ kind: 'change', text: `策略组「${b.name}」已修改` });
-  }
-  return out;
+/** 交易记录的一句话摘要：方向、点位×股数、金额、时间、状态、备注、落袋盈亏 */
+function tradeSummary(t: AnyObj): string {
+  const side = t.side === 'buy' ? '买入' : t.side === 'sell' ? '卖出' : String(t.side ?? '');
+  const price = typeof t.price === 'number' ? t.price : Number(t.price ?? 0);
+  const shares = typeof t.shares === 'number' ? t.shares : Number(t.shares ?? 0);
+  const amount = typeof t.amount === 'number' ? t.amount : price * shares;
+  const parts: string[] = [`${side} ${price}元×${shares}股`, `金额 ${round2(amount)}`];
+  const ts = typeof t.filledAt === 'number' ? t.filledAt
+    : (typeof t.createdAt === 'number' ? t.createdAt : null);
+  if (ts) parts.push(fmtDate(ts));
+  if (t.status === 'filled') parts.push('已成交');
+  else if (t.status === 'pending') parts.push('挂单中');
+  else if (t.status !== undefined) parts.push(String(t.status));
+  if (typeof t.realizedPnL === 'number') parts.push(`落袋 ${round2(t.realizedPnL)}`);
+  if (t.note) parts.push(`备注：${String(t.note)}`);
+  if (t.isMerged) parts.push('合并记录');
+  if (t.isDeleted) parts.push('已删除');
+  return parts.join('，');
 }
+
+function stockLabel(s: AnyObj): string {
+  const name = String(s.nickname || s.name || s.code || '');
+  const code = s.code === undefined || s.code === null ? '' : String(s.code);
+  return code && name !== code ? `${name}(${code})` : name;
+}
+
+const TRADE_HINTS: DiffHints = {
+  noun: '交易记录',
+  idKey: 'id',
+  describe: tradeSummary,
+  item: {
+    labels: {
+      side: '方向', price: '点位', shares: '股数', amount: '金额', status: '状态',
+      createdAt: '创建时间', originalCreatedAt: '原始创建时间', filledAt: '成交时间',
+      note: '备注', realizedPnL: '落袋盈亏', isMerged: '合并记录', isDeleted: '软删',
+      ttlDays: '挂单剩余天数', ttlUpdatedAt: '剩余天数生效时间',
+    },
+    fields: {
+      side: { valueLabels: { buy: '买入', sell: '卖出' } },
+      status: { valueLabels: { pending: '挂单中', filled: '已成交' } },
+    },
+  },
+};
+
+const STOCK_HINTS: DiffHints = {
+  noun: '股票',
+  idKey: 'id',
+  describe: stockLabel,
+  item: {
+    labels: {
+      code: '代码', name: '名称', nickname: '代号',
+      positionShares: '持仓股数', positionCost: '持仓成本',
+      dividend2024: '2024分红', dividend2025: '2025分红',
+      dividendByYear: '历年分红', dividendRates: '股息率档位',
+      registerDate: '登记日', link: '链接', tag: '标签',
+      selectedDividendYear: '选中分红年', bollHidden: '隐藏BOLL',
+      stockTrades: '', // 空标签：交易记录数组就地展开，避免"交易记录·交易记录"重复
+    },
+    fields: { stockTrades: TRADE_HINTS },
+  },
+};
+
+const PRESET_HINTS: DiffHints = {
+  noun: '策略组',
+  idKey: 'id',
+  describe: (p) => String(p.name ?? ''),
+  item: { labels: { name: '名称', rules: '规则', createdAt: '创建时间', updatedAt: '更新时间' } },
+};
+
+const STOCK_SETTINGS_HINTS: DiffHints = {
+  labels: {
+    visibleColumns: '可见列',
+    dividendRateColumns: '股息率档位列',
+    dividendRateColorRanges: '股息率配色',
+    tagColors: '标签颜色',
+    memo: '备忘录',
+    memoUpdatedAt: '备忘录时间',
+    tagParams: '标签参数',
+    customTags: '自定义标签',
+    buyOrderPlaceholder: '买入占位文字',
+    sellOrderPlaceholder: '卖出占位文字',
+  },
+  fields: {
+    // 备忘录是长文本，只展示字数而非全文
+    memo: { display: (v) => `（${typeof v === 'string' ? v.length : 0} 字）` },
+    customTags: {
+      noun: '自定义标签',
+      idKey: 'id',
+      describe: (r) => String(r.name ?? ''),
+      item: {
+        labels: {
+          name: '名称', enabled: '开关', source: '数据源', direction: '方向',
+          targetType: '目标类型', targetValue: '目标值', targetIndicator: '目标指标',
+          tolerance: '容差', color: '配色',
+        },
+        fields: { direction: { valueLabels: { up: '增至', down: '降至', touch: '触达' } } },
+      },
+    },
+  },
+};
+
+const APP_SETTINGS_HINTS: DiffHints = {
+  labels: {
+    priceStep: '价格步进', gramsStep: '克数步进', tagColors: '标签颜色',
+    touchMode: '触控模式', priceDisplayMode: '价格显示',
+    totalCapital: '黄金页总资金', dividendTotalCapital: '分红页总资金', visibleColumns: '可见列',
+    buyTaxFee: '买入税费', sellTaxFee: '卖出税费', apiSource: '行情源',
+    cacheTTLMinutes: '行情缓存时长', bollCacheTTLMinutes: 'BOLL缓存时长',
+    dividendYearLeft: '左分红年份', dividendYearRight: '右分红年份', manualFxRate: '手动汇率',
+  },
+};
+
+// 顶层提示：从快照根节点整体递归——新增顶层上云字段（区块）时无需在此登记，
+// 也会被自动比对并展示（未登记的字段用原始字段名，已登记的用中文名与段落前缀）。
+const ROOT_HINTS: DiffHints = {
+  labels: { stocks: '', stockSettings: '', appSettings: '', backtestStrategyPresets: '' },
+  fields: {
+    stocks: STOCK_HINTS,
+    backtestStrategyPresets: PRESET_HINTS,
+    stockSettings: { ...STOCK_SETTINGS_HINTS, sectionPrefix: '分红页设置：' },
+    appSettings: { ...APP_SETTINGS_HINTS, sectionPrefix: '全局设置：' },
+  },
+};
 
 export function diffStockCloudSnapshots(baseline: string | null, current: string): CloudDiffItem[] | null {
   const b = parseCloudSnapshot(baseline);
   if (b === null) return null; // 无基线：首次上传，无可对比的历史备份
   const c: CloudSnapshot = parseCloudSnapshot(current) || {};
 
-  const items: CloudDiffItem[] = [
-    ...diffStocks(b.stocks || [], c.stocks || []),
-  ];
-
-  // 备忘录单独提示（memoUpdatedAt 属噪声，不展示）
-  if (!sameValue((b.stockSettings || {}).memo, (c.stockSettings || {}).memo)) {
-    items.push({ kind: 'change', text: '备忘录内容已修改' });
-  }
-  const bSettings = { ...(b.stockSettings || {}) };
-  const cSettings = { ...(c.stockSettings || {}) };
-  delete bSettings.memo; delete bSettings.memoUpdatedAt;
-  delete cSettings.memo; delete cSettings.memoUpdatedAt;
-  items.push(...diffSettings(bSettings, cSettings, STOCK_SETTINGS_LABELS));
-
-  items.push(...diffSettings(b.appSettings, c.appSettings, APP_SETTINGS_LABELS));
-
-  items.push(...diffPresets(b.backtestStrategyPresets || [], c.backtestStrategyPresets || []));
-
-  return items;
+  const out: CloudDiffItem[] = [];
+  diffNode(b, c, '', ROOT_HINTS, out);
+  return out;
 }
