@@ -1742,63 +1742,97 @@ export default function App() {
     </div>
   );
 
-  const renderStockActionButtons = () => (
-    <div className="relative">
+  const renderStockActionButtons = () => {
+    const wrapperRef = useRef<HTMLDivElement>(null);
+    const popRef = useRef<HTMLDivElement>(null);
+    const [popoverLeft, setPopoverLeft] = useState<number | null>(null);
+    const [arrowLeft, setArrowLeft] = useState<number | null>(null);
+
+    // 智能定位：避免浮窗超出视口，且箭头始终指向按钮组中心
+    useEffect(() => {
+      if (!cloudConfirm) { setPopoverLeft(null); setArrowLeft(null); return; }
+      const calc = () => {
+        const wrap = wrapperRef.current;
+        const pop = popRef.current;
+        if (!wrap || !pop) return;
+        const wrapRect = wrap.getBoundingClientRect();
+        const popW = pop.offsetWidth;
+        const vw = window.innerWidth;
+        const idealCenter = wrapRect.left + wrapRect.width / 2;
+        // 理想左偏移：让 popover 中心 ≈ 按钮组中心
+        let left = idealCenter - popW / 2;
+        // 钳制：左右各留 12px 边距
+        left = Math.max(12, Math.min(left, vw - popW - 12));
+        setPopoverLeft(left);
+        // 箭头位置（相对于 popover 左边）：指向按钮组中心
+        setArrowLeft(idealCenter - left);
+      };
+      calc();
+      window.addEventListener('resize', calc);
+      const ro = new ResizeObserver(calc);
+      if (wrapperRef.current) ro.observe(wrapperRef.current);
+      return () => { window.removeEventListener('resize', calc); ro.disconnect(); };
+    }, [cloudConfirm]);
+
+    return (
+    <div ref={wrapperRef} className="relative">
       {cloudConfirm && (
-        <div 
-          className="absolute top-full mt-3 z-[100] animate-in fade-in zoom-in slide-in-from-top-2 duration-200 pointer-events-none"
-          style={{ 
-            left: '50%',
-            transform: 'translateX(-50%)'
-          }}
+        <div
+          ref={popRef}
+          className={`absolute top-full mt-3 z-[100] pointer-events-none ${popoverLeft === null ? 'opacity-0' : 'opacity-100'} transition-opacity duration-150`}
+          style={popoverLeft !== null ? { left: popoverLeft, maxWidth: 'calc(100vw - 24px)' } : { left: '50%', transform: 'translateX(-50%)', maxWidth: 'calc(100vw - 24px)' }}
         >
-           <div className={`bg-app-card border border-app-border shadow-[0_8px_30px_rgba(0,0,0,0.5)] rounded-xl p-3 flex flex-col items-center text-center w-max min-w-[160px] ${cloudConfirm === 'upload' ? 'max-w-[320px]' : 'max-w-[200px]'} pointer-events-auto`}>
-              <div className="text-brand-yellow mb-1.5">
+           <div className={`bg-app-card border border-app-border shadow-[0_8px_30px_rgba(0,0,0,0.5)] rounded-xl p-3 flex flex-col items-center text-center pointer-events-auto ${cloudConfirm === 'upload' ? 'w-[320px] max-w-full' : 'w-[200px] max-w-full'}`}>
+              <div className="text-brand-yellow mb-1">
                  <AlertTriangle size={18} />
               </div>
               <h4 className="text-xs font-bold text-app-text mb-0.5 whitespace-nowrap">
                 {cloudConfirm === 'upload' ? '确定上传？' : '确定下载？'}
               </h4>
-              <p className="text-[10px] text-app-subtext mb-2 leading-tight">
-                {cloudConfirm === 'upload' 
-                   ? '覆盖云端备份数据' 
+              <p className="text-[10px] text-app-subtext mb-2 leading-tight whitespace-nowrap">
+                {cloudConfirm === 'upload'
+                   ? '覆盖云端备份数据'
                    : '覆盖本地交易记录'}
               </p>
               {/* 上传前展示与上次同步基线的具体差异（复用下载确认浮窗） */}
               {cloudConfirm === 'upload' && (
-                <div className="w-full max-h-[220px] overflow-y-auto custom-scrollbar text-left mb-2 space-y-0.5">
+                <div className="w-full max-h-[220px] overflow-y-auto custom-scrollbar text-left mb-2 border border-app-border/40 rounded-lg bg-black/20">
                   {cloudDiff === null ? (
-                    <div className="text-[10px] text-app-subtext leading-tight">首次上传，暂无可对比的历史备份</div>
+                    <div className="text-[11px] text-app-subtext leading-relaxed px-2 py-3 text-center">首次上传，暂无可对比的历史备份</div>
                   ) : cloudDiff.length === 0 ? (
-                    <div className="text-[10px] text-app-subtext leading-tight">与上次同步相比无差异</div>
+                    <div className="text-[11px] text-app-subtext leading-relaxed px-2 py-3 text-center">与上次同步相比无差异</div>
                   ) : (
                     cloudDiff.map((d, i) => (
                       <div
                         key={i}
-                        className={`text-[10px] leading-tight break-all ${d.kind === 'add' ? 'text-brand-green' : d.kind === 'remove' ? 'text-brand-red' : 'text-app-rowtext'}`}
+                        className="flex gap-2 items-start px-2 py-1.5 border-b border-app-border/20 last:border-0"
                       >
-                        {d.text}
+                        <span className={`mt-[5px] w-[6px] h-[6px] rounded-full shrink-0 ${d.kind === 'add' ? 'bg-brand-green' : d.kind === 'remove' ? 'bg-brand-red' : 'bg-brand-yellow'}`}></span>
+                        <div className={`text-[11px] leading-relaxed whitespace-pre-line break-words ${d.kind === 'add' ? 'text-brand-green' : d.kind === 'remove' ? 'text-brand-red' : 'text-app-rowtext'}`}>
+                          {d.text}
+                        </div>
                       </div>
                     ))
                   )}
                 </div>
               )}
               <div className="grid grid-cols-2 gap-1.5 w-full">
-                 <button 
+                 <button
                    onClick={() => { setCloudConfirm(null); setCloudDiff(null); }}
-                   className="py-1 rounded-lg border border-app-border text-[10px] text-app-subtext hover:bg-app-input transition-colors font-medium"
+                   className="py-1.5 rounded-lg border border-app-border text-[11px] text-app-subtext hover:bg-app-input transition-colors font-medium"
                  >
                    取消
                  </button>
-                 <button 
+                 <button
                    onClick={cloudConfirm === 'upload' ? handleStockCloudUpload : handleCloudDownload}
-                   className={`py-1 rounded-lg text-[10px] text-white font-bold transition-opacity hover:opacity-90 ${cloudConfirm === 'upload' ? 'bg-brand-yellow' : 'bg-indigo-600'}`}
+                   className={`py-1.5 rounded-lg text-[11px] text-white font-bold transition-opacity hover:opacity-90 ${cloudConfirm === 'upload' ? 'bg-brand-yellow' : 'bg-indigo-600'}`}
                  >
                    确定
                  </button>
               </div>
-              <div 
-                className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-app-card border-l border-t border-app-border rotate-45"
+              <div
+                className="absolute -top-1.5 w-3 h-3 bg-app-card border-l border-t border-app-border rotate-45"
+                style={arrowLeft !== null ? { left: arrowLeft - 6 } : { left: '50%', transform: 'translateX(-50%) rotate(45deg)' }}
               ></div>
            </div>
         </div>
@@ -1876,7 +1910,8 @@ export default function App() {
           </button>
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div 

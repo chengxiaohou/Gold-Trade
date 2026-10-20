@@ -237,11 +237,19 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-// 差异行里展示的单个值：空值→"空"；布尔→开/关；疑似时间戳→日期时间；长文本→截断
+function roundIfNearInt(n: number): number {
+  if (Math.abs(n - round2(n)) < 1e-9) return round2(n);
+  return n;
+}
+
+// 差异行里展示的单个值：空值→"空"；布尔→开/关；疑似时间戳→日期时间；长文本→截断；浮点噪声 round 到 2 位
 function displayValue(v: unknown): string {
   if (v === undefined || v === null || v === '') return '空';
   if (typeof v === 'boolean') return v ? '开' : '关';
-  if (typeof v === 'number') return Math.abs(v) >= 1e12 ? fmtDateTime(v) : String(v);
+  if (typeof v === 'number') {
+    const cleaned = roundIfNearInt(v);
+    return Math.abs(v) >= 1e12 ? fmtDateTime(v) : String(cleaned);
+  }
   if (typeof v === 'string') return v.length > 60 ? `${v.slice(0, 60)}…（共 ${v.length} 字）` : v;
   if (Array.isArray(v)) return `[${v.length} 项]`;
   if (typeof v === 'object') return '对象';
@@ -273,6 +281,46 @@ function parseCloudSnapshot(raw: string | null): CloudSnapshot | null {
   } catch {
     return null;
   }
+}
+
+/** 对比两个同结构对象，返回已加 bullet 的可读差异行（· 字段: 旧 → 新）；
+ *  遇到子数组时：若子字段 hints 里带 idKey（实体数组），递归走 diffArray 下钻并嵌套缩进；
+ *  否则作为整体给出"已更新"概括 */
+function collectFieldChanges(a: AnyObj, b: AnyObj, hints: DiffHints): string[] {
+  const out: string[] = [];
+  const indent = '  ';
+  const indentBlock = (text: string): string[] =>
+    text.split('\n').map(l => l ? `${indent}${l}` : '');
+  const bullet = (s: string) => `· ${s}`;
+
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    const label = hints.labels?.[key] ?? key;
+    const child = hints.fields?.[key] ?? {};
+    const av = a[key];
+    const bv = b[key];
+    if (sameValue(av, bv)) continue;
+    if (Array.isArray(av) || Array.isArray(bv)) {
+      if (child.idKey) {
+        const sub: CloudDiffItem[] = [];
+        diffArray(Array.isArray(av) ? av : [], Array.isArray(bv) ? bv : [], '', child, sub);
+        for (const s of sub) {
+          // 子数组的每个条目（新增/删除/合并 change）统一缩进一层后 push
+          // 其中合并 change 本身含多行（head + 内部 · 列表），整体缩进
+          for (const l of indentBlock(s.text)) out.push(l);
+        }
+      } else if (Array.isArray(av) && Array.isArray(bv)) {
+        if (av.length !== bv.length) out.push(bullet(`${label}: ${av.length} 项 → ${bv.length} 项`));
+        else out.push(bullet(`${label}: 内容已更新`));
+      } else {
+        out.push(bullet(`${label}: 已更新`));
+      }
+    } else if (isPlainObject(av) || isPlainObject(bv)) {
+      out.push(bullet(`${label}: 已更新`));
+    } else {
+      out.push(bullet(`${label}: ${leafText(av, child)} → ${leafText(bv, child)}`));
+    }
+  }
+  return out;
 }
 
 /** 通用递归比对：对象逐字段下钻；数组交 diffArray；标量不同则产出一条差异 */
@@ -308,7 +356,7 @@ function diffArray(a: unknown[], b: unknown[], prefix: string, hints: DiffHints,
   const base = prefix.endsWith('·') ? prefix.slice(0, -1) : prefix;
   const noun = hints.noun ?? '';
 
-  // 按 id 匹配的实体数组：识别新增/删除，并对同 id 的元素继续下钻
+  // 按 id 匹配的实体数组：识别新增/删除，并对同 id 的元素合并字段差异为一条
   if (hints.idKey) {
     const key = hints.idKey;
     const describe = hints.describe ?? ((o: AnyObj) => String(o[key] ?? ''));
@@ -323,7 +371,17 @@ function diffArray(a: unknown[], b: unknown[], prefix: string, hints: DiffHints,
     for (const [k, oa] of aMap) {
       const ob = bMap.get(k);
       if (!ob || sameValue(oa, ob)) continue;
-      diffNode(oa, ob, `${base}${noun}「${describe(ob)}」`, itemHints, out);
+      const head = `${base}${noun}「${describe(ob)}」已修改`;
+      const lines = collectFieldChanges(oa, ob, itemHints);
+      if (lines.length === 0) {
+        out.push({ kind: 'change', text: head });
+      } else {
+        // 同一条实体里多个字段改动合并成一条，最多展示 8 条明细，超出折叠为"…另有 N 项"
+        const MAX_INLINE = 8;
+        const inline = lines.slice(0, MAX_INLINE).map(l => `  ${l}`).join('\n');
+        const tail = lines.length > MAX_INLINE ? `\n  …另有 ${lines.length - MAX_INLINE} 项` : '';
+        out.push({ kind: 'change', text: `${head}\n${inline}${tail}` });
+      }
     }
     return;
   }
