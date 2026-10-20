@@ -423,6 +423,33 @@ export default function App() {
   // 股息页上传前展示的"与上次同步基线"的具体差异；null = 无基线（首次上传）或非上传场景
   const [cloudDiff, setCloudDiff] = useState<CloudDiffItem[] | null>(null);
 
+  // 股息页同步确认浮窗的智能定位（避免超出视口 + 箭头对准按钮组中心）
+  const stockActionWrapperRef = useRef<HTMLDivElement>(null);
+  const stockActionPopRef = useRef<HTMLDivElement>(null);
+  const [popoverLeft, setPopoverLeft] = useState<number | null>(null);
+  const [arrowLeft, setArrowLeft] = useState<number | null>(null);
+  useEffect(() => {
+    if (!cloudConfirm) { setPopoverLeft(null); setArrowLeft(null); return; }
+    const calc = () => {
+      const wrap = stockActionWrapperRef.current;
+      const pop = stockActionPopRef.current;
+      if (!wrap || !pop) return;
+      const wrapRect = wrap.getBoundingClientRect();
+      const popW = pop.offsetWidth;
+      const vw = window.innerWidth;
+      const idealCenter = wrapRect.left + wrapRect.width / 2;
+      let left = idealCenter - popW / 2;
+      left = Math.max(12, Math.min(left, vw - popW - 12));
+      setPopoverLeft(left);
+      setArrowLeft(idealCenter - left);
+    };
+    calc();
+    window.addEventListener('resize', calc);
+    const ro = new ResizeObserver(calc);
+    if (stockActionWrapperRef.current) ro.observe(stockActionWrapperRef.current);
+    return () => { window.removeEventListener('resize', calc); ro.disconnect(); };
+  }, [cloudConfirm]);
+
   const [githubConfig, setGithubConfig] = useState<GithubConfig>(() => {
     const saved = localStorage.getItem('gold_github_config');
     return saved ? JSON.parse(saved) : { token: '', gistId: '' };
@@ -1742,43 +1769,11 @@ export default function App() {
     </div>
   );
 
-  const renderStockActionButtons = () => {
-    const wrapperRef = useRef<HTMLDivElement>(null);
-    const popRef = useRef<HTMLDivElement>(null);
-    const [popoverLeft, setPopoverLeft] = useState<number | null>(null);
-    const [arrowLeft, setArrowLeft] = useState<number | null>(null);
-
-    // 智能定位：避免浮窗超出视口，且箭头始终指向按钮组中心
-    useEffect(() => {
-      if (!cloudConfirm) { setPopoverLeft(null); setArrowLeft(null); return; }
-      const calc = () => {
-        const wrap = wrapperRef.current;
-        const pop = popRef.current;
-        if (!wrap || !pop) return;
-        const wrapRect = wrap.getBoundingClientRect();
-        const popW = pop.offsetWidth;
-        const vw = window.innerWidth;
-        const idealCenter = wrapRect.left + wrapRect.width / 2;
-        // 理想左偏移：让 popover 中心 ≈ 按钮组中心
-        let left = idealCenter - popW / 2;
-        // 钳制：左右各留 12px 边距
-        left = Math.max(12, Math.min(left, vw - popW - 12));
-        setPopoverLeft(left);
-        // 箭头位置（相对于 popover 左边）：指向按钮组中心
-        setArrowLeft(idealCenter - left);
-      };
-      calc();
-      window.addEventListener('resize', calc);
-      const ro = new ResizeObserver(calc);
-      if (wrapperRef.current) ro.observe(wrapperRef.current);
-      return () => { window.removeEventListener('resize', calc); ro.disconnect(); };
-    }, [cloudConfirm]);
-
-    return (
-    <div ref={wrapperRef} className="relative">
+  const renderStockActionButtons = () => (
+    <div ref={stockActionWrapperRef} className="relative">
       {cloudConfirm && (
         <div
-          ref={popRef}
+          ref={stockActionPopRef}
           className={`absolute top-full mt-3 z-[100] pointer-events-none ${popoverLeft === null ? 'opacity-0' : 'opacity-100'} transition-opacity duration-150`}
           style={popoverLeft !== null ? { left: popoverLeft, maxWidth: 'calc(100vw - 24px)' } : { left: '50%', transform: 'translateX(-50%)', maxWidth: 'calc(100vw - 24px)' }}
         >
@@ -1910,8 +1905,7 @@ export default function App() {
           </button>
       </div>
     </div>
-    );
-  };
+  );
 
   return (
     <div 
