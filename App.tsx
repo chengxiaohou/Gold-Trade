@@ -19,7 +19,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.110';
+const APP_VERSION = 'v2.18.111';
 
 // 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
 const ERRLOG_KEY = 'gold_trade_error_log';
@@ -1804,9 +1804,19 @@ export default function App() {
                         className="flex gap-2 items-start px-2 py-1.5"
                       >
                         <span className={`mt-[5px] w-[6px] h-[6px] rounded-full shrink-0 ${d.kind === 'add' ? 'bg-brand-green' : d.kind === 'remove' ? 'bg-brand-red' : 'bg-indigo-400'}`}></span>
-                        <div className={`text-[11px] leading-relaxed whitespace-pre-line break-words ${d.kind === 'add' ? 'text-brand-green' : d.kind === 'remove' ? 'text-brand-red' : 'text-app-rowtext'}`}>
-                          {d.text}
-                        </div>
+                        {d.kind === 'change' ? (
+                          <div className="text-[11px] leading-relaxed break-words min-w-0">
+                            {/* 首行：实体标题，白色加粗；后续行：具体改动，减号开头 */}
+                            <div className="text-app-text font-bold [overflow-wrap:anywhere]">{d.text.split('\n')[0]}</div>
+                            {d.text.split('\n').slice(1).map((line, j) => (
+                              <div key={j} className="text-app-rowtext whitespace-pre-wrap [overflow-wrap:anywhere]">{line.replace(/^ {2}/, '')}</div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className={`text-[11px] leading-relaxed whitespace-pre-line break-words ${d.kind === 'add' ? 'text-brand-green' : 'text-brand-red'}`}>
+                            {d.text}
+                          </div>
+                        )}
                       </div>
                     ))
                   )}
