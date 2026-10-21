@@ -89,7 +89,7 @@ export const TAG_PALETTE: { key: string; label: string; bg: string; text: string
 // 颜色 key → 十六进制（供卡片色点/K线图同一映射，key 与 TAG_PALETTE 一致，单独成源避免散落）
 export const TAG_COLOR_HEX: Record<string, string> = {
   gray: '#9ca3af', indigo: '#818cf8', red: '#ef4444', green: '#22c55e',
-  yellow: '#eab308', blue: '#60a5fa', orange: '#fb923c', pink: '#fb7299',
+  yellow: '#ffa500', blue: '#60a5fa', orange: '#fb923c', pink: '#fb7299',
 };
 
 // 自定义标签卡片：默认仅显示描述文字；悬停或点击时在文字上方显示 编辑/启用/删除 三个按钮。
