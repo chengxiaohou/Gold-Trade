@@ -19,7 +19,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.111';
+const APP_VERSION = 'v2.18.112';
 
 // 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
 const ERRLOG_KEY = 'gold_trade_error_log';
@@ -423,9 +423,10 @@ export default function App() {
   // 股息页上传前展示的"与上次同步基线"的具体差异；null = 无基线（首次上传）或非上传场景
   const [cloudDiff, setCloudDiff] = useState<CloudDiffItem[] | null>(null);
 
-  // 股息页同步确认浮窗的智能定位（避免超出视口 + 箭头对准按钮组中心）
+  // 股息页同步确认浮窗的智能定位：记录被点击的按钮，箭头始终指向它
   const stockActionWrapperRef = useRef<HTMLDivElement>(null);
   const stockActionPopRef = useRef<HTMLDivElement>(null);
+  const cloudAnchorRef = useRef<HTMLElement | null>(null);
   const [popoverLeft, setPopoverLeft] = useState<number | null>(null);
   const [arrowLeft, setArrowLeft] = useState<number | null>(null);
   useEffect(() => {
@@ -437,19 +438,30 @@ export default function App() {
       const wrapRect = wrap.getBoundingClientRect();
       const popW = pop.offsetWidth;
       const vw = window.innerWidth;
-      const idealCenter = wrapRect.left + wrapRect.width / 2;
-      // 视口坐标系下先钳制，再换算为相对父容器（relative wrapper）的 left
-      let leftVp = idealCenter - popW / 2;
-      leftVp = Math.max(12, Math.min(leftVp, vw - popW - 12));
+      // 锚点 = 被点击按钮的中心；按钮已不存在时退回按钮组中心
+      const anchorRect = cloudAnchorRef.current?.getBoundingClientRect();
+      const anchorX = anchorRect
+        ? anchorRect.left + anchorRect.width / 2
+        : wrapRect.left + wrapRect.width / 2;
+      // 弹窗尽量以锚点为中心，超出视口时整体平移（左右各留 12px）
+      const leftVp = Math.max(12, Math.min(anchorX - popW / 2, vw - popW - 12));
+      // 箭头单独对齐锚点：允许偏离弹窗中线；锚点靠近边缘时收在圆角内，仍指向按钮
+      const arrow = Math.max(18, Math.min(anchorX - leftVp, popW - 18));
       setPopoverLeft(leftVp - wrapRect.left);
-      setArrowLeft(idealCenter - leftVp);
+      setArrowLeft(arrow);
     };
     calc();
     window.addEventListener('resize', calc);
+    window.addEventListener('scroll', calc, true);
     const ro = new ResizeObserver(calc);
+    if (stockActionPopRef.current) ro.observe(stockActionPopRef.current);
     if (stockActionWrapperRef.current) ro.observe(stockActionWrapperRef.current);
-    return () => { window.removeEventListener('resize', calc); ro.disconnect(); };
-  }, [cloudConfirm]);
+    return () => {
+      window.removeEventListener('resize', calc);
+      window.removeEventListener('scroll', calc, true);
+      ro.disconnect();
+    };
+  }, [cloudConfirm, cloudDiff]);
 
   const [githubConfig, setGithubConfig] = useState<GithubConfig>(() => {
     const saved = localStorage.getItem('gold_github_config');
@@ -1847,7 +1859,7 @@ export default function App() {
       <div className="flex gap-1.5 lg:gap-2">
           {stockCloudDirty && (
             <button 
-              onClick={requestStockUpload}
+              onClick={(e) => { cloudAnchorRef.current = e.currentTarget; requestStockUpload(); }}
               disabled={isSyncing || uploadSuccess}
               className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-app-subtext hover:text-indigo-400 hover:border-indigo-500'} disabled:opacity-30`}
               title="上传到云端"
@@ -1890,7 +1902,7 @@ export default function App() {
             {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
           </button>
           <button 
-              onClick={() => requestCloudAction('download')}
+              onClick={(e) => { cloudAnchorRef.current = e.currentTarget; requestCloudAction('download'); }}
               disabled={isDownloading || downloadSuccess || !!cloudConfirm}
               className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-app-subtext hover:text-indigo-400 hover:border-indigo-500'} disabled:opacity-30`}
               title="从云端下载"
