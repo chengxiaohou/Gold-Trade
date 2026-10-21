@@ -27,6 +27,8 @@
                 hover: 'var(--row-hover-bg)',
               },
               brand: {
+                /* 项目主题色（紫）：界面强调色统一用 indigo，优先用这个语义 token */
+                indigo: 'var(--brand-indigo)',
                 yellow: 'var(--brand-yellow)',
                 softYellow: 'var(--soft-yellow)',
                 softGreen: 'var(--soft-green)',
@@ -35,7 +37,12 @@
                 green: '#10b981',
                 greenDim: 'var(--brand-green-dim)',
               }
-            }
+            },
+            /* 覆盖 Tailwind 默认边框色（近白 #e5e7eb）：全局边框统一走主题 token。
+              这样裸写 `border` 不再出现白色细线，agent 无需额外挑颜色也不会误用白色。 */
+            borderColor: {
+              DEFAULT: 'var(--app-border)',
+            },
           },
         },
       }
@@ -63,6 +70,7 @@
         --soft-green-hover: rgba(93, 168, 120, 0.5);
         
         --brand-yellow: #d97706; /* Darker amber for contrast on white */
+        --brand-indigo: #6366f1; /* 项目主题色（紫） */
         --brand-red-dim: #fee2e2;
         --brand-green-dim: #d1fae5;
         
@@ -94,6 +102,7 @@
         --soft-green-hover: rgba(77, 148, 102, 0.5);
 
         --brand-yellow: #fec007;
+        --brand-indigo: #818cf8; /* 项目主题色（紫，暗色模式提亮） */
         --brand-red-dim: #451a1a;
         --brand-green-dim: #132f25;
 
