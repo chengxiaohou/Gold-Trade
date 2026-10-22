@@ -2,8 +2,12 @@ import type { StockTrade } from '../types';
 import type { StockLedgerMap } from './stockLedgerStore';
 
 // 判断一只股票是否为 ETF/基金（项目中多处复用此规则，集中到一处）
-export const isEtf = (name?: string): boolean =>
-  !!name && (name.includes('ETF') || name.includes('etf'));
+// 规则：名称包含 ETF（大小写不敏感），或名称以 E 结尾（用户约定的简称写法）
+export const isEtf = (name?: string): boolean => {
+  if (!name) return false;
+  const n = name.trim().toUpperCase();
+  return n.includes('ETF') || n.endsWith('E');
+};
 
 // 单笔交易的税费计算结果
 export interface TradeFees {
