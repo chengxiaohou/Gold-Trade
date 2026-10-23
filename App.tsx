@@ -19,7 +19,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.112';
+const APP_VERSION = 'v2.18.117';
 
 // 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
 const ERRLOG_KEY = 'gold_trade_error_log';
@@ -601,6 +601,7 @@ export default function App() {
   const [exportFileName, setExportFileName] = useState('');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [stockResetSignal, setStockResetSignal] = useState(0);
+  const [showStockAccountPage, setShowStockAccountPage] = useState(false);
   const [showRequestStats, setShowRequestStats] = useState(() => {
     try {
       const saved = localStorage.getItem('gold_show_request_stats');
@@ -1916,6 +1917,17 @@ export default function App() {
               )}
           </button>
           <button 
+              onClick={() => setShowStockAccountPage(prev => !prev)}
+              className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-7 h-7 ${
+                showStockAccountPage 
+                  ? 'border-indigo-500 text-indigo-400' 
+                  : 'border-app-border text-app-subtext hover:text-indigo-400 hover:border-indigo-500'
+              }`}
+              title={showStockAccountPage ? '关闭股票账户' : '股票账户'}
+            >
+              <Wallet size={16} />
+          </button>
+          <button 
               onClick={() => setShowRequestStats(prev => !prev)}
               className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-7 h-7 ${
                 showRequestStats 
@@ -2540,6 +2552,8 @@ export default function App() {
             buyOrderPlaceholder={stockSettings.buyOrderPlaceholder}
             sellOrderPlaceholder={stockSettings.sellOrderPlaceholder}
             showRequestStats={showRequestStats}
+            showAccountPage={showStockAccountPage}
+            onCloseAccountPage={() => setShowStockAccountPage(false)}
             ledgerMap={ledgerMap}
             onLedgerMapChange={updateLedgerMap}
             onExportFullBackup={handleStockFullExport}
