@@ -1,6 +1,7 @@
 // 技术指标计算 —— 单一事实来源(SSOT)。
 // 列表页「当日行情」浮窗、回测图十字线悬浮详情共用同一份：改一处，两边改动同步生效。
 import type { BollKline } from './bollService';
+import { isEtf } from './realizedPnl';
 
 export interface IndicatorResult {
   open: number | null;   // 最新一根K线的开盘价
@@ -92,8 +93,7 @@ export function calcIndicators(klines: BollKline[]): IndicatorResult | null {
 // 价格格式化：股票 2 位小数、ETF 3 位小数（复用同一规则保证两处一致）
 export function formatPrice(price: number | undefined | null, name?: string): string {
   if (price == null || !Number.isFinite(price)) return '-';
-  const isETF = name?.includes('ETF') || name?.includes('etf');
-  return isETF ? price.toFixed(3) : price.toFixed(2);
+  return isEtf(name) ? price.toFixed(3) : price.toFixed(2);
 }
 
 // 成交量格式化（万/亿,单位手）

@@ -14,7 +14,7 @@ import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import { StockAccountPage } from './StockAccountPage';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
-import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, calcAvgPnlForTrades, calcTradeFees, tradeAmountFormula, estimatePendingSell, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
+import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, calcAvgPnlForTrades, calcTradeFees, tradeAmountFormula, estimatePendingSell, isEtf, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
 import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, volBucket, buildLatestShrinkTags, buildShrinkTagsForModule, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, analyzeStandEvents, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5, type StandEvent } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
@@ -5671,7 +5671,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
           const fmtPad = (v: number | null | undefined) => {
             const s = fmt(v);
-            const targetLen = (stock.name?.includes('ETF') || stock.name?.includes('etf')) ? 7 : 6;
+            const targetLen = isEtf(stock.name) ? 7 : 6;
             return s.padEnd(targetLen);
           };
           const buildLine = (label: string, data: BollData | null | undefined) => {
@@ -5829,7 +5829,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
                             const fmtPad = (v: number | null | undefined) => {
                               const s = fmt(v);
-                              const targetLen = (stock.name?.includes('ETF') || stock.name?.includes('etf')) ? 7 : 6;
+                              const targetLen = isEtf(stock.name) ? 7 : 6;
                               return s.padEnd(targetLen);
                             };
                             const maLine = (label: string, data: BollData | null | undefined) => {
@@ -6632,7 +6632,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
               {/* 挂单价 + 数量（复用黄金项目 InputGroup 步进输入，支持鼠标滚轮与触屏手势调节） */}
               <div className="grid grid-cols-2 gap-3">
-                <InputGroup label={<span className="inline-flex items-baseline gap-1 translate-y-px">挂单价格{priceGapValid && <span className="text-app-subtext/60 font-normal">({priceGapPct > 0 ? '+' : ''}{priceGapPct.toFixed(2)}%)</span>}<button type="button" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={(e) => { e.stopPropagation(); handleListSrClick(e, s, true, 'trade'); }} onMouseEnter={(e) => handleListSrHoverEnter(e, s, 'trade')} onMouseLeave={() => handleListSrHoverLeave()} className="p-0.5 rounded transition-colors hover:bg-app-input cursor-pointer select-none shrink-0 self-center" title=""><BarChart3 size={12} className="text-app-subtext" /></button></span>} value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 0.001 : 0.01} min={0} precision={(s.name?.includes('ETF') || s.name?.includes('etf')) ? 3 : 2} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
+                <InputGroup label={<span className="inline-flex items-baseline gap-1 translate-y-px">挂单价格{priceGapValid && <span className="text-app-subtext/60 font-normal">({priceGapPct > 0 ? '+' : ''}{priceGapPct.toFixed(2)}%)</span>}<button type="button" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={(e) => { e.stopPropagation(); handleListSrClick(e, s, true, 'trade'); }} onMouseEnter={(e) => handleListSrHoverEnter(e, s, 'trade')} onMouseLeave={() => handleListSrHoverLeave()} className="p-0.5 rounded transition-colors hover:bg-app-input cursor-pointer select-none shrink-0 self-center" title=""><BarChart3 size={12} className="text-app-subtext" /></button></span>} value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={isEtf(s.name) ? 0.001 : 0.01} min={0} precision={isEtf(s.name) ? 3 : 2} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
                 {/* 数量：卖出时以当前持仓为上限（静默截断） */}
                 <InputGroup
                   label={<span className="translate-y-px">数量(股)</span>}
@@ -7110,7 +7110,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
               const fmtPad = (v: number | null | undefined) => {
                 const s = fmt(v);
-                const targetLen = (stock.name?.includes('ETF') || stock.name?.includes('etf')) ? 7 : 6;
+                const targetLen = isEtf(stock.name) ? 7 : 6;
                 return s.padEnd(targetLen);
               };
               const buildLine = (label: string, data: BollData | null | undefined) => {
