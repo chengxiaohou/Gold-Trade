@@ -2,7 +2,7 @@ import type { TagParams, BacktestTagGroup } from '../types';
 import { DEFAULT_TAG_PARAMS, type UserTagRule, type SignalDataSource, type SignalTargetIndicator } from '../types';
 import type { BollKline } from './bollService';
 import { getMarketStatus } from './cacheService';
-import { calcIndicators } from './indicators';
+import { calcIndicators, countIndicatorExtremes } from './indicators';
 
 // ─────────────────────────────────────────────────────────────
 // 标签/信号判定分析器（共享模块）
@@ -1188,6 +1188,7 @@ export function buildLatestShrinkTags(
   volUp?: boolean | null,  // 当日涨跌：true=涨(红) / false=跌(绿) / null=沿用量增价涨旧配色
   standEvents?: StandEvent[] | null,
   allowVol?: boolean,      // 当日交易日 <14:30 量能未定型 → false 时跳过量能缩略
+  klines?: BollKline[],    // 传入后追加超买/超卖缩略（六项指标≥4 项同侧极值）
 ): MktTag[] {
   // 破位类事件标签（不含“修复观察”）
   const breakTags: MktTag[] = [];
@@ -1243,6 +1244,20 @@ export function buildLatestShrinkTags(
     }
   }
   tags.push(...breakTags);
+  // 超买/超卖缩略：与 getDayTagSet 同一判定/阈值（六项指标命中几项就显示"N"，无最低门槛），
+  // 绿"超N"=超卖、红"超N"=超买；双向冲突时只取票数多的一侧，相等则两侧都出。
+  if (klines && klines.length > 0) {
+    const ind = calcIndicators(klines);
+    if (ind) {
+      const { over, under } = countIndicatorExtremes(ind);
+      if (under > over) tags.push({ key: 'extreme-under', text: `超${under}`, cls: ENV_SINGLE_CLS.green });
+      else if (over > under) tags.push({ key: 'extreme-over', text: `超${over}`, cls: ENV_SINGLE_CLS.red });
+      else if (over > 0) {
+        tags.push({ key: 'extreme-over', text: `超${over}`, cls: ENV_SINGLE_CLS.red });
+        tags.push({ key: 'extreme-under', text: `超${under}`, cls: ENV_SINGLE_CLS.green });
+      }
+    }
+  }
   return tags;
 }
 
@@ -1275,8 +1290,9 @@ export function buildShrinkTagsForModule(
   volUp?: boolean | null,
   standEvents?: StandEvent[] | null,
   allowVol?: boolean,
+  klines?: BollKline[],
 ): MktTag[] {
-  let tags = buildLatestShrinkTags(events, patterns, env, lastDate, latestVol, volUp, standEvents, allowVol);
+  let tags = buildLatestShrinkTags(events, patterns, env, lastDate, latestVol, volUp, standEvents, allowVol, klines);
   if (!SHRINK_TAG_INCLUDE_ENV[module]) tags = tags.filter(t => !t.key.startsWith('env-'));
   if (SHRINK_TAG_HIDE_VOL_FLAT[module]) tags = tags.filter(t => t.key !== 'vol-平量');
   return tags;
@@ -1296,7 +1312,7 @@ export function buildLatestDayTags(klines: BollKline[], fmt: (v: number) => stri
   const last = klines[klines.length - 1];
   const prevClose = klines.length >= 2 ? klines[klines.length - 2].close : last.close;
   const volUp = last.close >= prevClose;
-  return buildLatestShrinkTags(events, patterns, env, lastDate, latestVol, volUp, standEvents, allowVol);
+  return buildLatestShrinkTags(events, patterns, env, lastDate, latestVol, volUp, standEvents, allowVol, klines);
 }
 
 // 弹窗破位事件“判断依据”文案拼接（封装原 explainLines 中 selEv 分支）

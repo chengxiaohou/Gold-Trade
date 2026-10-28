@@ -44,7 +44,9 @@ function collectSignalsOnDay(win: BollKline[], i: number, cfg: TagParams, custom
   // 从中央标签分发部门 getDayTagSet 取当日所有 label（形态/量能/价格态/破位/站上/自定义同源）
   const events = analyzeMarketConditions(win, Math.min(10, win.length - 1));
   const standEvents = analyzeStandEvents(win, Math.min(10, win.length - 1));
-  const dayTags = getDayTagSet(win, cfg, fmtP, { events, standEvents, customTags, dividendByYear });
+  // 回测暂不接入「超买/超卖」标签（产品决定，非遗漏）：excludeExtreme=true 排除该系列，
+  // 回测图悬浮栏与策略规则均不出现 超买N/超卖N；将来要接入时去掉该选项并补目录即可。
+  const dayTags = getDayTagSet(win, cfg, fmtP, { events, standEvents, customTags, dividendByYear, excludeExtreme: true });
   for (const t of dayTags) hits.add(t.label);
   // 环境状态：仅当 K 线足够长（≥130）才计算，供规则 envCondition 门控判定
   const env = win.length >= 130 ? analyzeEnvironment(win, fmtP, true, cfg) : null;

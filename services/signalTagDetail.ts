@@ -7,6 +7,7 @@
 import type { BollKline } from './bollService';
 import type { TagParams, UserTagRule } from '../types';
 import { DEFAULT_TAG_PARAMS } from '../types';
+import { calcIndicators, countIndicatorExtremes, EXTREME_LEVELS } from './indicators';
 import {
   analyzeKlinePatternsAt, analyzeKlineCombo, classifyVolumeAt,
   analyzeMarketConditions, analyzeStandEvents, buildBreakExplainLines, buildStandExplainLines, volBucket,
@@ -60,8 +61,8 @@ const USER_CHIP_CLS: Record<string, { cls: string; sel: string }> = {
 // 自定义标签参考价值：由规则字段拼出通用文案
 const USER_REFERENCE = '用户自定义信号标签：依据设定数据点与目标（固定值或均线/BOLL动态值）判定触发，作观察信号辅助判断，结合仓位与市场环境综合决策。'
 
-// chip 种类：volume/pricestate/pattern = 原子信号；break = 破位触发；break-obs = 观察；break-status = 真/假破位定论；user = 用户自定义
-export type DayTagKind = 'volume' | 'pricestate' | 'pattern' | 'break' | 'break-obs' | 'break-status' | 'stand' | 'user';
+// chip 种类：volume/pricestate/pattern = 原子信号；break = 破位触发；break-obs = 观察；break-status = 真/假破位定论；user = 用户自定义；extreme = 超买/超卖
+export type DayTagKind = 'volume' | 'pricestate' | 'pattern' | 'break' | 'break-obs' | 'break-status' | 'stand' | 'user' | 'extreme';
 export interface DayTag extends SignalTagDetail { key: string; kind: DayTagKind; }
 
 export interface GetDayTagSetOptions {
@@ -69,6 +70,8 @@ export interface GetDayTagSetOptions {
   standEvents?: StandEvent[];
   customTags?: UserTagRule[];
   dividendByYear?: Record<number, number>;
+  /** 回测暂不接入「超买/超卖」标签（产品决定，非遗漏）：传入 true 时不产出该系列 chip。 */
+  excludeExtreme?: boolean;
   /** 实时视图模式：盘中一律拦截量能（无论 K 线末根日期）；默认 false（历史/回测场景，仅"末根=今日"时卡 14:30）。 */
   liveMode?: boolean;
 }
@@ -160,6 +163,49 @@ export function getDayTagSet(
     if (se.date !== date) continue;
     const p = se.period;
     out.push({ key: `stand-${date}-${p}`, kind: 'stand', label: `站${p}`, cls: CHIP_CLS_RED, sel: CHIP_SEL_RED, detail: buildStandExplainLines(se, fmt, fmtDay), reference: '' });
+  }
+
+  // 超买/超卖（指标极值投票）：KDJ(K/D/J) + RSI(6/12/24) 共 6 项，命中几项就显示"N"（1~6），不设最低票数门槛。
+  // 阈值与价格浮窗着色同源（EXTREME_LEVELS），保证"看到几个绿字就有几个票"。
+  // 双向冲突（KDJ 与 RSI 不同步）时只显示票数多的一侧；两侧相等（如 3:3）则两侧都显示。
+  if (!opts.excludeExtreme) {
+    const ind = calcIndicators(win);
+    if (ind) {
+      const { over, under } = countIndicatorExtremes(ind);
+      const fmtV = (v: number | null) => (v == null ? '-' : v.toFixed(2));
+      const values = [
+        `K ${fmtV(ind.kdj.k)} / D ${fmtV(ind.kdj.d)} / J ${fmtV(ind.kdj.j)}`,
+        `RSI6 ${fmtV(ind.rsi.rsi6)} / RSI12 ${fmtV(ind.rsi.rsi12)} / RSI24 ${fmtV(ind.rsi.rsi24)}`,
+      ];
+      const pushExtreme = (side: 'over' | 'under', n: number) => {
+        if (side === 'under') {
+          out.push({
+            key: 'extreme-under', kind: 'extreme', label: `超卖${n}`,
+            cls: CHIP_CLS_GREEN, sel: CHIP_SEL_GREEN,
+            detail: [
+              `${date} 六项指标中 ${n} 项进入超卖区`,
+              ...values,
+              `超卖阈值：K<${EXTREME_LEVELS.kdjLow}、D<${EXTREME_LEVELS.kdjLow}、J<${EXTREME_LEVELS.jLow}、RSI<${EXTREME_LEVELS.rsiLow}`,
+            ],
+            reference: '超卖标签：KDJ 与 RSI 共六项中有数值处于超卖区，后缀即命中项数，数字越大越极端。超卖只是状态，不等于见底，需结合量能、趋势位置与支撑位判断。',
+          });
+        } else {
+          out.push({
+            key: 'extreme-over', kind: 'extreme', label: `超买${n}`,
+            cls: CHIP_CLS_RED, sel: CHIP_SEL_RED,
+            detail: [
+              `${date} 六项指标中 ${n} 项进入超买区`,
+              ...values,
+              `超买阈值：K>${EXTREME_LEVELS.kdjHigh}、D>${EXTREME_LEVELS.kdjHigh}、J>${EXTREME_LEVELS.jHigh}、RSI>${EXTREME_LEVELS.rsiHigh}`,
+            ],
+            reference: '超买标签：KDJ 与 RSI 共六项中有数值处于超买区，后缀即命中项数，数字越大越极端。超买只是状态，不等于见顶，强势趋势中可长时间钝化，需结合量能与位置判断。',
+          });
+        }
+      };
+      if (over > under) pushExtreme('over', over);
+      else if (under > over) pushExtreme('under', under);
+      else if (over > 0) { pushExtreme('over', over); pushExtreme('under', under); }
+    }
   }
 
   // 用户自定义动态信号标签（追加在最后）

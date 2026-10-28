@@ -5,7 +5,7 @@
 import React from 'react';
 import { GripHorizontal } from 'lucide-react';
 import type { IndicatorResult } from '../services/indicators';
-import { formatPrice, formatVolume, prevCloseFromChange, priceVsPrevCloseBrandCls } from '../services/indicators';
+import { formatPrice, formatVolume, prevCloseFromChange, priceVsPrevCloseBrandCls, EXTREME_LEVELS, extremeOf } from '../services/indicators';
 
 // 价格弹窗的「两组数据」渲染：
 //   第一组：开/现/低/高/额/幅/量/量比（8 项）
@@ -51,9 +51,13 @@ export function PriceIndicatorSection({ name, price, data }: { name: string; pri
       </div>
     </div>
   );
-  // 超买(数值偏高)用红色，超卖(数值偏低)用绿色
-  const rsiColor = (v: number | null) => v == null ? undefined : (v > 70 ? 'text-brand-red' : v < 30 ? 'text-brand-green' : undefined);
-  const kdjColor = (v: number | null, buyHigh: number, sellLow: number) => v == null ? undefined : (v > buyHigh ? 'text-brand-red' : v < sellLow ? 'text-brand-green' : undefined);
+  // 超买(数值偏高)用红色，超卖(数值偏低)用绿色；阈值与超买/超卖标签共用 EXTREME_LEVELS
+  const extremeCls = (v: number | null, high: number, low: number) => {
+    const side = extremeOf(v, high, low);
+    return side === 'over' ? 'text-brand-red' : side === 'under' ? 'text-brand-green' : undefined;
+  };
+  const rsiColor = (v: number | null) => extremeCls(v, EXTREME_LEVELS.rsiHigh, EXTREME_LEVELS.rsiLow);
+  const kdjColor = (v: number | null, high: number, low: number) => extremeCls(v, high, low);
   return (
     <>
       <div className="mb-1 space-y-1">

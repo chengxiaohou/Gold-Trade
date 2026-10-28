@@ -90,6 +90,32 @@ export function calcIndicators(klines: BollKline[]): IndicatorResult | null {
   return { open: last.open ?? null, high, low, changePct, volume, volumeMa5, kdj: { k: kv, d: dv, j: jv }, rsi: { rsi6: calcRsi(6), rsi12: calcRsi(12), rsi24: calcRsi(24) }, macd: { dif, dea, macd } };
 }
 
+// 超买/超卖阈值 —— 单一事实来源：价格浮窗着色、超买/超卖标签共用。
+// 高于 high = 超买（红），低于 low = 超卖（绿），恰好等于阈值不算。
+export const EXTREME_LEVELS = { kdjHigh: 80, jHigh: 100, rsiHigh: 70, kdjLow: 20, jLow: 0, rsiLow: 30 } as const;
+
+export type ExtremeSide = 'over' | 'under' | null;
+
+// 单个指标值的极值方向
+export function extremeOf(v: number | null | undefined, high: number, low: number): ExtremeSide {
+  if (v == null || !Number.isFinite(v)) return null;
+  return v > high ? 'over' : v < low ? 'under' : null;
+}
+
+// KDJ(K/D/J) + RSI(6/12/24) 共 6 项中，进入超买区 / 超卖区的项数
+export function countIndicatorExtremes(ind: IndicatorResult): { over: number; under: number } {
+  const { kdj, rsi } = ind;
+  const sides: ExtremeSide[] = [
+    extremeOf(kdj.k, EXTREME_LEVELS.kdjHigh, EXTREME_LEVELS.kdjLow),
+    extremeOf(kdj.d, EXTREME_LEVELS.kdjHigh, EXTREME_LEVELS.kdjLow),
+    extremeOf(kdj.j, EXTREME_LEVELS.jHigh, EXTREME_LEVELS.jLow),
+    extremeOf(rsi.rsi6, EXTREME_LEVELS.rsiHigh, EXTREME_LEVELS.rsiLow),
+    extremeOf(rsi.rsi12, EXTREME_LEVELS.rsiHigh, EXTREME_LEVELS.rsiLow),
+    extremeOf(rsi.rsi24, EXTREME_LEVELS.rsiHigh, EXTREME_LEVELS.rsiLow),
+  ];
+  return { over: sides.filter(s => s === 'over').length, under: sides.filter(s => s === 'under').length };
+}
+
 // 价格格式化：股票 2 位小数、ETF 3 位小数（复用同一规则保证两处一致）
 export function formatPrice(price: number | undefined | null, name?: string): string {
   if (price == null || !Number.isFinite(price)) return '-';
