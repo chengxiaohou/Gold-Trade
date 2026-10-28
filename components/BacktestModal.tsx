@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Plus, GripHorizontal, Play, Pin, Tag, Eye, EyeOff, Link } from 'lucide-react';
-import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, MouseEventParams, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams, UserTagRule } from '../types';
 import { priceBureau } from '../services/priceBureau';
@@ -415,6 +415,8 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       },
       rightPriceScale: { borderColor: 'rgba(148,163,184,0.2)' },
       crosshair: {
+        // Normal：十字光标完全跟随鼠标像素，不再吸附到 K 线的开/高/低/收
+        mode: CrosshairMode.Normal,
         vertLine: { color: 'rgba(148,163,184,0.4)', labelBackgroundColor: '#64748b' },
         horzLine: { color: 'rgba(148,163,184,0.4)', labelBackgroundColor: '#64748b' },
       },
@@ -564,9 +566,11 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       if (!cachedInd) return null;
       const rect = el.getBoundingClientRect();
       const popW = 210;
-      let left = rect.left + param.point.x + 12;
-      if (left + popW > window.innerWidth - 8) left = Math.max(8, rect.left + param.point.x - popW - 12);
+      // 浮窗位于光标正下方：水平以光标为中心，垂直在光标下方 12px
+      let left = rect.left + param.point.x - popW / 2;
+      left = Math.max(8, Math.min(left, window.innerWidth - 8 - popW));
       let top = rect.top + param.point.y + 12;
+      // 下方空间不足时翻到光标上方，避免超出视口
       if (top + 240 > window.innerHeight - 8) top = Math.max(8, rect.top + param.point.y - 240 - 12);
       return { name: stock.name, price: data[idx].close, changePercent: cachedChange, data: cachedInd, left, top, win: prefix, idx };
     };
