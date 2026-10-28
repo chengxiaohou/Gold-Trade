@@ -463,11 +463,11 @@ function pendingExpirySuffix(t: StockTrade, now: number): string {
   const ttl = t.ttlDays ?? PENDING_TTL_DAYS;
   const base = t.ttlUpdatedAt ?? t.createdAt;
   const idx = dayIndex(base, now);
-  if (idx >= ttl + 1) return '??'; // 已过期
-  if (idx === ttl) return '!!';     // 最后一个有效日
+  if (idx >= ttl + 1) return '?'; // 已过期
+  if (idx === ttl) return '!';     // 最后一个有效日
   return '';
 }
-// 生成挂单/成交的状态文字（挂单状态内嵌剩余天数或 !! / ?? 标记）
+// 生成挂单/成交的状态文字（挂单状态内嵌剩余天数或 ! / ? 标记）
 const tradeStatusLabel = (t: StockTrade): string => {
   const base = TRADE_STATUS_LABEL[`${t.side}-${t.status}`];
   if (t.status !== 'pending') return base;
@@ -1101,7 +1101,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
                     <span>截止 {deadlineStr}</span>
                     <span className="mx-1 text-app-border">·</span>
                     {suffix ? (
-                      <span className="text-orange-400 font-bold">{suffix === '!!' ? '最后一天' : '已过期'}</span>
+                      <span className="text-orange-400 font-bold">{suffix === '!' ? '最后一天' : '已过期'}</span>
                     ) : (
                       <span>剩 {remain} 天</span>
                     )}
@@ -6513,6 +6513,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const priceGapPct = priceGapValid ? ((orderPriceNum - marketPrice) / marketPrice) * 100 : 0;
         const orderDivRate = orderPriceNum > 0 && orderDividend > 0 ? (orderDividend / orderPriceNum) * 100 : 0;
         const costDivRate = costBasis > 0 && orderDividend > 0 ? (orderDividend / costBasis) * 100 : 0;
+        // 基于现价的股息率：与成本股息率比较决定红绿（成本更低 → 股息率更高 → 红色）
+        const priceDivRate = marketPrice > 0 && orderDividend > 0 ? (orderDividend / marketPrice) * 100 : 0;
         const divDiffValid = orderPriceNum > 0 && costDivRate > 0;
         // 差值 = 当前股息率 − 成本股息率（百分点），如 8.17% − 7.56% ≈ +0.61%
         const divDiffPct = divDiffValid ? (orderDivRate - costDivRate) : 0;
@@ -6571,29 +6573,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <div className="px-3 py-3 space-y-3 bg-app-card overflow-y-auto custom-scrollbar" style={{ maxHeight: tradeBodyMaxH ?? undefined }}>
               {/* 当前持仓概要 */}
               <div className="border border-app-border rounded-lg divide-y divide-app-border bg-app-input/50">
-                <div className="grid grid-cols-3 gap-2 px-2.5 pb-2 pt-1.5">
+                <div className="grid grid-cols-4 gap-2 px-2.5 pb-2 pt-1.5">
                     <div className="flex flex-col items-center gap-0.5">
                       <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">现价</span>
-                      <span className={`font-mono font-bold ${marketPrice > 0 && posShares > 0 ? priceColor(marketPrice, costBasis) : 'text-app-text'}`}>{marketPrice > 0 ? fmtP(marketPrice) : '-'}</span>
+                      <span className={`font-mono font-bold text-[11px] ${marketPrice > 0 && posShares > 0 ? priceColor(marketPrice, costBasis) : 'text-app-text'}`}>{marketPrice > 0 ? fmtP(marketPrice) : '-'}</span>
                     </div>
                     <div className="flex flex-col items-center gap-0.5">
                       <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">持仓均价</span>
-                      <span className={`font-mono font-bold ${posShares > 0 && costBasis > 0 ? priceColor(costBasis, marketPrice, true) : 'text-app-text'}`}>{posShares > 0 && costBasis > 0 ? fmtP(costBasis) : '-'}</span>
+                      <span className={`font-mono font-bold text-[11px] ${posShares > 0 && costBasis > 0 ? priceColor(costBasis, marketPrice, true) : 'text-app-text'}`}>{posShares > 0 && costBasis > 0 ? fmtP(costBasis) : '-'}</span>
                     </div>
                     <div className="flex flex-col items-center gap-0.5">
                       <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">回本价</span>
-                      <span className={`font-mono font-bold ${posShares > 0 && costBasis > 0 ? priceColor(breakEven, marketPrice, true) : 'text-app-text'}`}>{posShares > 0 && costBasis > 0 ? fmtP(breakEven) : '-'}</span>
+                      <span className={`font-mono font-bold text-[11px] ${posShares > 0 && costBasis > 0 ? priceColor(breakEven, marketPrice, true) : 'text-app-text'}`}>{posShares > 0 && costBasis > 0 ? fmtP(breakEven) : '-'}</span>
+                    </div>
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">股息率</span>
+                      {/* 与列表页持仓列同口径：按持仓成本的股息率（分红 / 持仓均价）；高于现价股息率显红，反之显绿 */}
+                      <span className={`font-mono font-bold text-[11px] ${posShares > 0 && costDivRate > 0 && priceDivRate > 0 && Math.abs(costDivRate - priceDivRate) >= 0.005 ? (costDivRate > priceDivRate ? 'text-brand-red' : 'text-brand-green') : 'text-app-text'}`}>{posShares > 0 && costDivRate > 0 ? `${costDivRate.toFixed(2)}%` : '-'}</span>
                     </div>
                   </div>
                 <div className="px-2.5 pt-1.5 pb-2 grid grid-cols-4 gap-1">
-                  <div className="flex flex-col items-center gap-0.5">
-                    <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">持仓</span>
-                    <span className="font-mono font-bold text-[11px]">{posShares}</span>
-                  </div>
-                  <div className="flex flex-col items-center gap-0.5">
-                    <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">总金额</span>
-                    <span className="font-mono font-bold text-[11px]">{marketPrice > 0 ? totalValue.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) : '-'}</span>
-                  </div>
                   <div className="flex flex-col items-center gap-0.5">
                     <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">浮动盈亏</span>
                     <span className={`font-mono font-bold text-[11px] ${posShares > 0 && marketPrice > 0 ? (floatingPnl >= 0 ? 'text-brand-red' : 'text-brand-green') : 'text-app-subtext'}`}>
@@ -6605,6 +6604,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     <span className={`font-mono font-bold text-[11px] ${realizedPnl !== 0 ? (realizedPnl >= 0 ? 'text-brand-red' : 'text-brand-green') : 'text-app-subtext'}`}>
                       {realizedPnl !== 0 ? fmtPnl(realizedPnl) : '-'}
                     </span>
+                  </div>
+                  <div className="flex flex-col items-center gap-0.5">
+                    <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">持仓</span>
+                    <span className="font-mono font-bold text-[11px] text-app-subtext">{posShares}</span>
+                  </div>
+                  <div className="flex flex-col items-center gap-0.5">
+                    <span className="text-[9px] uppercase font-bold text-app-subtext tracking-wider">总金额</span>
+                    <span className="font-mono font-bold text-[11px] text-app-subtext">{marketPrice > 0 ? totalValue.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) : '-'}</span>
                   </div>
                 </div>
               </div>
