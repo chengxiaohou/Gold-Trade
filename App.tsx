@@ -14,12 +14,12 @@ import type { StockLedgerMap } from './services/stockLedgerStore';
 import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { calcPositionFromTrades } from './services/realizedPnl';
-import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, buildStockCloudFingerprint, isStockCloudDirty, resolveMemoUpdatedAt, diffStockCloudSnapshots } from './services/stockSync';
+import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, buildStockCloudFingerprint, resolveMemoUpdatedAt, diffStockCloudSnapshots } from './services/stockSync';
 import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.127';
+const APP_VERSION = 'v2.18.128';
 
 // 收集前端未捕获错误到 localStorage，便于排查偶现白屏（如交易挂单买入崩溃）
 const ERRLOG_KEY = 'gold_trade_error_log';
@@ -558,8 +558,17 @@ export default function App() {
   const [stockCloudBaseline, setStockCloudBaseline] = useState<string | null>(
     () => localStorage.getItem('stock_cloud_baseline'),
   );
-  // 是否有改动需要上传（股息页上传按钮仅在为 true 时显示）
-  const stockCloudDirty = isStockCloudDirty(stockCloudBaseline, cloudFingerprint);
+  // 上传按钮与差异弹窗共用同一次差异计算，作为"是否需要上传"的唯一判定：
+  // 差异比对对 key 顺序、实体数组顺序、标量数组顺序都不敏感，而指纹字符串比对是敏感的。
+  // 云端下载回来的快照顺序常与本地重建结果不同，若两者各判各的，就会出现
+  // "按钮显示（字符串不等）但弹窗提示无差异（语义相同）"的矛盾。
+  const stockCloudDiffItems = useMemo<CloudDiffItem[] | null>(() => {
+    if (stockCloudBaseline === null) return null; // 首次上传：无基线，无可对比内容
+    if (stockCloudBaseline === cloudFingerprint) return []; // 快速路径：指纹完全一致
+    return diffStockCloudSnapshots(stockCloudBaseline, cloudFingerprint);
+  }, [stockCloudBaseline, cloudFingerprint]);
+  // 有未同步改动才显示上传按钮；基线缺失（首次上传）或损坏解析失败也视为有改动
+  const stockCloudDirty = stockCloudDiffItems === null || stockCloudDiffItems.length > 0;
 
   // 持久化基线：跨刷新保持"无改动则隐藏上传按钮"
   useEffect(() => {
@@ -1122,7 +1131,7 @@ export default function App() {
   // 股息页"上传到云端"：点击先算出与上次同步基线的具体差异，在确认浮窗里展示，确认后才真正上传
   const requestStockUpload = () => {
     if (isSyncing) return;
-    setCloudDiff(diffStockCloudSnapshots(stockCloudBaseline, cloudFingerprint));
+    setCloudDiff(stockCloudDiffItems);
     setCloudConfirm('upload');
   };
 
