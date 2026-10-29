@@ -1696,6 +1696,17 @@ const SupportResistanceRows: React.FC<{
   </div>
 );
 
+// 标签排序（单一实现）：与「标签」列排序完全一致——有标签的在前，标签内容按本地化字典序。
+// 批量拉取 BOLL 前会强制切到该排序并按它发请求：标签只依赖本地数据、不依赖待拉取的 K 线，
+// 因此能保证"请求顺序 = 列表从上到下顺序"，不会因 BOLL 数据陆续到达后重排而错位。
+const sortStocksByTag = (list: StockEntry[]): StockEntry[] =>
+  [...list].sort((a, b) => {
+    const aHasTag = a.tag && a.tag.trim() ? 0 : 1;
+    const bHasTag = b.tag && b.tag.trim() ? 0 : 1;
+    if (aHasTag !== bHasTag) return aHasTag - bHasTag;
+    return (a.tag || '').trim().localeCompare((b.tag || '').trim());
+  });
+
 export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, autoRefreshInterval = 60, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
   useEffect(() => {
@@ -3157,14 +3168,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         return positionAmountSortReverse ? pa - pb : pb - pa;
       });
     } else if (sortMode === 'tag') {
-      return [...displayStocks].sort((a, b) => {
-        const aHasTag = a.tag && a.tag.trim() ? 0 : 1;
-        const bHasTag = b.tag && b.tag.trim() ? 0 : 1;
-        if (aHasTag !== bHasTag) return aHasTag - bHasTag;
-        const aTag = (a.tag || '').trim();
-        const bTag = (b.tag || '').trim();
-        return aTag.localeCompare(bTag);
-      });
+      return sortStocksByTag(displayStocks);
     } else if (sortMode === 'daily' || sortMode === 'weekly' || sortMode === 'monthly') {
       // 轨道分组排序：升序=下→中→上，降序=上→中→下；同一轨道内按偏离度百分比
       // （负数代表向下偏离最远的“下中的下”），升序时负数靠前、正数靠后，降序时相反，
@@ -3430,12 +3434,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     }
 
     setIsRefreshingBoll(true);
+
+    // 批量拉取前统一切换到「标签」排序，并按该顺序发请求：
+    // 其它排序（尤其日/周/月线、股息率区间比例）依赖尚未拉取的 K 线，数据未到时会退化成原序，
+    // 等数据陆续返回后列表又要重排，导致请求顺序与"从上到下"对不上；
+    // 标签排序只依赖本地已有字段，切过去后排序立即稳定，请求顺序即用户看到的行顺序。
+    if (sortMode !== 'tag') onSortModeChange?.('tag');
+    const fetchOrder = sortStocksByTag(stocks);
+
     // 清空旧数据，显示加载状态
     priceBureau.clear();
 
     const madeRequest = await priceBureau.ensureBatch(stocks, apiSource, bollAdjust, {
       trigger,
-      order: sortedStocks,
+      order: fetchOrder,
       cancelCheck: () => fetchVersionRef.current !== currentVersion,
     });
 
@@ -3446,7 +3458,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     }
 
     setIsRefreshingBoll(false);
-  }, [stocks, bollAdjust, apiSource, sortedStocks, histDate]);
+  }, [stocks, bollAdjust, apiSource, sortMode, onSortModeChange, histDate]);
 
   // 防止 StrictMode 双重调用：标志在 effect 层设置，与 fetchAllBoll 内部守卫无关
   const didAutoRefreshBollRef = useRef(false);
