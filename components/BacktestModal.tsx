@@ -10,7 +10,7 @@ import { getMarketStatus } from '../services/cacheService';
 import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL } from '../services/backtestEngine';
 import { ENV_TAG_CATALOG, dividendRateForDay } from '../services/tagAnalyzers';
 import { calcIndicators, formatPrice, type IndicatorResult } from '../services/indicators';
-import { calcTradeStats } from '../services/realizedPnl';
+import { calcTradeStats, isEtf } from '../services/realizedPnl';
 import PriceInfoPopover from './PriceInfoPopover';
 import SignalTagsFooter from './SignalTagsFooter';
 import { TAG_COLOR_HEX, TAG_PALETTE } from './CloudSettingsModal';
@@ -395,6 +395,8 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       localization: {
         // 十字光标悬浮时的时间标签 → 年-月-日
         timeFormatter: (time: Time) => formatChartTime(time),
+        // Y 轴标尺 + 十字线价格标签的小数位：与列表页同一规则（ETF 3 位，其余 2 位）
+        priceFormatter: (price: number) => price.toFixed(isEtf(stock.name) ? 3 : 2),
       },
       grid: {
         vertLines: { color: 'rgba(148,163,184,0.15)' },
@@ -605,7 +607,19 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     };
   }, []);
 
-  // 加载真实日线K线数据
+  // 价格小数位同步列表页规则（ETF 3 位、其余 2 位）：K 线序列 precision 决定标尺刻度步长与十字线标签，
+  // chart 级 priceFormatter 兜住所有价格文本；stock 切换时一并刷新，避免沿用上一只股票的精度。
+  const pricePrecision = isEtf(stock.name) ? 3 : 2;
+  useEffect(() => {
+    const chart = chartInstance.current;
+    const series = seriesRef.current;
+    if (!chart || !series) return;
+    chart.applyOptions({ localization: { priceFormatter: (p: number) => p.toFixed(pricePrecision) } });
+    series.applyOptions({
+      priceFormat: { type: 'price', precision: pricePrecision, minMove: pricePrecision === 3 ? 0.001 : 0.01 },
+    });
+  }, [pricePrecision, stock.code]);
+
   // 统一走价格数据部：取数收敛进数据中心（同一周期同源），画图用"含未收盘"形态——
   // 数据中心把自持实时现价(开/高/低/量/现价)合成进今日K线，保证与列表/浮窗显示一致。
   useEffect(() => {
