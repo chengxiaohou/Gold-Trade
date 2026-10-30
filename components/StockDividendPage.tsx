@@ -2262,14 +2262,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     handleListSrClick(e, stock, false, pricePickTo);
   };
 
-  // 移开名称：非固定时关闭；触摸点按中跳过关闭，交由 click 固定
+  // 移开触发点（名称/图标）：非固定时延迟关闭 —— 悬停宽限 200ms，
+  // 期间把鼠标移进浮窗即取消关闭，从而能跨过空隙去点浮窗里的价格行/复制按钮。
   const handleListSrHoverLeave = () => {
-    if (!listSrTooltipPinned) {
-      if (listSrTouchGuardRef.current) return;
-      listSrHoveredRef.current = false;
+    if (listSrTooltipPinned) return;
+    if (listSrTouchGuardRef.current) return;
+    listSrHoveredRef.current = false; // 立刻标记移出，避免异步构建结果晚到又把浮窗打出来
+    cancelListSrHoverClose();
+    listSrCloseTimerRef.current = window.setTimeout(() => {
+      listSrCloseTimerRef.current = undefined;
+      if (listSrTooltipPinned) return;
       listSrActiveIdRef.current = undefined;
       setListSrPreviewText(null);
       setListSrPreviewRows(null);
+    }, 200);
+  };
+  // 鼠标进入浮窗：取消待关闭（浮窗内可点选价格、复制数据）
+  const cancelListSrHoverClose = () => {
+    if (listSrCloseTimerRef.current !== undefined) {
+      clearTimeout(listSrCloseTimerRef.current);
+      listSrCloseTimerRef.current = undefined;
     }
   };
 
@@ -2326,6 +2338,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const listSrTooltipMeasuredSize = useRef({ w: 0, h: 0 });
   const listSrTouchGuardRef = useRef(false); // 触摸点按中保护：避免合成mouseleave在点击固定前关闭浮窗
   const listSrTouchTimerRef = useRef<number | undefined>(undefined);
+  const listSrCloseTimerRef = useRef<number | undefined>(undefined); // 悬停宽限关闭定时器（移出后延迟关，留时间移进浮窗）
   const [listSrTooltipHidden, setListSrTooltipHidden] = useState(false);
   const listCopyHoveredRef = useRef(false);
   const [listCopyPreviewText, setListCopyPreviewText] = useState<string | null>(null);
@@ -7112,6 +7125,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {listSrPreviewText && listSrStock && (
         <div
           ref={listSrTooltipRef}
+          onMouseEnter={() => {
+            // 移进浮窗即取消待关闭，并保持"仍在悬停"状态（异步构建/重渲染不会把浮窗收掉）
+            cancelListSrHoverClose();
+            listSrHoveredRef.current = true;
+          }}
+          onMouseLeave={() => handleListSrHoverLeave()}
           className={`fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg overflow-hidden text-[11px] shadow-[0_8px_30px_rgba(0,0,0,0.55)] text-left flex flex-col ${listSrTooltipHidden ? ' invisible' : ''}`}
           style={{ top: listSrTooltipAbove, left: listSrTooltipOffset, tabSize: 8, maxHeight: 'calc(100vh - 20px)' }}
         >
