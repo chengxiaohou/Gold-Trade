@@ -20,7 +20,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.148';
+const APP_VERSION = 'v2.18.149';
 
 // 上传文件大小的展示格式（UTF-8 字节数 → B/KB/MB）
 function formatByteSize(bytes: number): string {
@@ -2079,13 +2079,6 @@ export default function App() {
             </button>
           )}
           <button 
-              onClick={() => openSettings('general')}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-400 hover:border-indigo-500 transition-colors w-7 h-7"
-              title="设置"
-            >
-              <Settings size={16} />
-          </button>
-          <button 
               onClick={() => setIsAddingStock(true)}
               className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-400 hover:border-indigo-500 transition-colors w-7 h-7"
               title="添加股票"
@@ -2143,6 +2136,13 @@ export default function App() {
               title={showRequestStats ? '隐藏请求统计' : '显示请求统计'}
             >
               <BarChart3 size={16} />
+          </button>
+          <button 
+              onClick={() => openSettings('general')}
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-400 hover:border-indigo-500 transition-colors w-7 h-7"
+              title="设置"
+            >
+              <Settings size={16} />
           </button>
       </div>
     </div>
