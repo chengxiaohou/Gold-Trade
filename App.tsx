@@ -20,7 +20,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.149';
+const APP_VERSION = 'v2.18.150';
 
 // 上传文件大小的展示格式（UTF-8 字节数 → B/KB/MB）
 function formatByteSize(bytes: number): string {
@@ -1438,6 +1438,30 @@ export default function App() {
       setIsDownloading(false);
     }
   };
+
+  // 云端上传/下载确认浮窗支持键盘操作：Enter 执行「确定」，ESC 执行「取消」
+  useEffect(() => {
+    if (!cloudConfirm) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing) return; // 中文输入法组合输入中不拦截
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeCloudConfirm();
+      } else if (e.key === 'Enter') {
+        if (isSyncing || isDownloading) return; // 同步进行中不重复触发
+        e.preventDefault();
+        const action = cloudConfirm === 'upload'
+          ? (currentPage === 'gold' ? handleCloudUpload : handleStockCloudUpload)
+          : handleCloudDownload;
+        action();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [cloudConfirm, currentPage, isSyncing, isDownloading]);
 
   // --- Data Persistence Handlers ---
 
