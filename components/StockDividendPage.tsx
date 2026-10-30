@@ -24,6 +24,7 @@ import { useStepWheel } from '../hooks/useStepWheel';
 import { BacktestModal } from './BacktestModal';
 import PriceInfoPopover, { PriceIndicatorSection, PopoverTitleBar, usePopoverDrag } from './PriceInfoPopover';
 import SignalTagsFooter from './SignalTagsFooter';
+import { PRIMARY_BTN_CLS } from './uiStyles';
 import { getDayTagSet, type DayTag } from '../services/signalTagDetail';
 import { calcIndicators, formatPrice, formatVolume, prevCloseFromChange, changePctVsPrevClose, priceVsPrevCloseCls, priceVsPrevCloseBrandCls, type IndicatorResult } from '../services/indicators';
 
@@ -53,6 +54,80 @@ const EMPTY_STYLE = {
 
 const getTagStyle = (colorKey?: string) => {
   return TAG_PALETTE.find(p => p.key === colorKey) || TAG_PALETTE[0];
+};
+
+// 标签编辑控件（输入框 + 预览 + 配色 + 已有标签）：标签编辑气泡与添加股票确认弹窗共用。
+// 在输入框直接输入新标签即可新增；输入后可点下方色块给该标签配色。
+interface TagEditFieldsProps {
+  value: string;
+  onChange: (value: string) => void;
+  availableTags: string[];
+  tagColors: Record<string, string>;
+  onTagColorChange: (tag: string, colorKey: string) => void;
+  compact?: boolean;
+}
+
+const TagEditFields: React.FC<TagEditFieldsProps> = ({
+  value, onChange, availableTags, tagColors = {}, onTagColorChange, compact = false,
+}) => {
+  const colorKey = value ? (tagColors?.[value] || 'gray') : 'gray';
+  const style = value ? getTagStyle(colorKey) : EMPTY_STYLE;
+  return (
+    <div className={compact ? 'space-y-1.5' : 'space-y-2'}>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={compact ? '输入新标签即可新增，如: 高股息' : '如: 高股息, 长线...'}
+        className={compact
+          ? 'w-full bg-app-input border border-app-border rounded-lg px-3 h-8 text-xs text-app-text placeholder-app-subtext/50 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 transition-all'
+          : 'w-full bg-app-input border border-app-border rounded-lg pl-3 pr-3 h-11 text-sm text-app-text placeholder-app-subtext/50 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 transition-all'}
+      />
+
+      <div className="pt-1 animate-in fade-in slide-in-from-top-1">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="text-[10px] text-app-subtext">预览:</div>
+          <span className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[22px] border ${style.bg} ${style.text} ${style.border}`}>
+            {value || '-'}
+          </span>
+        </div>
+
+        <div className={`grid grid-cols-8 ${compact ? 'gap-1.5' : 'gap-2'}`}>
+          {TAG_PALETTE.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              onClick={() => { if (value.trim()) onTagColorChange(value.trim(), p.key); }}
+              className={`${compact ? 'w-5 h-5' : 'w-6 h-6'} rounded-full border transition-all flex items-center justify-center ${p.bg} ${p.border} ${
+                colorKey === p.key ? 'opacity-100 scale-100' : 'hover:scale-105 opacity-60 hover:opacity-100'
+              }`}
+              title={p.label}
+            >
+              {colorKey === p.key && <div className={`w-2 h-2 rounded-full ${p.text} bg-current shadow-sm`} />}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {availableTags.length > 0 && (
+        <div className={`flex flex-wrap ${compact ? 'gap-1.5' : 'gap-2'} pt-2 border-t border-app-border`}>
+          {availableTags.filter(t => t !== value).map(tag => {
+            const tagStyle = getTagStyle(tagColors?.[tag]);
+            return (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => onChange(tag)}
+                className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[22px] border transition-all ${tagStyle.bg} ${tagStyle.border} ${tagStyle.text} hover:opacity-80`}
+              >
+                {tag}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 };
 
 // 盈利统计：快捷周期选择项
@@ -86,7 +161,6 @@ const EditTagBubble: React.FC<EditTagBubbleProps> = ({
 
   const [tagStr, setTagStr] = useState(stock.tag || '');
   
-  const currentTagColorKey = tagColors?.[tagStr] || 'gray';
   const [position, setPosition] = useState(initialPosition);
   
   const bubbleRef = useRef<HTMLDivElement>(null);
@@ -136,14 +210,6 @@ const EditTagBubble: React.FC<EditTagBubbleProps> = ({
     onUpdate(stock.id, { tag: val });
   };
 
-  const handleColorSelect = (key: string) => {
-     if (tagStr.trim()) {
-        onTagColorChange(tagStr.trim(), key);
-     }
-  };
-
-  const currentStyle = tagStr ? getTagStyle(currentTagColorKey) : EMPTY_STYLE;
-
   return createPortal(
     <>
       <div className="fixed inset-0 z-[9998]" onClick={onClose} />
@@ -180,58 +246,13 @@ const EditTagBubble: React.FC<EditTagBubbleProps> = ({
         <div className="p-5 space-y-5 bg-app-card max-h-[80vh] overflow-y-auto custom-scrollbar">
           <div className="space-y-2">
              <label className="text-xs text-app-subtext font-medium">标签 (Tag)</label>
-             <div className="relative">
-                <input
-                  type="text"
-                  value={tagStr}
-                  onChange={(e) => handleTagChange(e.target.value)}
-                  placeholder="如: 高股息, 长线..."
-                  className="w-full bg-app-input border border-white/5 rounded-lg pl-3 pr-3 h-11 text-sm text-gray-400 placeholder-app-subtext/50 focus:border-brand-yellow focus:outline-none focus:ring-1 focus:ring-brand-yellow/50 transition-all"
-                />
-             </div>
-             
-             <div className="pt-2 animate-in fade-in slide-in-from-top-1">
-                 <div className="flex items-center gap-2 mb-2">
-                   <div className="text-[10px] text-app-subtext">预览:</div>
-                   <span className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[22px] border ${currentStyle.bg} ${currentStyle.text} ${currentStyle.border}`}>
-                     {tagStr || '-'}
-                   </span>
-                 </div>
-                 
-                 <div className="grid grid-cols-8 gap-2">
-                   {TAG_PALETTE.map((p) => (
-                     <button
-                       key={p.key}
-                       onClick={() => handleColorSelect(p.key)}
-                       className={`w-6 h-6 rounded-full border transition-all flex items-center justify-center ${p.bg} ${p.border} ${
-                         currentTagColorKey === p.key ? 'opacity-100 scale-100' : 'hover:scale-105 opacity-60 hover:opacity-100'
-                       }`}
-                       title={p.label}
-                     >
-                       {currentTagColorKey === p.key && <div className={`w-2 h-2 rounded-full ${p.text} bg-current shadow-sm`} />}
-                     </button>
-                   ))}
-                 </div>
-             </div>
-
-             {availableTags.length > 0 && (
-                <div className="flex flex-wrap gap-2 pt-2 border-t border-white/5 mt-2">
-                   {availableTags.filter(t => t !== tagStr).map(tag => {
-                      const savedColorKey = tagColors?.[tag];
-                      const style = getTagStyle(savedColorKey);
-                      return (
-                        <button
-                          key={tag}
-                          type="button"
-                          onClick={() => handleTagChange(tag)}
-                          className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[22px] border transition-all ${style.bg} ${style.border} ${style.text} hover:opacity-80`}
-                        >
-                          {tag}
-                        </button>
-                      );
-                   })}
-                </div>
-             )}
+             <TagEditFields
+               value={tagStr}
+               onChange={handleTagChange}
+               availableTags={availableTags}
+               tagColors={tagColors}
+               onTagColorChange={onTagColorChange}
+             />
           </div>
         </div>
       </div>
@@ -298,6 +319,24 @@ interface DividendDiffEntry {
   error?: string;
   records: DividendRecord[];
   registerDate?: string; // 最新股权登记日
+}
+
+// 添加股票：拉取结果的暂存（确认阶段可编辑名称、链接、标签）
+interface PendingAddStock {
+  code: string;
+  name: string;
+  link: string;
+  tag: string;
+  price: number;
+  changePercent: number;
+  high: number;
+  low: number;
+  open: number;
+  volume: number;
+  dividend2024: number;
+  dividend2025: number;
+  dividendByYear: Record<number, number>;
+  registerDate?: string;
 }
 
 const DEFAULT_DIVIDEND_RATES: StockDividendRates = {
@@ -1776,7 +1815,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const ratesDrag = usePopoverDrag(ratesPopupRef, setRatesPopupTop, setRatesPopupLeft);
   const [newStock, setNewStock] = useState({
     code: '',
-    name: '',
   });
   const [isRefreshing, setIsRefreshing] = useState<Set<string>>(new Set());
   const [refreshFailed, setRefreshFailed] = useState<Set<string>>(new Set());
@@ -1939,6 +1977,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 添加股票的进度提示与错误状态
   const [addStep, setAddStep] = useState<string | null>(null);
   const [addError, setAddError] = useState<string | null>(null);
+  // 添加股票第二步：拉取结束后的确认信息（为 null 时展示代码/名称输入阶段）
+  const [pendingAdd, setPendingAdd] = useState<PendingAddStock | null>(null);
 
   // 备忘录是否有未同步的改动（与最近一次上传/下载的文字不同）
   const memoDirty = (memo || '') !== (memoBaseline || '');
@@ -4603,16 +4643,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     } : s));
   }, [stocks, onStocksChange, pushLedger]);
 
-  const handleAddStock = useCallback(async () => {
-    if (!newStock.code.trim()) return;
-
-    const stockCode = getFullCode(newStock.code);
-    const existing = stocks.find(s => s.code.toLowerCase() === stockCode.toLowerCase());
-    if (existing) {
-      alert('该股票已存在');
-      return;
-    }
-
+  // 拉取待添加股票的行情与分红（首次添加与「重新拉取」共用同一份逻辑，仅拉取不写入列表）
+  const fetchStockPreview = useCallback(async (stockCode: string): Promise<PendingAddStock> => {
     setAddError(null);
     setAddStep('正在获取股价…');
     setIsRefreshing(new Set(['new']));
@@ -4649,12 +4681,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         setAddError(e instanceof Error ? `查询分红失败：${e.message}` : '查询分红失败：未知错误');
       }
 
-      // 步骤3：写入列表
-      setAddStep('正在写入列表…');
-      const newEntry: StockEntry = {
-        id: Date.now().toString(),
+      return {
         code: stockCode,
-        name: newStock.name || result?.name || stockCode,
+        name: result?.name || '',
+        link: '',
+        tag: '',
         price: result?.price || 0,
         changePercent: result?.changePercent || 0,
         high: result?.high || 0,
@@ -4664,27 +4695,125 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         dividend2024,
         dividend2025,
         dividendByYear,
-        dividendRate2025: 0,
-        positionShares: 0,
-        positionCost: 0,
-        priceUpdatedAt: result ? Date.now() : null,
-        dividendRates: calculateDividendRates(dividend2025),
         registerDate,
       };
-
-      onStocksChange([...stocks, newEntry]);
-      setNewStock({ code: '', name: '' });
+    } finally {
       setAddStep(null);
-      setAddError(null);
-      onCloseAdding();
+      setIsRefreshing(new Set());
+    }
+  }, []);
+
+  // 第一步：只拉取信息，完成后进入确认窗口（不直接写入列表）
+  const handleAddStock = useCallback(async () => {
+    if (!newStock.code.trim()) return;
+
+    const stockCode = getFullCode(newStock.code);
+    const existing = stocks.find(s => s.code.toLowerCase() === stockCode.toLowerCase());
+    if (existing) {
+      alert('该股票已存在');
+      return;
+    }
+
+    try {
+      const preview = await fetchStockPreview(stockCode);
+      setPendingAdd(preview);
     } catch (e) {
       // 网络请求等异常：给出状态与错误信息便于排查，弹窗保持打开
       setAddStep(null);
       setAddError(e instanceof Error ? `添加失败：${e.message}` : '添加失败：未知错误');
-    } finally {
-      setIsRefreshing(new Set());
     }
-  }, [newStock, stocks, onStocksChange]);
+  }, [newStock, stocks, fetchStockPreview]);
+
+  // 确认窗口：重新拉取（沿用原代码，保留用户已填的名称/链接/标签）
+  const handleRefetchPending = useCallback(async () => {
+    if (!pendingAdd || addStep !== null) return;
+    try {
+      const preview = await fetchStockPreview(pendingAdd.code);
+      setPendingAdd(prev => prev ? {
+        ...preview,
+        name: prev.name.trim() ? prev.name : preview.name,
+        link: prev.link,
+        tag: prev.tag,
+      } : prev);
+    } catch (e) {
+      setAddStep(null);
+      setAddError(e instanceof Error ? `重新拉取失败：${e.message}` : '重新拉取失败：未知错误');
+    }
+  }, [pendingAdd, addStep, fetchStockPreview]);
+
+  // 第二步：确认后写入列表
+  const handleConfirmAdd = useCallback(() => {
+    if (!pendingAdd) return;
+    const stockCode = pendingAdd.code;
+    if (stocks.some(s => s.code.toLowerCase() === stockCode.toLowerCase())) {
+      setAddError('该股票已存在');
+      return;
+    }
+
+    const newEntry: StockEntry = {
+      id: Date.now().toString(),
+      code: stockCode,
+      name: pendingAdd.name.trim() || stockCode,
+      price: pendingAdd.price,
+      changePercent: pendingAdd.changePercent,
+      high: pendingAdd.high,
+      low: pendingAdd.low,
+      open: pendingAdd.open,
+      volume: pendingAdd.volume,
+      dividend2024: pendingAdd.dividend2024,
+      dividend2025: pendingAdd.dividend2025,
+      dividendByYear: pendingAdd.dividendByYear,
+      dividendRate2025: 0,
+      positionShares: 0,
+      positionCost: 0,
+      priceUpdatedAt: pendingAdd.price > 0 ? Date.now() : null,
+      dividendRates: calculateDividendRates(pendingAdd.dividend2025),
+      registerDate: pendingAdd.registerDate,
+      link: pendingAdd.link.trim() || undefined,
+      tag: pendingAdd.tag.trim() || undefined,
+    };
+
+    onStocksChange([...stocks, newEntry]);
+    setPendingAdd(null);
+    setNewStock({ code: '' });
+    setAddStep(null);
+    setAddError(null);
+    onCloseAdding();
+  }, [pendingAdd, stocks, onStocksChange, onCloseAdding]);
+
+  // 关闭添加弹窗：两个阶段共用，重置所有暂存状态
+  const closeAddModal = useCallback(() => {
+    if (addStep !== null) return; // 拉取中不允许关闭，避免拉取结果回填到已关闭的弹窗
+    setPendingAdd(null);
+    setNewStock({ code: '' });
+    setAddStep(null);
+    setAddError(null);
+    onCloseAdding();
+  }, [addStep, onCloseAdding]);
+
+  // 添加股票弹窗快捷键：Enter 确认当前阶段，ESC 取消
+  useEffect(() => {
+    if (!isAdding) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        closeAddModal();
+        return;
+      }
+      if (e.key !== 'Enter' || e.isComposing) return;
+      // 按钮/文本域上的 Enter 交给浏览器默认行为，避免重复触发
+      const tagName = (e.target as HTMLElement | null)?.tagName;
+      if (tagName === 'BUTTON' || tagName === 'TEXTAREA') return;
+      if (addStep !== null) return; // 拉取中忽略，防止重复请求
+      e.preventDefault();
+      if (pendingAdd) {
+        handleConfirmAdd();
+      } else if (newStock.code.trim()) {
+        handleAddStock();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isAdding, addStep, pendingAdd, newStock.code, closeAddModal, handleConfirmAdd, handleAddStock]);
 
   const handleDeleteStock = useCallback((id: string) => {
     onStocksChange(stocks.filter(s => s.id !== id));
@@ -5581,72 +5710,222 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         <>
           <div 
             className="fixed inset-0 z-40"
-            onClick={() => {
-              onCloseAdding();
-              setNewStock({ code: '', name: '' });
-            }}
+            onClick={closeAddModal}
           />
-          <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-app-card border border-app-border rounded-xl p-4 w-[320px] shadow-2xl">
-            <div className="text-sm font-bold text-app-text mb-3">添加股票</div>
-            <div className="space-y-2">
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">股票代码</label>
-                <input
-                  type="text"
-                  value={newStock.code}
-                  onChange={(e) => setNewStock(prev => ({ ...prev, code: e.target.value }))}
-                  placeholder="如 600519（自动识别市场）"
-                  className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text font-mono text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all"
-                  autoFocus
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">股票名称</label>
-                <input
-                  type="text"
-                  value={newStock.name}
-                  onChange={(e) => setNewStock(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder="可选"
-                  className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text font-mono text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all"
-                />
-              </div>
-            </div>
-            <div className="flex gap-2 mt-4">
-              <button
-                onClick={() => {
-                  onCloseAdding();
-                  setNewStock({ code: '', name: '' });
-                  setAddStep(null);
-                  setAddError(null);
-                }}
-                className="flex-1 py-2 rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transform active:scale-[0.98] border border-app-border text-app-subtext hover:bg-app-input hover:text-app-text"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleAddStock}
-                disabled={!newStock.code.trim() || isRefreshing.has('new') || addStep !== null}
-                className="flex-1 py-2 rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 bg-brand-yellow text-slate-900 hover:bg-[#fdd835]"
-              >
-                {addStep !== null ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
-                {addStep !== null ? '添加中…' : '添加'}
-              </button>
-            </div>
-            {/* 添加进度与错误提示 */}
-            {(addStep !== null || addError) && (
-              <div className="mt-3 space-y-1.5">
-                {addStep !== null && (
-                  <div className="flex items-center gap-2 text-[11px] text-app-text bg-app-input border border-app-border rounded-lg px-2.5 py-1.5">
-                    <RefreshCw size={11} className="animate-spin text-app-subtext shrink-0" />
-                    <span>{addStep}</span>
+          <div className={`fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-app-card border border-app-border rounded-xl p-4 shadow-2xl max-w-[calc(100vw-24px)] ${pendingAdd ? 'w-[360px]' : 'w-[320px]'}`}>
+            {pendingAdd ? (
+              <>
+                <div className="flex items-baseline justify-between mb-3">
+                  <div className="text-sm font-bold text-app-text">确认添加股票</div>
+                  <span className="font-mono text-[10px] text-app-subtext">{pendingAdd.code}</span>
+                </div>
+
+                {/* 拉取结果：行情 + 分红 */}
+                <div className="bg-app-input border border-app-border rounded-lg p-3 space-y-2.5">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <div className="text-[9px] text-app-subtext tracking-wider">现价</div>
+                      <div className="font-mono text-sm font-bold text-app-rowtext">
+                        {pendingAdd.price > 0 ? formatPrice(pendingAdd.price, pendingAdd.name) : '-'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] text-app-subtext tracking-wider">涨跌幅</div>
+                      <div className="font-mono text-sm font-bold text-app-rowtext">
+                        {pendingAdd.changePercent >= 0 ? '+' : ''}{formatPercent(pendingAdd.changePercent)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] text-app-subtext tracking-wider">最高 / 最低</div>
+                      <div className="font-mono text-[11px] leading-5 text-app-rowtext">
+                        {formatPrice(pendingAdd.high, pendingAdd.name)} / {formatPrice(pendingAdd.low, pendingAdd.name)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-app-border pt-2">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className="text-[9px] text-app-subtext tracking-wider">分红（每股）</span>
+                      {pendingAdd.registerDate && (
+                        <span className="text-[9px] text-app-subtext">
+                          最近股权登记日 <span className="font-mono text-app-rowtext">{pendingAdd.registerDate}</span>
+                        </span>
+                      )}
+                    </div>
+                    {(() => {
+                      const years = Object.keys(pendingAdd.dividendByYear || {})
+                        .map(y => Number(y))
+                        .filter(y => Number.isFinite(y))
+                        .sort((a, b) => b - a);
+                      const rightDiv = pendingAdd.dividendByYear?.[dividendYearRight] ?? pendingAdd.dividend2025 ?? 0;
+                      const rate = pendingAdd.price > 0 && rightDiv > 0 ? (rightDiv / pendingAdd.price) * 100 : null;
+                      return (
+                        <>
+                          {years.length > 0 ? (
+                            <div className="grid grid-cols-3 gap-1.5">
+                              {years.map(y => (
+                                <span
+                                  key={y}
+                                  className={`inline-flex items-center justify-center gap-1 w-full px-1.5 h-[22px] rounded border text-[10px] font-mono ${
+                                    y === dividendYearRight
+                                      ? 'border-indigo-500/40 bg-indigo-500/10 text-indigo-400'
+                                      : 'border-app-border bg-app-card text-app-rowtext'
+                                  }`}
+                                >
+                                  <span className="text-app-subtext">{y}</span>
+                                  <span>¥{formatPrice(pendingAdd.dividendByYear[y], pendingAdd.name)}</span>
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-[11px] leading-snug text-app-subtext">
+                              未查到分红数据，可重新拉取，或稍后用「自动获取分红」补全
+                            </div>
+                          )}
+                          <div className="mt-1.5 text-[10px] text-app-subtext">
+                            {dividendYearRight} 年股息率：
+                            <span className="font-mono text-indigo-400">{rate !== null ? `${rate.toFixed(2)}%` : '-'}</span>
+                            {rate !== null && (
+                              <span className="ml-1">
+                                （¥{formatPrice(rightDiv, pendingAdd.name)} / ¥{formatPrice(pendingAdd.price, pendingAdd.name)}）
+                              </span>
+                            )}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* 可编辑：名称 / 链接 / 标签 */}
+                <div className="space-y-2 mt-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">股票名称</label>
+                    <input
+                      type="text"
+                      value={pendingAdd.name}
+                      onChange={(e) => setPendingAdd(prev => prev ? { ...prev, name: e.target.value } : prev)}
+                      placeholder="股票名称"
+                      className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text font-mono text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">股票链接</label>
+                    <input
+                      type="text"
+                      value={pendingAdd.link}
+                      onChange={(e) => setPendingAdd(prev => prev ? { ...prev, link: e.target.value } : prev)}
+                      placeholder="可选，如公告链接"
+                      className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text font-mono text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">标签</label>
+                    <TagEditFields
+                      compact
+                      value={pendingAdd.tag}
+                      onChange={(tag) => setPendingAdd(prev => prev ? { ...prev, tag } : prev)}
+                      availableTags={availableTags}
+                      tagColors={tagColors}
+                      onTagColorChange={handleTagColorChange}
+                    />
+                  </div>
+                </div>
+
+                {/* 拉取进度与错误提示 */}
+                {(addStep !== null || addError) && (
+                  <div className="mt-3 space-y-1.5">
+                    {addStep !== null && (
+                      <div className="flex items-center gap-2 text-[11px] text-app-text bg-app-input border border-app-border rounded-lg px-2.5 py-1.5">
+                        <RefreshCw size={11} className="animate-spin text-app-subtext shrink-0" />
+                        <span>{addStep}</span>
+                      </div>
+                    )}
+                    {addError && (
+                      <div className="text-[11px] leading-snug text-brand-red bg-app-input border border-brand-red/30 rounded-lg px-2.5 py-1.5 break-all">
+                        <span className="font-bold mr-1">错误</span>{addError}
+                      </div>
+                    )}
                   </div>
                 )}
-                {addError && (
-                  <div className="text-[11px] leading-snug text-brand-red bg-app-input border border-brand-red/30 rounded-lg px-2.5 py-1.5 break-all">
-                    <span className="font-bold mr-1">错误</span>{addError}
+
+                <div className="flex gap-2 mt-4">
+                  <button
+                    onClick={closeAddModal}
+                    disabled={addStep !== null}
+                    className="px-3 py-2 rounded-lg font-semibold text-sm flex items-center justify-center transform active:scale-[0.98] disabled:opacity-50 border border-app-border text-app-subtext hover:bg-app-input hover:text-app-text"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleRefetchPending}
+                    disabled={addStep !== null}
+                    title="重新拉取股价与分红"
+                    className="flex-1 py-2 rounded-lg font-semibold text-sm flex items-center justify-center gap-1.5 transform active:scale-[0.98] disabled:opacity-50 border border-app-border text-app-subtext hover:bg-app-input hover:text-app-text"
+                  >
+                    <RefreshCw size={14} className={addStep !== null ? 'animate-spin' : ''} />
+                    重新拉取
+                  </button>
+                  <button
+                    onClick={handleConfirmAdd}
+                    disabled={addStep !== null}
+                    className={`flex-1 py-2 rounded-lg font-semibold text-sm flex items-center justify-center gap-1.5 transform active:scale-[0.98] disabled:opacity-50 ${PRIMARY_BTN_CLS}`}
+                  >
+                    <Check size={14} />
+                    确认添加
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-sm font-bold text-app-text mb-3">添加股票</div>
+                <div className="space-y-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">股票代码</label>
+                    <input
+                      type="text"
+                      value={newStock.code}
+                      onChange={(e) => setNewStock(prev => ({ ...prev, code: e.target.value }))}
+                      placeholder="如 600519（自动识别市场）"
+                      className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text font-mono text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-4">
+                  <button
+                    onClick={closeAddModal}
+                    disabled={addStep !== null}
+                    className="flex-1 py-2 rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 border border-app-border text-app-subtext hover:bg-app-input hover:text-app-text"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleAddStock}
+                    disabled={!newStock.code.trim() || isRefreshing.has('new') || addStep !== null}
+                    className={`flex-1 py-2 rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-50 ${PRIMARY_BTN_CLS}`}
+                  >
+                    {addStep !== null ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+                    {addStep !== null ? '添加中…' : '添加'}
+                  </button>
+                </div>
+                {/* 添加进度与错误提示 */}
+                {(addStep !== null || addError) && (
+                  <div className="mt-3 space-y-1.5">
+                    {addStep !== null && (
+                      <div className="flex items-center gap-2 text-[11px] text-app-text bg-app-input border border-app-border rounded-lg px-2.5 py-1.5">
+                        <RefreshCw size={11} className="animate-spin text-app-subtext shrink-0" />
+                        <span>{addStep}</span>
+                      </div>
+                    )}
+                    {addError && (
+                      <div className="text-[11px] leading-snug text-brand-red bg-app-input border border-brand-red/30 rounded-lg px-2.5 py-1.5 break-all">
+                        <span className="font-bold mr-1">错误</span>{addError}
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
+              </>
             )}
           </div>
         </>,

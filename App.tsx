@@ -7,6 +7,7 @@ import { TradeList } from './components/TradeList';
 import { TradingPlanPanel } from './components/TradingPlanPanel';
 import { CloudSettingsModal } from './components/CloudSettingsModal';
 import { StockDividendPage } from './components/StockDividendPage';
+import { PRIMARY_BTN_CLS } from './components/uiStyles';
 import { analyzeTrade } from './services/geminiService';
 import { saveToGist, loadFromGist } from './services/githubService';
 import { getLedgerFromStore, saveLedgerToStore } from './services/stockLedgerStore';
@@ -19,7 +20,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.140';
+const APP_VERSION = 'v2.18.148';
 
 // 上传文件大小的展示格式（UTF-8 字节数 → B/KB/MB）
 function formatByteSize(bytes: number): string {
@@ -2182,7 +2183,7 @@ export default function App() {
               </div>
               <div className="flex gap-2 pt-2">
                 <button type="button" onClick={() => setShowExportModal(false)} className="flex-1 py-2.5 rounded-lg border border-app-border text-app-subtext hover:bg-app-input hover:text-app-text font-medium text-sm">取消</button>
-                <button type="submit" disabled={!exportFileName.trim()} className="flex-1 py-2.5 rounded-lg bg-brand-yellow text-slate-900 hover:bg-[#fdd835] font-bold text-sm disabled:opacity-50">确认导出</button>
+                <button type="submit" disabled={!exportFileName.trim()} className={`flex-1 py-2.5 rounded-lg ${PRIMARY_BTN_CLS} font-bold text-sm disabled:opacity-50`}>确认导出</button>
               </div>
             </form>
           </div>
