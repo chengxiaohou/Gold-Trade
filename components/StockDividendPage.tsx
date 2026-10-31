@@ -2807,27 +2807,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     handleListSrClick(e, stock, false, pricePickTo);
   };
 
-  // 移开触发点（名称/图标）：非固定时延迟关闭 —— 悬停宽限 200ms，
-  // 期间把鼠标移进浮窗即取消关闭，从而能跨过空隙去点浮窗里的价格行/复制按钮。
+  // 移开触发点（名称/图标）：非固定时立即关闭，不做延时宽限。
+  // 移动端"点按闪现"由触摸保护(listSrTouchGuardRef)处理；需要操作浮窗内容请点击固定。
   const handleListSrHoverLeave = () => {
     if (listSrTooltipPinned) return;
     if (listSrTouchGuardRef.current) return;
     listSrHoveredRef.current = false; // 立刻标记移出，避免异步构建结果晚到又把浮窗打出来
-    cancelListSrHoverClose();
-    listSrCloseTimerRef.current = window.setTimeout(() => {
-      listSrCloseTimerRef.current = undefined;
-      if (listSrTooltipPinned) return;
-      listSrActiveIdRef.current = undefined;
-      setListSrPreviewText(null);
-      setListSrPreviewRows(null);
-    }, 200);
-  };
-  // 鼠标进入浮窗：取消待关闭（浮窗内可点选价格、复制数据）
-  const cancelListSrHoverClose = () => {
-    if (listSrCloseTimerRef.current !== undefined) {
-      clearTimeout(listSrCloseTimerRef.current);
-      listSrCloseTimerRef.current = undefined;
-    }
+    listSrActiveIdRef.current = undefined;
+    setListSrPreviewText(null);
+    setListSrPreviewRows(null);
   };
 
   // 触摸开始：短时间内跳过合成 mouseleave，放大最后的 click 固定
@@ -2883,7 +2871,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const listSrTooltipMeasuredSize = useRef({ w: 0, h: 0 });
   const listSrTouchGuardRef = useRef(false); // 触摸点按中保护：避免合成mouseleave在点击固定前关闭浮窗
   const listSrTouchTimerRef = useRef<number | undefined>(undefined);
-  const listSrCloseTimerRef = useRef<number | undefined>(undefined); // 悬停宽限关闭定时器（移出后延迟关，留时间移进浮窗）
   const [listSrTooltipHidden, setListSrTooltipHidden] = useState(false);
   const listCopyHoveredRef = useRef(false);
   const [listCopyPreviewText, setListCopyPreviewText] = useState<string | null>(null);
@@ -8003,8 +7990,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         <div
           ref={listSrTooltipRef}
           onMouseEnter={() => {
-            // 移进浮窗即取消待关闭，并保持"仍在悬停"状态（异步构建/重渲染不会把浮窗收掉）
-            cancelListSrHoverClose();
+            // 移进浮窗保持"仍在悬停"状态（异步构建/重渲染不会把浮窗收掉）
             listSrHoveredRef.current = true;
           }}
           onMouseLeave={() => handleListSrHoverLeave()}
