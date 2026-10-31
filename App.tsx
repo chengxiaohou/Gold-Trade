@@ -20,7 +20,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.204';
+const APP_VERSION = 'v2.18.209';
 
 // 上传文件大小的展示格式（UTF-8 字节数 → B/KB/MB）
 function formatByteSize(bytes: number): string {
@@ -1282,18 +1282,15 @@ export default function App() {
     ), 0);
   }, [buildCloudFilePayloads, cloudDirtyByFile]);
 
-  // 上传确认浮窗里的隐藏按钮：把本页即将上传的（股票/分红）文件按文件名打包下载，用于抽查上传内容
-  const downloadStockUploadFile = () => {
-    const payloads = buildCloudFilePayloads();
-    const bundle: Record<string, unknown> = {};
-    for (const name of [CLOUD_STOCKS_FILENAME, CLOUD_FINANCIALS_FILENAME]) {
-      if (cloudDirtyByFile[name]) bundle[name] = JSON.parse(payloads[name]);
-    }
-    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+  // 上传确认浮窗里隐藏的两个下载按钮：分别把原始 stocks.json / financials.json 存到本地用于抽查。
+  // 浏览器会拦截一次点击触发的多个文件下载，所以拆成两个独立按钮，每次只下一个文件；
+  // 导出内容与实际上传内容完全一致（紧凑 JSON、无缩进换行），黄金文件绝不导出（铁律）。
+  const downloadStockUploadFile = (name: CloudFileName) => {
+    const blob = new Blob([buildCloudFilePayloads()[name]], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'cloud-upload-files.json';
+    link.download = name;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -2058,9 +2055,9 @@ export default function App() {
               onMouseLeave={scheduleHoverClose}
               className={`bg-app-card border border-app-border shadow-[0_8px_30px_rgba(0,0,0,0.5)] rounded-xl p-3 flex flex-col items-center text-center pointer-events-auto ${cloudConfirm === 'upload' ? 'w-[320px] max-w-full' : 'w-[200px] max-w-full'}`}>
               {/* 标题行：警告图标 + 标题 + 本次上传体积，同一行、同一字号；
-                  体积按 gist 实际写入格式估算（含两空格缩进与 UTF-8 中文字节），
+                  体积按实际上传的紧凑 JSON（无缩进/换行）估算，
                   未算完时占位「计算中」并用固定宽度兜住，避免行宽跳动 */}
-              <div className="flex items-center justify-center gap-1.5 mb-2 whitespace-nowrap">
+              <div className="relative w-full flex items-center justify-center gap-1.5 mb-2 whitespace-nowrap">
                 <AlertTriangle size={14} className="text-indigo-400 shrink-0" />
                 <span className="text-xs font-bold text-app-subtext">
                   {cloudConfirm === 'upload' ? '确认上传' : '确认下载'}
@@ -2070,16 +2067,26 @@ export default function App() {
                     {cloudUploadSize !== null ? formatByteSize(cloudUploadSize) : '计算中…'}
                   </span>
                 )}
-                {/* 隐藏式下载：把即将上传的文件存到本地用于抽查；平时几乎不可见，与版本号按钮同一套样式 */}
+                {/* 隐藏式下载：靠右独立摆放，不挤占标题；分别导出原始 stocks.json / financials.json */}
                 {cloudConfirm === 'upload' && (
-                  <button
-                    type="button"
-                    onClick={downloadStockUploadFile}
-                    className="text-[10px] font-mono text-white/[0.01] hover:text-app-text transition-colors cursor-pointer select-none"
-                    title="下载即将上传的文件"
-                  >
-                    下载
-                  </button>
+                  <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => downloadStockUploadFile(CLOUD_STOCKS_FILENAME)}
+                      className="text-[10px] font-mono text-white/[0.01] hover:text-app-text transition-colors cursor-pointer select-none"
+                      title="下载 stocks.json"
+                    >
+                      股票
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => downloadStockUploadFile(CLOUD_FINANCIALS_FILENAME)}
+                      className="text-[10px] font-mono text-white/[0.01] hover:text-app-text transition-colors cursor-pointer select-none"
+                      title="下载 financials.json"
+                    >
+                      分红
+                    </button>
+                  </div>
                 )}
               </div>
               {cloudConfirm === 'download' && (
