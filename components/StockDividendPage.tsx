@@ -1830,7 +1830,7 @@ type AnnualChartRow = {
   payoutPlot: number;      // 曲线用值：缺失时按 0 落点
 };
 
-const AnnualDividendChart: React.FC<{ stock: StockEntry }> = ({ stock }) => {
+const AnnualDividendChart = React.memo(function AnnualDividendChart({ stock }: { stock: StockEntry }) {
   const [windowOffset, setWindowOffset] = useState(0);
   const [floatVisible, setFloatVisible] = useState(false);
   const floatElRef = useRef<HTMLDivElement>(null);
@@ -2198,7 +2198,7 @@ const AnnualDividendChart: React.FC<{ stock: StockEntry }> = ({ stock }) => {
       )}
     </>
   );
-};
+});
 
 // 支撑/压力位浮窗中的一行：plain 为纯文本行，cell 为带名称的表格行（名称可着色，price 为该行对应价格）
 type SrRow =
@@ -2932,25 +2932,46 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 股息率曲线浮窗（复用 DividendRateCurve 共享组件，hover 临时显示 / 点击固定，逻辑与价格浮窗一致）
   const [divRateInfoStock, setDivRateInfoStock] = useState<StockEntry | null>(null);
   const [divRateInfoKlines, setDivRateInfoKlines] = useState<BollKline[] | null>(null);
-  const [divRateInfoPos, setDivRateInfoPos] = useState({ left: 0, top: 0 });
+  // top 是弹窗的「垂直中心线」（配合 style 里的 translateY(-50%)），maxHeight 只由屏幕几何决定，
+  // 两者都与弹窗内容高度无关，因此内容从骨架切到图表、高度变化时位置不会发生任何跳动
+  const [divRateInfoPos, setDivRateInfoPos] = useState({ left: 0, top: 0, maxHeight: 600 });
   const [divRateInfoLoading, setDivRateInfoLoading] = useState(false);
   const [divRateInfoPinned, setDivRateInfoPinned] = useState(false);
   const divRateInfoBtnRef = useRef<HTMLTableCellElement | null>(null);
   const divRateInfoRef = useRef<HTMLDivElement | null>(null);
-  const divRateInfoHoveredRef = useRef(false);
-  const divRateTouchGuardRef = useRef(false); // 触摸点按中保护：避免合成mouseleave在点击固定前关闭浮窗
-  const divRateTouchTimerRef = useRef<number | undefined>(undefined);
   const divRateInfoActiveIdRef = useRef<string | undefined>(undefined);
-  const isInsideDivRateInfo = (node: Node | null) => !!node && !!divRateInfoRef.current?.contains(node);
-  // 关闭股息率曲线浮窗：悬停离开 / 点击切换 / 点击外部 / 右上角关闭按钮 共用同一套重置
+  // 关闭股息率曲线浮窗：点击切换 / 点击外部 / 右上角关闭按钮 共用同一套重置
   const closeDivRateInfo = useCallback(() => {
-    divRateInfoHoveredRef.current = false;
     divRateInfoActiveIdRef.current = undefined;
     setDivRateInfoPinned(false);
     setDivRateInfoStock(null);
     setDivRateInfoKlines(null);
     setDivRateInfoLoading(false);
   }, []);
+
+  // 股息率浮窗定位：点击时同步算好，首帧即为终态。
+  // 垂直方向 top 取单元格中心线 + translateY(-50%)，与弹窗内容高度完全解耦，
+  // 不可能出现「先偏下、数据到达后再跳回居中」。
+  const computeDivRatePos = (btn: HTMLElement) => {
+    const popupW = 360;
+    const gap = 8;
+    const margin = 10;
+    const vh = window.innerHeight;
+    const vw = window.innerWidth;
+    const rect = btn.getBoundingClientRect();
+    const center = rect.top + rect.height / 2;
+    // 最大高度只由「单元格中心到屏幕上下边缘的可用空间」决定：这样弹窗既严格居中于单元格，
+    // 又不会超出屏幕（空间不足时内部滚动，而不是把弹窗整体挪偏）
+    const maxHeight = Math.min(640, Math.max(200, Math.min(center - margin, vh - margin - center) * 2));
+    let top = center;
+    // 仅在单元格极端贴近屏幕边缘（可用空间不足最小高度）时，以「不出屏」优先做最小偏移
+    if (top - maxHeight / 2 < margin) top = margin + maxHeight / 2;
+    else if (top + maxHeight / 2 > vh - margin) top = vh - margin - maxHeight / 2;
+    let left = rect.right + gap;
+    if (left + popupW > vw - margin) left = rect.left - popupW - gap;
+    if (left < margin) left = Math.max(margin, (vw - popupW) / 2);
+    return { left, top, maxHeight };
+  };
 
   // 行情状态浮窗（近5交易日“破位”事件分析，数据复用 stockBollMap 日线，无需额外请求）
   const [mktInfoStock, setMktInfoStock] = useState<StockEntry | null>(null);
@@ -3334,47 +3355,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 显示股息率曲线浮窗（位置参考价格浮窗：右侧垂直居中）
   // period 可选：浮窗内切换日/周/月时传入新周期，避免 setState 闭包未更新导致仍按旧周期请求
   const openDivRateInfo = (btn: HTMLElement, stock: StockEntry, period: BollPeriod = divRatePeriod) => {
-    const rect = btn.getBoundingClientRect();
     divRateInfoBtnRef.current = btn as unknown as HTMLTableCellElement;
     divRateInfoActiveIdRef.current = stock.id;
+    // 位置在点击时同步算好（与内容高度无关），弹窗首次渲染即处于最终位置
+    setDivRateInfoPos(computeDivRatePos(btn));
     setDivRateInfoStock(stock);
     setDivRateInfoLoading(true);
-    setDivRateInfoKlines(null);
-    const popupW = 360;
-    const estH = 300;
-    const gap = 8;
-    // 浮窗已打开（切换周期）时保持当前位置，避免每次切换都按估算高度重新定位
-    if (!divRateInfoRef.current) {
-      let left = rect.right + gap;
-      let top = rect.top + rect.height / 2 - estH / 2;
-      if (left + popupW > window.innerWidth - 10) left = rect.left - popupW - gap;
-      if (left < 10) left = (window.innerWidth - popupW) / 2;
-      if (top + estH > window.innerHeight - 10) top = window.innerHeight - estH - 10;
-      if (top < 10) top = 10;
-      setDivRateInfoPos({ left, top });
-    }
+    // 已打开的弹窗在切换股票时保留旧曲线，等新数据到达后就地替换；
+    // 仅在首次打开（弹窗尚未挂载）时清空，走固定高度占位
+    if (!divRateInfoRef.current) setDivRateInfoKlines(null);
 
-    // 股息率曲线：跟随列表 sub-th 选中的周期（日/周/月）；日线额外合成今日实时 bar
-    const repositionDivRate = () => {
-      if (divRateInfoActiveIdRef.current !== stock.id || !divRateInfoBtnRef.current) return;
-      const popupH = divRateInfoRef.current?.offsetHeight || 0;
-      if (!popupH) return;
-      const popupW = 360;
-      const gap = 8;
-      const btnRect = (divRateInfoBtnRef.current as HTMLElement).getBoundingClientRect();
-      let left = btnRect.right + gap;
-      let top = btnRect.top + btnRect.height / 2 - popupH / 2;
-      if (left + popupW > window.innerWidth - 10) left = btnRect.left - popupW - gap;
-      if (left < 10) left = (window.innerWidth - popupW) / 2;
-      if (top + popupH > window.innerHeight - 10) top = window.innerHeight - popupH - 10;
-      if (top < 10) top = 10;
-      setDivRateInfoPos({ left, top });
-    };
     const applyKlines = (klines: BollKline[]) => {
       if (divRateInfoActiveIdRef.current !== stock.id) return;
       setDivRateInfoKlines(klines);
       setDivRateInfoLoading(false);
-      requestAnimationFrame(repositionDivRate);
     };
     // 根据 period 选对应的价格数据部接口
     const pd = priceBureau;
@@ -3400,6 +3394,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         } else {
           applyKlines(fresh.klines);
         }
+      } else {
+        // 拉取失败或无数据：结束加载态，走「暂无数据」分支，避免弹窗一直隐藏
+        setDivRateInfoLoading(false);
       }
     });
   };
@@ -3413,43 +3410,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (stock && divRateInfoBtnRef.current) openDivRateInfo(divRateInfoBtnRef.current, stock, p);
   };
 
-  // 悬停股息率列显示
-  const handleDivRateInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
-    // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
-    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned || mktInfoPinned) return;
-    divRateInfoHoveredRef.current = true;
-    openDivRateInfo(e.currentTarget as HTMLElement, stock);
-  };
-
-  // 触摸开始：短时间内跳过合成 mouseleave（点按闪现缺陷），放大最后的 click 固定
-  const handleDivRateInfoTouchStart = () => {
-    divRateTouchGuardRef.current = true;
-    if (divRateTouchTimerRef.current !== undefined) clearTimeout(divRateTouchTimerRef.current);
-    divRateTouchTimerRef.current = window.setTimeout(() => {
-      divRateTouchGuardRef.current = false;
-      divRateTouchTimerRef.current = undefined;
-    }, 400);
-  };
-
-  // 股息率悬停离开：非固定模式下直接关闭。
-// 注意不在此处判断 isInsideDivRateInfo——桌面 hover 从单元格移进浮窗(图表)也应关闭临时弹窗。
-// 移动端"点按闪现"由触摸保护(divRateTouchGuardRef)处理：触摸触发时不关闭，交由 click 固定。
-  const handleDivRateInfoLeave = (e?: React.MouseEvent) => {
-    divRateInfoHoveredRef.current = false;
-    if (divRateInfoPinned) return;
-    if (divRateTouchGuardRef.current) return; // 触摸点按中：跳过合成 mouseleave，等待 click 固定
-    divRateInfoActiveIdRef.current = undefined;
-    setDivRateInfoStock(null);
-    setDivRateInfoKlines(null);
-    setDivRateInfoLoading(false);
-  };
-
-  // 浮窗悬停离开：仍在浮窗内部（子元素间移动）则保留，真正离开且未固定时关闭
-  const handleDivRateInfoFloatLeave = (e: React.MouseEvent) => {
-    if (divRateInfoPinned) return;
-    if (isInsideDivRateInfo(e.relatedTarget as Node | null)) return;
-    closeDivRateInfo();
-  };
+  // 股息率弹窗仅点击打开：已打开时点击同列其他单元格，直接复用同一弹窗切换数据
 
   // 点击股息率：切换固定/取消固定
   const handleDivRateInfoClick = (e: React.MouseEvent, stock: StockEntry) => {
@@ -4088,10 +4049,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return () => document.removeEventListener('mousedown', handler);
   }, [positionInfoPinned]);
 
-  // 列表页股息率浮窗：点击外部关闭
+  // 列表页股息率浮窗：点击外部关闭。
+  // 点击其他「股息率」单元格不算外部——由单元格 click 处理器直接复用弹窗切换数据，
+  // 否则 mousedown 会先关闭、click 再重新打开，视觉上就成了「消失再出现」。
   useEffect(() => {
     if (!divRateInfoPinned) return;
     const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.('[data-divrate-cell]')) return;
       if (divRateInfoRef.current && !divRateInfoRef.current.contains(e.target as Node) &&
           divRateInfoBtnRef.current && !divRateInfoBtnRef.current.contains(e.target as Node)) {
         closeDivRateInfo();
@@ -4849,7 +4814,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       setPositionInfoPinned(false);
       setPositionInfoStock(null);
       // 股息率曲线浮窗
-      divRateInfoHoveredRef.current = false;
       divRateInfoActiveIdRef.current = undefined;
       setDivRateInfoPinned(false);
       setDivRateInfoStock(null);
@@ -5840,9 +5804,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </div>
                   </td>}
                   {cols.includes('dividendRate') && <td
-                    onMouseEnter={(e) => handleDivRateInfoEnter(e, stock)}
-                    onMouseLeave={handleDivRateInfoLeave}
-                    onTouchStart={handleDivRateInfoTouchStart}
+                    data-divrate-cell
                     onClick={(e) => handleDivRateInfoClick(e, stock)}
                     className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
@@ -7928,9 +7890,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         <div
           ref={divRateInfoRef}
           className="fixed z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-y-auto custom-scrollbar"
-          style={{ top: divRateInfoPos.top, left: divRateInfoPos.left, width: 360, maxHeight: 'calc(100vh - 20px)' }}
-          onMouseEnter={() => { divRateInfoHoveredRef.current = true; }}
-          onMouseLeave={handleDivRateInfoFloatLeave}
+          style={{ top: divRateInfoPos.top, left: divRateInfoPos.left, width: 360, maxHeight: divRateInfoPos.maxHeight, transform: 'translateY(-50%)' }}
         >
           <div className="relative px-7 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center">
             <span className="text-[11px] font-bold text-app-subtext truncate">{divRateInfoStock.name}</span>
@@ -7944,22 +7904,49 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             </button>
           </div>
           <div className="p-2.5 bg-app-card">
-            {divRateInfoLoading ? (
-              <div className="text-[10px] text-app-subtext py-2 text-center">加载中…</div>
-            ) : divRateInfoKlines && divRateInfoKlines.length > 0 ? (
-              <DividendRateCurve
-                klines={divRateInfoKlines}
-                stock={divRateInfoStock}
-                fallbackDividend={getDividendForYear(divRateInfoStock, getSelectedYear(divRateInfoStock))}
-                title={`股息率曲线（${divRatePeriod === 'daily' ? '日' : divRatePeriod === 'weekly' ? '周' : '月'}线）`}
-                ranges={ranges}
-                period={divRatePeriod}
-                rangeValue={dailyChartRange}
-                offsetValue={dailyChartOffset}
-                onRangeChange={handleDailyRangeChange}
-                onOffsetChange={handleDailyOffsetChange}
-                onPeriodChange={changeDivRatePeriodFromPopup}
-              />
+            {divRateInfoKlines && divRateInfoKlines.length > 0 ? (
+              // 切换股票时保留旧曲线原地不动，只蒙一层加载提示；
+              // 新数据到达后曲线就地替换，弹窗与图表都不重建、不闪
+              <div className="relative">
+                <DividendRateCurve
+                  klines={divRateInfoKlines}
+                  stock={divRateInfoStock}
+                  fallbackDividend={getDividendForYear(divRateInfoStock, getSelectedYear(divRateInfoStock))}
+                  title={`股息率曲线（${divRatePeriod === 'daily' ? '日' : divRatePeriod === 'weekly' ? '周' : '月'}线）`}
+                  ranges={ranges}
+                  period={divRatePeriod}
+                  rangeValue={dailyChartRange}
+                  offsetValue={dailyChartOffset}
+                  onRangeChange={handleDailyRangeChange}
+                  onOffsetChange={handleDailyOffsetChange}
+                  onPeriodChange={changeDivRatePeriodFromPopup}
+                />
+                {divRateInfoLoading && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-app-card/70 text-[10px] text-app-subtext rounded">
+                    加载中…
+                  </div>
+                )}
+              </div>
+            ) : divRateInfoLoading ? (
+              // 骨架与真实图表区块同结构同高度：加载完成后高度不变，
+              // 弹窗不会再出现「先按占位高度定位、数据到达后又跳一次」的情况
+              <div className="border-t border-app-border bg-app-card pt-2">
+                <div className="flex items-center mb-1 h-[18px]">
+                  <span className="text-[10px] text-app-subtext">加载中…</span>
+                </div>
+                <div className="h-[172px]" />
+                <div className="px-2.5 py-1.5 bg-app-card space-y-1">
+                  {['股价', '股息', '分红'].map(label => (
+                    <div key={label} className="flex items-baseline justify-between">
+                      <span className="text-[10px] text-app-subtext whitespace-nowrap">{label}</span>
+                      <span className="font-mono text-[11px] text-slate-400">-</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 mt-1 mb-1.5">
+                  <div className="flex-1 h-1.5" />
+                </div>
+              </div>
             ) : (
               <div className="text-[10px] text-app-subtext py-2 text-center">暂无数据</div>
             )}
