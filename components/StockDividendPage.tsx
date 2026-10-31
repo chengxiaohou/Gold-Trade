@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
+import { LineChart, ComposedChart, Line, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
 import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition, bollBandLabel, buildBollBandTextParts } from '../services/bollService';
 import type { BollData, BollPeriod, BollAdjust, BollKline, BollBandInfo, BollStreakExplain } from '../services/bollService';
@@ -1902,6 +1902,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 分红自动获取状态
   const [isFetchingDividends, setIsFetchingDividends] = useState(false);
   const [isFetchingSingleDividend, setIsFetchingSingleDividend] = useState<string | null>(null);
+  // 年度分红图表的平移偏移（从最新年份往回数，0 = 显示最近 10 年）
+  const [annualChartOffset, setAnnualChartOffset] = useState(0);
   const [dividendDiff, setDividendDiff] = useState<DividendDiffEntry[] | null>(null);
   const [selectedDividendIds, setSelectedDividendIds] = useState<Set<string>>(new Set());
   // 股票名称/代号显示切换（默认显示股票名称）
@@ -6538,7 +6540,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 />
                   <div className="border-t border-app-border pt-2">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] text-app-subtext">年度分红（元/股）</span>
+                      <span className="text-[10px] text-app-subtext">分红 · 归母净利润 · 支付率</span>
                       <button
                         type="button"
                         onClick={() => handleFetchSingleDividend(stock)}
@@ -6553,12 +6555,52 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       </button>
                     </div>
                     {(() => {
+                      type AnnualChartRow = {
+                        year: string;
+                        perShare: number | null; // 每股派息（元）
+                        total: number | null;    // 派现总额（亿元）
+                        profit: number | null;   // 归母净利润（亿元）
+                        payout: number | null;   // 股利支付率（%）
+                        perSharePlot: number;    // 曲线用值：缺失时按 0 落点
+                        payoutPlot: number;      // 曲线用值：缺失时按 0 落点
+                      };
                       const byYear = stock.dividendByYear || {};
-                      const years = Object.keys(byYear).map(Number).sort((a, b) => a - b);
-                      const chartData = years.map(y => ({
-                        year: y.toString(),
-                        dividend: byYear[y],
-                      }));
+                      const totals = stock.dividendTotalByYear || {};
+                      const profits = stock.parentNetProfitByYear || {};
+                      // 年份取三份数据的并集；缺值留空（不补 0），避免把「未披露」画成「0」
+                      const years = Array.from(new Set([
+                        ...Object.keys(byYear),
+                        ...Object.keys(totals),
+                        ...Object.keys(profits),
+                      ])).map(Number).filter(y => !isNaN(y)).sort((a, b) => a - b);
+                      // 默认一屏 10 年，用底部滑块平移（offset 从最新年份往回数）
+                      const WINDOW_YEARS = 10;
+                      const maxWindowOffset = Math.max(0, years.length - WINDOW_YEARS);
+                      const windowOffset = Math.min(annualChartOffset, maxWindowOffset);
+                      const visibleYears = years.slice(
+                        years.length - WINDOW_YEARS - windowOffset,
+                        years.length - windowOffset
+                      );
+                      const toYi = (v: number | undefined): number | null =>
+                        v == null ? null : Math.round(v / 1e6) / 100;
+                      const chartData: AnnualChartRow[] = visibleYears.map(y => {
+                        const total = totals[y];
+                        const profit = profits[y];
+                        // 归母净利润为负/缺失时不算支付率（负值的比率没有意义）
+                        const ratio = total != null && profit != null && profit > 0 ? (total / profit) * 100 : null;
+                        const payoutValue = ratio == null ? null : Math.round(ratio * 10) / 10;
+                        const perShareValue = byYear[y] ?? null;
+                        return {
+                          year: y.toString(),
+                          perShare: perShareValue,
+                          total: toYi(total),
+                          profit: toYi(profit),
+                          payout: payoutValue,
+                          // 曲线在缺失年份落到 0，避免断线留下"空洞"
+                          perSharePlot: perShareValue ?? 0,
+                          payoutPlot: payoutValue ?? 0,
+                        };
+                      });
                       if (chartData.length === 0) {
                         return (
                           <div className="h-[120px] flex items-center justify-center text-[10px] text-app-subtext">
@@ -6566,55 +6608,243 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           </div>
                         );
                       }
-                      const annualDividends = chartData.map(d => d.dividend);
-                      const maxAnnualDiv = annualDividends.length > 0 ? Math.max(...annualDividends) : 1;
+                      // 有金额数据 → 双轴（左金额、右百分比）；老数据只有每股派息 → 退化为原单线图
+                      const hasAmountData = chartData.some(d => d.total != null || d.profit != null);
+                      const amountValues = chartData
+                        .flatMap(d => [d.total, d.profit])
+                        .filter((v): v is number => v != null);
+                      const amountMin = amountValues.length ? Math.min(0, ...amountValues) : 0;
+                      const amountMax = amountValues.length ? Math.max(0, ...amountValues) : 1;
+                      const maxPayout = Math.max(0, ...chartData.map(d => d.payout ?? 0));
+                      // 右轴至少覆盖到 100%，便于判断「是否超额分红」
+                      const payoutMax = Math.max(100, Math.ceil(maxPayout / 20) * 20);
+                      // 三轴共享同一零轴：金额轴出现负值时，按同一比例把其余轴向下扩出负区间，
+                      // 使 0 在所有轴上落在同一像素高度（与同花顺的处理一致）
+                      const zeroRatio = amountMax > amountMin
+                        ? Math.min(0.6, Math.max(0, -amountMin / (amountMax - amountMin)))
+                        : 0;
+                      const ratioMin = zeroRatio > 0 ? -(payoutMax * zeroRatio) / (1 - zeroRatio) : 0;
+                      // 右轴等分 5 档（含 0 所在高度附近），网格虚线也只按这 5 档绘制
+                      const ratioTicks = Array.from({ length: 5 }, (_, i) => ratioMin + ((payoutMax - ratioMin) * i) / 4);
+                      const annualDividends = chartData.map(d => d.perShare ?? 0);
+                      const maxAnnualDiv = Math.max(0.0001, ...annualDividends);
+                      const perShareMin = zeroRatio > 0 ? -(maxAnnualDiv * zeroRatio) / (1 - zeroRatio) : 0;
                       const annualTickLen = maxAnnualDiv.toFixed(1).length + 1;
                       const annualYAxisFontSize = annualTickLen > 5 ? 7 : 9;
+                      const fmtYi = (v: number) => `${Math.round(v)}亿`;
+                      // 两根柱要完全重合：显式指定同一 barSize，再把组内间距设为负的同等值。
+                      // 可视区宽度按经验值 170px 估算，保证 barSize 小于类目宽度（否则 recharts 会重置间距）。
+                      const bandEstimate = 170 / Math.max(1, chartData.length);
+                      const barWidth = Math.max(4, Math.min(14, Math.floor(bandEstimate * 0.55)));
+
+                      // 统一的自定义 tooltip：每股派息始终展示，其余按是否有值逐行出现
+                      const renderTip = ({ active, payload, label }: any) => {
+                        if (!active || !payload || payload.length === 0) return null;
+                        const row = payload[0].payload as AnnualChartRow;
+                        const line = (name: string, value: string) => (
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-app-subtext">{name}</span>
+                            <span className="font-mono text-app-rowtext">{value}</span>
+                          </div>
+                        );
+                        return (
+                          <div
+                            className="rounded-md px-2 py-1.5 text-[10px] leading-4"
+                            style={{ backgroundColor: 'rgba(15,23,42,0.95)', border: '1px solid rgba(148,163,184,0.3)' }}
+                          >
+                            <div className="mb-0.5 font-bold text-app-rowtext">{label} 年</div>
+                            {row.perShare != null && line('每股派息', `${Number(row.perShare.toFixed(4))} 元`)}
+                            {row.total != null && line('派现总额', `${row.total.toFixed(2)} 亿`)}
+                            {row.profit != null && line('归母净利润', `${row.profit.toFixed(2)} 亿`)}
+                            {row.payout != null && line('股利支付率', `${row.payout.toFixed(1)}%`)}
+                          </div>
+                        );
+                      };
+
                       return (
-                        <div className="h-[120px] w-full select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={chartData} margin={{ top: 5, right: 10, left: 4, bottom: 0 }}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
-                              <XAxis
-                                dataKey="year"
-                                tick={{ fontSize: 9, fill: '#94a3b8' }}
-                                stroke="rgba(148,163,184,0.3)"
-                                tickLine={false}
-                                axisLine={false}
-                                minTickGap={18}
+                        <>
+                          {/* 图例：色块对应柱/线，共四组数据 */}
+                          {hasAmountData && (
+                            <div className="flex items-center gap-2 mb-0.5 text-[9px] text-app-subtext flex-wrap">
+                              <span className="flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-[1px]" style={{ background: 'rgba(99,102,241,0.55)' }} />
+                                归母净利润
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-[1px]" style={{ background: '#38bdf8' }} />
+                                派现总额
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <span className="w-2.5 h-[2px] rounded-full" style={{ background: '#fb923c' }} />
+                                股利支付率
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <span className="w-2.5 h-[2px] rounded-full" style={{ background: '#ef4444' }} />
+                                每股派息
+                              </span>
+                            </div>
+                          )}
+                          <div className={`${hasAmountData ? 'h-[150px]' : 'h-[120px]'} w-full select-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none`}>
+                            <ResponsiveContainer width="100%" height="100%">
+                              {hasAmountData ? (
+                                <ComposedChart
+                                  data={chartData}
+                                  margin={{ top: 5, right: 0, left: 0, bottom: 0 }}
+                                  // 组内间距 = -barSize，使第二根柱与第一根柱落在同一 x 位置（完全重合）
+                                  barGap={-barWidth}
+                                  barCategoryGap="18%"
+                                >
+                                  {/* 横向网格改由右轴 5 档 ReferenceLine 绘制，避免多轴刻度产生不对齐的虚线 */}
+                                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" horizontal={false} vertical={false} />
+                                  <XAxis
+                                    dataKey="year"
+                                    tick={{ fontSize: 8, fill: '#94a3b8' }}
+                                    stroke="rgba(148,163,184,0.3)"
+                                    tickLine={false}
+                                    axisLine={false}
+                                    minTickGap={10}
+                                  />
+                                  <YAxis
+                                    yAxisId="amount"
+                                    tick={{ fontSize: 7, fill: '#94a3b8' }}
+                                    stroke="rgba(148,163,184,0.3)"
+                                    tickLine={false}
+                                    axisLine={false}
+                                    domain={[amountMin, amountMax]}
+                                    width={32}
+                                    tickFormatter={fmtYi}
+                                  />
+                                  {/* 每股派息只用一根隐藏的左轴承载刻度，不显示标尺；负区间与金额轴按同一零轴比例扩出 */}
+                                  <YAxis
+                                    yAxisId="perShare"
+                                    hide
+                                    domain={[perShareMin, maxAnnualDiv]}
+                                  />
+                                  <YAxis
+                                    yAxisId="ratio"
+                                    orientation="right"
+                                    tick={{ fontSize: 7, fill: '#fb923c' }}
+                                    stroke="rgba(251,146,60,0.35)"
+                                    tickLine={false}
+                                    axisLine={false}
+                                    domain={[ratioMin, payoutMax]}
+                                    ticks={ratioTicks}
+                                    width={24}
+                                    tickFormatter={v => `${Math.round(v)}%`}
+                                  />
+                                  {/* 5 档对齐虚线：每档百分比一条，横贯整个绘图区 */}
+                                  {ratioTicks.map(v => (
+                                    <ReferenceLine
+                                      key={`ratio-grid-${v}`}
+                                      yAxisId="ratio"
+                                      y={v}
+                                      stroke="rgba(148,163,184,0.15)"
+                                      strokeDasharray="3 3"
+                                    />
+                                  ))}
+                                  {/* 共享零轴：金额、百分比、每股派息三条轴的 0 都落在这条线上 */}
+                                  {zeroRatio > 0 && (
+                                    <ReferenceLine
+                                      yAxisId="amount"
+                                      y={0}
+                                      stroke="rgba(148,163,184,0.28)"
+                                      strokeDasharray="3 3"
+                                    />
+                                  )}
+                                  <Tooltip content={renderTip} cursor={{ stroke: 'rgba(99,102,241,0.4)', strokeWidth: 1 }} />
+                                  {/* 底层宽柱：净利润（半透明，作为背景） */}
+                                  <Bar
+                                    yAxisId="amount"
+                                    dataKey="profit"
+                                    name="归母净利润"
+                                    fill="#6366f1"
+                                    fillOpacity={0.45}
+                                    barSize={barWidth}
+                                    radius={[2, 2, 0, 0]}
+                                    isAnimationActive={false}
+                                  />
+                                  {/* 上层柱：派现总额，与净利润柱同宽同位置（直接覆盖，仅露出高出部分） */}
+                                  <Bar
+                                    yAxisId="amount"
+                                    dataKey="total"
+                                    name="派现总额"
+                                    fill="#38bdf8"
+                                    barSize={barWidth}
+                                    radius={[2, 2, 0, 0]}
+                                    isAnimationActive={false}
+                                  />
+                                  <Line
+                                    yAxisId="ratio"
+                                    type="monotone"
+                                    dataKey="payoutPlot"
+                                    stroke="#fb923c"
+                                    strokeWidth={1.4}
+                                    dot={{ r: 2, fill: '#fb923c', strokeWidth: 0 }}
+                                    activeDot={{ r: 4 }}
+                                    connectNulls={false}
+                                    isAnimationActive={false}
+                                  />
+                                  <Line
+                                    yAxisId="perShare"
+                                    type="monotone"
+                                    dataKey="perSharePlot"
+                                    stroke="#ef4444"
+                                    strokeWidth={1.4}
+                                    dot={{ r: 1.5, fill: '#ef4444', strokeWidth: 0 }}
+                                    activeDot={{ r: 3 }}
+                                    connectNulls={false}
+                                    isAnimationActive={false}
+                                  />
+                                </ComposedChart>
+                              ) : (
+                                <LineChart data={chartData} margin={{ top: 5, right: 10, left: 4, bottom: 0 }}>
+                                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
+                                  <XAxis
+                                    dataKey="year"
+                                    tick={{ fontSize: 9, fill: '#94a3b8' }}
+                                    stroke="rgba(148,163,184,0.3)"
+                                    tickLine={false}
+                                    axisLine={false}
+                                    minTickGap={18}
+                                  />
+                                  <YAxis
+                                    tick={{ fontSize: annualYAxisFontSize, fill: '#94a3b8' }}
+                                    stroke="rgba(148,163,184,0.3)"
+                                    tickLine={false}
+                                    axisLine={false}
+                                    domain={[0, 'auto']}
+                                    width={30}
+                                  />
+                                  <Tooltip content={renderTip} cursor={{ stroke: 'rgba(99,102,241,0.4)', strokeWidth: 1 }} />
+                                  <Line
+                                    type="monotone"
+                                    dataKey="perShare"
+                                    stroke="#6366f1"
+                                    strokeWidth={1.8}
+                                    dot={{ r: 2, fill: '#6366f1', strokeWidth: 0 }}
+                                    activeDot={{ r: 4 }}
+                                    isAnimationActive={false}
+                                  />
+                                </LineChart>
+                              )}
+                            </ResponsiveContainer>
+                          </div>
+                          {/* 底部平移滑块：复用股息率曲线的滑块样式，仅在年份超过一屏时出现 */}
+                          {maxWindowOffset > 0 && (
+                            <div className="flex items-center gap-2 mt-1">
+                              <input
+                                type="range"
+                                min={0}
+                                max={maxWindowOffset}
+                                value={maxWindowOffset - windowOffset}
+                                onChange={(e) => setAnnualChartOffset(maxWindowOffset - Number(e.target.value))}
+                                className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-gray-500 
+                                  [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500
+                                  [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-gray-500 [&::-moz-range-thumb]:border-0"
                               />
-                              <YAxis
-                                tick={{ fontSize: annualYAxisFontSize, fill: '#94a3b8' }}
-                                stroke="rgba(148,163,184,0.3)"
-                                tickLine={false}
-                                axisLine={false}
-                                domain={[0, 'auto']}
-                                width={30}
-                              />
-                              <Tooltip
-                                contentStyle={{
-                                  backgroundColor: 'rgba(15,23,42,0.95)',
-                                  border: '1px solid rgba(148,163,184,0.3)',
-                                  borderRadius: 6,
-                                  fontSize: 11,
-                                  color: 'inherit',
-                                }}
-                                formatter={(value: number) => [`${value.toFixed(3)} 元`, '每股分红']}
-                                labelFormatter={(label) => `${label}年`}
-                                cursor={{ stroke: 'rgba(99,102,241,0.4)', strokeWidth: 1 }}
-                              />
-                              <Line
-                                type="monotone"
-                                dataKey="dividend"
-                                stroke="#6366f1"
-                                strokeWidth={1.8}
-                                dot={{ r: 2, fill: '#6366f1', strokeWidth: 0 }}
-                                activeDot={{ r: 4 }}
-                                isAnimationActive={false}
-                              />
-                            </LineChart>
-                          </ResponsiveContainer>
-                        </div>
+                            </div>
+                          )}
+                        </>
                       );
                     })()}
                   </div>
