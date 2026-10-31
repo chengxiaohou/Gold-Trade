@@ -455,6 +455,19 @@ const TRADE_STATUS_LABEL: Record<string, string> = {
 };
 const tradeStatusColor = (t: StockTrade) => t.status === 'pending' ? 'text-orange-400' : (t.side === 'buy' ? 'text-brand-red' : 'text-brand-green');
 
+// 备注「网格」文本的单一实现：交易弹窗备注输入框 onFocus 自动填充 与 支撑/压力位价格行点击回填共用，
+// 改联动规则（股息率口径 / 文本格式 / 名称拼接）只改这里，两个入口自动同步。
+// 股息率 = 选中年份分红 ÷ 价格，保留两位小数后去掉多余的 0；pickedName 为点中的支撑/压力位名称（聚焦填默认值时没有）。
+const GRID_NOTE_PREFIX = '网格';
+const buildGridNoteText = (dividend: number, price: number, pickedName?: string): string => {
+  const divRate = dividend > 0 && price > 0 ? (dividend / price) * 100 : 0;
+  if (divRate <= 0) return '';
+  const gridStr = `${GRID_NOTE_PREFIX}${String(parseFloat(divRate.toFixed(2)))}`;
+  return pickedName ? `${gridStr} ${pickedName} ` : `${gridStr} `;
+};
+// 备注是否仍是自动生成的（空 或 以「网格」开头）：只有这种情况才允许自动覆盖，避免丢失用户手写内容
+const isAutoGridNote = (note: string): boolean => !note || note.startsWith(GRID_NOTE_PREFIX);
+
 // 把同花顺公告链接转换成 amihexin 跳转链接：
 // 取 #seq= 公告编号 → 路径替换为 /tapp/app/noticebasic/index.html → 拼 ?seq= → URL 编码后加 amihexin://url= 前缀
 const buildAmihexinUrl = (raw: string): string => {
@@ -2724,7 +2737,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
 
   // 列表页股票名称支撑/压力位弹窗（hover 或 click）
-  const handleListSrClick = (e: React.MouseEvent, stock: StockEntry, pin = false, pricePickTo: 'trade' | null = null) => {
+  const handleListSrClick = (e: React.MouseEvent, stock: StockEntry, pin = false, pricePickTo: 'trade' | 'openTrade' | null = null) => {
     e.stopPropagation();
     // 点击固定且当前正是同一股票的固定弹窗 → 再次点击收起
     if (pin && listSrTooltipPinned && listSrStock?.id === stock.id) {
@@ -2769,12 +2782,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     });
   };
 
-  // 支撑/压力位价格行点击：仅当由交易弹窗「挂单价格」图标呼出时，把点到的价格回填挂单价格输入框；
-  // 同时根据选中价格自动填充备注「网格{股息率} {支撑压力位名称}」，口径与备注 onFocus 自动填充一致。
-  // 备注为空或以"网格"开头时才自动覆盖，避免丢失用户手写的额外备注（如"网格5.72 日上 大涨 急卖"）。
+  // 备注联动：按选中价格写入自动备注（规则见模块级 buildGridNoteText，与备注输入框 onFocus 共用同一实现）
+  const applyGridNoteForPickedPrice = (stock: StockEntry, price: number, pickedName: string) => {
+    const note = buildGridNoteText(getDividendForYear(stock, getSelectedYear(stock)) || 0, price, pickedName);
+    if (!note) return;
+    if (isAutoGridNote(addTradeNote)) setAddTradeNote(note);
+  };
+
+  // 支撑/压力位价格行点击：
+  // - 'trade'：交易弹窗「挂单价格」图标呼出时，把点到的价格回填挂单价格输入框，
+  //   同时根据选中价格自动填充备注「网格{股息率} {支撑压力位名称}」，口径与备注 onFocus 自动填充一致。
+  //   备注为空或以"网格"开头时才自动覆盖，避免丢失用户手写的额外备注（如"网格5.72 日上 大涨 急卖"）。
+  // - 'openTrade'：列表页「涨跌幅」列呼出时，关闭支撑/压力位弹窗并打开交易弹窗，把该行价格填入买入价格，
+  //   备注联动与 'trade' 完全同一套（按选中价格算股息率）。
   const handleSrPricePick = (price: number, pickedName: string) => {
-    if (listSrPricePickTo !== 'trade' || !(price > 0)) return;
-    setAddTradePrice(formatPrice(price, listSrStock?.name));
+    if (!(price > 0) || !listSrPricePickTo) return;
+    const stock = listSrStock;
+    const btn = listSrBtnRef.current;
     // 清空弹窗状态
     listSrHoveredRef.current = false;
     listSrActiveIdRef.current = undefined;
@@ -2783,23 +2807,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setListSrPreviewRows(null);
     setListSrStock(null);
     setListSrPricePickTo(null);
-    // 备注自动填充：网格 + 支撑/压力位名称
-    const stock = listSrStock;
-    if (stock) {
-      const dividend = getDividendForYear(stock, getSelectedYear(stock)) || 0;
-      const divRate = dividend > 0 ? (dividend / price) * 100 : 0;
-      if (divRate > 0) {
-        const gridStr = `网格${String(parseFloat(divRate.toFixed(2)))}`;
-        const newNote = pickedName ? `${gridStr} ${pickedName} ` : `${gridStr} `;
-        if (!addTradeNote || addTradeNote.startsWith('网格')) {
-          setAddTradeNote(newNote);
-        }
-      }
+    if (listSrPricePickTo === 'trade') {
+      setAddTradePrice(formatPrice(price, stock?.name));
+      if (stock) applyGridNoteForPickedPrice(stock, price, pickedName);
+      return;
     }
+    // 'openTrade'：打开交易弹窗（以被点击的「涨跌幅」单元格为定位锚点），方向固定买入，价格用选中的那行
+    if (!stock || !btn) return;
+    setTradeSimpleStock(null); // 交易弹窗优先级更高，打开时关闭简易浮窗
+    setEditingTradeId(null);
+    setAddTradeSide('buy');
+    openTradeInfo(btn, stock);
+    // openTradeInfo 默认填现价，这里覆盖为选中的支撑/压力位价格
+    setAddTradePrice(formatPrice(price, stock.name));
+    applyGridNoteForPickedPrice(stock, price, pickedName);
+    setTradeInfoPinned(true);
   };
 
   // 悬停名称显示支撑/压力位（临时，不固定）
-  const handleListSrHoverEnter = (e: React.MouseEvent, stock: StockEntry, pricePickTo: 'trade' | null = null) => {
+  const handleListSrHoverEnter = (e: React.MouseEvent, stock: StockEntry, pricePickTo: 'trade' | 'openTrade' | null = null) => {
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
     if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned || mktInfoPinned) return;
     handleListSrClick(e, stock, false, pricePickTo);
@@ -2888,8 +2914,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [listCopyPreviewPos, setListCopyPreviewPos] = useState({ left: 0, top: 0 });
   // 当前点击的股票（用于列表页弹窗内的复制操作）
   const [listSrStock, setListSrStock] = useState<StockEntry | null>(null);
-  // 支撑/压力位弹窗价格行点击的消费方：'trade' = 由交易弹窗「挂单价格」图标呼出，点击价格回填挂单价格输入框
-  const [listSrPricePickTo, setListSrPricePickTo] = useState<'trade' | null>(null);
+  // 支撑/压力位弹窗价格行点击的消费方：
+  // 'trade' = 由交易弹窗「挂单价格」图标呼出，点击价格回填挂单价格输入框
+  // 'openTrade' = 由列表页「涨跌幅」列呼出，点击价格打开交易弹窗并填入买入价格
+  const [listSrPricePickTo, setListSrPricePickTo] = useState<'trade' | 'openTrade' | null>(null);
   // 支撑/压力位弹窗标题栏拖拽：与价格弹窗共用同一套实现
   const srDrag = usePopoverDrag(srTooltipRef, setSrTooltipAbove, setSrTooltipOffset);
   const listSrDrag = usePopoverDrag(listSrTooltipRef, setListSrTooltipAbove, setListSrTooltipOffset);
@@ -5882,10 +5910,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     })()}
                   </td>}
                   {cols.includes('changePercent') && <td
-                    onMouseEnter={(e) => handleListSrHoverEnter(e, stock)}
+                    onMouseEnter={(e) => handleListSrHoverEnter(e, stock, 'openTrade')}
                     onMouseLeave={() => handleListSrHoverLeave()}
                     onTouchStart={handleListSrTouchStart}
-                    onClick={(e) => handleListSrClick(e, stock, true)}
+                    onClick={(e) => handleListSrClick(e, stock, true, 'openTrade')}
                     className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
@@ -7524,10 +7552,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   onChange={(e) => setAddTradeNote(e.target.value)}
                   onFocus={() => {
                     // 备注为空时，首次点击聚焦默认填入"网格{股息率} "，方便后继续编辑
-                    // 口径与上方「股息率」展示一致：按挂单价格计算（分红/挂单价格）
-                    if (!addTradeNote) {
-                      if (orderDivRate > 0) setAddTradeNote(`网格${String(parseFloat(orderDivRate.toFixed(2)))} `);
-                    }
+                    // 股息率按挂单价格计算；文本规则与支撑/压力位点行回填共用 buildGridNoteText
+                    if (addTradeNote) return;
+                    const note = buildGridNoteText(orderDividend, orderPriceNum);
+                    if (note) setAddTradeNote(note);
                   }}
                   onKeyDown={(e) => { if (e.key === 'Enter') { editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending'); } }}
                   enterKeyHint="done"
@@ -8071,7 +8099,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <SupportResistanceRows
               rows={listSrPreviewRows}
               fallback={listSrPreviewText}
-              onPriceClick={listSrPricePickTo === 'trade' ? handleSrPricePick : undefined}
+              onPriceClick={listSrPricePickTo ? handleSrPricePick : undefined}
             />
           </div>
         </div>
