@@ -1758,7 +1758,9 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
       </div>
       {/* 固定定位 + transform/textContent 直接写 DOM 的悬浮窗：内容随时命中、绝不触发 React 重渲染
          容器与字体沿用 PriceInfoPopover，标题只留日期、数据单行白色显示 */}
-      <div
+      {/* 悬浮窗必须挂到 body：外层弹窗带 transform（translateY(-50%)）与 overflow 裁剪，
+          若留在弹窗内，fixed 定位会以弹窗为包含块并被裁掉，导致浮窗不显示 */}
+      {createPortal(<div
         ref={floatingElRef}
         className={`pointer-events-none fixed left-0 top-0 z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden transition-opacity duration-100 ${floatVisible ? 'opacity-100' : 'opacity-0'}`}
         style={{ width: 105 }}
@@ -1780,7 +1782,7 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
               <span className="font-mono text-[11px] text-slate-400" ref={floatDividendRef} />
             </div>
           </div>
-      </div>
+      </div>, document.body)}
       <div className="flex items-center gap-2 mt-1 mb-1.5">
         <input
           ref={sliderRef}
@@ -2144,7 +2146,8 @@ const AnnualDividendChart = React.memo(function AnnualDividendChart({ stock }: {
         </div>
       )}
       {/* 固定定位 + transform/textContent 直接写 DOM 的悬浮窗（与股息率曲线一致） */}
-      <div
+      {/* 与股息率曲线同理：挂到 body，避免被带 transform 的外层弹窗当作包含块并裁剪 */}
+      {createPortal(<div
         ref={floatElRef}
         className={`pointer-events-none fixed left-0 top-0 z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden transition-opacity duration-100 ${floatVisible ? 'opacity-100' : 'opacity-0'}`}
         style={{ width: ANNUAL_FLOAT_W }}
@@ -2170,7 +2173,7 @@ const AnnualDividendChart = React.memo(function AnnualDividendChart({ stock }: {
             <span className="font-mono text-[11px]" style={{ color: '#fb923c' }} ref={floatPayoutRef} />
           </div>
         </div>
-      </div>
+      </div>, document.body)}
       {/* 底部平移滑块：复用股息率曲线的滑块样式，仅在年份超过一屏时出现 */}
       {maxWindowOffset > 0 && (
         <div className="flex items-center gap-2 mt-1">
