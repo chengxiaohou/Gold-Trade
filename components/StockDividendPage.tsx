@@ -9,7 +9,7 @@ import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, 
 import { priceBureau } from '../services/priceBureau';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import type { TencentQuote } from '../services/tencentQuote';
-import { fetchYearlyDividends, DividendRecord } from '../services/dividendService';
+import { fetchYearlyDividends, DividendRecord, type YearlyDividends } from '../services/dividendService';
 import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import { StockAccountPage } from './StockAccountPage';
@@ -3985,28 +3985,45 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (autoHoldTimer.current) { clearTimeout(autoHoldTimer.current); autoHoldTimer.current = null; }
   };
 
-  // 批量获取所有股票的 2024/2025 全年分红（东方财富，按报告期年度汇总）
+  // 批量获取所有股票的年度分红（逐只走同花顺 F10，含中期分红，数据完整）
+  // 说明：同花顺无「一条请求拉全部」的可用批量接口（数据中心 ajax 有反爬），
+  // 但允许小并发；这里用 4 路并发 + 120ms 启动间隔，50 只约 3~5 秒完成。
+  // 东财批量接口（fetchBatchYearlyDividends）已停用：个别股票会漏中期分红，见 dividendService 文件头。
   const handleFetchAllDividends = useCallback(async () => {
     if (isFetchingDividends || stocks.length === 0) return;
     const logCtx = requestLogService.beginBatch(
       `点击「分红」列头刷新：${stocks.length} 只股票 · ${stocks.length} 条请求`
     );
     setIsFetchingDividends(true);
+
+    // 小并发池：固定 4 路，按原顺序回填结果
+    const CONCURRENCY = 4;
+    const results: YearlyDividends[] = new Array(stocks.length);
+    let cursor = 0;
+    const worker = async () => {
+      for (;;) {
+        const index = cursor++;
+        if (index >= stocks.length) return;
+        results[index] = await fetchYearlyDividends(stocks[index].code, logCtx);
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, stocks.length) }, () => worker())
+    );
+
+    // 全部失败才提示网络异常；个别失败仍在差异弹窗里按股票展示
+    if (results.every(r => r?.error)) {
+      showNotice('分红数据查询失败，请检查网络环境。');
+      setIsFetchingDividends(false);
+      return;
+    }
+
     const entries: DividendDiffEntry[] = [];
     const selected = new Set<string>();
-    for (let i = 0; i < stocks.length; i++) {
-      const stock = stocks[i];
-      const result = await fetchYearlyDividends(stock.code, logCtx);
-      // 第一条请求失败即终止所有请求，并提示网络异常
-      if (i === 0 && result.error) {
-        showNotice('分红数据查询失败，请检查网络环境。');
-        setIsFetchingDividends(false);
-        return;
-      }
-      const fetchedByYear = result.found ? result.dividendByYear : {};
-      const existingByYear = stock.dividendByYear || {};
+    stocks.forEach((stock, i) => {
+      const result = results[i];
       // 提取最近一次股权登记日
-      const futureRegDate = result.records
+      const futureRegDate = result?.records
         ?.filter(r => r.registerDate)
         .map(r => r.registerDate!)
         .sort()
@@ -4017,23 +4034,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         name: stock.name,
         current2024: getDividendForYear(stock, dividendYearLeft),
         current2025: getDividendForYear(stock, dividendYearRight),
-        fetched2024: result.found ? (result.dividend2024 ?? null) : null,
-        fetched2025: result.found ? (result.dividend2025 ?? null) : null,
-        fetchedDividendByYear: result.found ? result.dividendByYear : stock.dividendByYear || {},
-        hasData: result.found,
-        error: result.error,
-        records: result.records || [],
+        fetched2024: result?.found ? (result.dividend2024 ?? null) : null,
+        fetched2025: result?.found ? (result.dividend2025 ?? null) : null,
+        fetchedDividendByYear: result?.found ? result.dividendByYear : stock.dividendByYear || {},
+        hasData: !!result?.found,
+        error: result?.error,
+        records: result?.records || [],
         registerDate: futureRegDate,
       });
       // 默认全部勾选所有有数据的股票
-      if (result.found && !result.error) selected.add(stock.id);
-    }
+      if (result?.found && !result.error) selected.add(stock.id);
+    });
     setDividendDiff(entries);
     setSelectedDividendIds(selected);
     setIsFetchingDividends(false);
   }, [stocks, isFetchingDividends]);
 
-  // 单只股票拉取年度分红（与批量拉取流程一致，仅拉取当前这一只，弹窗只展示这一只的结果）
+  // 单只股票拉取年度分红（同花顺 F10 单只查询，含中期分红）
   const handleFetchSingleDividend = useCallback(async (stock: StockEntry) => {
     if (isFetchingSingleDividend) return;
     const logCtx = requestLogService.beginBatch(

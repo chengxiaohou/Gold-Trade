@@ -20,7 +20,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.150';
+const APP_VERSION = 'v2.18.153';
 
 // 上传文件大小的展示格式（UTF-8 字节数 → B/KB/MB）
 function formatByteSize(bytes: number): string {

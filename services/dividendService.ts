@@ -2,13 +2,21 @@ import { requestLogService, type LogBatchContext } from './requestLogService';
 
 // 分红数据查询服务
 //
-// 主数据源：同花顺 F10「分红融资」页面（basic.10jqka.com.cn/pad/{code}/equitybonus.html）
-//  - 与用户手动查询的渠道一致；
-//  - 每条分红都带明确的所属年度标签，如【2025年年度】【2025年中期】【2024年特别】，
-//    直接按标签汇总即可，无需猜测归属年度；
-//  - 包含已实施与已公告预案的现金分红（同花顺页面展示的口径）。
+// 当前方案（在线使用）：每只股票逐条请求（N 只股票 = N 条请求）。
+//  - 主数据源：同花顺 F10「分红融资」页面（basic.10jqka.com.cn/pad/{code}/equitybonus.html，
+//    GBK 编码 HTML，按【YYYY年年度/中期/特别】标签汇总，含已实施与已公告预案）；
+//  - 备用数据源：东方财富 datacenter 单只查询（RPT_SHAREBONUS_DET，filter=(SECURITY_CODE="...")，
+//    当时只保留「实施分配」的记录）。
 //
-// 备用数据源：东方财富 datacenter 接口（按报告期年度汇总，可能漏特别分红，仅作降级用）。
+// ============ 批量方案（已实现但停用，因数据不完整） ============
+// 东方财富 datacenter 批量接口（RPT_SHAREBONUS_DET，SECURITY_CODE in (...)），
+// 一次 HTTP 请求即可拉取全部股票的分红明细（见 fetchBatchYearlyDividends）。
+// 停用原因：该报表对个别股票会缺失中期分红（实测 000538 云南白药
+// 缺 2024 中期 10派12.13、2025 中期 10派10.19），导致年度汇总偏小；
+// 若未来东财补全数据，可把组件调用点切回 fetchBatchYearlyDividends 以获得 1 条请求的速度。
+//
+// 同花顺同样没有「一条请求拉全部」的公开批量接口（数据中心 ajax 有 chameleon 反爬，返回 401），
+// 但实测允许小并发：批量刷新时由调用方用 4 路并发池请求单只 F10 页面。
 
 const THS_HOST = 'basic.10jqka.com.cn';
 const EASTMONEY_HOST = 'datacenter-web.eastmoney.com';
@@ -25,9 +33,10 @@ const PROD_CONFIG = {
   proxyTimeout: 12000,
 };
 
-// 数据源按 IP 限流，对突发请求会临时封禁（社区实测经验：相邻请求间隔至少 0.5 秒）。
-// 这里做统一节流：无论批量查询还是添加股票，相邻两次请求间隔都不小于该值。
-const MIN_REQUEST_INTERVAL_MS = 500;
+// 数据源按 IP 限流，对长时间高频请求会临时封禁。
+// 实测同花顺允许短时间并发（10 只并发全部 200，总耗时 <0.5s），
+// 因此不再串行等待 0.5 秒，改为「启动间隔 120ms + 调用方限制并发数（批量刷新用 4）」。
+const MIN_REQUEST_INTERVAL_MS = 120;
 let lastRequestTime = 0;
 
 async function throttleRequest(): Promise<void> {
@@ -285,9 +294,127 @@ async function fetchFromEastmoney(code: string, logCtx?: LogBatchContext): Promi
   }
 }
 
-// ---------- 对外入口 ----------
+// ---------- 批量数据源：东方财富 datacenter（已停用，保留备用） ----------
 
-// 查询一只股票的 2024/2025 全年分红（每股税前派息，按分红所属年度汇总）
+// 一次请求拉取多只股票的分红明细（实测支持 SECURITY_CODE in (...) 多代码批量）
+function buildBatchEastmoneyUrl(codes: string[], pageNo: number): string {
+  const inList = codes.map(c => `"${c.replace(/\.(SH|SZ|BJ)$/i, '')}"`).join(',');
+  const filter = `(SECURITY_CODE in (${inList}))(REPORT_DATE>='2024-01-01')`;
+  const params = new URLSearchParams({
+    reportName: 'RPT_SHAREBONUS_DET',
+    columns: 'SECURITY_CODE,SECURITY_NAME_ABBR,REPORT_DATE,PRETAX_BONUS_RMB,IMPL_PLAN_PROFILE,EQUITY_RECORD_DATE,EX_DIVIDEND_DATE,ASSIGN_PROGRESS',
+    filter,
+    sortColumns: 'SECURITY_CODE,REPORT_DATE',
+    sortTypes: '1,-1',
+    pageSize: '500',
+    pageNumber: String(pageNo),
+    client: 'WEB',
+    _: Date.now().toString(), // 避免代理层缓存
+  });
+  return `https://${EASTMONEY_HOST}/api/data/v1/get?${params.toString()}`;
+}
+
+// 拉取一页分红明细 JSON（开发走 vite 本地代理，生产走 CF Worker / 备用代理）
+async function fetchEastmoneyJsonPage(realUrl: string, logCtx?: LogBatchContext): Promise<{ data: Array<Record<string, unknown>>; pages: number }> {
+  const logId = requestLogService.startRequest(realUrl, 'GET', logCtx);
+  try {
+    let json: unknown;
+    if (import.meta.env.DEV) {
+      const localUrl = `/api/eastmoney/api/data/v1/get?${new URL(realUrl).searchParams.toString()}`;
+      const response = await fetch(localUrl, { signal: AbortSignal.timeout(15000) });
+      if (!response.ok) throw new Error(`本地代理返回 ${response.status}`);
+      json = await response.json();
+    } else {
+      const response = await prodFetch(realUrl);
+      json = await response.json();
+    }
+    requestLogService.success(logId);
+    const result = (json as { result?: { data?: Array<Record<string, unknown>>; pages?: number } })?.result;
+    return { data: Array.isArray(result?.data) ? result!.data! : [], pages: Number(result?.pages || 1) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '请求失败';
+    requestLogService.failed(logId, message);
+    throw error;
+  }
+}
+
+// ---------- 对外入口（批量） ----------
+
+// 批量查询多只股票的年度分红（一次或少量 HTTP 请求），返回与输入 codes 一一对应的结果。
+// 口径说明：
+//  - 只保留有金额（PRETAX_BONUS_RMB > 0）的记录，自动排除「预披露」类无金额行
+//    （如"分红金额上限不超过…"）；
+//  - 已实施与已公告预案（董事会决议通过等）都计入，与原同花顺主源口径一致；
+//  - 所属年度按报告期 REPORT_DATE 的年份汇总（如 2025-06-30 计入 2025 年）。
+export async function fetchBatchYearlyDividends(codes: string[], logCtx?: LogBatchContext): Promise<YearlyDividends[]> {
+  if (codes.length === 0) return [];
+  await throttleRequest();
+
+  const failAll = (message: string): YearlyDividends[] =>
+    codes.map(code => ({ found: false, code, dividend2024: 0, dividend2025: 0, dividendByYear: {}, records: [], source: '东方财富' as const, error: message }));
+
+  try {
+    const allRows: Array<Record<string, unknown>> = [];
+    let pageNo = 1;
+    for (;;) {
+      const { data, pages } = await fetchEastmoneyJsonPage(buildBatchEastmoneyUrl(codes, pageNo), logCtx);
+      allRows.push(...data);
+      if (pageNo >= pages) break;
+      pageNo += 1;
+      await throttleRequest(); // 翻页请求同样节流
+    }
+
+    // 按 6 位代码分组（输入代码可能带 .SH/.SZ/.BJ 后缀，返回里是不带后缀的）
+    const byCode = new Map<string, { name?: string; records: DividendRecord[] }>();
+    for (const row of allRows) {
+      const pretaxPer10 = parseFloat(String(row.PRETAX_BONUS_RMB ?? ''));
+      if (isNaN(pretaxPer10) || pretaxPer10 <= 0) continue;
+      const stripped = String(row.SECURITY_CODE || '').toUpperCase();
+      const reportDate = String(row.REPORT_DATE || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) continue;
+      const bucket = byCode.get(stripped) || { name: row.SECURITY_NAME_ABBR ? String(row.SECURITY_NAME_ABBR) : undefined, records: [] };
+      bucket.records.push({
+        reportDate,
+        pretaxPer10,
+        planProfile: String(row.IMPL_PLAN_PROFILE || ''),
+        registerDate: String(row.EQUITY_RECORD_DATE || '').slice(0, 10) || undefined,
+      });
+      byCode.set(stripped, bucket);
+    }
+
+    return codes.map(code => {
+      const bucket = byCode.get(code.replace(/\.(SH|SZ|BJ)$/i, '').toUpperCase());
+      if (!bucket || bucket.records.length === 0) {
+        return { found: false, code, dividend2024: 0, dividend2025: 0, dividendByYear: {}, records: [], source: '东方财富' as const };
+      }
+      const byYear: Record<number, number> = {};
+      for (const r of bucket.records) {
+        const y = parseInt(r.reportDate.slice(0, 4), 10);
+        byYear[y] = (byYear[y] || 0) + r.pretaxPer10;
+      }
+      for (const y of Object.keys(byYear)) {
+        byYear[+y] = Math.round((byYear[+y] / 10) * 10000) / 10000;
+      }
+      return {
+        found: true,
+        code,
+        name: bucket.name,
+        dividend2024: byYear[2024] || 0,
+        dividend2025: byYear[2025] || 0,
+        dividendByYear: byYear,
+        records: bucket.records,
+        source: '东方财富' as const,
+      };
+    });
+  } catch (e) {
+    return failAll(e instanceof Error ? e.message : '请求失败');
+  }
+}
+
+// ---------- 对外入口（逐只，当前在线方案） ----------
+
+// 查询一只股票的 2024/2025 全年分红（每股税前派息，按分红所属年度汇总）。
+// 主源同花顺 F10 HTML（含中期分红），失败降级东方财富单只查询。
 export async function fetchYearlyDividends(code: string, logCtx?: LogBatchContext): Promise<YearlyDividends> {
   await throttleRequest();
 
