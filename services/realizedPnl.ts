@@ -53,6 +53,15 @@ export interface PositionFromTrades {
 // 盈利计算模式：均价（移动加权） / 做T（最近买入匹配）
 export type PnlCalcMode = 'avg' | 'dt';
 
+// 入库精度统一：避免浮点运算噪声（如 255.00000000000043）写进本地存储与云端文件。
+// 金额（已实现盈亏等）保留 2 位小数（精确到分）；每股成本保留 4 位（行情报价常见精度）。
+export function roundMoney(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+export function roundCost(n: number): number {
+  return Math.round(n * 10000) / 10000;
+}
+
 // 从一组交易记录按「移动加权平均」重算持仓（忽略软删与挂单）。
 // 任何时候本地/云端/持久化恢复后需要对齐 positionShares / positionCost，都应调用此函数，
 // 避免交易记录已更新但字段未同步导致的"账面持仓与记录对不上"。
@@ -74,7 +83,7 @@ export function calcPositionFromTrades(trades?: StockTrade[]): PositionFromTrade
       if (rs === 0) rc = 0;
     }
   }
-  return { shares: rs, avgCost: rc };
+  return { shares: rs, avgCost: roundCost(rc) };
 }
 
 // 一笔窗口内的买/卖操作（供逐日明细展示）

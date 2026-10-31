@@ -40,9 +40,13 @@ export function mergeStockFromCloud(
   cloudStock: StockEntry,
   localStock?: StockEntry | undefined,
 ): MergeStockResult {
-  const finalTrades = (cloudStock.stockTrades || []).slice().sort(
-    (a, b) => (a.filledAt ?? a.createdAt) - (b.filledAt ?? b.createdAt)
-  );
+  // 交易记录完全以云端为准；旧云端文件可能残留已废弃的 realizedPnL，下载时一并清掉
+  const finalTrades = (cloudStock.stockTrades || [])
+    .map((t) => {
+      const { realizedPnL: _legacyPnl, ...rest } = t as StockTrade & { realizedPnL?: unknown };
+      return rest as StockTrade;
+    })
+    .sort((a, b) => (a.filledAt ?? a.createdAt) - (b.filledAt ?? b.createdAt));
   const { shares, avgCost } = calcPositionFromTrades(finalTrades);
   // 忽略云端的价格类字段（价格不同步；即便有残留也不进本地）
   const {
@@ -57,6 +61,8 @@ export function mergeStockFromCloud(
       positionCost: avgCost,
       // 本地价格缓存优先保留（云端不含价）
       ...pickLocalPrice(localStock),
+      // 公告链接完全以云端为准：云端没有就清空，不做本地保留
+      link: cloudStock.link,
     },
     ledgerEntry: { trades: finalTrades },
   };
@@ -89,24 +95,44 @@ export function buildUploadStocks(stocks: StockEntry[]): StockEntry[] {
   }));
 }
 
-// 剔除上传前的设备本地价格缓存字段（现价/涨跌/今开高低量/更新时刻/价格派生的股息率）
+// 剔除上传内容里的「派生/设备本地」字段：
+//   - 价格缓存：现价/涨跌/今开高低量/更新时刻/价格派生股息率；
+//   - 持仓缓存：positionShares / positionCost —— 由交易流水实时推导，上传前统一重算，云端不存；
+//   - 历史遗留：dividendRates（旧版股息率→股价表）、dividend2024/2025（旧版固定年份快照）、
+//     交易上的 realizedPnL（旧版本落库的落袋盈亏，界面已一律实时重算）。
 export function stripStockPriceCache(list: StockEntry[]): StockEntry[] {
-  return list.map(
-    ({ price, changePercent, high, low, open, volume, priceUpdatedAt, dividendRate2025, ...rest }) =>
-      rest as StockEntry
-  );
+  const stripTrade = (t: StockTrade): StockTrade => {
+    const { realizedPnL: _legacyPnl, ...rest } = t as StockTrade & { realizedPnL?: unknown };
+    return rest as StockTrade;
+  };
+  return list.map((stock) => {
+    const {
+      price, changePercent, high, low, open, volume, priceUpdatedAt, dividendRate2025,
+      positionShares, positionCost, ...rest
+    } = stock;
+    const {
+      dividendRates: _legacyRates,
+      dividend2024: _legacyD24,
+      dividend2025: _legacyD25,
+      ...clean
+    } = rest as StockEntry & { dividendRates?: unknown; dividend2024?: unknown; dividend2025?: unknown };
+    return {
+      ...(clean as StockEntry),
+      stockTrades: clean.stockTrades?.map(stripTrade),
+    };
+  });
 }
 
-// ===== 财务三表拆分（stocks → financials.json）=====
-// 三张低频财务表按 code 索引抽离到 financials.json 单独同步：
-// 公开数据跨设备一致、仅在拉取分红数据时变动，单独成文件可避免每次改交易时重传。
-export type StockFinancialField = 'dividendByYear' | 'dividendTotalByYear' | 'parentNetProfitByYear';
-// stocks.json 中每只股票的形态：不含三张财务表（转到 financials.json）
+// ===== 低频数据拆分（stocks → financials.json）=====
+// 三张财务表 + 公告链接按 code 索引抽离到 financials.json 单独同步：
+// 三者都是低频改动、跨设备一致，单独成文件可避免每次改交易时重传。
+export type StockFinancialField = 'dividendByYear' | 'dividendTotalByYear' | 'parentNetProfitByYear' | 'link';
+// stocks.json 中每只股票的形态：不含上述低频字段（转到 financials.json）
 export type StocksFileStock = Omit<StockEntry, StockFinancialField>;
-// financials.json 顶层：按 code 索引的财务数据
+// financials.json 顶层：按 code 索引的财务/低频数据
 export type FinancialsIndex = Record<string, StockFinancialByYear>;
 
-// 从整批股票抽离三张财务表，返回「不含财务表的股票」与「按 code 索引的财务表」
+// 从整批股票抽离低频字段，返回「不含低频字段的股票」与「按 code 索引的低频数据」
 export function splitFinancialsFromStocks(stocks: StockEntry[]): {
   core: StocksFileStock[];
   financials: FinancialsIndex;
@@ -117,14 +143,15 @@ export function splitFinancialsFromStocks(stocks: StockEntry[]): {
     if (s.dividendByYear) fin.dividendByYear = s.dividendByYear;
     if (s.dividendTotalByYear) fin.dividendTotalByYear = s.dividendTotalByYear;
     if (s.parentNetProfitByYear) fin.parentNetProfitByYear = s.parentNetProfitByYear;
+    if (s.link) fin.link = s.link;
     financials[s.code] = fin;
-    const { dividendByYear: _dby, dividendTotalByYear: _dt, parentNetProfitByYear: _np, ...rest } = s;
+    const { dividendByYear: _dby, dividendTotalByYear: _dt, parentNetProfitByYear: _np, link: _link, ...rest } = s;
     return rest;
   });
   return { core, financials };
 }
 
-// 把财务表按 code 合回股票列表，得到完整 StockEntry（dividendByYear 必填，缺省给 {}）
+// 把低频数据按 code 合回股票列表，得到完整 StockEntry（dividendByYear 必填，缺省给 {}）
 export function joinFinancialsToStocks(core: StocksFileStock[], financials?: FinancialsIndex): StockEntry[] {
   return core.map((s) => {
     const fin = financials?.[s.code];
@@ -133,6 +160,7 @@ export function joinFinancialsToStocks(core: StocksFileStock[], financials?: Fin
       dividendByYear: fin?.dividendByYear ?? {},
       dividendTotalByYear: fin?.dividendTotalByYear,
       parentNetProfitByYear: fin?.parentNetProfitByYear,
+      link: fin?.link,
     } as StockEntry;
   });
 }
@@ -142,9 +170,9 @@ export function joinFinancialsToStocks(core: StocksFileStock[], financials?: Fin
 // 与"最近一次成功上传/下载时的基线"比较，得到"是否有未同步改动"。
 // 三份指纹分别对应三个云端文件（gold.json / stocks.json / financials.json），
 // 并各自剔除不该入库的字段：
-//   - stocks.json：剔除价格缓存字段（现价/涨跌/高低量/更新时刻/价格派生股息率）与三张财务表，
+//   - stocks.json：剔除价格缓存字段（现价/涨跌/高低量/更新时刻/价格派生股息率）与三张财务表、公告链接，
 //     剔除设备特定字段（maxRows/maxWidth/sortMode/autoRefreshInterval）
-//   - financials.json：只含三张财务表（按 code 索引）
+//   - financials.json：三张财务表 + 公告链接（按 code 索引）
 //   - gold.json：黄金交易 + 全局设置 appSettings
 export interface GoldFileFingerprintInput {
   trades: TradeRecord[];
@@ -442,7 +470,7 @@ function diffArray(a: unknown[], b: unknown[], prefix: string, hints: DiffHints,
   }
 }
 
-/** 交易记录的一句话摘要：方向、点位×股数、金额、时间、状态、备注、落袋盈亏 */
+/** 交易记录的一句话摘要：方向、点位×股数、金额、时间、状态、备注 */
 function tradeSummary(t: AnyObj): string {
   const side = t.side === 'buy' ? '买入' : t.side === 'sell' ? '卖出' : String(t.side ?? '');
   const price = typeof t.price === 'number' ? t.price : Number(t.price ?? 0);
@@ -455,7 +483,6 @@ function tradeSummary(t: AnyObj): string {
   if (t.status === 'filled') parts.push('已成交');
   else if (t.status === 'pending') parts.push('挂单中');
   else if (t.status !== undefined) parts.push(String(t.status));
-  if (typeof t.realizedPnL === 'number') parts.push(`落袋 ${round2(t.realizedPnL)}`);
   if (t.note) parts.push(`备注：${String(t.note)}`);
   if (t.isMerged) parts.push('合并记录');
   if (t.isDeleted) parts.push('已删除');
@@ -476,7 +503,7 @@ const TRADE_HINTS: DiffHints = {
     labels: {
       side: '方向', price: '点位', shares: '股数', amount: '金额', status: '状态',
       createdAt: '创建时间', originalCreatedAt: '原始创建时间', filledAt: '成交时间',
-      note: '备注', realizedPnL: '落袋盈亏', isMerged: '合并记录', isDeleted: '软删',
+      note: '备注', isMerged: '合并记录', isDeleted: '软删',
       ttlDays: '挂单剩余天数', ttlUpdatedAt: '剩余天数生效时间',
     },
     fields: {
@@ -494,10 +521,8 @@ const STOCK_HINTS: DiffHints = {
   item: {
     labels: {
       code: '代码', name: '名称', nickname: '代号',
-      positionShares: '持仓股数', positionCost: '持仓成本',
-      dividend2024: '2024分红', dividend2025: '2025分红',
-      dividendByYear: '历年分红',
-      registerDate: '登记日', link: '链接', tag: '标签',
+      dividendByYear: '历年分红', dividendTotalByYear: '分红总额', parentNetProfitByYear: '归母净利润',
+      registerDate: '登记日', tag: '标签',
       selectedDividendYear: '选中分红年', bollHidden: '隐藏BOLL',
       stockTrades: '', // 空标签：交易记录数组就地展开，避免"交易记录·交易记录"重复
     },
@@ -621,6 +646,7 @@ export interface FinancialsStockChange {
   code: string;
   kind: CloudDiffKind; // 股票级：新增/删除/更新（增删混合时归为更新）
   groups: FinancialsYearGroup[];
+  linkChanged?: boolean; // 公告链接是否变化（不按年份归类）
 }
 export interface FinancialsDiffDetail {
   stocks: FinancialsStockChange[];
@@ -695,10 +721,11 @@ export function diffFinancialsSnapshots(baseline: string | null, current: string
       const d = diffFinancialsYear(pf, nf, y);
       if (d) deltas.push(d);
     }
-    if (deltas.length === 0) continue;
+    const linkChanged = (pf.link ?? '') !== (nf.link ?? '');
+    if (deltas.length === 0 && !linkChanged) continue;
     // 股票级：整个条目从无到有 → 新增；从有到无 → 删除；否则都是更新（年份段自身再标类型）
     const kind: CloudDiffKind = !p[code] ? 'add' : !n[code] ? 'remove' : 'change';
-    stocks.push({ code, kind, groups: groupFinancialsYears(deltas) });
+    stocks.push({ code, kind, groups: groupFinancialsYears(deltas), linkChanged: linkChanged || undefined });
   }
   return { stocks };
 }

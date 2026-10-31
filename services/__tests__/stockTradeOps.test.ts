@@ -13,17 +13,17 @@ describe('toggleTradeStatus：挂单 ⇄ 已成交', () => {
     expect(patch.positionCost).toBe(10);
   });
 
-  it('卖出挂单标记成交：持仓减少并按均价结算已实现盈亏', () => {
+  it('卖出挂单标记成交：持仓减少（已实现盈亏不落库，由界面实时重算）', () => {
     const stock = mkStock('600000', '浦发', {
       positionShares: 100, positionCost: 10,
       stockTrades: [mkTrade({ id: 'S1', side: 'sell', price: 20, shares: 40, status: 'pending' })],
     });
     const patch = toggleTradeStatus(stock, 'S1');
     expect(patch.positionShares).toBe(60);
-    expect(patch.stockTrades[0].realizedPnL).toBe(400); // (20-10)*40
+    expect(patch.stockTrades[0]).not.toHaveProperty('realizedPnL');
   });
 
-  it('已成交改回挂单：状态回退、成交时间与已实现盈亏清除、持仓回退', () => {
+  it('已成交改回挂单：状态回退、成交时间清除、持仓回退', () => {
     const base = mkTrade({ id: 'P1', side: 'buy', price: 10, shares: 100, status: 'pending' });
     const stock = mkStock('600000', '浦发', { stockTrades: [base] });
     const filled = toggleTradeStatus(stock, 'P1', 5000); // 先成交
@@ -31,7 +31,6 @@ describe('toggleTradeStatus：挂单 ⇄ 已成交', () => {
     expect(back.changed).toBe(true);
     expect(back.stockTrades[0].status).toBe('pending');
     expect(back.stockTrades[0].filledAt).toBeUndefined();
-    expect(back.stockTrades[0].realizedPnL).toBeUndefined();
     expect(back.positionShares).toBe(0);
     expect(back.positionCost).toBe(0);
   });

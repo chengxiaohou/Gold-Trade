@@ -87,6 +87,7 @@ export interface StockFinancialByYear {
   dividendByYear?: Record<number, number>;        // key=年份, value=每股税前派息（全年汇总）
   dividendTotalByYear?: Record<number, number>;   // key=年份, value=当年现金分红总额（元，税前）
   parentNetProfitByYear?: Record<number, number>; // key=年份, value=当年归母净利润（元，年报口径）
+  link?: string; // 公告链接（低频改动，随 financials.json 同步，不占 stocks.json）
 }
 
 export interface StockEntry {
@@ -99,8 +100,6 @@ export interface StockEntry {
   low: number;
   open?: number; // 今日开盘价（实时行情，用于价格浮窗合并今日K线）
   volume?: number; // 今日成交量（手，实时行情，用于价格浮窗合并今日K线）
-  dividend2024: number;
-  dividend2025: number;
   dividendByYear: Record<number, number>; // key=年份, value=每股税前派息（全年汇总）
   dividendTotalByYear?: Record<number, number>; // key=年份, value=当年现金分红总额（元，税前；每股派息 × 总股本估算）
   parentNetProfitByYear?: Record<number, number>; // key=年份, value=当年归母净利润（元，年报口径，东方财富）
@@ -130,7 +129,6 @@ export interface StockTrade {
   originalCreatedAt?: number; // 原始创建时间（不受 toggle 覆盖，用于做T配对等场景的真实买入日期）
   filledAt?: number;         // 成交时间戳
   note?: string;             // 备注
-  realizedPnL?: number;      // 卖出成交时按当前均价结算的落袋盈亏
   isMerged?: boolean;        // 是否为超出上限后自动合并的汇总记录（只读，不计入上限）
   amount?: number;           // 合并记录该段成交总金额（用于精确追溯成本链）
   isDeleted?: boolean;       // 软删标记：不展示、不计入持仓/盈亏/统计，仅保留在流水账中做墓碑锚点

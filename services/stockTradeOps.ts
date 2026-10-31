@@ -1,4 +1,5 @@
 import type { StockEntry, StockTrade } from '../types';
+import { roundCost } from './realizedPnl';
 
 // 交易记录本地修改操作的结果补丁：新的交易列表与联动后的持仓字段。
 // 纯函数——只计算"改了什么"，不负责写存储（持久化由调用方统一执行），便于单测锁定逻辑。
@@ -29,20 +30,18 @@ export function toggleTradeStatus(stock: StockEntry, tradeId: string, now: numbe
   let updatedTrade: StockTrade;
 
   if (trade.status === 'pending') {
-    // 标记成交
-    let realizedPnL: number | undefined;
+    // 标记成交：买入加权成本，卖出回减持仓（已实现盈亏由界面按流水实时重算，不再落库）
     if (trade.side === 'buy') {
       shares = shares + trade.shares;
       cost = shares > 0 ? (cost * (shares - trade.shares) + trade.price * trade.shares) / shares : 0;
     } else {
       shares = Math.max(0, shares - trade.shares);
-      realizedPnL = cost > 0 ? (trade.price - cost) * trade.shares : 0;
       if (shares === 0) cost = 0;
     }
     // 标记成交时把时间更改为成交这一刻（createdAt 是记录行展示的时间字段）
     // 但在覆盖 createdAt 之前，先保存原始创建时刻（首次 toggle 时存一次，后续取消/再成交不再更新）
     const prevOriginal = trade.originalCreatedAt ?? trade.createdAt;
-    updatedTrade = { ...trade, status: 'filled', createdAt: now, filledAt: now, originalCreatedAt: prevOriginal, realizedPnL };
+    updatedTrade = { ...trade, status: 'filled', createdAt: now, filledAt: now, originalCreatedAt: prevOriginal };
   } else {
     // 取消成交（反选）：回退持仓
     if (trade.side === 'buy') {
@@ -53,13 +52,13 @@ export function toggleTradeStatus(stock: StockEntry, tradeId: string, now: numbe
       shares = shares + trade.shares;
       // 若此前卖出已清仓（cost 归零），此处成本无法精准恢复，保持当前值，可手动校正
     }
-    updatedTrade = { ...trade, status: 'pending', filledAt: undefined, realizedPnL: undefined };
+    updatedTrade = { ...trade, status: 'pending', filledAt: undefined };
   }
 
   return {
     stockTrades: trades.map(t => t.id === tradeId ? updatedTrade : t),
     positionShares: shares,
-    positionCost: cost,
+    positionCost: roundCost(cost),
     changed: true,
     status: updatedTrade.status,
   };
@@ -88,7 +87,7 @@ export function removeTrade(stock: StockEntry, tradeId: string): StockTradePatch
   return {
     stockTrades: trades.filter(t => t.id !== tradeId),
     positionShares: shares,
-    positionCost: cost,
+    positionCost: roundCost(cost),
     changed: true,
   };
 }

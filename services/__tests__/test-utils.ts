@@ -31,8 +31,6 @@ export function mkStock(code: string, name: string, over: Partial<StockEntry> = 
     changePercent: 0,
     high: 0,
     low: 0,
-    dividend2024: 0,
-    dividend2025: 0,
     dividendByYear: {},
     dividendRate2025: 0,
     positionShares: 0,

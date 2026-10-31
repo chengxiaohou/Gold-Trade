@@ -14,7 +14,7 @@ import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import { StockAccountPage } from './StockAccountPage';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
-import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, calcAvgPnlForTrades, calcTradeFees, tradeAmountFormula, estimatePendingSell, isEtf, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
+import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, calcAvgPnlForTrades, calcTradeFees, tradeAmountFormula, estimatePendingSell, isEtf, roundCost, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
 import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, volBucket, buildLatestShrinkTags, buildShrinkTagsForModule, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, analyzeStandEvents, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5, type StandEvent } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
@@ -407,8 +407,6 @@ interface PendingAddStock {
   low: number;
   open: number;
   volume: number;
-  dividend2024: number;
-  dividend2025: number;
   dividendByYear: Record<number, number>;
   dividendTotalByYear?: Record<number, number>;
   parentNetProfitByYear?: Record<number, number>;
@@ -2264,15 +2262,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const cols = visibleColumns || defaultVisibleColumns;
   // 分红年份列（dividendLeft / dividendRight）：表头合并为一格，年份各自成列
   const dividendYearCols = cols.filter(c => c === 'dividendLeft' || c === 'dividendRight');
-  // 获取某年的分红金额（优先从 dividendByYear 取，兼容旧数据）
+  // 获取某年的分红金额（若有则取，否则 0）
   const getDividendForYear = (stock: StockEntry, year: number): number => {
-    if (stock.dividendByYear && stock.dividendByYear[year] !== undefined) {
-      return stock.dividendByYear[year];
-    }
-    // 兼容旧数据
-    if (year === 2024) return stock.dividend2024 || 0;
-    if (year === 2025) return stock.dividend2025 || 0;
-    return 0;
+    return stock.dividendByYear?.[year] ?? 0;
   };
 
   // 获取该股票选中的分红年份（默认使用右年份）
@@ -4550,8 +4542,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         name: stock.name,
         current2024: getDividendForYear(stock, dividendYearLeft),
         current2025: getDividendForYear(stock, dividendYearRight),
-        fetched2024: result?.found ? (result.dividend2024 ?? null) : null,
-        fetched2025: result?.found ? (result.dividend2025 ?? null) : null,
+        fetched2024: result?.found ? (result.dividendByYear[2024] ?? null) : null,
+        fetched2025: result?.found ? (result.dividendByYear[2025] ?? null) : null,
         fetchedDividendByYear: result?.found ? result.dividendByYear : stock.dividendByYear || {},
         dividendTotalByYear: result?.found
           ? calcDividendTotalByYear(result.records, sharesByCode[bareCode(stock.code)], result.totalShares)
@@ -4611,8 +4603,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       name: stock.name,
       current2024: getDividendForYear(stock, dividendYearLeft),
       current2025: getDividendForYear(stock, dividendYearRight),
-      fetched2024: result.found ? (result.dividend2024 ?? null) : null,
-      fetched2025: result.found ? (result.dividend2025 ?? null) : null,
+      fetched2024: result.found ? (result.dividendByYear[2024] ?? null) : null,
+      fetched2025: result.found ? (result.dividendByYear[2025] ?? null) : null,
       fetchedDividendByYear: result.found ? result.dividendByYear : stock.dividendByYear || {},
       dividendTotalByYear: result.found
         ? calcDividendTotalByYear(result.records, sharesByDate, result.totalShares)
@@ -4666,8 +4658,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       const dividendByYear = Object.keys(entry.fetchedDividendByYear).length > 0
         ? entry.fetchedDividendByYear
         : (stock.dividendByYear || {});
-      const dividend2024 = dividendByYear[dividendYearLeft] ?? entry.fetched2024 ?? stock.dividend2024;
-      const dividend2025 = dividendByYear[dividendYearRight] ?? entry.fetched2025 ?? stock.dividend2025;
       const selectedYear = getSelectedYear(stock);
       const selectedDividend = dividendByYear[selectedYear] ?? 0;
       const dividendRate2025 = stock.price > 0 ? (selectedDividend / stock.price) * 100 : 0;
@@ -4679,8 +4669,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         .reverse()[0];
       return {
         ...stock,
-        dividend2024,
-        dividend2025,
         dividendByYear,
         // 三项派生数据随分红一起落库（可随云端同步）：
         // 现金分红总额（每股派息 × 总股本估算）、归母净利润（东财年报，元）；
@@ -5082,23 +5070,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       if (s.id !== stockId) return s;
       let shares2 = s.positionShares || 0;
       let cost = s.positionCost || 0;
-      let realizedPnL: number | undefined;
       let newTrade: StockTrade = baseTrade;
       if (status === 'filled') {
-        // 直接成交：买入加权成本，卖出按当前均价结算已实现盈亏（与切换成交逻辑一致）
+        // 直接成交：买入加权成本，卖出回减持仓（已实现盈亏由界面按流水实时重算，不再落库）
         if (addTradeSide === 'buy') {
           shares2 = shares2 + shares;
           cost = shares2 > 0 ? (cost * (shares2 - shares) + price * shares) / shares2 : 0;
         } else {
           shares2 = Math.max(0, shares2 - shares);
-          realizedPnL = cost > 0 ? (price - cost) * shares : 0;
           if (shares2 === 0) cost = 0;
         }
-        newTrade = { ...baseTrade, filledAt: Date.now(), realizedPnL };
+        newTrade = { ...baseTrade, filledAt: Date.now() };
       }
       let newTrades = [...(s.stockTrades || []), newTrade];
       pushLedger(s.id, newTrades);
-      return { ...s, stockTrades: newTrades, positionShares: shares2, positionCost: cost };
+      return { ...s, stockTrades: newTrades, positionShares: shares2, positionCost: roundCost(cost) };
     }));
     // 挂单/成交后仅清空数量与备注，保留价格（常为现价，方便连续操作）
     setAddTradeShares('');
@@ -5134,7 +5120,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       // 3) 按新字段构造记录
       let newTrade: StockTrade = {
         ...trade, side: addTradeSide, price, shares, note: addTradeNote.trim() || undefined,
-        status, filledAt: undefined, realizedPnL: undefined,
+        status, filledAt: undefined,
         // 编辑挂单：时间戳更新到修改时刻，剩余有效交易天数随之重置为 5 天
         ...(status === 'pending' ? { createdAt: Date.now() } : {}),
       };
@@ -5144,14 +5130,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           cost = shares2 > 0 ? (cost * (shares2 - shares) + price * shares) / shares2 : 0;
         } else {
           shares2 = Math.max(0, shares2 - shares);
-          const rp = cost > 0 ? (price - cost) * shares : 0;
           if (shares2 === 0) cost = 0;
-          newTrade = { ...newTrade, filledAt: Date.now(), realizedPnL: rp };
         }
+        newTrade = { ...newTrade, filledAt: Date.now() };
       }
       let newTrades = [...baseTrades, newTrade];
       pushLedger(s.id, newTrades);
-      return { ...s, stockTrades: newTrades, positionShares: shares2, positionCost: cost };
+      return { ...s, stockTrades: newTrades, positionShares: shares2, positionCost: roundCost(cost) };
     }));
     // 保存编辑后仅清空数量与备注，保留价格
     setAddTradeShares('');
@@ -5219,9 +5204,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         setAddError('未获取到实时价格，请检查股票代码或网络后重试');
       }
 
-      // 步骤2：自动查询该股票的 2024/2025 全年分红（查不到则保持 0，可稍后用"自动获取分红"批量补）
-      let dividend2024 = 0;
-      let dividend2025 = 0;
+      // 步骤2：自动查询该股票的历年分红（查不到则留空，可稍后用"自动获取分红"批量补）
       let dividendByYear: Record<number, number> = {};
       let dividendTotalByYear: Record<number, number> | undefined;
       let parentNetProfitByYear: Record<number, number> | undefined;
@@ -5231,8 +5214,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const divLogCtx = requestLogService.beginBatch('添加股票查询：分红 + 净利润 + 历年股本（1 只股票 · 最多 4 条请求）');
         const divResult = await fetchYearlyDividends(stockCode, divLogCtx);
         if (divResult.found) {
-          dividend2024 = divResult.dividend2024;
-          dividend2025 = divResult.dividend2025;
           dividendByYear = divResult.dividendByYear;
           // 归母净利润（东财批量接口，单只也是 1 条请求；失败留空）
           try {
@@ -5273,8 +5254,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         low: result?.low || 0,
         open: result?.open || 0,
         volume: result?.volume || 0,
-        dividend2024,
-        dividend2025,
         dividendByYear,
         dividendTotalByYear,
         parentNetProfitByYear,
@@ -5343,8 +5322,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       low: pendingAdd.low,
       open: pendingAdd.open,
       volume: pendingAdd.volume,
-      dividend2024: pendingAdd.dividend2024,
-      dividend2025: pendingAdd.dividend2025,
       dividendByYear: pendingAdd.dividendByYear,
       dividendTotalByYear: pendingAdd.dividendTotalByYear,
       parentNetProfitByYear: pendingAdd.parentNetProfitByYear,
@@ -5428,9 +5405,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const year = (field as string) === 'dividendLeft' ? dividendYearLeft : dividendYearRight;
         // Update dividendByYear
         newStock.dividendByYear = { ...(s.dividendByYear || {}), [year]: dividend };
-        // Keep legacy fields in sync
-        if (year === 2024) newStock.dividend2024 = dividend;
-        if (year === 2025) newStock.dividend2025 = dividend;
         // Recalculate rate if this is the selected year
         const selectedYear = getSelectedYear(s);
         if (selectedYear === year) {
@@ -6330,7 +6304,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         .map(y => Number(y))
                         .filter(y => Number.isFinite(y))
                         .sort((a, b) => b - a);
-                      const rightDiv = pendingAdd.dividendByYear?.[dividendYearRight] ?? pendingAdd.dividend2025 ?? 0;
+                      const rightDiv = pendingAdd.dividendByYear?.[dividendYearRight] ?? 0;
                       const rate = pendingAdd.price > 0 && rightDiv > 0 ? (rightDiv / pendingAdd.price) * 100 : null;
                       // 连续分红年数：从最近有分红的年份开始，逐年往前判断是否连号
                       let streakCount = 0;

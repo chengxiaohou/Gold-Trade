@@ -20,7 +20,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.209';
+const APP_VERSION = 'v2.18.217';
 
 // 上传文件大小的展示格式（UTF-8 字节数 → B/KB/MB）
 function formatByteSize(bytes: number): string {
@@ -142,8 +142,6 @@ function createDefaultStocks(): StockEntry[] {
   ];
   
   return stockData.map((item, index) => {
-    const div2024 = item.dividendByYear[2024] || 0;
-    const div2025 = item.dividendByYear[2025] || 0;
     return {
       id: (index + 1).toString(),
       code: item.code,
@@ -152,8 +150,6 @@ function createDefaultStocks(): StockEntry[] {
       changePercent: 0,
       high: 0,
       low: 0,
-      dividend2024: div2024,
-      dividend2025: div2025,
       dividendByYear: item.dividendByYear,
       dividendRate2025: 0,
       positionShares: 0,
@@ -253,13 +249,15 @@ export default function App() {
           return parsed.map((s: StockEntry) => {
             // 持仓只从交易记录重算，不再保留旧的手动填写成本
             const { shares, avgCost } = calcPositionFromTrades(s.stockTrades);
+            // 兼容极老数据：曾用固定字段 dividend2024/2025 存两年派息，这里一次性迁移进 dividendByYear
+            const legacy = s as StockEntry & { dividend2024?: number; dividend2025?: number };
             return {
               ...s,
               dividendByYear: s.dividendByYear && Object.keys(s.dividendByYear).length > 0
                 ? s.dividendByYear
                 : {
-                    ...(s.dividend2024 ? { 2024: s.dividend2024 } : {}),
-                    ...(s.dividend2025 ? { 2025: s.dividend2025 } : {}),
+                    ...(legacy.dividend2024 ? { 2024: legacy.dividend2024 } : {}),
+                    ...(legacy.dividend2025 ? { 2025: legacy.dividend2025 } : {}),
                   },
               selectedDividendYear: s.selectedDividendYear ?? 2025,
               positionShares: shares,
@@ -423,8 +421,8 @@ export default function App() {
   
   // Localized Cloud Confirmation Popover State
   const [cloudConfirm, setCloudConfirm] = useState<'upload' | 'download' | null>(null);
-  // 本次将上传的文件总大小（UTF-8 字节数）；null = 未计算/非上传场景
-  const [cloudUploadSize, setCloudUploadSize] = useState<number | null>(null);
+  // 本次将上传的「每个文件」大小（UTF-8 字节数）；null = 未计算/非上传场景
+  const [cloudFileSizes, setCloudFileSizes] = useState<Partial<Record<CloudFileName, number>> | null>(null);
 
   // 股息页同步确认浮窗的智能定位：记录被点击的按钮，箭头始终指向它
   const stockActionWrapperRef = useRef<HTMLDivElement>(null);
@@ -463,7 +461,7 @@ export default function App() {
     cancelHoverClose();
     cloudConfirmPinnedRef.current = false;
     setCloudConfirm(null);
-    setCloudUploadSize(null);
+    setCloudFileSizes(null);
   };
 
   // 统一计算弹窗在视口中的位置（position: fixed，坐标即视口坐标，与 wrapper 的相对定位无关，
@@ -694,6 +692,8 @@ export default function App() {
         const kindPrefix = g.kind !== st.kind ? `${KIND_LABELS[g.kind]} ` : '';
         return `  - ${kindPrefix}${range} 年：${g.fields.map(f => FIELD_LABELS[f]).join('、')}`;
       });
+      // 公告链接不按年份归类，单独一行
+      if (st.linkChanged) lines.push('  - 公告链接：更新');
       return { kind: st.kind, text: `${KIND_LABELS[st.kind]}「${stockLabel(st.code)}」\n${lines.join('\n')}` };
     });
   }, [cloudFileBaselines.financials, cloudFileBaselines.stocks, financialsFileFingerprint, stocks]);
@@ -727,7 +727,7 @@ export default function App() {
     setStocks(createDefaultStocks());
     setStockSettings({
       tagColors: {},
-      visibleColumns: ['code', 'name', 'price', 'changePercent', 'high', 'low', 'dividend2024', 'dividend2025', 'dividendRate2025', 'dividendRates'],
+      visibleColumns: ['code', 'name', 'price', 'changePercent', 'high', 'low', 'dividendLeft', 'dividendRight', 'dividendRate', 'dividendRates'],
       dividendRateColumns: ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'],
       dividendRateColorRanges: [
         { min: 0, max: 4.5, color: 'red' },
@@ -1165,7 +1165,7 @@ export default function App() {
         openSettings('cloud');
         return;
     }
-    setCloudUploadSize(null);
+    setCloudFileSizes(null);
     setCloudConfirm(action);
   };
 
@@ -1273,24 +1273,30 @@ export default function App() {
     };
   }, [trades, appSettings, stocks, stockSettings, presetsFromStorage]);
 
-  // 估算本次上传体积：只统计「本页（股票/分红）」有差异（会上传）文件的字节数。
+  // 估算本次上传体积：按文件分别统计「本页（股票/分红）」的字节数，
+  // 供确认浮窗在各自的「待上传」标签左侧展示。
   // 铁律：黄金文件绝不纳入本页体积——它从不会由本页上传。
-  const computeStockUploadSize = useCallback((): number => {
+  const computeStockUploadSizes = useCallback((): Partial<Record<CloudFileName, number>> => {
     const payloads = buildCloudFilePayloads();
-    return [CLOUD_STOCKS_FILENAME, CLOUD_FINANCIALS_FILENAME].reduce((sum, name) => (
-      cloudDirtyByFile[name] ? sum + new Blob([payloads[name]]).size : sum
-    ), 0);
+    const sizes: Partial<Record<CloudFileName, number>> = {};
+    for (const name of [CLOUD_STOCKS_FILENAME, CLOUD_FINANCIALS_FILENAME] as CloudFileName[]) {
+      if (cloudDirtyByFile[name]) sizes[name] = new Blob([payloads[name]]).size;
+    }
+    return sizes;
   }, [buildCloudFilePayloads, cloudDirtyByFile]);
 
-  // 上传确认浮窗里隐藏的两个下载按钮：分别把原始 stocks.json / financials.json 存到本地用于抽查。
-  // 浏览器会拦截一次点击触发的多个文件下载，所以拆成两个独立按钮，每次只下一个文件；
-  // 导出内容与实际上传内容完全一致（紧凑 JSON、无缩进换行），黄金文件绝不导出（铁律）。
-  const downloadStockUploadFile = (name: CloudFileName) => {
-    const blob = new Blob([buildCloudFilePayloads()[name]], { type: 'application/json' });
+  // 上传确认浮窗左右两侧各有一组隐藏下载按钮：
+  //   左侧 → 美化后的 JSON（两空格缩进，便于人工阅读）；
+  //   右侧 → 原始文件（与实际上传内容逐字节一致，紧凑 JSON、无换行）。
+  // 每次点击只下一个文件（浏览器会拦截一次点击触发的多文件下载）；黄金文件绝不导出（铁律）。
+  const downloadStockUploadFile = (name: CloudFileName, pretty: boolean) => {
+    const payload = buildCloudFilePayloads()[name];
+    const text = pretty ? JSON.stringify(JSON.parse(payload), null, 2) : payload;
+    const blob = new Blob([text], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = name;
+    link.download = pretty ? name.replace(/\.json$/, '.pretty.json') : name;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1300,11 +1306,11 @@ export default function App() {
   // 股息页"上传到云端"：打开确认浮窗，展示各文件差异，确认后一键上传全部有差异文件
   const requestStockUpload = () => {
     if (isSyncing) return;
-    setCloudUploadSize(null);
+    setCloudFileSizes(null);
     snapPopoverToAnchor(320, 460);
     setCloudConfirm('upload');
     // 体积统计需要完整序列化一次上传数据，放到空闲时算，优先保证弹窗即时出现
-    runWhenIdle(() => setCloudUploadSize(computeStockUploadSize()));
+    runWhenIdle(() => setCloudFileSizes(computeStockUploadSizes()));
   };
 
   // ===== 确认浮窗的悬停触发（悬停意图 + 悬停宽限，见上方 HOVER_* 注释）=====
@@ -1363,7 +1369,7 @@ export default function App() {
     if (isSyncing) return;
     cloudConfirmPinnedRef.current = false;
     setCloudConfirm(null);
-    setCloudUploadSize(null);
+    setCloudFileSizes(null);
     setIsSyncing(true);
     setUploadSuccess(false);
     const ok = await performStockCloudUpload();
@@ -1394,7 +1400,7 @@ export default function App() {
   const handleCloudDownload = async () => {
     cloudConfirmPinnedRef.current = false;
     setCloudConfirm(null);
-    setCloudUploadSize(null);
+    setCloudFileSizes(null);
     setIsDownloading(true);
     setDownloadSuccess(false);
     try {
@@ -2054,35 +2060,49 @@ export default function App() {
               onMouseEnter={cancelHoverClose}
               onMouseLeave={scheduleHoverClose}
               className={`bg-app-card border border-app-border shadow-[0_8px_30px_rgba(0,0,0,0.5)] rounded-xl p-3 flex flex-col items-center text-center pointer-events-auto ${cloudConfirm === 'upload' ? 'w-[320px] max-w-full' : 'w-[200px] max-w-full'}`}>
-              {/* 标题行：警告图标 + 标题 + 本次上传体积，同一行、同一字号；
-                  体积按实际上传的紧凑 JSON（无缩进/换行）估算，
-                  未算完时占位「计算中」并用固定宽度兜住，避免行宽跳动 */}
+              {/* 标题行：警告图标 + 标题，同一行、同一字号 */}
               <div className="relative w-full flex items-center justify-center gap-1.5 mb-2 whitespace-nowrap">
                 <AlertTriangle size={14} className="text-indigo-400 shrink-0" />
                 <span className="text-xs font-bold text-app-subtext">
                   {cloudConfirm === 'upload' ? '确认上传' : '确认下载'}
                 </span>
+                {/* 左侧隐藏下载：美化后的 stocks.json / financials.json（便于人工阅读） */}
                 {cloudConfirm === 'upload' && (
-                  <span className="inline-block min-w-[46px] text-xs font-normal text-app-subtext">
-                    {cloudUploadSize !== null ? formatByteSize(cloudUploadSize) : '计算中…'}
-                  </span>
-                )}
-                {/* 隐藏式下载：靠右独立摆放，不挤占标题；分别导出原始 stocks.json / financials.json */}
-                {cloudConfirm === 'upload' && (
-                  <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => downloadStockUploadFile(CLOUD_STOCKS_FILENAME)}
+                      onClick={() => downloadStockUploadFile(CLOUD_STOCKS_FILENAME, true)}
                       className="text-[10px] font-mono text-white/[0.01] hover:text-app-text transition-colors cursor-pointer select-none"
-                      title="下载 stocks.json"
+                      title="下载美化后的 stocks.json"
                     >
                       股票
                     </button>
                     <button
                       type="button"
-                      onClick={() => downloadStockUploadFile(CLOUD_FINANCIALS_FILENAME)}
+                      onClick={() => downloadStockUploadFile(CLOUD_FINANCIALS_FILENAME, true)}
                       className="text-[10px] font-mono text-white/[0.01] hover:text-app-text transition-colors cursor-pointer select-none"
-                      title="下载 financials.json"
+                      title="下载美化后的 financials.json"
+                    >
+                      分红
+                    </button>
+                  </div>
+                )}
+                {/* 右侧隐藏下载：原始 stocks.json / financials.json（与上传内容逐字节一致） */}
+                {cloudConfirm === 'upload' && (
+                  <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => downloadStockUploadFile(CLOUD_STOCKS_FILENAME, false)}
+                      className="text-[10px] font-mono text-white/[0.01] hover:text-app-text transition-colors cursor-pointer select-none"
+                      title="下载原始 stocks.json"
+                    >
+                      股票
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => downloadStockUploadFile(CLOUD_FINANCIALS_FILENAME, false)}
+                      className="text-[10px] font-mono text-white/[0.01] hover:text-app-text transition-colors cursor-pointer select-none"
+                      title="下载原始 financials.json"
                     >
                       分红
                     </button>
@@ -2097,12 +2117,19 @@ export default function App() {
                 <div className="w-full max-h-[240px] overflow-y-auto custom-scrollbar text-left mb-2 border border-app-border rounded-lg bg-app-input divide-y divide-app-border">
                   {cloudFileRows.filter((row) => row.dirty).map((row) => (
                     <div key={row.file} className="px-2 py-2">
-                      {/* 文件标题行：中文名 + 状态 */}
+                      {/* 文件标题行：中文名 + 体积 + 状态（体积贴着状态左侧） */}
                       <div className="flex items-center gap-1.5 mb-1">
                         <span className="w-[7px] h-[7px] rounded-full shrink-0 bg-indigo-400"></span>
                         <span className="text-[11px] font-bold text-app-text">{row.label}</span>
-                        <span className="ml-auto text-[10px] text-indigo-400">
-                          {row.firstTime ? '首次上传' : '待上传'}
+                        <span className="ml-auto flex items-center gap-1.5 whitespace-nowrap">
+                          <span className="text-[10px] text-app-subtext">
+                            {cloudFileSizes?.[row.file] !== undefined
+                              ? formatByteSize(cloudFileSizes[row.file]!)
+                              : '计算中…'}
+                          </span>
+                          <span className="text-[10px] text-indigo-400">
+                            {row.firstTime ? '首次上传' : '待上传'}
+                          </span>
                         </span>
                       </div>
                       {/* 差异明细 */}

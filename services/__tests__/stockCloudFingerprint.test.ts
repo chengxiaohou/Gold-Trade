@@ -56,10 +56,31 @@ describe('buildStocksFileFingerprint', () => {
     expect(mk({ autoRefreshInterval: 300 })).toBe(base);
   });
 
-  it('真实持仓数据变化（positionShares）改变指纹', () => {
+  it('持仓缓存 positionShares / positionCost 不改变指纹（由交易流水推导，上传前剔除）', () => {
     const a = buildStocksFileFingerprint({ stocks: [mkStock('600000', '浦发')] });
     const b = buildStocksFileFingerprint({ stocks: [mkStock('600000', '浦发', { positionShares: 100, positionCost: 10 })] });
-    expect(b).not.toBe(a);
+    expect(b).toBe(a);
+  });
+
+  it('历史遗留字段 dividendRates / dividend2024 / dividend2025 不改变 stocks 指纹（上传时被剔除）', () => {
+    const legacy = {
+      ...mkStock('600000', '浦发'),
+      dividendRates: { '3%': 90, '4%': 67.5 },
+      dividend2024: 0.5,
+      dividend2025: 0.6,
+    } as unknown as ReturnType<typeof mkStock>;
+    const a = buildStocksFileFingerprint({ stocks: [mkStock('600000', '浦发')] });
+    const b = buildStocksFileFingerprint({ stocks: [legacy] });
+    expect(b).toBe(a);
+  });
+
+  it('公告链接不影响 stocks 指纹，但会改变 financials 指纹（已挪到分红文件）', () => {
+    const withLink = buildStocksFileFingerprint({
+      stocks: [mkStock('600000', '浦发', { link: 'https://example.com/a' })],
+    });
+    expect(withLink).toBe(buildStocksFileFingerprint({ stocks: [mkStock('600000', '浦发')] }));
+    expect(buildFinancialsFileFingerprint([mkStock('600000', '浦发', { link: 'https://example.com/a' })]))
+      .not.toBe(buildFinancialsFileFingerprint([mkStock('600000', '浦发')]));
   });
 
   it('分红数据（dividendByYear）不改变 stocks 指纹（已拆到 financials）', () => {

@@ -59,8 +59,6 @@ export interface YearlyDividends {
   found: boolean;         // false 表示该代码查不到分红数据（如 ETF）
   code: string;
   name?: string;
-  dividend2024: number;   // 每股派息（税前），按分红所属年度汇总（含中期/特别/年度）
-  dividend2025: number;
   dividendByYear: Record<number, number>; // key=年份, value=每股税前派息（全年汇总）
   totalShares?: number;   // 总股本（股），用于估算年度现金分红总额
   records: DividendRecord[];
@@ -159,16 +157,6 @@ function parseTonghuashunHtml(html: string, code: string): YearlyDividends | nul
   const sharesInYi = sharesMatch ? parseFloat(sharesMatch[1]) : NaN;
   const totalShares = isFinite(sharesInYi) && sharesInYi > 0 ? Math.round(sharesInYi * 1e8) : undefined;
 
-  const sumPerShare = (year: number): number => {
-    const totalPer10 = records
-      .filter(r => {
-        const y = r.planProfile.match(/【(\d{4})年/);
-        return y && parseInt(y[1], 10) === year;
-      })
-      .reduce((acc, r) => acc + r.pretaxPer10, 0);
-    return Math.round((totalPer10 / 10) * 10000) / 10000;
-  };
-
   const buildDividendByYear = (): Record<number, number> => {
     const map: Record<number, number> = {};
     for (const r of records) {
@@ -186,8 +174,6 @@ function parseTonghuashunHtml(html: string, code: string): YearlyDividends | nul
   return {
     found: true,
     code,
-    dividend2024: sumPerShare(2024),
-    dividend2025: sumPerShare(2025),
     dividendByYear: buildDividendByYear(),
     totalShares,
     records,
@@ -230,7 +216,7 @@ function parseEastmoneyJson(json: unknown, code: string): YearlyDividends {
   const result = (json as { result?: { data?: Array<Record<string, unknown>> } })?.result;
   const data = result?.data;
   if (!Array.isArray(data) || data.length === 0) {
-    return { found: false, code, dividend2024: 0, dividend2025: 0, dividendByYear: {}, records: [], source: '东方财富' };
+    return { found: false, code, dividendByYear: {}, records: [], source: '东方财富' };
   }
 
   const records: DividendRecord[] = data
@@ -245,13 +231,6 @@ function parseEastmoneyJson(json: unknown, code: string): YearlyDividends {
       planProfile: String(r.IMPL_PLAN_PROFILE || ''),
       registerDate: String(r.REGISTER_DATE || '').slice(0, 10) || undefined,
     }));
-
-  const sumPerShare = (year: number): number => {
-    const totalPer10 = records
-      .filter(r => r.reportDate.startsWith(`${year}-`))
-      .reduce((acc, r) => acc + r.pretaxPer10, 0);
-    return Math.round((totalPer10 / 10) * 10000) / 10000;
-  };
 
   const buildDividendByYear = (): Record<number, number> => {
     const map: Record<number, number> = {};
@@ -275,8 +254,6 @@ function parseEastmoneyJson(json: unknown, code: string): YearlyDividends {
     found: true,
     code,
     name: data[0]?.SECURITY_NAME_ABBR ? String(data[0].SECURITY_NAME_ABBR) : undefined,
-    dividend2024: sumPerShare(2024),
-    dividend2025: sumPerShare(2025),
     dividendByYear: buildDividendByYear(),
     totalShares,
     records,
@@ -463,7 +440,7 @@ export async function fetchBatchYearlyDividends(codes: string[], logCtx?: LogBat
   await throttleRequest();
 
   const failAll = (message: string): YearlyDividends[] =>
-    codes.map(code => ({ found: false, code, dividend2024: 0, dividend2025: 0, dividendByYear: {}, records: [], source: '东方财富' as const, error: message }));
+    codes.map(code => ({ found: false, code, dividendByYear: {}, records: [], source: '东方财富' as const, error: message }));
 
   try {
     const allRows: Array<Record<string, unknown>> = [];
@@ -497,7 +474,7 @@ export async function fetchBatchYearlyDividends(codes: string[], logCtx?: LogBat
     return codes.map(code => {
       const bucket = byCode.get(code.replace(/\.(SH|SZ|BJ)$/i, '').toUpperCase());
       if (!bucket || bucket.records.length === 0) {
-        return { found: false, code, dividend2024: 0, dividend2025: 0, dividendByYear: {}, records: [], source: '东方财富' as const };
+        return { found: false, code, dividendByYear: {}, records: [], source: '东方财富' as const };
       }
       const byYear: Record<number, number> = {};
       for (const r of bucket.records) {
@@ -511,8 +488,6 @@ export async function fetchBatchYearlyDividends(codes: string[], logCtx?: LogBat
         found: true,
         code,
         name: bucket.name,
-        dividend2024: byYear[2024] || 0,
-        dividend2025: byYear[2025] || 0,
         dividendByYear: byYear,
         records: bucket.records,
         source: '东方财富' as const,
@@ -525,7 +500,7 @@ export async function fetchBatchYearlyDividends(codes: string[], logCtx?: LogBat
 
 // ---------- 对外入口（逐只，当前在线方案） ----------
 
-// 查询一只股票的 2024/2025 全年分红（每股税前派息，按分红所属年度汇总）。
+// 查询一只股票的历年分红（每股税前派息，按分红所属年度汇总）。
 // 主源同花顺 F10 HTML（含中期分红），失败降级东方财富单只查询。
 export async function fetchYearlyDividends(code: string, logCtx?: LogBatchContext): Promise<YearlyDividends> {
   await throttleRequest();
@@ -543,8 +518,6 @@ export async function fetchYearlyDividends(code: string, logCtx?: LogBatchContex
   return {
     found: false,
     code,
-    dividend2024: 0,
-    dividend2025: 0,
     dividendByYear: {},
     records: [],
     source: '同花顺',
