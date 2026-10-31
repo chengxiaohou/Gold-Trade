@@ -1975,27 +1975,6 @@ const AnnualDividendChart: React.FC<{ stock: StockEntry }> = ({ stock }) => {
 
   return (
     <>
-      {/* 图例：色块对应柱/线，共四组数据 */}
-      {hasAmountData && (
-        <div className="flex items-center gap-2 mb-0.5 text-[9px] text-app-subtext flex-wrap">
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-[1px]" style={{ background: 'rgba(99,102,241,0.8)' }} />
-            归母净利润
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-[1px]" style={{ background: '#38bdf8' }} />
-            派现总额
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2.5 h-[2px] rounded-full" style={{ background: '#fb923c' }} />
-            股利支付率
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2.5 h-[2px] rounded-full" style={{ background: '#ef4444' }} />
-            每股派息
-          </span>
-        </div>
-      )}
       <div
         ref={chartBoxRef}
         className={`${hasAmountData ? 'h-[150px]' : 'h-[120px]'} w-full select-none touch-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-500/50 [&_svg]:outline-none [&_svg]:focus:outline-none`}
@@ -2023,6 +2002,8 @@ const AnnualDividendChart: React.FC<{ stock: StockEntry }> = ({ stock }) => {
                 tickLine={false}
                 axisLine={false}
                 minTickGap={10}
+                height={14}
+                tickMargin={2}
               />
               <YAxis
                 yAxisId="amount"
@@ -2049,7 +2030,7 @@ const AnnualDividendChart: React.FC<{ stock: StockEntry }> = ({ stock }) => {
                 axisLine={false}
                 domain={[ratioMin, payoutMax]}
                 ticks={ratioTicks}
-                width={24}
+                width={32}
                 tickFormatter={v => `${Math.round(v)}%`}
               />
               {/* 5 档对齐虚线：每档百分比一条，横贯整个绘图区 */}
@@ -2150,6 +2131,27 @@ const AnnualDividendChart: React.FC<{ stock: StockEntry }> = ({ stock }) => {
           )}
         </ResponsiveContainer>
       </div>
+      {/* 图例：色块对应柱/线，四组数据，居中放在图表正下方 */}
+      {hasAmountData && (
+        <div className="flex items-center justify-center gap-2 mt-2 mb-2 text-[9px] text-app-subtext flex-wrap">
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-[1px]" style={{ background: 'rgba(99,102,241,0.8)' }} />
+            归母净利润
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-[1px]" style={{ background: '#38bdf8' }} />
+            派现总额
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2.5 h-[2px] rounded-full" style={{ background: '#fb923c' }} />
+            股利支付率
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2.5 h-[2px] rounded-full" style={{ background: '#ef4444' }} />
+            每股派息
+          </span>
+        </div>
+      )}
       {/* 固定定位 + transform/textContent 直接写 DOM 的悬浮窗（与股息率曲线一致） */}
       <div
         ref={floatElRef}
@@ -3338,7 +3340,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setDivRateInfoStock(stock);
     setDivRateInfoLoading(true);
     setDivRateInfoKlines(null);
-    const popupW = 330;
+    const popupW = 360;
     const estH = 300;
     const gap = 8;
     // 浮窗已打开（切换周期）时保持当前位置，避免每次切换都按估算高度重新定位
@@ -3357,7 +3359,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       if (divRateInfoActiveIdRef.current !== stock.id || !divRateInfoBtnRef.current) return;
       const popupH = divRateInfoRef.current?.offsetHeight || 0;
       if (!popupH) return;
-      const popupW = 330;
+      const popupW = 360;
       const gap = 8;
       const btnRect = (divRateInfoBtnRef.current as HTMLElement).getBoundingClientRect();
       let left = btnRect.right + gap;
@@ -7926,7 +7928,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         <div
           ref={divRateInfoRef}
           className="fixed z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-y-auto custom-scrollbar"
-          style={{ top: divRateInfoPos.top, left: divRateInfoPos.left, width: 330, maxHeight: 'calc(100vh - 20px)' }}
+          style={{ top: divRateInfoPos.top, left: divRateInfoPos.left, width: 360, maxHeight: 'calc(100vh - 20px)' }}
           onMouseEnter={() => { divRateInfoHoveredRef.current = true; }}
           onMouseLeave={handleDivRateInfoFloatLeave}
         >
@@ -7964,7 +7966,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           </div>
           {/* 年度分红 · 归母净利润 · 支付率：由详情弹窗拆分而来，跟随股息率浮窗一起展示 */}
           <div className="border-t border-app-border px-2.5 pt-2 pb-2.5 bg-app-card">
-            <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center justify-between mb-2 mt-0.5">
               <span className="text-[10px] text-app-subtext">分红 · 净利润 · 支付率</span>
               <button
                 type="button"
