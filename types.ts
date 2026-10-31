@@ -96,6 +96,8 @@ export interface StockEntry {
   dividend2024: number;
   dividend2025: number;
   dividendByYear: Record<number, number>; // key=年份, value=每股税前派息（全年汇总）
+  dividendTotalByYear?: Record<number, number>; // key=年份, value=当年现金分红总额（元，税前；每股派息 × 总股本估算）
+  parentNetProfitByYear?: Record<number, number>; // key=年份, value=当年归母净利润（元，年报口径，东方财富）
   dividendRate2025: number;
   positionShares: number; // 持仓股数（0 = 未持仓）
   positionCost: number;   // 每股成本（买入均价，元；仅编辑模式展示）

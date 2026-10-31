@@ -9,7 +9,7 @@ import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, 
 import { priceBureau } from '../services/priceBureau';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import type { TencentQuote } from '../services/tencentQuote';
-import { fetchYearlyDividends, DividendRecord, type YearlyDividends } from '../services/dividendService';
+import { fetchYearlyDividends, fetchParentNetProfitBatch, fetchTotalSharesByPeriod, DividendRecord, type YearlyDividends } from '../services/dividendService';
 import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import { StockAccountPage } from './StockAccountPage';
@@ -92,7 +92,8 @@ const TagEditFields: React.FC<TagEditFieldsProps> = ({
           </span>
         </div>
 
-        <div className={`grid grid-cols-8 ${compact ? 'gap-1.5' : 'gap-2'}`}>
+        {/* 色点用紧凑排列：固定小间距，避免撑满一行后间距过大 */}
+        <div className={`flex flex-wrap ${compact ? 'gap-1' : 'gap-1.5'}`}>
           {TAG_PALETTE.map((p) => (
             <button
               key={p.key}
@@ -305,6 +306,77 @@ interface StockDividendPageProps {
   onBacktestPresetsDirty?: () => void;       // 策略组有增删改时调用，用于触发云端"有改动需上传"
 }
 
+// 年度现金分红总额（元，税前）＝ Σ 每条分红记录的「每股派息 × 当期总股本」。
+// 必须用当期股本：早年送转后股本变化很大，用当前股本会把早年分红总额放大约 3 倍
+// （实测 600285 2011 年支付率会虚高到 285%）。
+// sharesByDate 为「报告期 → 总股本」（东财分红明细）：年度→12-31、中期→06-30；
+// 期次匹配不上（特别分红等）时退化为当年任一期次，最后回退当前总股本。
+const calcDividendTotalByYear = (
+  records: DividendRecord[] | undefined,
+  sharesByDate: Record<string, number> | undefined,
+  fallbackShares?: number,
+): Record<number, number> | undefined => {
+  if (!records || records.length === 0) return undefined;
+  // 该年任一期次的总股本：优先年报期，其次该年最新一期
+  const sharesOfYear = (year: number): number | undefined => {
+    if (!sharesByDate) return undefined;
+    const annual = sharesByDate[`${year}-12-31`];
+    if (annual) return annual;
+    const sameYear = Object.keys(sharesByDate).filter(k => k.startsWith(`${year}-`)).sort().reverse();
+    return sameYear.length > 0 ? sharesByDate[sameYear[0]] : undefined;
+  };
+  const out: Record<number, number> = {};
+  for (const r of records) {
+    const profileYear = r.planProfile.match(/【(\d{4})年/);
+    const year = profileYear
+      ? parseInt(profileYear[1], 10)
+      : parseInt((r.reportDate || '').slice(0, 4), 10); // 东财备用源无【年份】标签，用报告期
+    if (!isFinite(year)) continue;
+    const isInterim = /中期/.test(r.planProfile) || (r.reportDate || '').slice(5, 10) === '06-30';
+    const shares = (isInterim ? sharesByDate?.[`${year}-06-30`] : undefined)
+      ?? sharesOfYear(year)
+      ?? fallbackShares;
+    if (!shares || shares <= 0) continue;
+    out[year] = (out[year] || 0) + (r.pretaxPer10 / 10) * shares;
+  }
+  for (const y of Object.keys(out)) out[+y] = Math.round(out[+y]);
+  return Object.keys(out).length > 0 ? out : undefined;
+};
+
+// 6 位代码（去掉 .SH/.SZ/.BJ 后缀），用于匹配东财批量接口返回的键
+const bareCode = (code: string): string => code.replace(/\.(SH|SZ|BJ)$/i, '').toUpperCase();
+
+// 金额（元）→ 亿/万，适配窄单元格展示
+const formatYiAmount = (v?: number): string => {
+  if (v === undefined || !isFinite(v)) return '-';
+  const abs = Math.abs(v);
+  if (abs >= 1e8) return `${(v / 1e8).toFixed(2)}亿`;
+  if (abs >= 1e4) return `${(v / 1e4).toFixed(2)}万`;
+  return v.toFixed(0);
+};
+
+// 股利支付率 = 现金分红总额 / 归母净利润（年报口径；亏损或零利润不计算）
+const formatPayoutRatio = (total?: number, profit?: number): string => {
+  if (total === undefined || profit === undefined) return '-';
+  if (!isFinite(total) || !isFinite(profit) || profit <= 0) return '-';
+  return `${((total / profit) * 100).toFixed(1)}%`;
+};
+
+// 年份下方的三项派生数据：总额 / 净利 / 支付率。两项都缺失时整块不渲染，避免无数据时占位
+const DividendYearDetail = ({ total, profit }: { total?: number; profit?: number }) => {
+  if (total === undefined && profit === undefined) return null;
+  return (
+    <div
+      className="mt-0.5 text-[9px] leading-[13px] text-app-subtext font-mono whitespace-nowrap text-center"
+      title={'总额＝每股派息×总股本（估算）；净利＝年报归母净利润；支付率＝总额/净利'}
+    >
+      <div>总额 {formatYiAmount(total)}</div>
+      <div>净利 {formatYiAmount(profit)}</div>
+      <div className="text-app-rowtext">支付 {formatPayoutRatio(total, profit)}</div>
+    </div>
+  );
+};
+
 // 分红核对弹窗里的单只股票差异条目
 interface DividendDiffEntry {
   stockId: string;
@@ -315,6 +387,8 @@ interface DividendDiffEntry {
   fetched2024: number | null; // null = 查不到
   fetched2025: number | null;
   fetchedDividendByYear: Record<number, number>;
+  dividendTotalByYear?: Record<number, number>; // 当年现金分红总额（元，税前，估算）
+  parentNetProfitByYear?: Record<number, number>; // 当年归母净利润（元，年报口径）
   hasData: boolean;
   error?: string;
   records: DividendRecord[];
@@ -336,6 +410,8 @@ interface PendingAddStock {
   dividend2024: number;
   dividend2025: number;
   dividendByYear: Record<number, number>;
+  dividendTotalByYear?: Record<number, number>;
+  parentNetProfitByYear?: Record<number, number>;
   registerDate?: string;
 }
 
@@ -3992,7 +4068,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const handleFetchAllDividends = useCallback(async () => {
     if (isFetchingDividends || stocks.length === 0) return;
     const logCtx = requestLogService.beginBatch(
-      `点击「分红」列头刷新：${stocks.length} 只股票 · ${stocks.length} 条请求`
+      `点击「分红」列头刷新：${stocks.length} 只股票 · ${stocks.length} 条分红请求 + 1 条净利润请求 + 1 条股本请求`
     );
     setIsFetchingDividends(true);
 
@@ -4018,6 +4094,33 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       return;
     }
 
+    // 归母净利润：全部股票 × 全部已拉到的分红年份，合并为 1 条东财业绩报表批量请求
+    let netProfitByCode: Record<string, Record<number, number>> = {};
+    if (results.some(r => r?.found)) {
+      const years = new Set<number>();
+      for (const r of results) {
+        if (!r?.found) continue;
+        for (const y of Object.keys(r.dividendByYear)) years.add(Number(y));
+      }
+      if (years.size > 0) {
+        try {
+          netProfitByCode = await fetchParentNetProfitBatch(stocks.map(s => s.code), Array.from(years), logCtx);
+        } catch {
+          // 净利润获取失败不影响分红主流程，该项留空
+        }
+      }
+    }
+
+    // 历年总股本：全部股票 1 条东财批量请求（按当期股本算分红总额，避免早年股本变化导致支付率虚高）
+    let sharesByCode: Record<string, Record<string, number>> = {};
+    if (results.some(r => r?.found)) {
+      try {
+        sharesByCode = await fetchTotalSharesByPeriod(stocks.map(s => s.code), logCtx);
+      } catch {
+        // 股本获取失败时回退用页面当前总股本
+      }
+    }
+
     const entries: DividendDiffEntry[] = [];
     const selected = new Set<string>();
     stocks.forEach((stock, i) => {
@@ -4037,6 +4140,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         fetched2024: result?.found ? (result.dividend2024 ?? null) : null,
         fetched2025: result?.found ? (result.dividend2025 ?? null) : null,
         fetchedDividendByYear: result?.found ? result.dividendByYear : stock.dividendByYear || {},
+        dividendTotalByYear: result?.found
+          ? calcDividendTotalByYear(result.records, sharesByCode[bareCode(stock.code)], result.totalShares)
+          : undefined,
+        parentNetProfitByYear: netProfitByCode[bareCode(stock.code)],
         hasData: !!result?.found,
         error: result?.error,
         records: result?.records || [],
@@ -4054,12 +4161,31 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const handleFetchSingleDividend = useCallback(async (stock: StockEntry) => {
     if (isFetchingSingleDividend) return;
     const logCtx = requestLogService.beginBatch(
-      `小眼睛详情页刷新 ${stock.name}(${getDisplayCode(stock.code)})：1 只股票 · 1 条请求`
+      `小眼睛详情页刷新 ${stock.name}(${getDisplayCode(stock.code)})：1 只股票 · 1 条分红请求 + 1 条净利润请求 + 1 条股本请求`
     );
     setIsFetchingSingleDividend(stock.id);
     const result = await fetchYearlyDividends(stock.code, logCtx);
     const fetchedByYear = result.found ? result.dividendByYear : {};
-    const existingByYear = stock.dividendByYear || {};
+    // 归母净利润：同样走东财批量接口（这里只有 1 只 → 1 条请求）
+    let parentNetProfitByYear: Record<number, number> | undefined;
+    if (result.found && Object.keys(fetchedByYear).length > 0) {
+      try {
+        parentNetProfitByYear = (await fetchParentNetProfitBatch(
+          [stock.code], Object.keys(fetchedByYear).map(Number), logCtx
+        ))[bareCode(stock.code)];
+      } catch {
+        // 净利润获取失败不影响分红主流程
+      }
+    }
+    // 历年总股本（按当期股本算分红总额），失败则回退到页面当前总股本
+    let sharesByDate: Record<string, number> | undefined;
+    if (result.found) {
+      try {
+        sharesByDate = (await fetchTotalSharesByPeriod([stock.code], logCtx))[bareCode(stock.code)];
+      } catch {
+        // 股本获取失败不影响分红主流程
+      }
+    }
     // 提取最近一次股权登记日
     const futureRegDate = result.records
       ?.filter(r => r.registerDate)
@@ -4075,6 +4201,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       fetched2024: result.found ? (result.dividend2024 ?? null) : null,
       fetched2025: result.found ? (result.dividend2025 ?? null) : null,
       fetchedDividendByYear: result.found ? result.dividendByYear : stock.dividendByYear || {},
+      dividendTotalByYear: result.found
+        ? calcDividendTotalByYear(result.records, sharesByDate, result.totalShares)
+        : undefined,
+      parentNetProfitByYear,
       hasData: result.found,
       error: result.error,
       records: result.records || [],
@@ -4139,6 +4269,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         dividend2024,
         dividend2025,
         dividendByYear,
+        // 三项派生数据随分红一起落库（可随云端同步）：
+        // 现金分红总额（每股派息 × 总股本估算）、归母净利润（东财年报，元）；
+        // 股利支付率 = 现金分红总额 / 归母净利润，使用时由这两项算出，不单独存。
+        dividendTotalByYear: entry.dividendTotalByYear ?? stock.dividendTotalByYear,
+        parentNetProfitByYear: entry.parentNetProfitByYear ?? stock.parentNetProfitByYear,
         dividendRate2025,
         dividendRates: calculateDividendRates(selectedDividend, rateCols),
         registerDate: futureRegDate || stock.registerDate,
@@ -4677,15 +4812,33 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       let dividend2024 = 0;
       let dividend2025 = 0;
       let dividendByYear: Record<number, number> = {};
+      let dividendTotalByYear: Record<number, number> | undefined;
+      let parentNetProfitByYear: Record<number, number> | undefined;
       let registerDate: string | undefined;
       setAddStep('正在请求年度分红数据…');
       try {
-        const divLogCtx = requestLogService.beginBatch('添加股票查询分红：1 只股票 · 1~2 条请求');
+        const divLogCtx = requestLogService.beginBatch('添加股票查询：分红 + 净利润 + 历年股本（1 只股票 · 最多 4 条请求）');
         const divResult = await fetchYearlyDividends(stockCode, divLogCtx);
         if (divResult.found) {
           dividend2024 = divResult.dividend2024;
           dividend2025 = divResult.dividend2025;
           dividendByYear = divResult.dividendByYear;
+          // 归母净利润（东财批量接口，单只也是 1 条请求；失败留空）
+          try {
+            parentNetProfitByYear = (await fetchParentNetProfitBatch(
+              [stockCode], Object.keys(dividendByYear).map(Number), divLogCtx
+            ))[bareCode(stockCode)];
+          } catch {
+            // 净利润获取失败不影响添加流程
+          }
+          // 现金分红总额：每条记录用当期总股本（东财历年股本），失败回退页面当前总股本
+          let sharesByDate: Record<string, number> | undefined;
+          try {
+            sharesByDate = (await fetchTotalSharesByPeriod([stockCode], divLogCtx))[bareCode(stockCode)];
+          } catch {
+            // 股本获取失败不影响添加流程
+          }
+          dividendTotalByYear = calcDividendTotalByYear(divResult.records, sharesByDate, divResult.totalShares);
           // 与批量获取分红一致的逻辑：从 records 提取最近一次股权登记日
           registerDate = divResult.records
             ?.filter(r => r.registerDate)
@@ -4712,6 +4865,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         dividend2024,
         dividend2025,
         dividendByYear,
+        dividendTotalByYear,
+        parentNetProfitByYear,
         registerDate,
       };
     } finally {
@@ -4780,6 +4935,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       dividend2024: pendingAdd.dividend2024,
       dividend2025: pendingAdd.dividend2025,
       dividendByYear: pendingAdd.dividendByYear,
+      dividendTotalByYear: pendingAdd.dividendTotalByYear,
+      parentNetProfitByYear: pendingAdd.parentNetProfitByYear,
       dividendRate2025: 0,
       positionShares: 0,
       positionCost: 0,
@@ -5729,7 +5886,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             className="fixed inset-0 z-40"
             onClick={closeAddModal}
           />
-          <div className={`fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-app-card border border-app-border rounded-xl p-4 shadow-2xl max-w-[calc(100vw-24px)] ${pendingAdd ? 'w-[360px]' : 'w-[320px]'}`}>
+          <div className={`fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-app-card border border-app-border rounded-xl p-4 shadow-2xl max-w-[calc(100vw-24px)] ${pendingAdd ? 'w-[460px]' : 'w-[320px]'}`}>
             {pendingAdd ? (
               <>
                 <div className="flex items-baseline justify-between mb-3">
@@ -5761,14 +5918,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </div>
 
                   <div className="border-t border-app-border pt-2">
-                    <div className="flex items-center justify-between gap-2 mb-1.5">
-                      <span className="text-[9px] text-app-subtext tracking-wider">分红（每股）</span>
-                      {pendingAdd.registerDate && (
-                        <span className="text-[9px] text-app-subtext">
-                          最近股权登记日 <span className="font-mono text-app-rowtext">{pendingAdd.registerDate}</span>
-                        </span>
-                      )}
-                    </div>
                     {(() => {
                       const years = Object.keys(pendingAdd.dividendByYear || {})
                         .map(y => Number(y))
@@ -5776,24 +5925,69 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         .sort((a, b) => b - a);
                       const rightDiv = pendingAdd.dividendByYear?.[dividendYearRight] ?? pendingAdd.dividend2025 ?? 0;
                       const rate = pendingAdd.price > 0 && rightDiv > 0 ? (rightDiv / pendingAdd.price) * 100 : null;
+                      // 连续分红年数：从最近有分红的年份开始，逐年往前判断是否连号
+                      let streakCount = 0;
+                      let streakStart = 0;
+                      if (years.length > 0) {
+                        streakCount = 1;
+                        while (streakCount < years.length && years[streakCount] === years[0] - streakCount) {
+                          streakCount += 1;
+                        }
+                        streakStart = years[0] - streakCount + 1;
+                      }
                       return (
                         <>
-                          {years.length > 0 ? (
-                            <div className="grid grid-cols-3 gap-1.5">
-                              {years.map(y => (
-                                <span
-                                  key={y}
-                                  className={`inline-flex items-center justify-center gap-1 w-full px-1.5 h-[22px] rounded border text-[10px] font-mono ${
-                                    y === dividendYearRight
-                                      ? 'border-indigo-500/40 bg-indigo-500/10 text-indigo-400'
-                                      : 'border-app-border bg-app-card text-app-rowtext'
-                                  }`}
-                                >
-                                  <span className="text-app-subtext">{y}</span>
-                                  <span>¥{formatPrice(pendingAdd.dividendByYear[y], pendingAdd.name)}</span>
+                          {/* 原「分红明细」标题的位置改为连续分红统计 */}
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
+                            {years.length > 0 && (
+                              <span className="text-[10px] text-app-subtext">
+                                连续分红
+                                <span className="mx-1 font-mono text-[11px] font-bold text-indigo-400">{streakCount}</span>
+                                年
+                                <span className="ml-1 font-mono text-app-rowtext">
+                                  （{streakCount > 1 ? `${streakStart}–${years[0]}` : String(years[0])}）
                                 </span>
-                              ))}
-                            </div>
+                              </span>
+                            )}
+                            {pendingAdd.registerDate && (
+                              <span className="text-[9px] text-app-subtext whitespace-nowrap">
+                                最近股权登记日 <span className="font-mono text-app-rowtext">{pendingAdd.registerDate}</span>
+                              </span>
+                            )}
+                          </div>
+                          {years.length > 0 ? (
+                            <>
+                              {/* 列表式展示：每年一行，字段全称，表格区可滚动避免撑出屏幕 */}
+                              <div className="max-h-[190px] overflow-y-auto custom-scrollbar border border-app-border rounded-md">
+                                <table className="w-full text-[10px] border-separate border-spacing-0 font-mono">
+                                  <thead className="sticky top-0 z-10">
+                                    <tr className="bg-app-input text-app-subtext">
+                                      <th className="px-1.5 py-1 text-left font-medium border-b border-app-border border-r border-app-border whitespace-nowrap">年份</th>
+                                      <th className="px-1.5 py-1 text-right font-medium border-b border-app-border border-r border-app-border whitespace-nowrap">每股派息</th>
+                                      <th className="px-1.5 py-1 text-right font-medium border-b border-app-border border-r border-app-border whitespace-nowrap">现金分红总额</th>
+                                      <th className="px-1.5 py-1 text-right font-medium border-b border-app-border border-r border-app-border whitespace-nowrap">归母净利润</th>
+                                      <th className="px-1.5 py-1 text-right font-medium border-b border-app-border whitespace-nowrap">股利支付率</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {years.map(y => {
+                                      const total = pendingAdd.dividendTotalByYear?.[y];
+                                      const profit = pendingAdd.parentNetProfitByYear?.[y];
+                                      const isCurrent = y === dividendYearRight;
+                                      return (
+                                        <tr key={y} className={isCurrent ? 'bg-indigo-500/10' : ''}>
+                                          <td className={`px-1.5 py-0.5 text-left border-b border-app-border border-r border-app-border ${isCurrent ? 'text-indigo-400 font-bold' : 'text-app-subtext'}`}>{y}</td>
+                                          <td className="px-1.5 py-0.5 text-right border-b border-app-border border-r border-app-border text-app-rowtext">¥{formatPrice(pendingAdd.dividendByYear[y], pendingAdd.name)}</td>
+                                          <td className="px-1.5 py-0.5 text-right border-b border-app-border border-r border-app-border text-app-rowtext">{formatYiAmount(total)}</td>
+                                          <td className="px-1.5 py-0.5 text-right border-b border-app-border border-r border-app-border text-app-rowtext">{formatYiAmount(profit)}</td>
+                                          <td className="px-1.5 py-0.5 text-right border-b border-app-border text-app-rowtext">{formatPayoutRatio(total, profit)}</td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </>
                           ) : (
                             <div className="text-[11px] leading-snug text-app-subtext">
                               未查到分红数据，可重新拉取，或稍后用「自动获取分红」补全
@@ -5816,25 +6010,28 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
                 {/* 可编辑：名称 / 链接 / 标签 */}
                 <div className="space-y-2 mt-3">
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">股票名称</label>
-                    <input
-                      type="text"
-                      value={pendingAdd.name}
-                      onChange={(e) => setPendingAdd(prev => prev ? { ...prev, name: e.target.value } : prev)}
-                      placeholder="股票名称"
-                      className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text font-mono text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">股票链接</label>
-                    <input
-                      type="text"
-                      value={pendingAdd.link}
-                      onChange={(e) => setPendingAdd(prev => prev ? { ...prev, link: e.target.value } : prev)}
-                      placeholder="可选，如公告链接"
-                      className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text font-mono text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all"
-                    />
+                  {/* 名称与链接同一行，各占一半宽度 */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1 min-w-0">
+                      <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">股票名称</label>
+                      <input
+                        type="text"
+                        value={pendingAdd.name}
+                        onChange={(e) => setPendingAdd(prev => prev ? { ...prev, name: e.target.value } : prev)}
+                        placeholder="股票名称"
+                        className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text font-mono text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all"
+                      />
+                    </div>
+                    <div className="space-y-1 min-w-0">
+                      <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">股票链接</label>
+                      <input
+                        type="text"
+                        value={pendingAdd.link}
+                        onChange={(e) => setPendingAdd(prev => prev ? { ...prev, link: e.target.value } : prev)}
+                        placeholder="可选，如公告链接"
+                        className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text font-mono text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all"
+                      />
+                    </div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">标签</label>
@@ -6542,7 +6739,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   <div>
                     <h3 className="text-xs font-bold text-app-text">分红数据核对</h3>
                     <p className="text-[9px] text-app-subtext mt-0.5">
-                      数据来源：同花顺 F10 · 按分红所属年度汇总（含中期/特别分红）· 每股税前派息（送转不计入）
+                      数据来源：同花顺 F10｜东财年报 · 每年的「每股派息」下方为现金分红总额 / 归母净利润 / 股利支付率（估算）
                     </p>
                   </div>
                   <button
@@ -6601,11 +6798,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                               <div className="text-[10px] text-app-text font-medium whitespace-nowrap">{entry.name}</div>
                               <div className="text-[8px] text-app-subtext font-mono">{entry.code}</div>
                             </td>
-                            <td className="px-1 py-0.5 text-center border-b border-app-border border-r border-app-border font-mono">
+                            <td className="px-1 py-1 text-center border-b border-app-border border-r border-app-border font-mono">
                               {formatDividendCell(entry.current2024, entry.fetched2024, entry.hasData)}
+                              {entry.hasData && dividendYearLeft !== undefined && (
+                                <DividendYearDetail
+                                  total={entry.dividendTotalByYear?.[dividendYearLeft]}
+                                  profit={entry.parentNetProfitByYear?.[dividendYearLeft]}
+                                />
+                              )}
                             </td>
-                            <td className="px-1 py-0.5 text-center border-b border-app-border border-r border-app-border font-mono">
+                            <td className="px-1 py-1 text-center border-b border-app-border border-r border-app-border font-mono">
                               {formatDividendCell(entry.current2025, entry.fetched2025, entry.hasData)}
+                              {entry.hasData && dividendYearRight !== undefined && (
+                                <DividendYearDetail
+                                  total={entry.dividendTotalByYear?.[dividendYearRight]}
+                                  profit={entry.parentNetProfitByYear?.[dividendYearRight]}
+                                />
+                              )}
                             </td>
                             <td className="px-1 py-0.5 text-center border-b border-app-border border-r border-app-border font-mono">
                               {(() => {

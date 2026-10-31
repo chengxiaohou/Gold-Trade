@@ -62,6 +62,7 @@ export interface YearlyDividends {
   dividend2024: number;   // 每股派息（税前），按分红所属年度汇总（含中期/特别/年度）
   dividend2025: number;
   dividendByYear: Record<number, number>; // key=年份, value=每股税前派息（全年汇总）
+  totalShares?: number;   // 总股本（股），用于估算年度现金分红总额
   records: DividendRecord[];
   source: '同花顺' | '东方财富';
   error?: string;
@@ -152,6 +153,12 @@ function parseTonghuashunHtml(html: string, code: string): YearlyDividends | nul
 
   if (records.length === 0) return null;
 
+  // 总股本（亿股）→ 股。用于估算「年度现金分红总额 = 每股派息 × 总股本」。
+  // 页面给的是当前股本，历史上发生增发/回购时按当前股本估算会有少量偏差。
+  const sharesMatch = html.match(/总股本（亿股）[\s\S]{0,300}?([\d.]+)/);
+  const sharesInYi = sharesMatch ? parseFloat(sharesMatch[1]) : NaN;
+  const totalShares = isFinite(sharesInYi) && sharesInYi > 0 ? Math.round(sharesInYi * 1e8) : undefined;
+
   const sumPerShare = (year: number): number => {
     const totalPer10 = records
       .filter(r => {
@@ -182,6 +189,7 @@ function parseTonghuashunHtml(html: string, code: string): YearlyDividends | nul
     dividend2024: sumPerShare(2024),
     dividend2025: sumPerShare(2025),
     dividendByYear: buildDividendByYear(),
+    totalShares,
     records,
     source: '同花顺',
   };
@@ -259,6 +267,10 @@ function parseEastmoneyJson(json: unknown, code: string): YearlyDividends {
     return map;
   };
 
+  // 总股本（股）：报表里 TOTAL_SHARES 为股数，用于估算年度现金分红总额
+  const sharesRaw = parseFloat(String(data.find(r => r.TOTAL_SHARES)?.TOTAL_SHARES ?? ''));
+  const totalShares = isFinite(sharesRaw) && sharesRaw > 0 ? sharesRaw : undefined;
+
   return {
     found: true,
     code,
@@ -266,6 +278,7 @@ function parseEastmoneyJson(json: unknown, code: string): YearlyDividends {
     dividend2024: sumPerShare(2024),
     dividend2025: sumPerShare(2025),
     dividendByYear: buildDividendByYear(),
+    totalShares,
     records,
     source: '东方财富',
   };
@@ -336,6 +349,105 @@ async function fetchEastmoneyJsonPage(realUrl: string, logCtx?: LogBatchContext)
     requestLogService.failed(logId, message);
     throw error;
   }
+}
+
+// ---------- 归母净利润（批量）：东方财富业绩报表 ----------
+
+// 东财业绩报表 RPT_LICO_FN_CPD 支持 SECURITY_CODE in (...) + REPORTDATE in (...)，
+// 因此「多只股票 × 多个年报期」只需 1 条请求，返回 PARENT_NETPROFIT（归母净利润，元）。
+// 年报口径：只取 YYYY-12-31；当年年报尚未披露的年份自然没有数据（调用方留空）。
+// 亏损公司为负数，原样保留。
+function buildNetProfitBatchUrl(codes: string[], years: number[], pageNo: number): string {
+  const codeList = codes.map(c => `"${c.replace(/\.(SH|SZ|BJ)$/i, '')}"`).join(',');
+  const dateList = years.map(y => `'${y}-12-31'`).join(',');
+  const params = new URLSearchParams({
+    reportName: 'RPT_LICO_FN_CPD',
+    columns: 'SECURITY_CODE,REPORTDATE,PARENT_NETPROFIT',
+    filter: `(SECURITY_CODE in (${codeList}))(REPORTDATE in (${dateList}))`,
+    sortColumns: 'SECURITY_CODE',
+    sortTypes: '1',
+    pageSize: '500',
+    pageNumber: String(pageNo),
+    client: 'WEB',
+    _: Date.now().toString(), // 避免代理层缓存
+  });
+  return `https://${EASTMONEY_HOST}/api/data/v1/get?${params.toString()}`;
+}
+
+// 批量查询多只股票多年的归母净利润，返回 { 6位代码: { 年份: 净利润（元） } }
+export async function fetchParentNetProfitBatch(
+  codes: string[],
+  years: number[],
+  logCtx?: LogBatchContext,
+): Promise<Record<string, Record<number, number>>> {
+  const out: Record<string, Record<number, number>> = {};
+  if (codes.length === 0 || years.length === 0) return out;
+
+  let pageNo = 1;
+  for (;;) {
+    const { data, pages } = await fetchEastmoneyJsonPage(buildNetProfitBatchUrl(codes, years, pageNo), logCtx);
+    for (const row of data) {
+      const code = String(row.SECURITY_CODE || '').toUpperCase();
+      const reportDate = String(row.REPORTDATE || '').slice(0, 10);
+      const year = parseInt(reportDate.slice(0, 4), 10);
+      const netProfit = parseFloat(String(row.PARENT_NETPROFIT ?? ''));
+      if (!code || isNaN(year) || isNaN(netProfit)) continue;
+      (out[code] ||= {})[year] = netProfit;
+    }
+    if (pageNo >= pages) break;
+    pageNo += 1;
+    await throttleRequest(); // 翻页请求同样节流
+  }
+  return out;
+}
+
+// ---------- 历年总股本（批量）：东方财富分红明细 ----------
+
+// 分红总额 = 每股派息 × 当期总股本。同花顺页面只给「当前」总股本，早年送转后股本变化很大
+// （实测 600285 当前 5.67 亿股、2011 年只有 2.00 亿股），用当前股本会把早年分红总额放大约 3 倍，
+// 支付率虚高到 200%+。东财分红明细每条记录都带 TOTAL_SHARES（该方案对应的总股本）且支持多代码批量，
+// 因此这里只取它的股本字段（不取它的派息金额——该报表个别股票漏中期分红，见文件头），
+// 按报告期返回 { 6位代码: { 'YYYY-12-31': 股本, 'YYYY-06-30': 股本, ... } }。
+function buildSharesBatchUrl(codes: string[], pageNo: number): string {
+  const inList = codes.map(c => `"${c.replace(/\.(SH|SZ|BJ)$/i, '')}"`).join(',');
+  const params = new URLSearchParams({
+    reportName: 'RPT_SHAREBONUS_DET',
+    columns: 'SECURITY_CODE,REPORT_DATE,TOTAL_SHARES',
+    filter: `(SECURITY_CODE in (${inList}))`,
+    sortColumns: 'SECURITY_CODE,REPORT_DATE',
+    sortTypes: '1,-1',
+    pageSize: '500',
+    pageNumber: String(pageNo),
+    client: 'WEB',
+    _: Date.now().toString(), // 避免代理层缓存
+  });
+  return `https://${EASTMONEY_HOST}/api/data/v1/get?${params.toString()}`;
+}
+
+// 批量查询多只股票的「报告期 → 总股本」
+export async function fetchTotalSharesByPeriod(
+  codes: string[],
+  logCtx?: LogBatchContext,
+): Promise<Record<string, Record<string, number>>> {
+  const out: Record<string, Record<string, number>> = {};
+  if (codes.length === 0) return out;
+
+  let pageNo = 1;
+  for (;;) {
+    const { data, pages } = await fetchEastmoneyJsonPage(buildSharesBatchUrl(codes, pageNo), logCtx);
+    for (const row of data) {
+      const code = String(row.SECURITY_CODE || '').toUpperCase();
+      const reportDate = String(row.REPORT_DATE || '').slice(0, 10);
+      const shares = parseFloat(String(row.TOTAL_SHARES ?? ''));
+      if (!code || !/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) continue;
+      if (!isFinite(shares) || shares <= 0) continue;
+      (out[code] ||= {})[reportDate] = shares;
+    }
+    if (pageNo >= pages) break;
+    pageNo += 1;
+    await throttleRequest(); // 翻页请求同样节流
+  }
+  return out;
 }
 
 // ---------- 对外入口（批量） ----------
