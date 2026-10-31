@@ -1,8 +1,15 @@
 
 import { TradeRecord, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset } from "../types";
+import { splitFinancialsFromStocks, joinFinancialsToStocks, type StocksFileStock, type FinancialsIndex } from "./stockSync";
 
-const GIST_FILENAME = "gold-trades.json";
+const GIST_FILENAME = "gold-trades.json"; // 旧版单文件（迁移时删除）
 const GIST_DESCRIPTION = "GoldCost Pro 交易记录备份";
+// 拆分后的三个云端文件
+export const CLOUD_GOLD_FILENAME = "gold.json";
+export const CLOUD_STOCKS_FILENAME = "stocks.json";
+export const CLOUD_FINANCIALS_FILENAME = "financials.json";
+export const CLOUD_FILE_NAMES = [CLOUD_GOLD_FILENAME, CLOUD_STOCKS_FILENAME, CLOUD_FINANCIALS_FILENAME] as const;
+export type CloudFileName = (typeof CLOUD_FILE_NAMES)[number];
 
 // Helper to construct headers with robust token handling
 const getHeaders = (token: string) => {
@@ -122,21 +129,22 @@ export const validateConnection = async (token: string, gistId?: string): Promis
   }
 };
 
-interface GistPayload {
-  trades?: TradeRecord[];
-  settings?: AppSettings;
-  stocks?: StockEntry[];
-  stockSettings?: StockSettings;
-  backtestStrategyPresets?: BacktestStrategyPreset[]; // 回测策略组合模板（全局模板，独立一级字段）
-  version?: number;
-}
-
 export interface GistData {
   trades: TradeRecord[];
   settings?: AppSettings;
   stocks?: StockEntry[];
   stockSettings?: StockSettings;
   backtestStrategyPresets?: BacktestStrategyPreset[];
+}
+
+// 安全解析 JSON：失败返回 null（新文件缺失或损坏时不抛错，按空处理）
+function safeParse(raw: string): Record<string, any> | null {
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === 'object' ? o : null;
+  } catch {
+    return null;
+  }
 }
 
 export const loadFromGist = async (token: string, gistId: string): Promise<GistData | null> => {
@@ -151,28 +159,44 @@ export const loadFromGist = async (token: string, gistId: string): Promise<GistD
     }
 
     const data = await response.json();
-    const file = data.files[GIST_FILENAME];
+    const files: Record<string, { content?: string }> = data.files || {};
 
-    if (!file || !file.content) {
-      throw new Error(`Gist 中未找到目标文件 '${GIST_FILENAME}'。请确认该 Gist 是由本应用创建的。`);
+    // 新版：三文件
+    const goldRaw = files[CLOUD_GOLD_FILENAME]?.content;
+    const stocksRaw = files[CLOUD_STOCKS_FILENAME]?.content;
+    const finRaw = files[CLOUD_FINANCIALS_FILENAME]?.content;
+    if (goldRaw !== undefined || stocksRaw !== undefined || finRaw !== undefined) {
+      const gold = safeParse(goldRaw || '{}') || {};
+      const stocksParsed = safeParse(stocksRaw || '{}') || {};
+      const finParsed = safeParse(finRaw || '{}') || {};
+      const financials: FinancialsIndex = finParsed.financials || {};
+      const coreStocks: StocksFileStock[] = Array.isArray(stocksParsed.stocks) ? stocksParsed.stocks : [];
+      return {
+        trades: Array.isArray(gold.trades) ? gold.trades : [],
+        settings: gold.settings,
+        stocks: joinFinancialsToStocks(coreStocks, financials),
+        stockSettings: stocksParsed.stockSettings,
+        backtestStrategyPresets: stocksParsed.backtestStrategyPresets,
+      };
     }
 
-    const parsed = JSON.parse(file.content);
-
-    // Backward compatibility: Old format was just an array of trades
-    if (Array.isArray(parsed)) {
-      return { trades: parsed };
+    // 旧版单文件（迁移前）
+    const legacy = files[GIST_FILENAME]?.content;
+    if (legacy) {
+      const parsed = JSON.parse(legacy);
+      if (Array.isArray(parsed)) {
+        return { trades: parsed };
+      }
+      return {
+        trades: parsed.trades || [],
+        settings: parsed.settings,
+        stocks: parsed.stocks,
+        stockSettings: parsed.stockSettings,
+        backtestStrategyPresets: parsed.backtestStrategyPresets,
+      };
     }
 
-    // New format: Object containing trades, settings and stocks
-    return {
-      trades: parsed.trades || [],
-      settings: parsed.settings,
-      stocks: parsed.stocks,
-      stockSettings: parsed.stockSettings,
-      backtestStrategyPresets: parsed.backtestStrategyPresets
-    };
-
+    throw new Error(`Gist 中未找到本应用的数据文件。请确认该 Gist 是由本应用创建的。`);
   } catch (error) {
     console.error("Load from Gist failed:", error);
     if (error instanceof TypeError && error.message.includes("fetch")) {
@@ -182,27 +206,67 @@ export const loadFromGist = async (token: string, gistId: string): Promise<GistD
   }
 };
 
+// 探测 gist 中已存在的文件（用于迁移检测：云端仍是旧版单文件时，写全三文件并删除旧文件）。
+export interface CloudFilePresence {
+  gold: boolean;
+  stocks: boolean;
+  financials: boolean;
+  legacy: boolean;
+}
+export async function getCloudFilePresence(token: string, gistId: string): Promise<CloudFilePresence> {
+  const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+    headers: getHeaders(token),
+    cache: 'no-cache',
+  });
+  if (!response.ok) {
+    await handleApiError(response, "读取云端文件清单失败");
+  }
+  const data = await response.json();
+  const names = Object.keys(data.files || {});
+  return {
+    gold: names.includes(CLOUD_GOLD_FILENAME),
+    stocks: names.includes(CLOUD_STOCKS_FILENAME),
+    financials: names.includes(CLOUD_FINANCIALS_FILENAME),
+    legacy: names.includes(GIST_FILENAME),
+  };
+}
+
+export interface SaveToGistOptions {
+  /** 要写入的文件；缺省写入全部三个文件 */
+  files?: CloudFileName[];
+  /** 是否删除旧版单文件 gold-trades.json（首次迁移到多文件时用） */
+  deleteLegacy?: boolean;
+}
+
 export const saveToGist = async (
   token: string,
-  data: GistData & { trades?: TradeRecord[] },
-  gistId?: string
+  data: GistData & { trades?: TradeRecord[]; stocks?: StockEntry[] },
+  gistId?: string,
+  opts?: SaveToGistOptions
 ): Promise<string> => {
+  const filesToWrite = opts?.files ?? [...CLOUD_FILE_NAMES];
+  const files: Record<string, { content?: string } | null> = {};
+  const coreStocks = splitFinancialsFromStocks(data.stocks || []);
 
-  const payload: GistPayload = {
-    trades: data.trades,
-    settings: data.settings,
-    stocks: data.stocks,
-    stockSettings: data.stockSettings,
-    backtestStrategyPresets: data.backtestStrategyPresets,
-    version: 1
-  };
+  for (const name of filesToWrite) {
+    if (name === CLOUD_GOLD_FILENAME) {
+      files[name] = {
+        content: JSON.stringify({ version: 1, trades: data.trades || [], settings: data.settings }),
+      };
+    } else if (name === CLOUD_STOCKS_FILENAME) {
+      files[name] = {
+        content: JSON.stringify({ version: 1, stocks: coreStocks.core, stockSettings: data.stockSettings, backtestStrategyPresets: data.backtestStrategyPresets }),
+      };
+    } else if (name === CLOUD_FINANCIALS_FILENAME) {
+      files[name] = {
+        content: JSON.stringify({ version: 1, financials: coreStocks.financials }),
+      };
+    }
+  }
 
-  const content = JSON.stringify(payload, null, 2);
-  const files = {
-    [GIST_FILENAME]: {
-      content: content,
-    },
-  };
+  if (opts?.deleteLegacy) {
+    files[GIST_FILENAME] = null; // 删除旧版单文件
+  }
 
   try {
     let url = "https://api.github.com/gists";
@@ -214,9 +278,14 @@ export const saveToGist = async (
       method = "PATCH";
     }
 
-    // Debug: Check payload size
-    if (content.length > 1000000) {
-        console.warn("Payload size is large:", content.length);
+    // 单文件硬上限 1MB，这里只对即将写入的最大单文件体积做一次诊断提示
+    let maxLen = 0;
+    for (const name of Object.keys(files)) {
+      const f = files[name];
+      if (f && f.content && f.content.length > maxLen) maxLen = f.content.length;
+    }
+    if (maxLen > 1000000) {
+      console.warn("Payload size is large:", maxLen);
     }
 
     const response = await fetch(url, {

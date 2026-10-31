@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffe
 import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen } from 'lucide-react';
 import { LineChart, ComposedChart, Line, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
-import { StockEntry, StockDividendRates, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
+import { StockEntry, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
 import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition, bollBandLabel, buildBollBandTextParts } from '../services/bollService';
 import type { BollData, BollPeriod, BollAdjust, BollKline, BollBandInfo, BollStreakExplain } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime } from '../services/cacheService';
@@ -414,26 +414,6 @@ interface PendingAddStock {
   parentNetProfitByYear?: Record<number, number>;
   registerDate?: string;
 }
-
-const DEFAULT_DIVIDEND_RATES: StockDividendRates = {
-  '2%': 0,
-  '3%': 0,
-  '4%': 0,
-  '5%': 0,
-  '6%': 0,
-  '7%': 0,
-};
-
-const calculateDividendRates = (dividend: number, rateColumns: string[] = ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%']): StockDividendRates => {
-  const rates: StockDividendRates = {};
-  rateColumns.forEach(rate => {
-    const rateNum = parseFloat(rate) / 100;
-    if (!isNaN(rateNum) && rateNum > 0) {
-      rates[rate] = dividend / rateNum;
-    }
-  });
-  return rates;
-};
 
 // 分红核对弹窗：单个年份的单元格（现值 → 查到值）
 const formatDividendCell = (current: number, fetched: number | null, hasData: boolean) => {
@@ -4708,7 +4688,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         dividendTotalByYear: entry.dividendTotalByYear ?? stock.dividendTotalByYear,
         parentNetProfitByYear: entry.parentNetProfitByYear ?? stock.parentNetProfitByYear,
         dividendRate2025,
-        dividendRates: calculateDividendRates(selectedDividend, rateCols),
         registerDate: futureRegDate || stock.registerDate,
       };
     });
@@ -5373,7 +5352,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       positionShares: 0,
       positionCost: 0,
       priceUpdatedAt: pendingAdd.price > 0 ? Date.now() : null,
-      dividendRates: calculateDividendRates(pendingAdd.dividend2025),
       registerDate: pendingAdd.registerDate,
       link: pendingAdd.link.trim() || undefined,
       tag: pendingAdd.tag.trim() || undefined,
@@ -5456,7 +5434,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         // Recalculate rate if this is the selected year
         const selectedYear = getSelectedYear(s);
         if (selectedYear === year) {
-          newStock.dividendRates = calculateDividendRates(dividend);
           newStock.dividendRate2025 = s.price > 0 ? (dividend / s.price) * 100 : 0;
         }
       }

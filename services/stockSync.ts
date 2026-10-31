@@ -1,7 +1,7 @@
 // 股票交易记录的云端同步纯函数（无副作用，便于单元测试）
-// 机制：全量上传 + 覆盖式下载合并（下载以云端为准；云端没有而本地独有的股票条目剔除，
-// 从而实现跨设备删除传播；软删 isDeleted 只用于交易记录粒度，直接随记录携带）。
-import type { StockEntry, StockTrade, StockSettings, BacktestStrategyPreset } from '../types';
+// 机制：全量上传 + 覆盖式下载（下载以云端为准，本地未上传的交易/股票一律被覆盖丢弃，
+// 从而实现跨设备删除传播；软删 isDeleted 只用于交易记录粒度，随记录一起携带）。
+import type { StockEntry, StockTrade, StockSettings, BacktestStrategyPreset, TradeRecord, StockFinancialByYear } from '../types';
 import type { StockLedgerMap } from './stockLedgerStore';
 import { calcPositionFromTrades } from './realizedPnl';
 
@@ -30,23 +30,17 @@ function pickLocalPrice(localStock: StockEntry | undefined): Pick<
   };
 }
 
-// 把云端某只股票的全量记录合并到本地流水账，并重算持仓。
+// 用云端某只股票的全量记录覆盖本地，并重算持仓。
 // 规则：
-//   - 以本地流水账 trades 为基底（union by id）
-//   - 云端同 id 覆盖本地（编辑回传 + 软删 isDeleted 同步）
-//   - 云端新增 id 并入；本地独有（云端没有）保留
+//   - 交易记录完全以云端为准：云端没有的本地记录（例如刚挂、尚未上传的单）会被丢弃
 //   - 软删 isDeleted 随记录一起被携带，不需要墓碑
 //   - 价格类字段（现价/涨跌/高低量/更新时刻/价格派生股息率）是设备本地缓存：
 //     下载时一律保留本地值，不用云端残留覆盖
 export function mergeStockFromCloud(
   cloudStock: StockEntry,
-  localTrades: StockTrade[] | undefined,
   localStock?: StockEntry | undefined,
 ): MergeStockResult {
-  const cloudTrades = cloudStock.stockTrades || [];
-  const baseById = new Map<string, StockTrade>((localTrades || []).map(t => [t.id, t]));
-  for (const ct of cloudTrades) baseById.set(ct.id, ct);
-  const finalTrades = Array.from(baseById.values()).sort(
+  const finalTrades = (cloudStock.stockTrades || []).slice().sort(
     (a, b) => (a.filledAt ?? a.createdAt) - (b.filledAt ?? b.createdAt)
   );
   const { shares, avgCost } = calcPositionFromTrades(finalTrades);
@@ -68,29 +62,22 @@ export function mergeStockFromCloud(
   };
 }
 
-// 把整批云端股票合并到本地流水账（批量版，覆盖模式），返回合并后的股票列表 + 新流水账。
-// 语义：下载以云端为准直接覆盖本地股票条目：
-//   - 云端有的股票：按 id 合并（union 流水账、云端覆盖本地非价格字段、保留本地价格缓存）
+// 把整批云端股票覆盖到本地（批量版），返回覆盖后的股票列表 + 新流水账。
+// 语义：下载以云端为准，完整覆盖本地：
+//   - 云端有的股票：交易记录取云端全量，本地未上传的记录被丢弃；保留本地价格缓存
 //   - 本地有而云端没有的股票条目：从股票列表与流水账中一并剔除（实现跨设备删除传播）
 // localStocks 仅用于在下载时保留云端命中的本地价格缓存字段。
 export function mergeCloudStocks(
   cloudStocks: StockEntry[],
-  localLedger: StockLedgerMap,
   localStocks: StockEntry[],
 ): { mergedStocks: StockEntry[]; newLedger: StockLedgerMap } {
-  const newLedger: StockLedgerMap = { ...localLedger };
+  const newLedger: StockLedgerMap = {};
   const mergedStocks = cloudStocks.map(c => {
     const localStock = localStocks.find(s => s.id === c.id);
-    const { stock, ledgerEntry } = mergeStockFromCloud(c, localLedger[c.id]?.trades, localStock);
+    const { stock, ledgerEntry } = mergeStockFromCloud(c, localStock);
     newLedger[c.id] = ledgerEntry;
     return stock;
   });
-  // 覆盖模式：云端没有、本地独有的股票条目 → 从流水账中一并剔除，
-  // 避免下载后启动回填从流水账读到旧条目把已覆盖删除的股票"复活"。
-  const cloudIds = new Set(cloudStocks.map(c => c.id));
-  for (const id of Object.keys(newLedger)) {
-    if (!cloudIds.has(id)) delete newLedger[id];
-  }
   return { mergedStocks, newLedger };
 }
 
@@ -110,33 +97,84 @@ export function stripStockPriceCache(list: StockEntry[]): StockEntry[] {
   );
 }
 
+// ===== 财务三表拆分（stocks → financials.json）=====
+// 三张低频财务表按 code 索引抽离到 financials.json 单独同步：
+// 公开数据跨设备一致、仅在拉取分红数据时变动，单独成文件可避免每次改交易时重传。
+export type StockFinancialField = 'dividendByYear' | 'dividendTotalByYear' | 'parentNetProfitByYear';
+// stocks.json 中每只股票的形态：不含三张财务表（转到 financials.json）
+export type StocksFileStock = Omit<StockEntry, StockFinancialField>;
+// financials.json 顶层：按 code 索引的财务数据
+export type FinancialsIndex = Record<string, StockFinancialByYear>;
+
+// 从整批股票抽离三张财务表，返回「不含财务表的股票」与「按 code 索引的财务表」
+export function splitFinancialsFromStocks(stocks: StockEntry[]): {
+  core: StocksFileStock[];
+  financials: FinancialsIndex;
+} {
+  const financials: FinancialsIndex = {};
+  const core: StocksFileStock[] = stocks.map((s) => {
+    const fin: StockFinancialByYear = {};
+    if (s.dividendByYear) fin.dividendByYear = s.dividendByYear;
+    if (s.dividendTotalByYear) fin.dividendTotalByYear = s.dividendTotalByYear;
+    if (s.parentNetProfitByYear) fin.parentNetProfitByYear = s.parentNetProfitByYear;
+    financials[s.code] = fin;
+    const { dividendByYear: _dby, dividendTotalByYear: _dt, parentNetProfitByYear: _np, ...rest } = s;
+    return rest;
+  });
+  return { core, financials };
+}
+
+// 把财务表按 code 合回股票列表，得到完整 StockEntry（dividendByYear 必填，缺省给 {}）
+export function joinFinancialsToStocks(core: StocksFileStock[], financials?: FinancialsIndex): StockEntry[] {
+  return core.map((s) => {
+    const fin = financials?.[s.code];
+    return {
+      ...(s as StockEntry),
+      dividendByYear: fin?.dividendByYear ?? {},
+      dividendTotalByYear: fin?.dividendTotalByYear,
+      parentNetProfitByYear: fin?.parentNetProfitByYear,
+    } as StockEntry;
+  });
+}
+
 // ===== 云端"差异对比"指纹（纯函数，无副作用）=====
-// 用于判断股息页本地是否有需要上传到云端的改动：把会上传到云端的字段
-// （stocks / stockSettings / backtestStrategyPresets）序列化成稳定指纹，
-// 与"最近一次成功上传/下载时的基线"比较，即可得到"是否有未同步改动"。
-// 与 performStockCloudUpload 的上传规则保持一致：
-//   - stocks 剔除价格缓存字段（现价/涨跌/高低量/更新时刻/价格派生股息率），避免价格刷新误报
-//   - stockSettings 剔除设备特定字段（maxRows/maxWidth/sortMode/autoRefreshInterval），避免设备差异误报
-//   - backtestStrategyPresets（策略组模板）整体纳入
-//   - appSettings（黄金/股息两页全局设置，含总资金 totalCapital / dividendTotalCapital，上传时整包推送）
-export interface StockCloudFingerprintInput {
+// 用于判断本地是否有需要上传到云端的改动：把"会上传到每个文件的字段"序列化成稳定指纹，
+// 与"最近一次成功上传/下载时的基线"比较，得到"是否有未同步改动"。
+// 三份指纹分别对应三个云端文件（gold.json / stocks.json / financials.json），
+// 并各自剔除不该入库的字段：
+//   - stocks.json：剔除价格缓存字段（现价/涨跌/高低量/更新时刻/价格派生股息率）与三张财务表，
+//     剔除设备特定字段（maxRows/maxWidth/sortMode/autoRefreshInterval）
+//   - financials.json：只含三张财务表（按 code 索引）
+//   - gold.json：黄金交易 + 全局设置 appSettings
+export interface GoldFileFingerprintInput {
+  trades: TradeRecord[];
+  settings?: Record<string, unknown>;
+}
+export function buildGoldFileFingerprint({ trades, settings }: GoldFileFingerprintInput): string {
+  return stableStringify({ trades, settings });
+}
+
+export interface StocksFileFingerprintInput {
   stocks: StockEntry[];
   stockSettings?: StockSettings;
   backtestStrategyPresets?: BacktestStrategyPreset[];
-  appSettings?: Record<string, unknown>;
 }
-
-export function buildStockCloudFingerprint(input: StockCloudFingerprintInput): string {
-  const { stocks, stockSettings, backtestStrategyPresets = [], appSettings } = input;
+export function buildStocksFileFingerprint(input: StocksFileFingerprintInput): string {
+  const { stocks, stockSettings, backtestStrategyPresets = [] } = input;
   const cloudStockSettings = stockSettings
     ? { ...stockSettings, maxRows: undefined, maxWidth: undefined, sortMode: undefined, autoRefreshInterval: undefined }
     : undefined;
-  return JSON.stringify({
-    stocks: stripStockPriceCache(buildUploadStocks(stocks)),
+  const { core } = splitFinancialsFromStocks(stripStockPriceCache(buildUploadStocks(stocks)));
+  return stableStringify({
+    stocks: core,
     stockSettings: cloudStockSettings,
     backtestStrategyPresets,
-    appSettings,
   });
+}
+
+export function buildFinancialsFileFingerprint(stocks: StockEntry[]): string {
+  const { financials } = splitFinancialsFromStocks(stocks);
+  return stableStringify({ financials });
 }
 
 // 编辑备忘录后应写入的时间戳：
@@ -370,7 +408,7 @@ function diffArray(a: unknown[], b: unknown[], prefix: string, hints: DiffHints,
     for (const [k, oa] of aMap) {
       const ob = bMap.get(k);
       if (!ob || sameValue(oa, ob)) continue;
-      const head = `${base}${noun}「${describe(ob)}」已修改`;
+      const head = `${base}更新「${describe(ob)}」`;
       const lines = collectFieldChanges(oa, ob, itemHints);
       if (lines.length === 0) {
         out.push({ kind: 'change', text: head });
@@ -449,7 +487,8 @@ const TRADE_HINTS: DiffHints = {
 };
 
 const STOCK_HINTS: DiffHints = {
-  noun: '股票',
+  // 文件标题已标明"股票"，实体前缀不再重复"股票"二字
+  noun: '',
   idKey: 'id',
   describe: stockLabel,
   item: {
@@ -457,7 +496,7 @@ const STOCK_HINTS: DiffHints = {
       code: '代码', name: '名称', nickname: '代号',
       positionShares: '持仓股数', positionCost: '持仓成本',
       dividend2024: '2024分红', dividend2025: '2025分红',
-      dividendByYear: '历年分红', dividendRates: '股息率档位',
+      dividendByYear: '历年分红',
       registerDate: '登记日', link: '链接', tag: '标签',
       selectedDividendYear: '选中分红年', bollHidden: '隐藏BOLL',
       stockTrades: '', // 空标签：交易记录数组就地展开，避免"交易记录·交易记录"重复
@@ -536,4 +575,149 @@ export function diffStockCloudSnapshots(baseline: string | null, current: string
   const out: CloudDiffItem[] = [];
   diffNode(b, c, '', ROOT_HINTS, out);
   return out;
+}
+
+// 黄金文件（gold.json → { trades, settings }）的差异对比：交易记录逐条、全局设置逐字段
+interface GoldSnapshot {
+  trades?: TradeRecord[];
+  settings?: AnyObj;
+}
+function parseGoldSnapshot(raw: string | null): GoldSnapshot | null {
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === 'object' ? (o as GoldSnapshot) : null;
+  } catch {
+    return null;
+  }
+}
+const GOLD_ROOT_HINTS: DiffHints = {
+  labels: { trades: '', settings: '' },
+  fields: {
+    trades: TRADE_HINTS,
+    settings: { ...APP_SETTINGS_HINTS, sectionPrefix: '黄金设置：' },
+  },
+};
+export function diffGoldSnapshots(baseline: string | null, current: string): CloudDiffItem[] | null {
+  const b = parseGoldSnapshot(baseline);
+  if (b === null) return null;
+  const c: GoldSnapshot = parseGoldSnapshot(current) || {};
+  const out: CloudDiffItem[] = [];
+  diffNode(b, c, '', GOLD_ROOT_HINTS, out);
+  return out;
+}
+
+// financials.json 的差异明细：精确到「哪只股票 → 哪些年份 → 三张表中哪几项变了」，
+// 并区分新增/删除/更新；连续年份且变化项相同的合并成「1999-2008」年份区间。
+// 分红数据量很大，展示颗粒度止于「股票 + 年份区间（含变化项名称）」，不做逐值对比。
+export type FinancialsField = 'dividend' | 'dividendTotal' | 'netProfit';
+export interface FinancialsYearGroup {
+  kind: CloudDiffKind; // 该段年份是整年新增、整年删除，还是已有年份的值更新
+  startYear: number;
+  endYear: number; // 与 startYear 相同表示只有一年
+  fields: FinancialsField[]; // 涉及的三表项
+}
+export interface FinancialsStockChange {
+  code: string;
+  kind: CloudDiffKind; // 股票级：新增/删除/更新（增删混合时归为更新）
+  groups: FinancialsYearGroup[];
+}
+export interface FinancialsDiffDetail {
+  stocks: FinancialsStockChange[];
+}
+
+// 三张财务表与差异展示字段的对应关系
+const FINANCIAL_TABLES: Array<{ field: FinancialsField; key: StockFinancialField }> = [
+  { field: 'dividend', key: 'dividendByYear' },
+  { field: 'dividendTotal', key: 'dividendTotalByYear' },
+  { field: 'netProfit', key: 'parentNetProfitByYear' },
+];
+
+interface FinancialsYearDelta {
+  year: number;
+  kind: CloudDiffKind;
+  fields: FinancialsField[];
+}
+
+// 某只股票某一年的变化：整年只在当前/基线存在 → 新增/删除；两边都有但值不同 → 更新
+function diffFinancialsYear(
+  pf: StockFinancialByYear,
+  nf: StockFinancialByYear,
+  year: number,
+): FinancialsYearDelta | null {
+  const prevVals = FINANCIAL_TABLES.map(t => pf[t.key]?.[year]);
+  const nextVals = FINANCIAL_TABLES.map(t => nf[t.key]?.[year]);
+  const prevHas = prevVals.some(v => v !== undefined && v !== null);
+  const nextHas = nextVals.some(v => v !== undefined && v !== null);
+  if (!prevHas && !nextHas) return null;
+  if (!prevHas) {
+    return { year, kind: 'add', fields: FINANCIAL_TABLES.filter((_, i) => nextVals[i] !== undefined && nextVals[i] !== null).map(t => t.field) };
+  }
+  if (!nextHas) {
+    return { year, kind: 'remove', fields: FINANCIAL_TABLES.filter((_, i) => prevVals[i] !== undefined && prevVals[i] !== null).map(t => t.field) };
+  }
+  const fields = FINANCIAL_TABLES.filter((_, i) => (prevVals[i] ?? null) !== (nextVals[i] ?? null)).map(t => t.field);
+  return fields.length > 0 ? { year, kind: 'change', fields } : null;
+}
+
+// 把逐年的变化按「连续年份 + 变化项相同」合并成区间，例如 1999-2008 年合并为一段
+function groupFinancialsYears(deltas: FinancialsYearDelta[]): FinancialsYearGroup[] {
+  const groups: FinancialsYearGroup[] = [];
+  const sorted = deltas.slice().sort((a, b) => a.year - b.year);
+  for (const d of sorted) {
+    const last = groups[groups.length - 1];
+    const sameShape = last && d.year === last.endYear + 1 && d.kind === last.kind
+      && d.fields.length === last.fields.length && d.fields.every((f, i) => f === last.fields[i]);
+    if (sameShape) last.endYear = d.year;
+    else groups.push({ kind: d.kind, startYear: d.year, endYear: d.year, fields: d.fields.slice() });
+  }
+  return groups;
+}
+
+export function diffFinancialsSnapshots(baseline: string | null, current: string): FinancialsDiffDetail | null {
+  if (!baseline) return null;
+  let prev: FinancialsIndex | undefined;
+  let next: FinancialsIndex | undefined;
+  try { prev = (JSON.parse(baseline) as { financials?: FinancialsIndex }).financials; } catch { return null; }
+  try { next = (JSON.parse(current) as { financials?: FinancialsIndex }).financials; } catch { next = undefined; }
+  const p = prev || {}, n = next || {};
+  const stocks: FinancialsStockChange[] = [];
+  const codes = new Set([...Object.keys(p), ...Object.keys(n)]);
+  for (const code of codes) {
+    const pf = p[code] || {}, nf = n[code] || {};
+    const years = new Set<number>();
+    for (const t of FINANCIAL_TABLES) {
+      Object.keys(pf[t.key] || {}).forEach(y => years.add(Number(y)));
+      Object.keys(nf[t.key] || {}).forEach(y => years.add(Number(y)));
+    }
+    const deltas: FinancialsYearDelta[] = [];
+    for (const y of years) {
+      const d = diffFinancialsYear(pf, nf, y);
+      if (d) deltas.push(d);
+    }
+    if (deltas.length === 0) continue;
+    // 股票级：整个条目从无到有 → 新增；从有到无 → 删除；否则都是更新（年份段自身再标类型）
+    const kind: CloudDiffKind = !p[code] ? 'add' : !n[code] ? 'remove' : 'change';
+    stocks.push({ code, kind, groups: groupFinancialsYears(deltas) });
+  }
+  return { stocks };
+}
+
+// 从 stocks.json 快照中提取「code → 名称」：financials.json 本身不含名称，
+// 展示分红差异时需要借助股票文件（当前本地股票 + 上次同步的股票基线）来还原股票名称。
+export function collectStockNamesFromSnapshot(raw: string | null): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const o = JSON.parse(raw) as { stocks?: Array<{ code?: unknown; name?: unknown; nickname?: unknown }> };
+    const names: Record<string, string> = {};
+    for (const s of o.stocks || []) {
+      const code = typeof s?.code === 'string' ? s.code : '';
+      if (!code) continue;
+      const name = (typeof s.nickname === 'string' && s.nickname) || (typeof s.name === 'string' ? s.name : '');
+      if (name && name !== code) names[code] = name;
+    }
+    return names;
+  } catch {
+    return {};
+  }
 }

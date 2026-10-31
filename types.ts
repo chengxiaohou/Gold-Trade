@@ -81,7 +81,13 @@ export interface CacheInfo {
   isTradingHours: boolean; // Whether currently in trading hours
 }
 
-export type StockDividendRates = Record<string, number>;
+// 单只股票的"低频财务数据"（分红数据流产物），拆分到 financials.json 单独同步；
+// 按 code 索引、跨设备一致，随分红拉取时才变动。
+export interface StockFinancialByYear {
+  dividendByYear?: Record<number, number>;        // key=年份, value=每股税前派息（全年汇总）
+  dividendTotalByYear?: Record<number, number>;   // key=年份, value=当年现金分红总额（元，税前）
+  parentNetProfitByYear?: Record<number, number>; // key=年份, value=当年归母净利润（元，年报口径）
+}
 
 export interface StockEntry {
   id: string;
@@ -104,7 +110,6 @@ export interface StockEntry {
   nickname?: string;      // 自定义代号（为空时使用内置默认代号）
   link?: string;          // 股票链接（随股票整体上云同步，编辑模式可改）
   priceUpdatedAt: number | null;
-  dividendRates: StockDividendRates;
   tag?: string; // User defined tag for filtering or categorization
   selectedDividendYear?: number; // Which dividend year this stock uses for rate calc, default = right year
   bollHidden?: boolean; // Whether BOLL data is hidden for this stock

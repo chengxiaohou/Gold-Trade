@@ -9,18 +9,18 @@ import { CloudSettingsModal } from './components/CloudSettingsModal';
 import { StockDividendPage } from './components/StockDividendPage';
 import { PRIMARY_BTN_CLS } from './components/uiStyles';
 import { analyzeTrade } from './services/geminiService';
-import { saveToGist, loadFromGist } from './services/githubService';
+import { saveToGist, loadFromGist, getCloudFilePresence, CLOUD_GOLD_FILENAME, CLOUD_STOCKS_FILENAME, CLOUD_FINANCIALS_FILENAME, CLOUD_FILE_NAMES, type CloudFileName } from './services/githubService';
 import { getLedgerFromStore, saveLedgerToStore } from './services/stockLedgerStore';
 import type { StockLedgerMap } from './services/stockLedgerStore';
 import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { calcPositionFromTrades } from './services/realizedPnl';
-import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, buildStockCloudFingerprint, resolveMemoUpdatedAt, diffStockCloudSnapshots } from './services/stockSync';
+import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, splitFinancialsFromStocks, resolveMemoUpdatedAt, diffStockCloudSnapshots, diffGoldSnapshots, buildGoldFileFingerprint, buildStocksFileFingerprint, buildFinancialsFileFingerprint, diffFinancialsSnapshots, collectStockNamesFromSnapshot } from './services/stockSync';
 import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.195';
+const APP_VERSION = 'v2.18.204';
 
 // 上传文件大小的展示格式（UTF-8 字节数 → B/KB/MB）
 function formatByteSize(bytes: number): string {
@@ -129,17 +129,6 @@ function fmtGrams(n: number) {
   return parseFloat(n.toFixed(2)).toString();
 }
 
-// 生成股息率对应股价的辅助函数
-function calcDividendRates(dividend2025: number): Record<string, number> {
-  const rates = ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%'];
-  const result: Record<string, number> = {};
-  rates.forEach(rate => {
-    const rateValue = parseFloat(rate) / 100;
-    result[rate] = Math.round((dividend2025 / rateValue) * 1000) / 1000;
-  });
-  return result;
-}
-
 // 默认股票数据（分红值已于 2026-08-09 从同花顺 F10 分红融资校准：按分红所属年度汇总，含中期/特别分红）
 function createDefaultStocks(): StockEntry[] {
   const stockData: Array<{ code: string; name: string; dividendByYear: Record<number, number> }> = [
@@ -170,7 +159,6 @@ function createDefaultStocks(): StockEntry[] {
       positionShares: 0,
       positionCost: 0,
       priceUpdatedAt: null,
-      dividendRates: calcDividendRates(div2025),
     };
   });
 }
@@ -435,9 +423,7 @@ export default function App() {
   
   // Localized Cloud Confirmation Popover State
   const [cloudConfirm, setCloudConfirm] = useState<'upload' | 'download' | null>(null);
-  // 股息页上传前展示的"与上次同步基线"的具体差异；null = 无基线（首次上传）或非上传场景
-  const [cloudDiff, setCloudDiff] = useState<CloudDiffItem[] | null>(null);
-  // 本次将上传的文件大小（UTF-8 字节数）；null = 未计算/非上传场景
+  // 本次将上传的文件总大小（UTF-8 字节数）；null = 未计算/非上传场景
   const [cloudUploadSize, setCloudUploadSize] = useState<number | null>(null);
 
   // 股息页同步确认浮窗的智能定位：记录被点击的按钮，箭头始终指向它
@@ -477,7 +463,6 @@ export default function App() {
     cancelHoverClose();
     cloudConfirmPinnedRef.current = false;
     setCloudConfirm(null);
-    setCloudDiff(null);
     setCloudUploadSize(null);
   };
 
@@ -535,7 +520,7 @@ export default function App() {
       window.removeEventListener('resize', calc);
       window.removeEventListener('scroll', calc, true);
     };
-  }, [cloudConfirm, cloudDiff]);
+  }, [cloudConfirm]);
 
   // 点击弹窗与触发按钮之外的任意位置 → 直接关闭确认弹窗（用捕获阶段，避免被内部元素阻止冒泡）
   useEffect(() => {
@@ -633,40 +618,110 @@ export default function App() {
     return [];
   }, []);
 
-  // 股息页云端上传字段的当前指纹，随股息数据变化自动重算
-  const cloudFingerprint = useMemo(
-    () => buildStockCloudFingerprint({
-      stocks,
-      stockSettings,
-      backtestStrategyPresets: presetsFromStorage(),
-      appSettings,
-    }),
-    [stocks, stockSettings, backtestPresetsVersion, presetsFromStorage, appSettings],
+  // 三个云端文件各自的基线指纹；null = 尚未同步（首次使用需先上传建备份）。
+  interface CloudFileBaselines { gold: string | null; stocks: string | null; financials: string | null; }
+  const [cloudFileBaselines, setCloudFileBaselines] = useState<CloudFileBaselines>(() => {
+    const empty: CloudFileBaselines = { gold: null, stocks: null, financials: null };
+    try {
+      const raw = localStorage.getItem('stock_cloud_file_baselines');
+      if (raw) {
+        const o = JSON.parse(raw);
+        return { gold: o.gold ?? null, stocks: o.stocks ?? null, financials: o.financials ?? null };
+      }
+    } catch { /* 忽略解析异常 */ }
+    return empty;
+  });
+
+  // 三个文件的当前指纹，随数据变化自动重算
+  const goldFileFingerprint = useMemo(
+    () => buildGoldFileFingerprint({ trades, settings: appSettings }),
+    [trades, appSettings],
   );
-  // 最近一次成功上传/下载时云端字段的指纹基线；null 表示尚未同步（首次使用需先上传建备份）
-  const [stockCloudBaseline, setStockCloudBaseline] = useState<string | null>(
-    () => localStorage.getItem('stock_cloud_baseline'),
+  const stocksFileFingerprint = useMemo(
+    () => buildStocksFileFingerprint({ stocks, stockSettings, backtestStrategyPresets: presetsFromStorage() }),
+    [stocks, stockSettings, backtestPresetsVersion, presetsFromStorage],
   );
-  // 上传按钮与差异弹窗共用同一次差异计算，作为"是否需要上传"的唯一判定：
-  // 差异比对对 key 顺序、实体数组顺序、标量数组顺序都不敏感，而指纹字符串比对是敏感的。
-  // 云端下载回来的快照顺序常与本地重建结果不同，若两者各判各的，就会出现
-  // "按钮显示（字符串不等）但弹窗提示无差异（语义相同）"的矛盾。
-  const stockCloudDiffItems = useMemo<CloudDiffItem[] | null>(() => {
-    if (stockCloudBaseline === null) return null; // 首次上传：无基线，无可对比内容
-    if (stockCloudBaseline === cloudFingerprint) return []; // 快速路径：指纹完全一致
-    return diffStockCloudSnapshots(stockCloudBaseline, cloudFingerprint);
-  }, [stockCloudBaseline, cloudFingerprint]);
-  // 有未同步改动才显示上传按钮；基线缺失（首次上传）或损坏解析失败也视为有改动
-  const stockCloudDirty = stockCloudDiffItems === null || stockCloudDiffItems.length > 0;
+  const financialsFileFingerprint = useMemo(() => buildFinancialsFileFingerprint(stocks), [stocks]);
+
+  // 各文件是否有未同步改动（基线缺失视作有改动，便于首次上传建备份）
+  const goldFileDirty = cloudFileBaselines.gold === null || cloudFileBaselines.gold !== goldFileFingerprint;
+  const stocksFileDirty = cloudFileBaselines.stocks === null || cloudFileBaselines.stocks !== stocksFileFingerprint;
+  const financialsFileDirty = cloudFileBaselines.financials === null || cloudFileBaselines.financials !== financialsFileFingerprint;
+  // 铁律：股票/股息页的上传按钮只由「股票 + 分红」两文件决定，黄金的改动绝不影响本页按钮
+  const stockCloudDirty = stocksFileDirty || financialsFileDirty;
+
+  // stocks.json 的逐字段差异（复用原引擎）；null = 无基线
+  const stocksFileDiffItems = useMemo<CloudDiffItem[] | null>(() => {
+    if (cloudFileBaselines.stocks === null) return null;
+    if (cloudFileBaselines.stocks === stocksFileFingerprint) return [];
+    return diffStockCloudSnapshots(cloudFileBaselines.stocks, stocksFileFingerprint);
+  }, [cloudFileBaselines.stocks, stocksFileFingerprint]);
+
+  // gold.json 的逐字段差异（交易记录 + 全局设置）
+  const goldFileDiffItems = useMemo<CloudDiffItem[] | null>(() => {
+    if (cloudFileBaselines.gold === null) return null;
+    if (cloudFileBaselines.gold === goldFileFingerprint) return [];
+    return diffGoldSnapshots(cloudFileBaselines.gold, goldFileFingerprint);
+  }, [cloudFileBaselines.gold, goldFileFingerprint]);
+
+  // financials.json 的差异明细：按「股票 → 年份区间 → 变化项」转成 CloudDiffItem，
+  // 区分新增/删除/更新；连续年份且变化项相同的合并成 1999-2008 这样的区间。
+  const financialsDiffItems = useMemo<CloudDiffItem[] | null>(() => {
+    if (cloudFileBaselines.financials === null) return null;
+    if (cloudFileBaselines.financials === financialsFileFingerprint) return [];
+    const d = diffFinancialsSnapshots(cloudFileBaselines.financials, financialsFileFingerprint);
+    if (!d || d.stocks.length === 0) return [];
+    // 分红文件不含股票名称：优先取当前本地股票，取不到（如股票已被删除）再回退到上次同步的股票基线
+    const names: Record<string, string> = {
+      ...collectStockNamesFromSnapshot(cloudFileBaselines.stocks),
+      ...Object.fromEntries(
+        stocks
+          .filter(s => s.nickname || s.name)
+          .map(s => [s.code, (s.nickname || s.name) as string]),
+      ),
+    };
+    const stockLabel = (code: string) => {
+      const name = names[code];
+      return name && name !== code ? `${name}(${code})` : code;
+    };
+    const FIELD_LABELS: Record<string, string> = { dividend: '每股派息', dividendTotal: '分红总额', netProfit: '归母净利润' };
+    const KIND_LABELS: Record<string, string> = { add: '新增', remove: '删除', change: '更新' };
+    // 年份区间全部展示（不做折叠），弹窗内部可滚动
+    return d.stocks.map((st) => {
+      const lines = st.groups.map((g) => {
+        const range = g.startYear === g.endYear ? `${g.startYear}` : `${g.startYear}-${g.endYear}`;
+        // 年份段的类型与股票整体类型一致时省略前缀，避免「删除」下面每行再写一遍删除
+        const kindPrefix = g.kind !== st.kind ? `${KIND_LABELS[g.kind]} ` : '';
+        return `  - ${kindPrefix}${range} 年：${g.fields.map(f => FIELD_LABELS[f]).join('、')}`;
+      });
+      return { kind: st.kind, text: `${KIND_LABELS[st.kind]}「${stockLabel(st.code)}」\n${lines.join('\n')}` };
+    });
+  }, [cloudFileBaselines.financials, cloudFileBaselines.stocks, financialsFileFingerprint, stocks]);
+
+  // 当前各文件是否脏（供体积估算与按文件上传共用）
+  const cloudDirtyByFile = useMemo<Record<CloudFileName, boolean>>(() => ({
+    [CLOUD_GOLD_FILENAME]: goldFileDirty,
+    [CLOUD_STOCKS_FILENAME]: stocksFileDirty,
+    [CLOUD_FINANCIALS_FILENAME]: financialsFileDirty,
+  }), [goldFileDirty, stocksFileDirty, financialsFileDirty]);
+
+  // 确认上传浮窗按文件展示差异：只展示「当前页」归属的文件（铁律：本页看不到、也碰不到对方文件）。
+  // 黄金页 → 黄金；股息（股票）页 → 股票 + 分红。
+  interface CloudFileRow { file: CloudFileName; label: string; dirty: boolean; firstTime: boolean; items: CloudDiffItem[] | null; }
+  const cloudFileRows = useMemo<CloudFileRow[]>(() => (
+    currentPage === 'gold'
+      ? [{ file: CLOUD_GOLD_FILENAME, label: '黄金', dirty: goldFileDirty, firstTime: cloudFileBaselines.gold === null, items: goldFileDiffItems }]
+      : [
+          { file: CLOUD_STOCKS_FILENAME, label: '股票', dirty: stocksFileDirty, firstTime: cloudFileBaselines.stocks === null, items: stocksFileDiffItems },
+          { file: CLOUD_FINANCIALS_FILENAME, label: '分红', dirty: financialsFileDirty, firstTime: cloudFileBaselines.financials === null, items: financialsDiffItems },
+        ]
+  ), [currentPage, goldFileDirty, stocksFileDirty, financialsFileDirty, cloudFileBaselines.gold, cloudFileBaselines.stocks, cloudFileBaselines.financials, goldFileDiffItems, stocksFileDiffItems, financialsDiffItems]);
 
   // 持久化基线：跨刷新保持"无改动则隐藏上传按钮"
   useEffect(() => {
-    if (stockCloudBaseline === null) {
-      localStorage.removeItem('stock_cloud_baseline');
-    } else {
-      localStorage.setItem('stock_cloud_baseline', stockCloudBaseline);
-    }
-  }, [stockCloudBaseline]);
+    localStorage.setItem('stock_cloud_file_baselines', JSON.stringify(cloudFileBaselines));
+    localStorage.removeItem('stock_cloud_baseline'); // 旧版单基线不再使用，清理残留
+  }, [cloudFileBaselines]);
 
   const resetStockData = () => {
     setStocks(createDefaultStocks());
@@ -1110,33 +1165,39 @@ export default function App() {
         openSettings('cloud');
         return;
     }
-    setCloudDiff(null);
     setCloudUploadSize(null);
     setCloudConfirm(action);
   };
 
-  // 共享的云端上传核心逻辑：上传股息页数据，返回是否成功
+  // 共享的云端上传核心逻辑：仅上传有差异的文件，返回是否成功
+  // ===== 铁律：页面与云端文件严格绑定 =====
+  // 黄金页只上传 gold.json（黄金交易 + 全局设置）；
+  // 股息（股票）页只上传 stocks.json（股票 + 分红页设置）与 financials.json（财务三表）。
+  // 即使对方文件真有改动，也绝不允许从本页上传/下载对方文件——页面各自只认自己的文件。
   const performStockCloudUpload = useCallback(async (): Promise<boolean> => {
     try {
-      let existingTrades: TradeRecord[] = [];
-      let existingStocks: StockEntry[] = [];
-      let existingStockSettings: StockSettings | undefined;
-      let existingPresets: BacktestStrategyPreset[] | undefined;
-      
+      // 本次可写入的云端文件集合由「当前页」决定，且只挑其中确有差异的写
+      const pageFiles: CloudFileName[] = currentPage === 'gold'
+        ? [CLOUD_GOLD_FILENAME]
+        : [CLOUD_STOCKS_FILENAME, CLOUD_FINANCIALS_FILENAME];
+      const filesToWrite: CloudFileName[] = pageFiles.filter(name => cloudDirtyByFile[name]);
+
+      // 迁移检测：已存在 gist 却还没有新三文件（仍为旧版单文件备份）→ 一次性完整拆分三文件并删除旧文件。
+      // 结构性迁移是铁律的唯一例外：旧单文件本身混装着三份数据，必须一次写全三文件才能正确拆开。
+      let deleteLegacy = false;
       if (githubConfig.gistId) {
         try {
-          const existing = await loadFromGist(githubConfig.token, githubConfig.gistId);
-          if (existing) {
-            existingTrades = existing.trades || [];
-            existingStocks = existing.stocks || [];
-            existingStockSettings = existing.stockSettings;
-            existingPresets = existing.backtestStrategyPresets;
+          const presence = await getCloudFilePresence(githubConfig.token, githubConfig.gistId);
+          if (!presence.gold && !presence.stocks && !presence.financials) {
+            filesToWrite.splice(0, filesToWrite.length, ...CLOUD_FILE_NAMES);
+            deleteLegacy = presence.legacy;
           }
-        } catch {
-        }
+        } catch { /* 预检失败则按页面差异文件上传 */ }
       }
-      
-      // 构造上传数据时排除设备特定的设置（不同设备各自保留）
+
+      if (filesToWrite.length === 0) return true; // 本页无差异，无需上传
+
+      // 上传数据：本地全量（saveToGist 内部按 filesToWrite 裁剪写盘）
       const cloudStockSettings = stockSettings ? {
         ...stockSettings,
         maxRows: undefined,
@@ -1144,62 +1205,38 @@ export default function App() {
         sortMode: undefined,
         autoRefreshInterval: undefined,
       } : undefined;
-      const cloudExistingStockSettings = existingStockSettings ? {
-        ...existingStockSettings,
-        maxRows: undefined,
-        maxWidth: undefined,
-        sortMode: undefined,
-        autoRefreshInterval: undefined,
-      } : undefined;
+      const dataToUpload = {
+        trades,
+        settings: appSettings,
+        stocks: stripStockPriceCache(buildUploadStocks(stocks)),
+        stockSettings: cloudStockSettings,
+        backtestStrategyPresets: presetsFromStorage(),
+      };
 
-      // 读取本地策略组合模板（BacktestModal 写入），上传时与云端按 id 合并（保留本地版本，云端独有的保留）
-      let localPresets: BacktestStrategyPreset[] = [];
-      try {
-        const raw = localStorage.getItem('bt_strategy_presets');
-        if (raw) localPresets = JSON.parse(raw);
-      } catch { /* 忽略解析异常 */ }
-      const presetsById = new Map<string, BacktestStrategyPreset>();
-      for (const p of existingPresets || []) if (p?.id && !presetsById.has(p.id)) presetsById.set(p.id, p);
-      for (const p of localPresets || []) if (p?.id) presetsById.set(p.id, p); // 本地覆盖云端同 id
-      const uploadPresets = Array.from(presetsById.values());
-
-      let dataToUpload;
-      if (currentPage === 'gold') {
-        dataToUpload = {
-          trades,
-          settings: appSettings,
-          stocks: stripStockPriceCache(existingStocks),
-          stockSettings: cloudExistingStockSettings,
-          backtestStrategyPresets: uploadPresets
-        };
-      } else {
-        // 全量上传：每只票的 stockTrades 携带完整记录（含软删 isDeleted 标记）。
-        // 软删随记录一起传播，不需要墓碑 deletedIds 旁路。
-        dataToUpload = {
-          trades: existingTrades,
-          settings: appSettings,
-          stocks: stripStockPriceCache(buildUploadStocks(stocks)),
-          stockSettings: cloudStockSettings,
-          backtestStrategyPresets: uploadPresets
-        };
-      }
-      
       const newGistId = await saveToGist(
-        githubConfig.token, 
-        dataToUpload, 
-        githubConfig.gistId || undefined
+        githubConfig.token,
+        dataToUpload,
+        githubConfig.gistId || undefined,
+        { files: filesToWrite, deleteLegacy },
       );
-      
+
       if (newGistId && newGistId !== githubConfig.gistId) {
         const newConfig = { ...githubConfig, gistId: newGistId };
         setGithubConfig(newConfig);
         localStorage.setItem('gold_github_config', JSON.stringify(newConfig));
       }
+
+      // 上传成功：把本次实际写入文件的基线更新为当前指纹（未写入的文件基线保持不变）
+      setCloudFileBaselines(prev => ({
+        gold: filesToWrite.includes(CLOUD_GOLD_FILENAME) ? goldFileFingerprint : prev.gold,
+        stocks: filesToWrite.includes(CLOUD_STOCKS_FILENAME) ? stocksFileFingerprint : prev.stocks,
+        financials: filesToWrite.includes(CLOUD_FINANCIALS_FILENAME) ? financialsFileFingerprint : prev.financials,
+      }));
       return true;
     } catch {
       return false;
     }
-  }, [githubConfig, stockSettings, currentPage, trades, appSettings, stocks]);
+  }, [githubConfig, cloudDirtyByFile, currentPage, stockSettings, trades, appSettings, stocks, presetsFromStorage, goldFileFingerprint, stocksFileFingerprint, financialsFileFingerprint]);
 
   const handleCloudUpload = async () => {
     cloudConfirmPinnedRef.current = false;
@@ -1211,9 +1248,6 @@ export default function App() {
       setUploadSuccess(true);
       setMemoBaseline(stockSettings?.memo || '');
       setMemoUpdatedAtBaseline(stockSettings?.memoUpdatedAt ?? 0);
-      if (currentPage === 'stocks') setStockCloudBaseline(buildStockCloudFingerprint({
-        stocks, stockSettings, backtestStrategyPresets: presetsFromStorage(), appSettings,
-      }));
       setTimeout(() => setUploadSuccess(false), 2000);
     } else {
       alert('云端上传失败，请检查网络或 Token 设置');
@@ -1221,10 +1255,9 @@ export default function App() {
     setIsSyncing(false);
   };
 
-  // 估算本次上传文件大小：与 saveToGist 实际写入 gist 的格式保持一致（同一 payload 结构 + 两空格缩进），
-  // 用 Blob 取 UTF-8 字节数（备注/中文占多字节，不能拿 content.length 当字节数）。
-  // 云端已有的交易记录/策略模板在"确定"时才合并拉取，这里按本地数据估算，文案标注"约"。
-  const computeStockUploadSize = useCallback((): number => {
+  // 按三个云端文件分别构造即将上传的紧凑 JSON（与 saveToGist 实际写盘内容一致），
+  // 体积估算与「下载待上传文件」共用，保证看到的体积与下载到的文件完全一致
+  const buildCloudFilePayloads = useCallback((): Record<CloudFileName, string> => {
     const cloudStockSettings = stockSettings ? {
       ...stockSettings,
       maxRows: undefined,
@@ -1232,23 +1265,46 @@ export default function App() {
       sortMode: undefined,
       autoRefreshInterval: undefined,
     } : undefined;
-    const payload = {
-      trades,
-      settings: appSettings,
-      stocks: stripStockPriceCache(buildUploadStocks(stocks)),
-      stockSettings: cloudStockSettings,
-      backtestStrategyPresets: presetsFromStorage(),
-      version: 1,
+    const { core, financials } = splitFinancialsFromStocks(stripStockPriceCache(buildUploadStocks(stocks)));
+    return {
+      [CLOUD_GOLD_FILENAME]: JSON.stringify({ version: 1, trades, settings: appSettings }),
+      [CLOUD_STOCKS_FILENAME]: JSON.stringify({ version: 1, stocks: core, stockSettings: cloudStockSettings, backtestStrategyPresets: presetsFromStorage() }),
+      [CLOUD_FINANCIALS_FILENAME]: JSON.stringify({ version: 1, financials }),
     };
-    return new Blob([JSON.stringify(payload, null, 2)]).size;
   }, [trades, appSettings, stocks, stockSettings, presetsFromStorage]);
 
-  // 股息页"上传到云端"：点击先算出与上次同步基线的具体差异，在确认浮窗里展示，确认后才真正上传
+  // 估算本次上传体积：只统计「本页（股票/分红）」有差异（会上传）文件的字节数。
+  // 铁律：黄金文件绝不纳入本页体积——它从不会由本页上传。
+  const computeStockUploadSize = useCallback((): number => {
+    const payloads = buildCloudFilePayloads();
+    return [CLOUD_STOCKS_FILENAME, CLOUD_FINANCIALS_FILENAME].reduce((sum, name) => (
+      cloudDirtyByFile[name] ? sum + new Blob([payloads[name]]).size : sum
+    ), 0);
+  }, [buildCloudFilePayloads, cloudDirtyByFile]);
+
+  // 上传确认浮窗里的隐藏按钮：把本页即将上传的（股票/分红）文件按文件名打包下载，用于抽查上传内容
+  const downloadStockUploadFile = () => {
+    const payloads = buildCloudFilePayloads();
+    const bundle: Record<string, unknown> = {};
+    for (const name of [CLOUD_STOCKS_FILENAME, CLOUD_FINANCIALS_FILENAME]) {
+      if (cloudDirtyByFile[name]) bundle[name] = JSON.parse(payloads[name]);
+    }
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'cloud-upload-files.json';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // 股息页"上传到云端"：打开确认浮窗，展示各文件差异，确认后一键上传全部有差异文件
   const requestStockUpload = () => {
     if (isSyncing) return;
-    setCloudDiff(stockCloudDiffItems);
     setCloudUploadSize(null);
-    snapPopoverToAnchor(320, 380);
+    snapPopoverToAnchor(320, 460);
     setCloudConfirm('upload');
     // 体积统计需要完整序列化一次上传数据，放到空闲时算，优先保证弹窗即时出现
     runWhenIdle(() => setCloudUploadSize(computeStockUploadSize()));
@@ -1310,7 +1366,6 @@ export default function App() {
     if (isSyncing) return;
     cloudConfirmPinnedRef.current = false;
     setCloudConfirm(null);
-    setCloudDiff(null);
     setCloudUploadSize(null);
     setIsSyncing(true);
     setUploadSuccess(false);
@@ -1319,9 +1374,6 @@ export default function App() {
       setUploadSuccess(true);
       setMemoBaseline(stockSettings?.memo || '');
       setMemoUpdatedAtBaseline(stockSettings?.memoUpdatedAt ?? 0);
-      setStockCloudBaseline(buildStockCloudFingerprint({
-        stocks, stockSettings, backtestStrategyPresets: presetsFromStorage(), appSettings,
-      }));
       setTimeout(() => setUploadSuccess(false), 2000);
     } else {
       alert('云端上传失败，请检查网络或 Token 设置');
@@ -1330,26 +1382,21 @@ export default function App() {
   };
 
   // 备忘录专用上传：与主上传按钮上传同一份数据，返回是否成功
-  // 成功后同步重置 stockCloudBaseline，确保右上角上传按钮状态与备忘录按钮一致
+  // 基线在 performStockCloudUpload 内部按实际写入文件更新，无需在此重置
   const handleMemoUpload = useCallback(async (): Promise<boolean> => {
     const ok = await performStockCloudUpload();
     if (ok) {
       setMemoBaseline(stockSettings?.memo || '');
       setMemoUpdatedAtBaseline(stockSettings?.memoUpdatedAt ?? 0);
-      // 同步重置云端指纹基线，让右上角上传按钮也消失（避免"备忘录上传成功但右上角仍提示脏"的状态漂移）
-      if (currentPage === 'stocks') {
-        setStockCloudBaseline(buildStockCloudFingerprint({
-          stocks, stockSettings, backtestStrategyPresets: presetsFromStorage(), appSettings,
-        }));
-      }
     }
     return ok;
-  }, [performStockCloudUpload, stockSettings, stocks, currentPage, appSettings]);
+  }, [performStockCloudUpload, stockSettings]);
 
+  // 铁律：下载同样按页面归属文件绑定——黄金页只下载 gold.json；股息（股票）页只下载/合并
+  // stocks.json 与 financials.json，绝不读取或回写对方文件。
   const handleCloudDownload = async () => {
     cloudConfirmPinnedRef.current = false;
     setCloudConfirm(null);
-    setCloudDiff(null);
     setCloudUploadSize(null);
     setIsDownloading(true);
     setDownloadSuccess(false);
@@ -1365,17 +1412,20 @@ export default function App() {
               ...result.settings
             }));
           }
+          // 黄金页下载只对齐 gold.json（交易 + 设置），其余两文件基线保持不变
+          setCloudFileBaselines(prev => ({
+            ...prev,
+            gold: buildGoldFileFingerprint({ trades: result.trades, settings: { ...appSettings, ...(result.settings || {}) } }),
+          }));
         } else {
           // 记录本次下载后本地生效的股息页数据，用于重置云端上传基线（避免异步 setState 读到旧值）
           let syncStocksForBaseline: StockEntry[] = stocks;
           let syncStockSettingsForBaseline: StockSettings | undefined = stockSettings;
 
           if (result.stocks) {
-            // 信任云端合并：以本地全量流水账为基底，用云端全量记录按 id 覆盖（本地命中的用云端版本
-            // 档改回传，云端新增的加入；本地独有的保留）。软删 isDeleted 直接随记录携带、无需墓碑。
-            // 合并后重排并按时间升序回写 stocks 与流水账。
-            const newLedger: StockLedgerMap = { ...ledgerRef.current };
-            const merged = mergeCloudStocks(result.stocks as StockEntry[], newLedger, stocks);
+            // 完整覆盖式下载：交易记录以云端全量记录为准（本地未上传的记录，如刚挂的单，会被丢弃），
+            // 云端没有的本地股票条目一并剔除；仅保留本地价格缓存字段。软删 isDeleted 随记录携带。
+            const merged = mergeCloudStocks(result.stocks as StockEntry[], stocks);
             setStocks(merged.mergedStocks);
             ledgerRef.current = merged.newLedger;
             setLedgerMap(merged.newLedger);
@@ -1383,15 +1433,9 @@ export default function App() {
             syncStocksForBaseline = merged.mergedStocks;
           }
 
-          if (result.settings) {
-            setAppSettings(prev => ({
-              ...prev,
-              ...result.settings
-            }));
-          }
-          
+          // 铁律：股息（股票）页只下载/合并 stocks.json 与 financials.json，
+          // 绝不动 gold.json（其 settings/交易 只由黄金页下载）。
           if (result.stockSettings) {
-            // 从云端恢复时，保留本地的设备特定设置（maxRows、maxWidth、sortMode）
             const restoredStockSettings = {
               ...result.stockSettings,
               maxRows: stockSettings?.maxRows ?? result.stockSettings.maxRows,
@@ -1418,14 +1462,15 @@ export default function App() {
             for (const p of localPresets || []) if (p?.id) mergedMap.set(p.id, p);
             for (const p of result.backtestStrategyPresets || []) if (p?.id) mergedMap.set(p.id, p); // 云端覆盖
             localStorage.setItem('bt_strategy_presets', JSON.stringify(Array.from(mergedMap.values())));
+            bumpBacktestPresets(); // 让 stocks 指纹随合并后的策略组重算，避免基线与当前指纹漂移
           }
 
-          // 下载成功后重置云端指纹基线：本地已与云端对齐，无改动则不再显示上传按钮
-          setStockCloudBaseline(buildStockCloudFingerprint({
-            stocks: syncStocksForBaseline,
-            stockSettings: syncStockSettingsForBaseline,
-            backtestStrategyPresets: presetsFromStorage(),
-            appSettings: { ...appSettings, ...(result.settings || {}) },
+          // 下载成功后重置本页（股票/分红）两文件基线：本地已与云端对齐，无改动则不再显示上传按钮。
+          // 黄金基线不动——它由黄金页下载时单独重置（铁律：本页不触碰 gold.json）。
+          setCloudFileBaselines(prev => ({
+            ...prev,
+            stocks: buildStocksFileFingerprint({ stocks: syncStocksForBaseline, stockSettings: syncStockSettingsForBaseline, backtestStrategyPresets: presetsFromStorage() }),
+            financials: buildFinancialsFileFingerprint(syncStocksForBaseline),
           }));
         }
         
@@ -2025,40 +2070,55 @@ export default function App() {
                     {cloudUploadSize !== null ? formatByteSize(cloudUploadSize) : '计算中…'}
                   </span>
                 )}
+                {/* 隐藏式下载：把即将上传的文件存到本地用于抽查；平时几乎不可见，与版本号按钮同一套样式 */}
+                {cloudConfirm === 'upload' && (
+                  <button
+                    type="button"
+                    onClick={downloadStockUploadFile}
+                    className="text-[10px] font-mono text-white/[0.01] hover:text-app-text transition-colors cursor-pointer select-none"
+                    title="下载即将上传的文件"
+                  >
+                    下载
+                  </button>
+                )}
               </div>
               {cloudConfirm === 'download' && (
                 <p className="text-[10px] text-app-subtext mb-2 leading-tight whitespace-nowrap">将覆盖本地交易记录</p>
               )}
-              {/* 上传前展示与上次同步基线的具体差异（复用下载确认浮窗） */}
+              {/* 上传前按文件展示与上次同步基线的差异；只展示有变更（含首次上传）的文件，无变更的文件不展示 */}
               {cloudConfirm === 'upload' && (
-                <div className="w-full max-h-[220px] overflow-y-auto custom-scrollbar text-left mb-2 border border-app-border rounded-lg bg-app-input divide-y divide-app-border">
-                  {cloudDiff === null ? (
-                    <div className="text-[11px] text-app-subtext leading-relaxed px-2 py-3 text-center">首次上传，暂无可对比的历史备份</div>
-                  ) : cloudDiff.length === 0 ? (
-                    <div className="text-[11px] text-app-subtext leading-relaxed px-2 py-3 text-center">与上次同步相比无差异</div>
-                  ) : (
-                    cloudDiff.map((d, i) => (
-                      <div
-                        key={i}
-                        className="flex gap-2 items-start px-2 py-1.5"
-                      >
-                        <span className={`mt-[5px] w-[6px] h-[6px] rounded-full shrink-0 ${d.kind === 'add' ? 'bg-brand-green' : d.kind === 'remove' ? 'bg-brand-red' : 'bg-indigo-400'}`}></span>
-                        {d.kind === 'change' ? (
-                          <div className="text-[11px] leading-relaxed break-words min-w-0">
-                            {/* 首行：实体标题，白色加粗；后续行：具体改动，减号开头 */}
-                            <div className="text-app-text font-bold [overflow-wrap:anywhere]">{d.text.split('\n')[0]}</div>
-                            {d.text.split('\n').slice(1).map((line, j) => (
-                              <div key={j} className="text-app-rowtext whitespace-pre-wrap [overflow-wrap:anywhere]">{line.replace(/^ {2}/, '')}</div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className={`text-[11px] leading-relaxed whitespace-pre-line break-words ${d.kind === 'add' ? 'text-brand-green' : 'text-brand-red'}`}>
-                            {d.text}
-                          </div>
-                        )}
+                <div className="w-full max-h-[240px] overflow-y-auto custom-scrollbar text-left mb-2 border border-app-border rounded-lg bg-app-input divide-y divide-app-border">
+                  {cloudFileRows.filter((row) => row.dirty).map((row) => (
+                    <div key={row.file} className="px-2 py-2">
+                      {/* 文件标题行：中文名 + 状态 */}
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span className="w-[7px] h-[7px] rounded-full shrink-0 bg-indigo-400"></span>
+                        <span className="text-[11px] font-bold text-app-text">{row.label}</span>
+                        <span className="ml-auto text-[10px] text-indigo-400">
+                          {row.firstTime ? '首次上传' : '待上传'}
+                        </span>
                       </div>
-                    ))
-                  )}
+                      {/* 差异明细 */}
+                      {row.firstTime ? (
+                        <div className="text-[10px] text-app-subtext leading-relaxed pl-2.5">首次上传，暂无可对比的历史备份</div>
+                      ) : row.items && row.items.length > 0 ? (
+                        row.items.map((d, i) => (
+                          <div key={i} className="flex gap-2 items-start pl-2.5 py-1">
+                            <span className={`mt-[5px] w-[5px] h-[5px] rounded-full shrink-0 ${d.kind === 'add' ? 'bg-brand-green' : d.kind === 'remove' ? 'bg-brand-red' : 'bg-indigo-400'}`}></span>
+                            {/* 二级文字：新增/删除/更新统一字号字重与颜色（仅小圆点保留语义色） */}
+                            <div className="text-[10px] leading-relaxed break-words min-w-0">
+                              <div className="text-app-text font-semibold [overflow-wrap:anywhere]">{d.text.split('\n')[0]}</div>
+                              {d.text.split('\n').slice(1).map((line, j) => (
+                                <div key={j} className="text-app-rowtext whitespace-pre-wrap [overflow-wrap:anywhere]">{line.replace(/^ {2}/, '')}</div>
+                              ))}
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-[10px] text-app-subtext leading-relaxed pl-2.5">内容有更新</div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
               <div className="grid grid-cols-2 gap-1.5 w-full">

@@ -38,7 +38,6 @@ export function mkStock(code: string, name: string, over: Partial<StockEntry> = 
     positionShares: 0,
     positionCost: 0,
     priceUpdatedAt: null,
-    dividendRates: {},
   };
   return { ...base, ...over };
 }
