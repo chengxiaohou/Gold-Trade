@@ -275,6 +275,7 @@ interface StockDividendPageProps {
   maxRows?: number;
   maxWidth?: number;
   autoRefreshInterval?: number; // 股价自动刷新间隔（秒），0=关闭；设备本地设置
+  divRateHoverEnabled?: boolean; // 股息率弹窗是否支持鼠标悬浮显示；设备本地设置，不上传云端
   actionButtons?: React.ReactNode;
   appVersion?: string;
   onTogglePage?: () => void;
@@ -2242,7 +2243,7 @@ const sortStocksByTag = (list: StockEntry[]): StockEntry[] =>
     return (a.tag || '').trim().localeCompare((b.tag || '').trim());
   });
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, autoRefreshInterval = 60, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, autoRefreshInterval = 60, divRateHoverEnabled = false, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
   useEffect(() => {
     const id = 'profit-month-scroller-style';
@@ -2943,6 +2944,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const divRateInfoBtnRef = useRef<HTMLTableCellElement | null>(null);
   const divRateInfoRef = useRef<HTMLDivElement | null>(null);
   const divRateInfoActiveIdRef = useRef<string | undefined>(undefined);
+  // 悬浮开启时：初次移入单元格的 100ms 宽限（避免鼠标路过误触发）
+  const divRateHoverOpenTimerRef = useRef<number | undefined>(undefined);
   // 关闭股息率曲线浮窗：点击切换 / 点击外部 / 右上角关闭按钮 共用同一套重置
   const closeDivRateInfo = useCallback(() => {
     divRateInfoActiveIdRef.current = undefined;
@@ -3413,14 +3416,51 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (stock && divRateInfoBtnRef.current) openDivRateInfo(divRateInfoBtnRef.current, stock, p);
   };
 
-  // 股息率弹窗仅点击打开：已打开时点击同列其他单元格，直接复用同一弹窗切换数据
+  // 股息率弹窗：默认仅点击打开；设备设置开启「悬浮显示」后，鼠标移入单元格即临时展示，
+  // 点击仍可固定。进入需 100ms 宽限防路过；同一列单元格间移动则立即切换、不设宽限；
+  // 离开单元格立即关闭（不设离开宽限）。
+  const cancelDivRateHoverOpen = () => {
+    if (divRateHoverOpenTimerRef.current !== undefined) {
+      clearTimeout(divRateHoverOpenTimerRef.current);
+      divRateHoverOpenTimerRef.current = undefined;
+    }
+  };
+
+  const handleDivRateInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
+    if (!divRateHoverEnabled || divRateInfoPinned) return;
+    // 已有任一浮窗被点击固定：悬浮不抢占
+    if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || mktInfoPinned) return;
+    cancelDivRateHoverOpen();
+    if (divRateInfoStock?.id === stock.id) return;
+    // 浮窗已开（正沿同一列移动）：立即切换，不做宽限
+    if (divRateInfoStock) {
+      openDivRateInfo(e.currentTarget as HTMLElement, stock);
+      return;
+    }
+    const btn = e.currentTarget as HTMLElement;
+    divRateHoverOpenTimerRef.current = window.setTimeout(() => {
+      divRateHoverOpenTimerRef.current = undefined;
+      openDivRateInfo(btn, stock);
+    }, 100);
+  };
+
+  const handleDivRateInfoLeave = (e?: React.MouseEvent) => {
+    if (!divRateHoverEnabled || divRateInfoPinned) return;
+    cancelDivRateHoverOpen();
+    // 在同一列单元格之间移动：不关闭，交给目标单元格立即切换
+    const to = e?.relatedTarget as HTMLElement | null;
+    if (to?.closest?.('[data-divrate-cell]')) return;
+    closeDivRateInfo();
+  };
 
   // 点击股息率：切换固定/取消固定
   const handleDivRateInfoClick = (e: React.MouseEvent, stock: StockEntry) => {
     e.stopPropagation();
-    if (divRateInfoPinned && divRateInfoStock?.id === stock.id) {
-      // 取消固定并关闭
-      closeDivRateInfo();
+    cancelDivRateHoverOpen();
+    if (divRateInfoStock?.id === stock.id) {
+      // 已展示（悬浮或已固定）：点击只切换固定状态，不重复请求
+      if (divRateInfoPinned) closeDivRateInfo();
+      else setDivRateInfoPinned(true);
       return;
     }
     openDivRateInfo(e.currentTarget as HTMLElement, stock);
@@ -5788,6 +5828,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   {cols.includes('dividendRate') && <td
                     data-divrate-cell
                     onClick={(e) => handleDivRateInfoClick(e, stock)}
+                    onMouseEnter={(e) => handleDivRateInfoEnter(e, stock)}
+                    onMouseLeave={handleDivRateInfoLeave}
                     className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
@@ -7871,6 +7913,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {divRateInfoStock && (
         <div
           ref={divRateInfoRef}
+          onMouseLeave={handleDivRateInfoLeave}
           className="fixed z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-y-auto custom-scrollbar"
           style={{ top: divRateInfoPos.top, left: divRateInfoPos.left, width: 360, maxHeight: divRateInfoPos.maxHeight, transform: 'translateY(-50%)' }}
         >

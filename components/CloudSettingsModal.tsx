@@ -169,6 +169,8 @@ interface CloudSettingsModalProps {
   currentPage: 'gold' | 'stock';
   onSave: (githubConfig: GithubConfig, appSettings: AppSettings, stockSettings?: StockSettings) => void;
   initialTab?: 'general' | 'cloud' | 'tagmanage';
+  divRateHoverEnabled?: boolean; // 股息率弹窗悬浮显示；设备本地设置，不写入 stockSettings/云端
+  onDivRateHoverEnabledChange?: (v: boolean) => void;
 }
 
 export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
@@ -180,6 +182,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   currentPage,
   onSave,
   initialTab = 'general',
+  divRateHoverEnabled = false,
+  onDivRateHoverEnabledChange,
 }) => {
   // Config States
   const [token, setToken] = useState(githubConfig.token);
@@ -1268,6 +1272,20 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                              className="text-sm"
                            />
                            <span className="text-xs text-app-subtext pb-1">秒/次（0=关闭，默认60）；仅盘中自动刷新，收盘/未开盘自动停止</span>
+                        </div>
+                        {/* 股息率弹窗悬浮显示：设备本地开关，不随云端同步 */}
+                        <div className="pt-3 border-t border-app-border flex items-start justify-between gap-3">
+                           <div className="min-w-0">
+                              <div className="text-sm font-medium text-app-text">股息率弹窗悬浮显示</div>
+                              <div className="text-xs text-app-subtext mt-1 leading-relaxed">开启后鼠标移入股息率单元格即临时显示弹窗，点击可固定；仅本设备生效，不上传云端。</div>
+                           </div>
+                           <button
+                             type="button"
+                             onClick={() => onDivRateHoverEnabledChange?.(!divRateHoverEnabled)}
+                             className={`shrink-0 px-3 py-1 rounded-full border text-xs font-semibold transition-colors ${divRateHoverEnabled ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-400' : 'bg-app-input border-app-border text-app-subtext hover:text-app-text'}`}
+                           >
+                             {divRateHoverEnabled ? '已开启' : '已关闭'}
+                           </button>
                         </div>
                      </div>
 

@@ -20,7 +20,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.218';
+const APP_VERSION = 'v2.18.220';
 
 // 上传文件大小的展示格式（UTF-8 字节数 → B/KB/MB）
 function formatByteSize(bytes: number): string {
@@ -413,6 +413,14 @@ export default function App() {
 
   // Github Cloud Config State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  // 股息率弹窗「鼠标悬浮显示」开关：设备本地持久化即可，不进入 stockSettings、不上传云端
+  const [divRateHoverEnabled, setDivRateHoverEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem('divRateHoverEnabled') === '1'; } catch { return false; }
+  });
+  const changeDivRateHoverEnabled = (v: boolean) => {
+    setDivRateHoverEnabled(v);
+    try { localStorage.setItem('divRateHoverEnabled', v ? '1' : '0'); } catch { /* 忽略 */ }
+  };
   const [settingsDefaultTab, setSettingsDefaultTab] = useState<'general' | 'cloud'>('general');
   const [isSyncing, setIsSyncing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -2282,6 +2290,8 @@ export default function App() {
         currentPage={currentPage === 'gold' ? 'gold' : 'stock'}
         onSave={handleSaveSettings}
         initialTab={settingsDefaultTab}
+        divRateHoverEnabled={divRateHoverEnabled}
+        onDivRateHoverEnabledChange={changeDivRateHoverEnabled}
       />
 
       {showExportModal && (
@@ -2861,6 +2871,7 @@ export default function App() {
             maxRows={stockSettings.maxRows}
             maxWidth={stockSettings.maxWidth}
             autoRefreshInterval={stockSettings.autoRefreshInterval ?? 60}
+            divRateHoverEnabled={divRateHoverEnabled}
             actionButtons={renderStockActionButtons()}
             appVersion={APP_VERSION}
             onTogglePage={togglePage}
