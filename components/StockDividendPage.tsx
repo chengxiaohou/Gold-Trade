@@ -1778,7 +1778,7 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
             <Line
               type="monotone"
               dataKey="rate"
-              stroke="#3b82f6"
+              stroke="#6366f1"
               strokeWidth={1.2}
               dot={false}
               activeDot={false}
@@ -1799,8 +1799,8 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
               <>
                 <ReferenceDot x={maxPricePt.date} y={maxPricePt.price} yAxisId="price" r={0} stroke="none" label={{ value: maxPricePt.price.toFixed(2), position: 'top', fontSize: 8, fill: 'rgba(148,163,184,0.85)' }} />
                 <ReferenceDot x={minPricePt.date} y={minPricePt.price} yAxisId="price" r={0} stroke="none" label={{ value: minPricePt.price.toFixed(2), position: 'bottom', fontSize: 8, fill: 'rgba(148,163,184,0.85)' }} />
-                <ReferenceDot x={maxRatePt.date} y={maxRatePt.rate} r={0} stroke="none" label={{ value: `${maxRatePt.rate.toFixed(2)}%`, position: 'top', fontSize: 8, fill: '#3b82f6' }} />
-                <ReferenceDot x={minRatePt.date} y={minRatePt.rate} r={0} stroke="none" label={{ value: `${minRatePt.rate.toFixed(2)}%`, position: 'bottom', fontSize: 8, fill: '#3b82f6' }} />
+                <ReferenceDot x={maxRatePt.date} y={maxRatePt.rate} r={0} stroke="none" label={{ value: `${maxRatePt.rate.toFixed(2)}%`, position: 'top', fontSize: 8, fill: '#6366f1' }} />
+                <ReferenceDot x={minRatePt.date} y={minRatePt.rate} r={0} stroke="none" label={{ value: `${minRatePt.rate.toFixed(2)}%`, position: 'bottom', fontSize: 8, fill: '#6366f1' }} />
               </>
             )}
           </LineChart>
@@ -2165,9 +2165,9 @@ const AnnualDividendChart = React.memo(function AnnualDividendChart({ stock }: {
                 yAxisId="perShare"
                 type="monotone"
                 dataKey="perSharePlot"
-                stroke="#ef4444"
+                stroke="#dc2626"
                 strokeWidth={1.4}
-                dot={{ r: 1.5, fill: '#ef4444', strokeWidth: 0 }}
+                dot={{ r: 1.5, fill: '#dc2626', strokeWidth: 0 }}
                 activeDot={false}
                 connectNulls={false}
                 isAnimationActive={false}
@@ -2222,7 +2222,7 @@ const AnnualDividendChart = React.memo(function AnnualDividendChart({ stock }: {
             股利支付率
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-2.5 h-[2px] rounded-full" style={{ background: '#ef4444' }} />
+            <span className="w-2.5 h-[2px] rounded-full" style={{ background: '#dc2626' }} />
             每股派息
           </span>
         </div>
@@ -2240,7 +2240,7 @@ const AnnualDividendChart = React.memo(function AnnualDividendChart({ stock }: {
         <div className="px-2.5 py-1.5 bg-app-card space-y-0.5">
           <div className="flex items-baseline justify-between">
             <span className="text-[10px] text-app-subtext whitespace-nowrap">每股派息</span>
-            <span className="font-mono text-[11px]" style={{ color: '#ef4444' }} ref={floatPerShareRef} />
+            <span className="font-mono text-[11px]" style={{ color: '#dc2626' }} ref={floatPerShareRef} />
           </div>
           <div className="flex items-baseline justify-between">
             <span className="text-[10px] text-app-subtext whitespace-nowrap">派现总额</span>
@@ -5687,7 +5687,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   onClick={() => setNameSubMode(m => m === 'tags' ? 'code' : 'tags')}
                   title="点击在状态标签/代码之间切换"
                 >{nameSubMode === 'tags' ? '状态' : '代码'}</th>}
-                {cols.includes('dividendRate') && <th colSpan={1} ref={periodCellRef} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap cursor-pointer select-none" title={`股息率列按${divRatePeriod === 'daily' ? '日' : divRatePeriod === 'weekly' ? '周' : '月'}线周期（${dailyChartRange}条）计算下方历史比例；滚轮可调条数，长按恢复默认 250`}
+                {cols.includes('dividendRate') && <th colSpan={1} ref={periodCellRef} className="w-[70px] min-w-[70px] max-w-[70px] overflow-hidden px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap cursor-pointer select-none" title={`股息率列按${divRatePeriod === 'daily' ? '日' : divRatePeriod === 'weekly' ? '周' : '月'}线周期（${dailyChartRange}条）计算下方历史比例；滚轮可调条数，长按恢复默认 250`}
                     onPointerDown={startPeriodLongPress}
                     onPointerUp={stopPeriodLongPress}
                     onPointerLeave={stopPeriodLongPress}
@@ -5893,10 +5893,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onClick={(e) => handleDivRateInfoClick(e, stock)}
                     onMouseEnter={(e) => handleDivRateInfoEnter(e, stock)}
                     onMouseLeave={handleDivRateInfoLeave}
-                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
+                    className={`w-[70px] min-w-[70px] max-w-[70px] overflow-hidden px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
                     title=""
                   >
-                    <div className="flex flex-col items-center leading-tight gap-px">
+                    <div className="flex flex-col items-center leading-tight gap-px w-full overflow-hidden">
                       <span className={`font-mono text-xs font-bold ${getDividendRateColor(getDividendRate(stock), ranges)}`}>
                         {getDividendRate(stock) > 0 ? formatPercent(getDividendRate(stock)) : '--'}
                       </span>
