@@ -1996,8 +1996,12 @@ const AnnualDividendChart = React.memo(function AnnualDividendChart({ stock }: {
     ? Math.min(0.6, Math.max(0, -amountMin / (amountMax - amountMin)))
     : 0;
   const ratioMin = zeroRatio > 0 ? -(payoutMax * zeroRatio) / (1 - zeroRatio) : 0;
-  // 固定 25% 一档：正常情况 0/25/50/75/100，出现负区间时从 0 往下补 -25 这一档
-  const ratioStep = 25;
+  // 网格步长按区间大小自适应：正常情况是 25% 一档（0/25/50/75/100）。
+  // 支付率异常高的个股（如净利润极低导致 1000%+）若仍按 25% 一档，会产生上百条虚线，
+  // 密集虚线在渲染时相位对齐、视觉上变成一片竖条纹，因此改为放大步长、把线条数控制在一屏 6 条内。
+  const ratioRange = payoutMax - ratioMin;
+  const ratioStep = [25, 50, 100, 200, 250, 500, 1000, 2000]
+    .find(step => ratioRange / step <= 6) ?? 2000;
   const ratioTicks: number[] = [];
   for (let v = Math.ceil(ratioMin / ratioStep) * ratioStep; v <= payoutMax + 1e-6; v += ratioStep) {
     ratioTicks.push(Math.round(v));
@@ -3056,6 +3060,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [divRateInfoPinned, setDivRateInfoPinned] = useState(false);
   const divRateInfoBtnRef = useRef<HTMLTableCellElement | null>(null);
   const divRateInfoRef = useRef<HTMLDivElement | null>(null);
+  // 打开时单元格的垂直中心线，用于「实测高度后重新贴合单元格」的前置/后置校正
+  const divRateInfoCenterRef = useRef(0);
   const divRateInfoActiveIdRef = useRef<string | undefined>(undefined);
   // 悬浮开启时：初次移入单元格的 100ms 宽限（避免鼠标路过误触发）
   const divRateHoverOpenTimerRef = useRef<number | undefined>(undefined);
@@ -3069,8 +3075,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   }, []);
 
   // 股息率浮窗定位：点击时同步算好，首帧即为终态。
-  // 垂直方向 top 取单元格中心线 + translateY(-50%)，与弹窗内容高度完全解耦，
-  // 不可能出现「先偏下、数据到达后再跳回居中」。
+  // 垂直方向 top 取单元格中心线 + translateY(-50%)，与弹窗内容高度完全解耦。
+  // 可用高度不再「上下对称收缩」（那样底部单元格只能得到一个很矮、内部滚动的弹窗），
+  // 而是允许用满屏幕高度，再让 top 向可容纳的方向偏移：靠近底部时整体上移（前置），
+  // 靠近顶部时整体下移，保证弹窗完整可见。
   const computeDivRatePos = (btn: HTMLElement) => {
     const popupW = 360;
     const gap = 8;
@@ -3079,11 +3087,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const vw = window.innerWidth;
     const rect = btn.getBoundingClientRect();
     const center = rect.top + rect.height / 2;
-    // 最大高度只由「单元格中心到屏幕上下边缘的可用空间」决定：这样弹窗既严格居中于单元格，
-    // 又不会超出屏幕（空间不足时内部滚动，而不是把弹窗整体挪偏）
-    const maxHeight = Math.min(640, Math.max(200, Math.min(center - margin, vh - margin - center) * 2));
+    const maxHeight = Math.min(640, Math.max(200, vh - margin * 2));
     let top = center;
-    // 仅在单元格极端贴近屏幕边缘（可用空间不足最小高度）时，以「不出屏」优先做最小偏移
     if (top - maxHeight / 2 < margin) top = margin + maxHeight / 2;
     else if (top + maxHeight / 2 > vh - margin) top = vh - margin - maxHeight / 2;
     let left = rect.right + gap;
@@ -3091,6 +3096,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (left < margin) left = Math.max(margin, (vw - popupW) / 2);
     return { left, top, maxHeight };
   };
+
+  // 浮窗实际渲染后再按「实测高度」贴合单元格：内容比 maxHeight 矮时不必按 maxHeight 偏移，
+  // 底部单元格的弹窗才会刚好贴住窗口下边缘，而不是被整体推得过高或探出屏幕。
+  useLayoutEffect(() => {
+    if (!divRateInfoStock) return;
+    const el = divRateInfoRef.current;
+    if (!el) return;
+    const margin = 10;
+    const vh = window.innerHeight;
+    const h = Math.min(el.offsetHeight, vh - margin * 2);
+    const center = divRateInfoCenterRef.current;
+    let top = center;
+    if (top - h / 2 < margin) top = margin + h / 2;
+    if (top + h / 2 > vh - margin) top = vh - margin - h / 2;
+    setDivRateInfoPos((p) => (Math.abs(p.top - top) > 0.5 ? { ...p, top } : p));
+  }, [divRateInfoStock, divRateInfoKlines, divRateInfoLoading]);
 
   // 行情状态浮窗（近5交易日“破位”事件分析，数据复用 stockBollMap 日线，无需额外请求）
   const [mktInfoStock, setMktInfoStock] = useState<StockEntry | null>(null);
@@ -3477,6 +3498,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     divRateInfoBtnRef.current = btn as unknown as HTMLTableCellElement;
     divRateInfoActiveIdRef.current = stock.id;
     // 位置在点击时同步算好（与内容高度无关），弹窗首次渲染即处于最终位置
+    const rect = btn.getBoundingClientRect();
+    divRateInfoCenterRef.current = rect.top + rect.height / 2;
     setDivRateInfoPos(computeDivRatePos(btn));
     setDivRateInfoStock(stock);
     setDivRateInfoLoading(true);
