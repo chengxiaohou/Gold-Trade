@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen } from 'lucide-react';
-import { LineChart, ComposedChart, Line, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
+import { LineChart, ComposedChart, Line, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { StockEntry, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
 import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition, bollBandLabel, buildBollBandTextParts } from '../services/bollService';
 import type { BollData, BollPeriod, BollAdjust, BollKline, BollBandInfo, BollStreakExplain } from '../services/bollService';
@@ -1379,53 +1379,103 @@ const DIVIDEND_CHART_RANGE_STEP = 25;
 // 股息率默认周期：图表"重置"、列表股息率周期单元格长按恢复，共用同一默认值，改一处两边同步
 const DIVIDEND_CHART_DEFAULT_RANGE = 250;
 
+// 图表底部「平移进度条」：去掉原生滑块把手，填充色从右边缘向左延伸；
+// 支持点击任意位置直接定位、按住拖拽连续平移；滚轮平移仍由调用方通过 trackRef + useStepWheel 接管。
+const PanProgressBar = React.memo(function PanProgressBar({ trackRef, value, max, onChange }: {
+  trackRef: React.RefObject<HTMLDivElement | null>;
+  value: number;
+  max: number;
+  onChange: (next: number) => void;
+}) {
+  const draggingRef = useRef(false);
+  const rectRef = useRef<DOMRect | null>(null);
+  const updateFromClientX = (clientX: number) => {
+    const rect = rectRef.current ?? trackRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || max <= 0) return;
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    onChange(Math.round(ratio * max));
+  };
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (max <= 0 || e.button !== 0) return;
+    draggingRef.current = true;
+    rectRef.current = trackRef.current?.getBoundingClientRect() ?? null;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    updateFromClientX(e.clientX);
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!draggingRef.current) return;
+    updateFromClientX(e.clientX);
+  };
+  const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    draggingRef.current = false;
+    rectRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+  const pct = max > 0 ? Math.max(0, Math.min(100, (1 - value / max) * 100)) : 0;
+  return (
+    <div
+      ref={trackRef}
+      className="flex-1 h-4 flex items-center cursor-pointer select-none touch-none"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      role="slider"
+      aria-valuemin={0}
+      aria-valuemax={max}
+      aria-valuenow={Math.round(value)}
+    >
+      <div className="relative w-full h-1 rounded-full bg-app-input overflow-hidden">
+        <div className="absolute inset-y-0 right-0 rounded-full bg-indigo-500/80" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+});
+
 // 股息率曲线共享组件：详情弹窗与列表页“股息率”浮窗共用一套渲染逻辑，
 // 之后任一处的股息率曲线改动都会同时反映到另一处。
-const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock, fallbackDividend, title, period, rangeValue, offsetValue, onRangeChange, onOffsetChange, onPeriodChange }: {
+const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock, fallbackDividend, title, period, externalRange, externalOffset, onPeriodChange }: {
   klines: BollKline[];
   stock: StockEntry;
   fallbackDividend: number;
   title?: string;
   ranges: DividendRateColorRange[];
   period?: 'daily' | 'weekly' | 'monthly';
-  // 受控区间（列表页股息率列共享 daily 区间时传入）；未传入则内部自管理并本地记忆
-  rangeValue?: number;
-  offsetValue?: number;
-  onRangeChange?: (v: number) => void;
-  onOffsetChange?: (v: number) => void;
+  // 单向同步的图表窗口参数（列表页股息率列的周期/位置）：列表页变化时同步进图表，
+  // 图表内调整进度条或周期只改自身内部状态，绝不回写列表页
+  externalRange?: number;
+  externalOffset?: number;
   // 周期切换（日/周/月）：传入后标题栏显示与「区间价格」按钮同风格的三档按钮
   onPeriodChange?: (p: 'daily' | 'weekly' | 'monthly') => void;
 }) {
   const [chartRange, setChartRange] = useState(() => {
+    if (period && externalRange !== undefined) return externalRange;
     if (period) {
       try { return Number(localStorage.getItem(`dividendChartRange_${period}`)) || 120; } catch { /* ignore */ }
     }
     return 120;
   });
   const [chartOffset, setChartOffset] = useState(() => {
+    if (period && externalOffset !== undefined) return externalOffset;
     if (period) {
       try { return Number(localStorage.getItem(`dividendChartOffset_${period}`)) || 0; } catch { /* ignore */ }
     }
     return 0;
   });
   const sliderRAFRef = useRef<number | null>(null);
-  // 兼容受控模式：有外部值则以外部值为准
-  const range = Math.min(period && rangeValue !== undefined && onRangeChange ? rangeValue : chartRange, klines.length);
+  // 单向联动：列表页调整周期/位置时同步进图表；图表内的调整不经过列表页回调，因此不会反向影响列表
+  useEffect(() => {
+    if (period && externalRange !== undefined) setChartRange(externalRange);
+  }, [period, externalRange]);
+  useEffect(() => {
+    if (period && externalOffset !== undefined) setChartOffset(externalOffset);
+  }, [period, externalOffset]);
+  const range = Math.min(chartRange, klines.length);
   const updateRange = (v: number) => {
-    if (period && rangeValue !== undefined && onRangeChange) {
-      onRangeChange(v);
-    } else {
-      setChartRange(v);
-    }
-    if (period) { try { localStorage.setItem(`dividendChartRange_${period}`, String(v)); } catch { /* ignore */ } }
+    setChartRange(v);
   };
   const updateOffset = (v: number) => {
-    if (period && offsetValue !== undefined && onOffsetChange) {
-      onOffsetChange(v);
-    } else {
-      setChartOffset(v);
-    }
-    if (period) { try { localStorage.setItem(`dividendChartOffset_${period}`, String(v)); } catch { /* ignore */ } }
+    setChartOffset(v);
   };
   // 价格曲线 Y 轴模式：'dynamic' = 按当前区间价格动态取范围；'history' = 按全历史价格区间锁定
   const [priceAxisMode, setPriceAxisMode] = useState<'dynamic' | 'history'>(() => {
@@ -1451,20 +1501,19 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
     onPinch: (factor) => { updateRange(Math.max(5, Math.min(500, Math.round(rangeRef.current * factor)))); },
   });
 
-  // 底部平移滑块：光标悬停时用滚轮平移（与项目其它控件共用 useStepWheel；
-  // 滑块视觉值 = 最大偏移 - offset，因此下滚 → 滑块右移 → 显示更新年份）
-  const sliderRef = useRef<HTMLInputElement>(null);
-  const sliderRawOffset = period && offsetValue !== undefined ? offsetValue : chartOffset;
+  // 底部平移进度条：光标悬停时用滚轮平移（与项目其它控件共用 useStepWheel；
+  // 滚轮直接步进 offset：下滚 → offset 增大 → 进度条填充收缩、显示更早的年份）
+  const sliderRef = useRef<HTMLDivElement>(null);
   const sliderMax = Math.max(0, (klines ? klines.length : 0) - range);
-  const sliderValueRef = useRef(sliderMax - Math.min(sliderRawOffset, sliderMax));
-  useEffect(() => { sliderValueRef.current = sliderMax - Math.min(sliderRawOffset, sliderMax); }, [sliderRawOffset, sliderMax]);
+  const sliderValueRef = useRef(Math.min(chartOffset, sliderMax));
+  useEffect(() => { sliderValueRef.current = Math.min(chartOffset, sliderMax); }, [chartOffset, sliderMax]);
   useStepWheel({
     ref: sliderRef,
     valueRef: sliderValueRef,
     step: 1,
     min: 0,
     max: sliderMax,
-    onChange: (next) => updateOffset(sliderMax - next),
+    onChange: (next) => updateOffset(next),
   });
 
   // —— 浮窗跟随移植：固定定位 + 直接改 transform 定位（不触发每帧重渲染），复用回测的边界翻转 ——
@@ -1494,7 +1543,7 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
   const maxRange = currentKlines.length;
   const options = [5, 10, 20, 30, 60, 120, 250, 500].filter(opt => opt <= maxRange);
   const maxOffset = Math.max(0, maxRange - range);
-  const offset = Math.min(period && offsetValue !== undefined && onOffsetChange ? offsetValue : chartOffset, maxOffset);
+  const offset = Math.min(chartOffset, maxOffset);
   const dividend = fallbackDividend;
   // 最新一根K线所在的年份（当前交易年份）：今年分红未完成，统一用选中年份的预估分红（fallback）计算
   const currentYear = parseInt((currentKlines[currentKlines.length - 1]?.date || '').slice(0, 4), 10);
@@ -1785,23 +1834,18 @@ const DividendRateCurve = React.memo(function DividendRateCurve({ klines, stock,
           </div>
       </div>, document.body)}
       <div className="flex items-center gap-2 mt-1 mb-1.5">
-        <input
-          ref={sliderRef}
-          type="range"
-          min={0}
-          max={maxOffset}
+        <PanProgressBar
+          trackRef={sliderRef}
           value={maxOffset - offset}
-          onChange={(e) => {
-            const newOffset = maxOffset - Number(e.target.value);
+          max={maxOffset}
+          onChange={(next) => {
+            const newOffset = maxOffset - next;
             if (sliderRAFRef.current) cancelAnimationFrame(sliderRAFRef.current);
             sliderRAFRef.current = requestAnimationFrame(() => {
               sliderRAFRef.current = null;
               updateOffset(newOffset);
             });
           }}
-          className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-gray-500 
-            [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500
-            [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-gray-500 [&::-moz-range-thumb]:border-0"
         />
       </div>
     </div>
@@ -1850,18 +1894,18 @@ const AnnualDividendChart = React.memo(function AnnualDividendChart({ stock }: {
   const offset = Math.min(windowOffset, maxWindowOffset);
   const visibleYears = years.slice(years.length - WINDOW_YEARS - offset, years.length - offset);
 
-  // 底部平移滑块：光标悬停时用滚轮平移（复用项目统一的 useStepWheel；
-  // 滑块视觉值 = 最大偏移 - offset，因此下滚 → 滑块右移 → 显示更新年份）
-  const sliderRef = useRef<HTMLInputElement>(null);
-  const sliderValueRef = useRef(maxWindowOffset - offset);
-  useEffect(() => { sliderValueRef.current = maxWindowOffset - offset; }, [maxWindowOffset, offset]);
+  // 底部平移进度条：光标悬停时用滚轮平移（复用项目统一的 useStepWheel；
+  // 滚轮直接步进 offset：下滚 → offset 增大 → 进度条填充收缩、显示更早的年份）
+  const sliderRef = useRef<HTMLDivElement>(null);
+  const sliderValueRef = useRef(Math.min(offset, maxWindowOffset));
+  useEffect(() => { sliderValueRef.current = Math.min(offset, maxWindowOffset); }, [offset, maxWindowOffset]);
   useStepWheel({
     ref: sliderRef,
     valueRef: sliderValueRef,
     step: 1,
     min: 0,
     max: maxWindowOffset,
-    onChange: (next) => setWindowOffset(maxWindowOffset - next),
+    onChange: (next) => setWindowOffset(next),
   });
   const toYi = (v: number | undefined): number | null => (v == null ? null : Math.round(v / 1e6) / 100);
   const chartData: AnnualChartRow[] = visibleYears.map(y => {
@@ -1966,6 +2010,40 @@ const AnnualDividendChart = React.memo(function AnnualDividendChart({ stock }: {
   // 可视区宽度按经验值 170px 估算，保证 barSize 小于类目宽度（否则 recharts 会重置间距）。
   const bandEstimate = 170 / Math.max(1, chartData.length);
   const barWidth = Math.max(4, Math.min(14, Math.floor(bandEstimate * 0.55)));
+  // 谁更高谁在后：逐年决定叠放顺序，高柱先画（作背景）、矮柱后画（完整露出），
+  // 这样无论哪根更高，两根柱子的轮廓都能看见，而不是被较高的柱子整根盖住。
+  const PROFIT_FILL = 'rgba(99,102,241,0.8)';
+  const TOTAL_FILL = '#38bdf8';
+  const barLayers = chartData.map(d => {
+    const p = d.profit;
+    const t = d.total;
+    if (p == null && t == null) {
+      return { back: null, front: null, backFill: PROFIT_FILL, frontFill: TOTAL_FILL };
+    }
+    if (p == null || t == null) {
+      const only = p ?? t;
+      const isProfit = p != null;
+      return {
+        back: only,
+        front: null,
+        backFill: isProfit ? PROFIT_FILL : TOTAL_FILL,
+        frontFill: isProfit ? TOTAL_FILL : PROFIT_FILL,
+      };
+    }
+    // 负值取绝对值比较柱体的长度（同为负值时更长的柱子同样应该退到后面）
+    const profitHigher = Math.abs(p) >= Math.abs(t);
+    return {
+      back: profitHigher ? p : t,
+      front: profitHigher ? t : p,
+      backFill: profitHigher ? PROFIT_FILL : TOTAL_FILL,
+      frontFill: profitHigher ? TOTAL_FILL : PROFIT_FILL,
+    };
+  });
+  const chartRows = chartData.map((d, i) => ({
+    ...d,
+    barBack: barLayers[i].back,
+    barFront: barLayers[i].front,
+  }));
 
   return (
     <>
@@ -1981,7 +2059,7 @@ const AnnualDividendChart = React.memo(function AnnualDividendChart({ stock }: {
         <ResponsiveContainer width="100%" height="100%">
           {hasAmountData ? (
             <ComposedChart
-              data={chartData}
+              data={chartRows}
               margin={{ top: 5, right: 0, left: 0, bottom: 0 }}
               // 组内间距 = -barSize，使第二根柱与第一根柱落在同一 x 位置（完全重合）
               barGap={-barWidth}
@@ -2048,27 +2126,30 @@ const AnnualDividendChart = React.memo(function AnnualDividendChart({ stock }: {
               )}
               {/* 内容盒已迁移到固定浮窗，这里只保留垂直光标线 */}
               <Tooltip content={() => null} cursor={{ stroke: 'rgba(99,102,241,0.4)', strokeWidth: 1 }} />
-              {/* 底层宽柱：净利润（半透明，作为背景） */}
+              {/* 底层柱：当年较高的那根（颜色随年份变化），先画作为背景 */}
               <Bar
                 yAxisId="amount"
-                dataKey="profit"
-                name="归母净利润"
-                fill="#6366f1"
-                fillOpacity={0.8}
+                dataKey="barBack"
                 barSize={barWidth}
                 radius={[2, 2, 0, 0]}
                 isAnimationActive={false}
-              />
-              {/* 上层柱：派现总额，与净利润柱同宽同位置（直接覆盖，仅露出高出部分） */}
+              >
+                {chartRows.map((d, i) => (
+                  <Cell key={`back-${d.year}`} fill={barLayers[i].backFill} />
+                ))}
+              </Bar>
+              {/* 上层柱：当年较矮的那根，与底层柱同宽同位置，完整覆盖露出自身高度 */}
               <Bar
                 yAxisId="amount"
-                dataKey="total"
-                name="派现总额"
-                fill="#38bdf8"
+                dataKey="barFront"
                 barSize={barWidth}
                 radius={[2, 2, 0, 0]}
                 isAnimationActive={false}
-              />
+              >
+                {chartRows.map((d, i) => (
+                  <Cell key={`front-${d.year}`} fill={barLayers[i].frontFill} />
+                ))}
+              </Bar>
               <Line
                 yAxisId="ratio"
                 type="monotone"
@@ -2175,19 +2256,14 @@ const AnnualDividendChart = React.memo(function AnnualDividendChart({ stock }: {
           </div>
         </div>
       </div>, document.body)}
-      {/* 底部平移滑块：复用股息率曲线的滑块样式，仅在年份超过一屏时出现 */}
+      {/* 底部平移进度条：与股息率曲线共用同一实现，仅在年份超过一屏时出现 */}
       {maxWindowOffset > 0 && (
         <div className="flex items-center gap-2 mt-1">
-          <input
-            ref={sliderRef}
-            type="range"
-            min={0}
-            max={maxWindowOffset}
+          <PanProgressBar
+            trackRef={sliderRef}
             value={maxWindowOffset - offset}
-            onChange={(e) => setWindowOffset(maxWindowOffset - Number(e.target.value))}
-            className="flex-1 h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-gray-500 
-              [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500
-              [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-gray-500 [&::-moz-range-thumb]:border-0"
+            max={maxWindowOffset}
+            onChange={(next) => setWindowOffset(maxWindowOffset - next)}
           />
         </div>
       )}
@@ -7927,10 +8003,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   title={`股息率曲线（${divRatePeriod === 'daily' ? '日' : divRatePeriod === 'weekly' ? '周' : '月'}线）`}
                   ranges={ranges}
                   period={divRatePeriod}
-                  rangeValue={dailyChartRange}
-                  offsetValue={dailyChartOffset}
-                  onRangeChange={handleDailyRangeChange}
-                  onOffsetChange={handleDailyOffsetChange}
+                  externalRange={dailyChartRange}
+                  externalOffset={dailyChartOffset}
                   onPeriodChange={changeDivRatePeriodFromPopup}
                 />
                 {divRateInfoLoading && (
