@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
-import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Trash2, Eye, EyeOff, Tags } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Trash2, Eye, EyeOff, Tags, FileText } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
@@ -569,11 +569,6 @@ export default function App() {
         ],
         tagColors: parsed.tagColors || {},
         sortMode: parsed.sortMode || 'default',
-        maxHeight: typeof parsed.maxHeight === 'number'
-          ? parsed.maxHeight
-          : typeof parsed.maxRows === 'number' && parsed.maxRows > 0
-            ? parsed.maxRows * 32 + 48 // 兼容旧「最大行数」设置：按旧公式换算成像素高度
-            : 528,
         maxWidth: parsed.maxWidth || 942,
         memo: parsed.memo || '',
         memoUpdatedAt: parsed.memoUpdatedAt || 0,
@@ -592,7 +587,6 @@ export default function App() {
         ],
         tagColors: {},
         sortMode: 'default',
-        maxHeight: 528,
         maxWidth: 942,
         memo: '',
         memoUpdatedAt: 0,
@@ -767,6 +761,7 @@ export default function App() {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [stockResetSignal, setStockResetSignal] = useState(0);
   const [showStockAccountPage, setShowStockAccountPage] = useState(false);
+  const [showMemoModal, setShowMemoModal] = useState(false);
   const [showRequestStats, setShowRequestStats] = useState(() => {
     try {
       const saved = localStorage.getItem('gold_show_request_stats');
@@ -1212,7 +1207,6 @@ export default function App() {
       // 上传数据：本地全量（saveToGist 内部按 filesToWrite 裁剪写盘）
       const cloudStockSettings = stockSettings ? {
         ...stockSettings,
-        maxHeight: undefined,
         maxWidth: undefined,
         sortMode: undefined,
         autoRefreshInterval: undefined,
@@ -1272,7 +1266,6 @@ export default function App() {
   const buildCloudFilePayloads = useCallback((): Record<CloudFileName, string> => {
     const cloudStockSettings = stockSettings ? {
       ...stockSettings,
-      maxHeight: undefined,
       maxWidth: undefined,
       sortMode: undefined,
       autoRefreshInterval: undefined,
@@ -1453,7 +1446,6 @@ export default function App() {
           if (result.stockSettings) {
             const restoredStockSettings = {
               ...result.stockSettings,
-              maxHeight: stockSettings?.maxHeight ?? result.stockSettings.maxHeight,
               maxWidth: stockSettings?.maxWidth ?? result.stockSettings.maxWidth,
               sortMode: stockSettings?.sortMode ?? result.stockSettings.sortMode,
               tagParams: result.stockSettings.tagParams || DEFAULT_TAG_PARAMS,
@@ -2209,6 +2201,13 @@ export default function App() {
             </button>
           )}
           <button 
+              onClick={() => setShowMemoModal(true)}
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-400 hover:border-indigo-500 transition-colors w-7 h-7"
+              title="交易备忘录"
+            >
+              <FileText size={16} />
+          </button>
+          <button 
               onClick={() => setIsAddingStock(true)}
               className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-400 hover:border-indigo-500 transition-colors w-7 h-7"
               title="添加股票"
@@ -2280,7 +2279,7 @@ export default function App() {
 
   return (
     <div 
-      className="min-h-screen bg-app-bg text-app-text font-sans pt-1 md:pt-2 px-4 md:px-8 pb-4 md:pb-8 flex justify-center relative transition-colors duration-300"
+      className={`${currentPage === 'gold' ? 'min-h-screen pb-4 md:pb-8' : 'h-screen overflow-hidden pb-0'} bg-app-bg text-app-text font-sans pt-1 md:pt-2 px-4 md:px-8 flex justify-center relative transition-colors duration-300`}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
@@ -2422,7 +2421,7 @@ export default function App() {
 
       <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".json" />
 
-      <div className="max-w-[1400px] w-full pb-12 flex flex-col">
+      <div className={`max-w-[1400px] w-full flex flex-col ${currentPage === 'gold' ? 'pb-12' : 'h-full min-h-0 pb-0'}`}>
         {currentPage === 'gold' && (
         <header className="mb-6 flex items-end justify-between gap-4">
           <h1 className={`text-3xl font-bold tracking-wide ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}>黄金交易模拟{import.meta.env.DEV ? ' (debug)' : ''}</h1>
@@ -2866,14 +2865,14 @@ export default function App() {
             memo={stockSettings.memo}
             memoUpdatedAt={stockSettings.memoUpdatedAt}
             memoBaseline={memoBaseline}
+            memoOpen={showMemoModal}
+            onMemoClose={() => setShowMemoModal(false)}
             onMemoChange={(memo) => setStockSettings(prev => ({
               ...prev,
               memo,
               memoUpdatedAt: resolveMemoUpdatedAt(memo, memoBaseline, memoUpdatedAtBaseline, Date.now()),
             }))}
             onMemoUpload={handleMemoUpload}
-            maxHeight={stockSettings.maxHeight}
-            onMaxHeightChange={(height) => setStockSettings(prev => ({ ...prev, maxHeight: height }))}
             maxWidth={stockSettings.maxWidth}
             onMaxWidthChange={(width) => setStockSettings(prev => ({ ...prev, maxWidth: width }))}
             autoRefreshInterval={stockSettings.autoRefreshInterval ?? 60}

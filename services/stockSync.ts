@@ -171,7 +171,7 @@ export function joinFinancialsToStocks(core: StocksFileStock[], financials?: Fin
 // 三份指纹分别对应三个云端文件（gold.json / stocks.json / financials.json），
 // 并各自剔除不该入库的字段：
 //   - stocks.json：剔除价格缓存字段（现价/涨跌/高低量/更新时刻/价格派生股息率）与三张财务表、公告链接，
-//     剔除设备特定字段（maxHeight/maxWidth/sortMode/autoRefreshInterval）
+//     剔除设备特定字段（maxWidth/sortMode/autoRefreshInterval）
 //   - financials.json：三张财务表 + 公告链接（按 code 索引）
 //   - gold.json：黄金交易 + 全局设置 appSettings
 export interface GoldFileFingerprintInput {
@@ -190,7 +190,7 @@ export interface StocksFileFingerprintInput {
 export function buildStocksFileFingerprint(input: StocksFileFingerprintInput): string {
   const { stocks, stockSettings, backtestStrategyPresets = [] } = input;
   const cloudStockSettings = stockSettings
-    ? { ...stockSettings, maxHeight: undefined, maxWidth: undefined, sortMode: undefined, autoRefreshInterval: undefined }
+    ? { ...stockSettings, maxWidth: undefined, sortMode: undefined, autoRefreshInterval: undefined }
     : undefined;
   const { core } = splitFinancialsFromStocks(stripStockPriceCache(buildUploadStocks(stocks)));
   return stableStringify({

@@ -265,7 +265,6 @@ export interface StockSettings {
   visibleColumns?: string[];
   dividendRateColumns?: string[];
   dividendRateColorRanges?: DividendRateColorRange[];
-  maxHeight?: number; // 列表最大高度(px)，超出后内部滚动；0=不限制，默认528
   maxWidth?: number; // 列表最大宽度(px)，默认942
   tagColors?: Record<string, string>; // 标签颜色配置，与黄金页面独立
   sortMode?: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent' | 'costPct' | 'tradePct'; // 列表排序规则

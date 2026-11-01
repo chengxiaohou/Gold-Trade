@@ -44,13 +44,12 @@ describe('buildStocksFileFingerprint', () => {
     expect(buildStocksFileFingerprint(cached)).toBe(buildStocksFileFingerprint(base));
   });
 
-  it('设备特定字段 maxHeight/maxWidth/sortMode/autoRefreshInterval 变化不改变指纹', () => {
+  it('设备特定字段 maxWidth/sortMode/autoRefreshInterval 变化不改变指纹', () => {
     const mk = (over: Partial<StockSettings>) => buildStocksFileFingerprint({
       stocks: [mkStock('600000', '浦发')],
       stockSettings: { visibleColumns: ['code'], memo: 'x', ...over } as StockSettings,
     });
     const base = mk({});
-    expect(mk({ maxHeight: 700 })).toBe(base);
     expect(mk({ maxWidth: 1200 })).toBe(base);
     expect(mk({ sortMode: 'daily' })).toBe(base);
     expect(mk({ autoRefreshInterval: 300 })).toBe(base);

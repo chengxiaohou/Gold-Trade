@@ -272,8 +272,6 @@ interface StockDividendPageProps {
   colorRanges?: DividendRateColorRange[];
   tagColors?: Record<string, string>;
   onTagColorsChange?: (colors: Record<string, string>) => void;
-  maxHeight?: number;
-  onMaxHeightChange?: (height: number) => void; // 拖拽列表下边缘时回写"列表最大高度"设置
   maxWidth?: number;
   onMaxWidthChange?: (width: number) => void; // 拖拽列表右边缘时回写"列表最大宽度"设置
   autoRefreshInterval?: number; // 股价自动刷新间隔（秒），0=关闭；设备本地设置
@@ -293,6 +291,8 @@ interface StockDividendPageProps {
   memo?: string;
   memoUpdatedAt?: number;
   memoBaseline?: string;
+  memoOpen?: boolean;      // 交易备忘录弹窗开关（入口在上方按钮栏）
+  onMemoClose?: () => void;
   onMemoChange?: (memo: string) => void;
   onMemoUpload?: () => Promise<boolean>;
   buyOrderPlaceholder?: string; // 买入挂单备注占位文字（随云端同步）
@@ -2321,7 +2321,7 @@ const sortStocksByTag = (list: StockEntry[]): StockEntry[] =>
     return (a.tag || '').trim().localeCompare((b.tag || '').trim());
   });
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxHeight = 528, onMaxHeightChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, divRateHoverEnabled = false, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, divRateHoverEnabled = false, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
   useEffect(() => {
     const id = 'profit-month-scroller-style';
@@ -2545,8 +2545,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const memoToastTimer = useRef<number | null>(null);
 
   // 备忘录高度：底部拖拽调整，仅保存在本机
-  const memoBoxRef = useRef<HTMLDivElement>(null);
-  const memoResizeStartRef = useRef<{ y: number; height: number; maxHeight: number } | null>(null);
+  const memoBoxRef = useRef<HTMLTextAreaElement>(null);
+  const memoResizeStartRef = useRef<{ y: number; height: number; maxDelta: number } | null>(null);
   const [memoHeight, setMemoHeight] = useState<number>(() => {
     try {
       const saved = Number(localStorage.getItem('stockDividendMemoHeight'));
@@ -2558,6 +2558,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [resizingMemoHeight, setResizingMemoHeight] = useState<number | null>(null);
   const effectiveMemoHeight = resizingMemoHeight ?? memoHeight;
 
+  // 弹窗垂直居中：拖拽下边缘时下半部分向外扩张，因此高度按指针位移的 2 倍变化，
+  // 才能让下边缘始终贴着指针（上限由距视口底部的剩余空间决定）
+  const MEMO_MIN_HEIGHT = 80;
+
   const handleMemoResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     const el = memoBoxRef.current;
     if (!el) return;
@@ -2566,7 +2570,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     memoResizeStartRef.current = {
       y: e.clientY,
       height: rect.height,
-      maxHeight: Math.max(80, window.innerHeight - rect.top - 24),
+      maxDelta: Math.max(0, Math.min(window.innerHeight - 24 - rect.bottom, rect.top - 40)),
     };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
@@ -2574,8 +2578,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const handleMemoResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const start = memoResizeStartRef.current;
     if (!start) return;
-    const next = start.height + (e.clientY - start.y);
-    setResizingMemoHeight(Math.round(Math.min(Math.max(next, 80), start.maxHeight)));
+    const delta = Math.min(e.clientY - start.y, start.maxDelta);
+    setResizingMemoHeight(Math.max(MEMO_MIN_HEIGHT, Math.round(start.height + delta * 2)));
   };
 
   const handleMemoResizeEnd = () => {
@@ -3989,6 +3993,23 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     try { localStorage.setItem('stock_request_log_panel_open', showLogPanel ? '1' : '0'); } catch {}
   }, [showLogPanel]);
 
+  // 底部栏是 fixed 覆盖层：实时量取它的实际高度，回写到页面底部留白，
+  // 这样收起/展开（请求日志面板）时列表区高度都会跟着变化，页面本身始终不滚动。
+  const bottomBarRef = useRef<HTMLDivElement | null>(null);
+  const [bottomBarH, setBottomBarH] = useState(0);
+  useEffect(() => {
+    const el = bottomBarRef.current;
+    if (!showRequestStats || !el) {
+      setBottomBarH(0);
+      return;
+    }
+    const update = () => setBottomBarH(el.getBoundingClientRect().height);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [showRequestStats, bottomBarView]);
+
   // 底部栏点击空白区域切换展开/收起（交互控件点击不触发）
   const toggleBottomBar = useCallback((e: React.MouseEvent) => {
     const t = e.target as HTMLElement;
@@ -4325,38 +4346,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     resizeStartRef.current = null;
     setResizingWidth(null);
     if (width != null) onMaxWidthChange?.(width);
-  };
-
-  // 列表最大高度拖拽：拖动表格卡片下边缘实时调整高度，松手后写回「列表最大高度」设置
-  const heightResizeStartRef = useRef<{ y: number; height: number; maxHeight: number } | null>(null);
-  const [resizingHeight, setResizingHeight] = useState<number | null>(null);
-  const effectiveMaxHeight = resizingHeight ?? maxHeight;
-
-  const handleHeightResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
-    const el = tableCardRef.current;
-    if (!el) return;
-    e.preventDefault();
-    const rect = el.getBoundingClientRect();
-    heightResizeStartRef.current = {
-      y: e.clientY,
-      height: rect.height,
-      maxHeight: Math.max(120, window.innerHeight - rect.top - 24),
-    };
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-
-  const handleHeightResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    const start = heightResizeStartRef.current;
-    if (!start) return;
-    const next = start.height + (e.clientY - start.y);
-    setResizingHeight(Math.round(Math.min(Math.max(next, 120), start.maxHeight)));
-  };
-
-  const handleHeightResizeEnd = () => {
-    const height = resizingHeight;
-    heightResizeStartRef.current = null;
-    setResizingHeight(null);
-    if (height != null) onMaxHeightChange?.(height);
   };
 
   const availableTags = useMemo(() => {
@@ -5640,8 +5629,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
 
   return (
-    <div className="flex flex-col gap-3 w-full">
-      <div className="flex justify-center -mb-2.5">
+    <div
+      className="flex flex-col gap-3 w-full h-full min-h-0"
+      style={{ paddingBottom: bottomBarH > 0 ? bottomBarH + 2 : 0 }}
+    >
+      <div className="shrink-0 flex justify-center -mb-2.5">
         <div className="w-full flex items-end gap-3" style={{ maxWidth: effectiveMaxWidth }}>
           <div className="flex items-center gap-3 pb-2">
             <h1 className={`text-3xl font-bold tracking-wide ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}>股息率{import.meta.env.DEV ? ' (debug)' : ''}</h1>
@@ -5653,18 +5645,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           )}
         </div>
       </div>
-      <div className="flex justify-center">
-        <div className="relative w-full" style={{ maxWidth: effectiveMaxWidth }}>
+      <div className="flex-1 min-h-0 flex justify-center">
+        <div className="relative w-full h-full" style={{ maxWidth: effectiveMaxWidth }}>
           <div
             ref={tableCardRef}
-            className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full"
+            className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full h-full flex flex-col min-h-0"
           >
           <div 
             ref={scrollContainerRef}
-            className="overflow-x-auto custom-scrollbar"
+            className="flex-1 min-h-0 overflow-auto custom-scrollbar"
             style={{ 
-              maxHeight: effectiveMaxHeight > 0 ? `${effectiveMaxHeight}px` : 'none',
-              overflowY: effectiveMaxHeight > 0 ? 'auto' : 'visible',
               WebkitOverflowScrolling: 'touch',
               scrollbarWidth: 'none',
               msOverflowStyle: 'none'
@@ -6432,66 +6422,68 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             onPointerUp={handleResizeEnd}
             onPointerCancel={handleResizeEnd}
           />
-          {/* 下边缘拖拽手柄：热区中心对齐卡片下边界，调整「列表最大高度」 */}
-          <div
-            className="absolute left-0 right-0 bottom-0 z-20 h-1.5 translate-y-1/2 cursor-row-resize select-none touch-none before:absolute before:left-0 before:right-0 before:top-[calc(50%-1px)] before:h-px before:-translate-y-1/2 before:bg-gradient-to-r before:from-transparent before:via-transparent before:to-transparent before:transition-colors hover:before:via-indigo-500 active:before:via-indigo-500"
-            title="拖拽调整列表高度"
-            onPointerDown={handleHeightResizeStart}
-            onPointerMove={handleHeightResizeMove}
-            onPointerUp={handleHeightResizeEnd}
-            onPointerCancel={handleHeightResizeEnd}
-          />
         </div>
       </div>
 
-      {/* 备忘录模块（随云端同步） */}
-      <div className="flex justify-center">
-        <div className="relative w-full mt-1" style={{ maxWidth: effectiveMaxWidth }}>
-          <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-app-border bg-app-input">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[12px] font-bold text-app-subtext tracking-wider uppercase">交易备忘录</span>
-                {memoDirty && (
+      {/* 交易备忘录弹窗（入口在右上角按钮栏） */}
+      {memoOpen && (
+        <div className="fixed inset-0 z-[120] bg-black/50 flex items-center justify-center p-4" onClick={onMemoClose}>
+          <div className="relative w-full max-w-[640px]" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-2xl flex flex-col">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-app-border bg-app-input">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[12px] font-bold text-app-subtext tracking-wider uppercase">交易备忘录</span>
+                  {memoDirty && (
+                    <button
+                      onClick={handleMemoUploadClick}
+                      disabled={memoUploading}
+                      title="上传备忘录到云端"
+                      className="p-0.5 text-app-subtext hover:text-app-text transition-colors"
+                    >
+                      {memoUploading ? (
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <CloudUpload className="w-3 h-3" />
+                      )}
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-app-rowtext font-mono opacity-60">{formatMemoTime(memoUpdatedAt)}</span>
                   <button
-                    onClick={handleMemoUploadClick}
-                    disabled={memoUploading}
-                    title="上传备忘录到云端"
-                    className="p-0.5 text-app-subtext hover:text-app-text transition-colors"
+                    onClick={onMemoClose}
+                    className="p-0.5 text-app-subtext hover:text-app-text transition-colors cursor-pointer select-none"
+                    title="关闭备忘录"
                   >
-                    {memoUploading ? (
-                      <RefreshCw className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <CloudUpload className="w-3 h-3" />
-                    )}
+                    <X className="w-3.5 h-3.5" />
                   </button>
-                )}
+                </div>
               </div>
-              <span className="text-[10px] text-app-rowtext font-mono opacity-60">{formatMemoTime(memoUpdatedAt)}</span>
+              <textarea
+                ref={memoBoxRef}
+                value={memo || ''}
+                onChange={(e) => onMemoChange?.(e.target.value)}
+                placeholder="在这里记录备忘内容…"
+                rows={4}
+                style={{ height: effectiveMemoHeight }}
+                className="w-full max-h-[calc(100vh-100px)] bg-app-card text-app-subtext text-[11px] leading-relaxed tracking-wider p-3 outline-none resize-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all"
+              />
             </div>
-            <textarea
-              ref={memoBoxRef}
-              value={memo || ''}
-              onChange={(e) => onMemoChange?.(e.target.value)}
-              placeholder="在这里记录备忘内容…"
-              rows={4}
-              style={{ height: effectiveMemoHeight }}
-              className="w-full bg-app-card text-app-subtext text-[11px] leading-relaxed tracking-wider p-3 outline-none resize-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all"
+            {/* 下边缘拖拽手柄：热区中心对齐卡片下边界，调整备忘录高度 */}
+            <div
+              className="absolute left-0 right-0 bottom-0 z-20 h-1.5 translate-y-1/2 cursor-row-resize select-none touch-none before:absolute before:left-0 before:right-0 before:top-[calc(50%-1px)] before:h-px before:-translate-y-1/2 before:bg-gradient-to-r before:from-transparent before:via-transparent before:to-transparent before:transition-colors hover:before:via-indigo-500 active:before:via-indigo-500"
+              title="拖拽调整备忘录高度"
+              onPointerDown={handleMemoResizeStart}
+              onPointerMove={handleMemoResizeMove}
+              onPointerUp={handleMemoResizeEnd}
+              onPointerCancel={handleMemoResizeEnd}
             />
           </div>
-          {/* 下边缘拖拽手柄：热区中心对齐卡片下边界，调整备忘录高度 */}
-          <div
-            className="absolute left-0 right-0 bottom-0 z-20 h-1.5 translate-y-1/2 cursor-row-resize select-none touch-none before:absolute before:left-0 before:right-0 before:top-[calc(50%-1px)] before:h-px before:-translate-y-1/2 before:bg-gradient-to-r before:from-transparent before:via-transparent before:to-transparent before:transition-colors hover:before:via-indigo-500 active:before:via-indigo-500"
-            title="拖拽调整备忘录高度"
-            onPointerDown={handleMemoResizeStart}
-            onPointerMove={handleMemoResizeMove}
-            onPointerUp={handleMemoResizeEnd}
-            onPointerCancel={handleMemoResizeEnd}
-          />
         </div>
-      </div>
+      )}
 
       {/* 页面底部：版本号与黄金交易切换 */}
-      <div className="flex justify-center">
+      <div className="shrink-0 flex justify-center -mt-2 leading-none">
         <div className="w-full flex justify-end items-center gap-3" style={{ maxWidth: effectiveMaxWidth }}>
           {appVersion && <span className="select-all hover:text-app-text text-white/[0.01] text-[10px] font-mono">{appVersion}</span>}
           {onTogglePage && (
@@ -8308,8 +8300,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
       {/* 页面底部请求计数器 */}
       {showRequestStats && (
-      <div className="fixed bottom-0 left-0 right-0 z-30 bg-app-card border-t border-app-border px-4 py-2">
-        <div onClick={toggleBottomBar} className="flex items-center justify-between gap-2 h-[29px] cursor-pointer">
+      <div
+        ref={bottomBarRef}
+        className={`fixed bottom-0 left-0 right-0 z-30 bg-app-card border-t border-app-border px-4 pt-0.5 ${
+          bottomBarView === 'request' && showLogPanel ? 'pb-1.5' : 'pb-0.5'
+        }`}
+      >
+        <div onClick={toggleBottomBar} className="flex items-center justify-between gap-2 h-[22px] cursor-pointer">
           <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={(e) => { e.stopPropagation(); setBottomBarView(v => (v === 'request' ? 'profit' : 'request')); }}
@@ -8371,29 +8368,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 URL.revokeObjectURL(url);
               }}
               disabled={requestLogs.length === 0}
-              className="flex items-center gap-1 px-2 py-1 text-xs text-app-subtext hover:text-app-text border border-app-border rounded hover:border-app-text/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="下载当前请求日志（CSV）"
+              className="flex items-center justify-center px-2 py-0.5 text-xs text-app-subtext hover:text-app-text border border-app-border rounded hover:border-app-text/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="下载日志"
             >
               <Download size={12} />
-              <span className="hidden sm:inline">下载日志</span>
             </button>
             <button
               onClick={() => requestLogService.reset()}
               disabled={requestLogs.length === 0}
-              className="flex items-center gap-1 px-2 py-1 text-xs text-app-subtext hover:text-red-400 border border-app-border rounded hover:border-red-400/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="清空当前请求日志"
+              className="flex items-center justify-center px-2 py-0.5 text-xs text-app-subtext hover:text-red-400 border border-app-border rounded hover:border-red-400/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="重置"
             >
               <RotateCcw size={12} />
-              <span className="hidden sm:inline">重置</span>
             </button>
             <button
               onClick={handleExportDefaultData}
               disabled={stocks.length === 0}
-              className="flex items-center gap-1 px-2 py-1 text-xs text-app-subtext hover:text-blue-400 border border-app-border rounded hover:border-blue-400/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="导出当前股票分红数据为内置代码"
+              className="flex items-center justify-center px-2 py-0.5 text-xs text-app-subtext hover:text-blue-400 border border-app-border rounded hover:border-blue-400/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="导出内置"
             >
               <Download size={12} />
-              <span className="hidden sm:inline">导出内置</span>
             </button>
             </>) : null}
           </div>
@@ -8401,7 +8395,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
         {/* 日志面板（仅请求视图） */}
         {bottomBarView === 'request' && showLogPanel && (
-          <div className="mt-2 pt-2 border-t border-app-border max-h-48 overflow-y-auto">
+          <div className="mt-1 pt-1.5 border-t border-app-border max-h-48 overflow-y-auto">
             <div className="space-y-1">
               {requestLogs.length === 0 ? (
                 <div className="text-xs text-app-subtext text-center py-2">暂无请求记录</div>
