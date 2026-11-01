@@ -155,8 +155,14 @@
         -moz-appearance: textfield;
       }
 
-      /* 阻止弹窗/内层列表滚到尽头时串扰带动外层页面或股票大列表滚动 */
-      * {
+      /* 阻止内层滚动容器滚到尽头时串扰带动外层页面或股票大列表滚动。
+         注意：不能对所有元素（*）设置 contain —— overflow:hidden 的元素（如 truncate 文本按钮、
+         隐藏溢出的小盒子）本身就是滚动容器但没有可滚内容，滚轮落到它们身上会被 contain 截断，
+         导致外层滚不动。因此只给真正参与滚动的容器加上 contain。 */
+      html, body {
+        overscroll-behavior: none;
+      }
+      .custom-scrollbar {
         overscroll-behavior: contain;
       }
     </style>

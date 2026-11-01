@@ -1,7 +1,7 @@
 
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, TrendingUp, Database, RefreshCw, ChevronUp, ChevronDown, Pencil, Trash2, Eye, EyeOff } from 'lucide-react';
+import { X, ExternalLink, CheckCircle2, Sliders, Cloud, Touchpad, Columns3, TrendingUp, Database, RefreshCw, ChevronUp, ChevronDown, Pencil, Trash2, Eye, EyeOff, Sun, Moon } from 'lucide-react';
 import { GithubConfig, AppSettings, StockSettings, DividendRateColorRange, ApiSource, CacheInfo, TagParams, TagParamEntry, DEFAULT_TAG_PARAMS, UserTagRule, SignalDataSource, SignalTargetIndicator } from '../types';
 import { DAILY_SIGNAL_CATALOG } from '../services/tagAnalyzers';
 import { validateConnection } from '../services/githubService';
@@ -171,6 +171,9 @@ interface CloudSettingsModalProps {
   initialTab?: 'general' | 'cloud' | 'tagmanage';
   divRateHoverEnabled?: boolean; // 股息率弹窗悬浮显示；设备本地设置，不写入 stockSettings/云端
   onDivRateHoverEnabledChange?: (v: boolean) => void;
+  theme?: 'dark' | 'light';
+  onToggleTheme?: () => void;
+  onResetStockData?: () => void;
 }
 
 export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
@@ -184,6 +187,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   initialTab = 'general',
   divRateHoverEnabled = false,
   onDivRateHoverEnabledChange,
+  theme = 'dark',
+  onToggleTheme,
+  onResetStockData,
 }) => {
   // Config States
   const [token, setToken] = useState(githubConfig.token);
@@ -205,8 +211,6 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [buyTaxFee, setBuyTaxFee] = useState((appSettings.buyTaxFee ?? 5).toString());
   const [sellTaxFee, setSellTaxFee] = useState((appSettings.sellTaxFee ?? 5).toString());
   const [dividendRateColumns, setDividendRateColumns] = useState<string[]>(stockSettings?.dividendRateColumns || ['3%', '3.5%', '4%', '4.5%', '5%', '5.5%', '6%', '6.5%', '7%']);
-  const [newDividendRate, setNewDividendRate] = useState('');
-  const [editingDividendRateIndex, setEditingDividendRateIndex] = useState<number | null>(null);
   const [dividendRateColorRanges, setDividendRateColorRanges] = useState<DividendRateColorRange[]>(stockSettings?.dividendRateColorRanges || [
     { min: 3, max: 4, color: 'red' },
     { min: 4.5, max: 5.5, color: 'gray' },
@@ -615,7 +619,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         </div>
 
         {/* Body - Scrollable */}
-        <div className="p-6 overflow-y-auto">
+        <div className="p-6 overflow-y-auto min-h-0" style={{ overscrollBehavior: 'contain' }}>
           <form className="space-y-6">
             
             {/* Tab: General */}
@@ -1015,311 +1019,6 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                         </div>
                      </div>
 
-                     {/* Dividend Rate Color Ranges */}
-                     <div className="pt-4 border-t border-app-border space-y-4">
-                        <div className="space-y-2">
-                           <label className="text-sm font-medium text-app-text block">
-                              股息率颜色区间
-                           </label>
-                           <p className="text-xs text-app-subtext">
-                              根据股息率范围显示不同颜色，匹配的第一个区间生效。
-                           </p>
-                           <div className="flex items-center gap-2">
-                             <input
-                               type="number"
-                               value={newRange.min}
-                               onChange={(e) => setNewRange(prev => ({ ...prev, min: e.target.value }))}
-                               placeholder="最小"
-                               className="w-14 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
-                               step="0.1"
-                             />
-                             <span className="text-app-subtext text-xs">-</span>
-                             <input
-                               type="number"
-                               value={newRange.max}
-                               onChange={(e) => setNewRange(prev => ({ ...prev, max: e.target.value }))}
-                               placeholder="最大"
-                               className="w-14 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
-                               step="0.1"
-                             />
-                             <button
-                               type="button"
-                               onClick={() => {
-                                 const min = parseFloat(newRange.min);
-                                 const max = parseFloat(newRange.max);
-                                 if (!isNaN(min) && !isNaN(max) && min <= max) {
-                                   if (editingRangeIndex !== null) {
-                                     const updated = [...dividendRateColorRanges];
-                                     updated[editingRangeIndex] = { min, max, color: newRange.color };
-                                     
-                                     // 联动修改相邻区间
-                                     // 修改左边区间的 max
-                                     if (editingRangeIndex > 0) {
-                                       updated[editingRangeIndex - 1] = {
-                                         ...updated[editingRangeIndex - 1],
-                                         max: min
-                                       };
-                                     }
-                                     // 修改右边区间的 min
-                                     if (editingRangeIndex < updated.length - 1) {
-                                       updated[editingRangeIndex + 1] = {
-                                         ...updated[editingRangeIndex + 1],
-                                         min: max
-                                       };
-                                     }
-                                     
-                                     setDividendRateColorRanges(updated);
-                                   } else {
-                                     setDividendRateColorRanges([...dividendRateColorRanges, { min, max, color: newRange.color }]);
-                                   }
-                                   setEditingRangeIndex(null);
-                                   setNewRange({ min: '', max: '', color: 'gray' });
-                                 }
-                               }}
-                               className="px-3 py-1.5 bg-app-input text-app-text border border-white/5 rounded-lg text-xs font-semibold hover:bg-app-card hover:border-app-text/50 transition-colors"
-                             >
-                               {editingRangeIndex !== null ? '确认' : '添加'}
-                             </button>
-                           </div>
-                           <div className="flex flex-wrap gap-2">
-                             {COLOR_OPTIONS.map(color => (
-                               <button
-                                 type="button"
-                                 key={color.key}
-                                 onClick={() => setNewRange(prev => ({ ...prev, color: color.key }))}
-                                 className={`w-6 h-6 rounded-full border transition-all flex items-center justify-center ${color.bg} ${color.border} ${
-                                   newRange.color === color.key ? 'opacity-100 scale-100' : 'hover:scale-105 opacity-60 hover:opacity-100'
-                                 }`}
-                                 title={color.label}
-                               >
-                                 {newRange.color === color.key && <div className={`w-2 h-2 rounded-full ${color.text} bg-current shadow-sm`} />}
-                               </button>
-                             ))}
-                           </div>
-                           <div className="flex flex-wrap gap-2 pt-2 border-t border-white/5 mt-2">
-                             {dividendRateColorRanges.map((range, index) => {
-                               const colorStyle = COLOR_OPTIONS.find(c => c.key === range.color) || COLOR_OPTIONS[0];
-                               return (
-                                 <button
-                                   type="button"
-                                   key={index}
-                                   onClick={() => {
-                                     setNewRange({ min: range.min.toString(), max: range.max.toString(), color: range.color });
-                                     setEditingRangeIndex(index);
-                                   }}
-                                   className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[60px] border transition-all ${colorStyle.bg} ${colorStyle.border} ${colorStyle.text} hover:opacity-80 ${editingRangeIndex === index ? 'ring-1 ring-indigo-500/50' : ''}`}
-                                 >
-                                   {range.min}-{range.max}%
-                                   <button
-                                     type="button"
-                                     onClick={(e) => {
-                                       e.stopPropagation();
-                                       if (dividendRateColorRanges.length > 1) {
-                                         if (!window.confirm(`确定删除「${range.min}-${range.max}%」颜色区间？`)) return;
-                                         setDividendRateColorRanges(dividendRateColorRanges.filter((_, i) => i !== index));
-                                         if (editingRangeIndex === index) {
-                                           setEditingRangeIndex(null);
-                                           setNewRange({ min: '', max: '', color: 'gray' });
-                                         }
-                                       }
-                                     }}
-                                     className="ml-1 opacity-0 hover:opacity-100 hover:text-red-400 transition-all"
-                                   >
-                                     <X size={10} />
-                                   </button>
-                                 </button>
-                               );
-                             })}
-                           </div>
-                        </div>
-
-                        {/* Dividend Rate Columns */}
-                        <div className="space-y-2">
-                           <label className="text-sm font-medium text-app-text block">
-                              股息率对应股价列
-                           </label>
-                           <p className="text-xs text-app-subtext">
-                              配置股息率对应股价的列，可以增减列数。
-                           </p>
-                           <div className="flex gap-2">
-                             <input
-                               type="number"
-                               value={newDividendRate}
-                               onChange={(e) => {
-                                 const val = parseFloat(e.target.value);
-                                 if (isNaN(val) || val >= 0 && val <= 100) {
-                                   setNewDividendRate(e.target.value);
-                                 }
-                               }}
-                               placeholder="股息率"
-                               className="w-14 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
-                               min="0"
-                               max="100"
-                               onKeyDown={(e) => {
-                                 if (e.key === 'Enter') {
-                                   const value = parseFloat(newDividendRate);
-                                   if (!isNaN(value) && value >= 0 && value <= 100) {
-                                     const formattedValue = `${value}%`;
-                                     if (editingDividendRateIndex !== null) {
-                                       const newColumns = [...dividendRateColumns];
-                                       newColumns[editingDividendRateIndex] = formattedValue;
-                                       setDividendRateColumns(newColumns.sort((a, b) => parseFloat(a) - parseFloat(b)));
-                                       setEditingDividendRateIndex(null);
-                                     } else if (!dividendRateColumns.includes(formattedValue)) {
-                                       setDividendRateColumns([...dividendRateColumns, formattedValue].sort((a, b) => parseFloat(a) - parseFloat(b)));
-                                     }
-                                     setNewDividendRate('');
-                                   }
-                                 }
-                               }}
-                             />
-                             <button
-                               type="button"
-                               onClick={() => {
-                                 const value = parseFloat(newDividendRate);
-                                 if (!isNaN(value) && value >= 0 && value <= 100) {
-                                   const formattedValue = `${value}%`;
-                                   if (editingDividendRateIndex !== null) {
-                                     const newColumns = [...dividendRateColumns];
-                                     newColumns[editingDividendRateIndex] = formattedValue;
-                                     setDividendRateColumns(newColumns.sort((a, b) => parseFloat(a) - parseFloat(b)));
-                                     setEditingDividendRateIndex(null);
-                                   } else if (!dividendRateColumns.includes(formattedValue)) {
-                                     setDividendRateColumns([...dividendRateColumns, formattedValue].sort((a, b) => parseFloat(a) - parseFloat(b)));
-                                   }
-                                   setNewDividendRate('');
-                                 }
-                               }}
-                               className="px-3 py-1.5 bg-app-input text-app-text border border-white/5 rounded-lg text-xs font-semibold hover:bg-app-card hover:border-app-text/50 transition-colors"
-                             >
-                               {editingDividendRateIndex !== null ? '确认' : '添加'}
-                             </button>
-                           </div>
-                           <div className="flex flex-wrap gap-2 pt-2 border-t border-white/5 mt-2">
-                             {dividendRateColumns.map((rate, index) => (
-                               <button
-                                 type="button"
-                                 key={rate}
-                                 onClick={() => {
-                                   setNewDividendRate(rate);
-                                   setEditingDividendRateIndex(index);
-                                 }}
-                                 className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[40px] border transition-all bg-app-input text-app-text border-app-border hover:opacity-80 ${editingDividendRateIndex === index ? 'ring-1 ring-indigo-500/50' : ''}`}
-                               >
-                                 {rate}
-                                 <button
-                                   type="button"
-                                   onClick={(e) => {
-                                     e.stopPropagation();
-                                     if (dividendRateColumns.length > 1) {
-                                       setDividendRateColumns(dividendRateColumns.filter(r => r !== rate));
-                                     }
-                                   }}
-                                   className="ml-1 opacity-0 hover:opacity-100 hover:text-red-400 transition-all"
-                                 >
-                                   <X size={10} />
-                                 </button>
-                               </button>
-                             ))}
-                           </div>
-                        </div>
-
-                        {/* 列表最大宽度（复用交易窗口输入框，支持滚轮/手势调节） */}
-                        <div className="grid grid-cols-2 gap-3">
-                           <InputGroup
-                             label="列表最大宽度"
-                             value={maxWidth}
-                             onChange={(v) => {
-                               const val = parseInt(v) || 0;
-                               if (val >= 0) setMaxWidth(val);
-                             }}
-                             step={5}
-                             precision={0}
-                             min={0}
-                             touchMode
-                             className="text-sm"
-                           />
-                        </div>
-                        {/* 股价自动刷新间隔：长按刷新按钮进入自动刷新 */ }
-                        <div className="pt-3 flex items-end gap-3">
-                           <InputGroup
-                             label="自动刷新间隔"
-                             value={autoRefreshInterval}
-                             onChange={(v) => {
-                               const val = parseInt(v) || 0;
-                               if (val >= 0) setAutoRefreshInterval(val);
-                             }}
-                             step={10}
-                             precision={0}
-                             min={0}
-                             touchMode
-                             className="text-sm"
-                           />
-                           <span className="text-xs text-app-subtext pb-1">秒/次（0=关闭，默认60）；仅盘中自动刷新，收盘/未开盘自动停止</span>
-                        </div>
-                        {/* 股息率弹窗悬浮显示：设备本地开关，不随云端同步 */}
-                        <div className="pt-3 border-t border-app-border flex items-start justify-between gap-3">
-                           <div className="min-w-0">
-                              <div className="text-sm font-medium text-app-text">股息率弹窗悬浮显示</div>
-                              <div className="text-xs text-app-subtext mt-1 leading-relaxed">开启后鼠标移入股息率单元格即临时显示弹窗，点击可固定；仅本设备生效，不上传云端。</div>
-                           </div>
-                           <button
-                             type="button"
-                             onClick={() => onDivRateHoverEnabledChange?.(!divRateHoverEnabled)}
-                             className={`shrink-0 px-3 py-1 rounded-full border text-xs font-semibold transition-colors ${divRateHoverEnabled ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-400' : 'bg-app-input border-app-border text-app-subtext hover:text-app-text'}`}
-                           >
-                             {divRateHoverEnabled ? '已开启' : '已关闭'}
-                           </button>
-                        </div>
-                     </div>
-
-                     {/* Stock Column Visibility */}
-                     <div className="pt-4 border-t border-app-border">
-                        <div className="flex flex-col gap-2">
-                           <span className="text-sm font-medium text-app-text flex items-center gap-2">
-                              <Columns3 size={16} className="text-indigo-400"/> 股票列表列显示
-                           </span>
-                           <span className="text-xs text-app-subtext">
-                              勾选需要在股票列表表格中显示的列。
-                           </span>
-                           <div className="grid grid-cols-2 gap-2 mt-2">
-                             {stockColumns.map(col => (
-                               <button
-                                 key={col.key}
-                                 type="button"
-                                 onClick={() => {
-                                   if (visibleColumns.includes(col.key)) {
-                                     if (visibleColumns.length > 1) {
-                                       setVisibleColumns(visibleColumns.filter(k => k !== col.key));
-                                     }
-                                   } else {
-                                     setVisibleColumns([...visibleColumns, col.key]);
-                                   }
-                                 }}
-                                 className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all ${
-                                   visibleColumns.includes(col.key)
-                                     ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50'
-                                     : 'bg-app-input text-app-subtext border border-app-border hover:border-app-text/30'
-                                 }`}
-                               >
-                                 <span className={`w-4 h-4 rounded flex items-center justify-center border ${
-                                   visibleColumns.includes(col.key)
-                                     ? 'bg-indigo-500 border-indigo-500 text-white'
-                                     : 'border-app-border'
-                                 }`}>
-                                   {visibleColumns.includes(col.key) && (
-                                     <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                                     </svg>
-                                   )}
-                                 </span>
-                                 {col.label}
-                               </button>
-                             ))}
-                           </div>
-                        </div>
-                     </div>
-
                      {/* Dividend Year Settings */}
                      <div className="pt-4 border-t border-app-border">
                         <div className="flex items-center justify-between">
@@ -1358,6 +1057,206 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                      </div>
                    </>
                  )}
+
+                {/* 界面与数据：原本位于页面右上角按钮栏，挪到设置里以节省横向空间 */}
+                <div className="pt-3 border-t border-app-border space-y-3">
+                  <span className="text-sm font-medium text-app-text flex items-center gap-2">
+                    <Sliders size={16} className="text-indigo-400"/> 界面与数据
+                  </span>
+                  <div className="space-y-2 [&>div]:rounded-lg [&>div]:bg-app-input [&>div]:px-3 [&>div]:py-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm text-app-text">深色模式</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onToggleTheme}
+                      className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-app-input border border-app-border text-app-subtext hover:text-indigo-400 hover:border-indigo-500 transition-colors"
+                    >
+                      {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+                      {theme === 'dark' ? '亮色' : '深色'}
+                    </button>
+                  </div>
+                  {currentPage === 'stock' && (
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm text-app-text">鼠标悬停显示股息率弹窗</div>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={!!divRateHoverEnabled}
+                        onClick={() => onDivRateHoverEnabledChange?.(!divRateHoverEnabled)}
+                        className={`shrink-0 relative inline-flex items-center w-11 h-6 rounded-full transition-colors ${divRateHoverEnabled ? 'bg-indigo-500' : 'bg-app-border'}`}
+                      >
+                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${divRateHoverEnabled ? 'translate-x-5' : ''}`} />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* 股价自动刷新间隔：长按刷新按钮进入自动刷新 */}
+                  {currentPage === 'stock' && (
+                      <div className="flex items-center justify-between gap-3">
+                         <div className="min-w-0">
+                            <div className="text-sm text-app-text">股价自动刷新间隔（秒）</div>
+                            <div className="text-xs text-app-subtext">仅盘中开启后生效</div>
+                         </div>
+                         <div className="flex items-center gap-1.5 shrink-0">
+                            <div className="w-[71px]">
+                               <InputGroup
+                                 value={autoRefreshInterval}
+                                 onChange={(v) => {
+                                   const val = parseInt(v) || 0;
+                                   if (val >= 0) setAutoRefreshInterval(val);
+                                 }}
+                                 step={10}
+                                 precision={0}
+                                 min={0}
+                                 touchMode
+                                 hideControls
+                                 className="!py-1.5 !pl-2 !pr-2 !text-xs text-center"
+                               />
+                            </div>
+                         </div>
+                      </div>
+                  )}
+
+                  {currentPage === 'stock' && (
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm text-app-text">重置股票数据</div>
+                        <div className="text-xs text-app-subtext">清空全部股票与交易记录，此操作无法撤销。</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onResetStockData?.()}
+                        className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-app-input border border-app-border text-app-subtext hover:text-red-400 hover:border-red-400 transition-colors"
+                      >
+                        <Trash2 size={14} />
+                        重置
+                      </button>
+                    </div>
+                  )}
+
+                  {currentPage === 'stock' && (
+                    <div className="space-y-2">
+                       <label className="text-sm font-medium text-app-text block">
+                          股息率颜色区间
+                       </label>
+                       <p className="text-xs text-app-subtext">
+                          根据股息率范围显示不同颜色，匹配的第一个区间生效。
+                       </p>
+                       <div className="flex items-center gap-2">
+                         <input
+                           type="number"
+                           value={newRange.min}
+                           onChange={(e) => setNewRange(prev => ({ ...prev, min: e.target.value }))}
+                           placeholder="最小"
+                           className="w-14 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
+                           step="0.1"
+                         />
+                         <span className="text-app-subtext text-xs">-</span>
+                         <input
+                           type="number"
+                           value={newRange.max}
+                           onChange={(e) => setNewRange(prev => ({ ...prev, max: e.target.value }))}
+                           placeholder="最大"
+                           className="w-14 bg-app-input border border-white/5 rounded-lg px-2 py-1.5 text-xs text-app-text outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all [appearance:textfield]"
+                           step="0.1"
+                         />
+                         <button
+                           type="button"
+                           onClick={() => {
+                             const min = parseFloat(newRange.min);
+                             const max = parseFloat(newRange.max);
+                             if (!isNaN(min) && !isNaN(max) && min <= max) {
+                               if (editingRangeIndex !== null) {
+                                 const updated = [...dividendRateColorRanges];
+                                 updated[editingRangeIndex] = { min, max, color: newRange.color };
+                                 
+                                 // 联动修改相邻区间
+                                 // 修改左边区间的 max
+                                 if (editingRangeIndex > 0) {
+                                   updated[editingRangeIndex - 1] = {
+                                     ...updated[editingRangeIndex - 1],
+                                     max: min
+                                   };
+                                 }
+                                 // 修改右边区间的 min
+                                 if (editingRangeIndex < updated.length - 1) {
+                                   updated[editingRangeIndex + 1] = {
+                                     ...updated[editingRangeIndex + 1],
+                                     min: max
+                                   };
+                                 }
+                                 
+                                 setDividendRateColorRanges(updated);
+                               } else {
+                                 setDividendRateColorRanges([...dividendRateColorRanges, { min, max, color: newRange.color }]);
+                               }
+                               setEditingRangeIndex(null);
+                               setNewRange({ min: '', max: '', color: 'gray' });
+                             }
+                           }}
+                           className="px-3 py-1.5 bg-app-input text-app-text border border-white/5 rounded-lg text-xs font-semibold hover:bg-app-card hover:border-app-text/50 transition-colors"
+                         >
+                           {editingRangeIndex !== null ? '确认' : '添加'}
+                         </button>
+                       </div>
+                       <div className="flex flex-wrap gap-2">
+                         {COLOR_OPTIONS.map(color => (
+                           <button
+                             type="button"
+                             key={color.key}
+                             onClick={() => setNewRange(prev => ({ ...prev, color: color.key }))}
+                             className={`w-6 h-6 rounded-full border transition-all flex items-center justify-center ${color.bg} ${color.border} ${
+                               newRange.color === color.key ? 'opacity-100 scale-100' : 'hover:scale-105 opacity-60 hover:opacity-100'
+                             }`}
+                             title={color.label}
+                           >
+                             {newRange.color === color.key && <div className={`w-2 h-2 rounded-full ${color.text} bg-current shadow-sm`} />}
+                           </button>
+                         ))}
+                       </div>
+                       <div className="flex flex-wrap gap-2 pt-2 border-t border-white/5 mt-2">
+                         {dividendRateColorRanges.map((range, index) => {
+                           const colorStyle = COLOR_OPTIONS.find(c => c.key === range.color) || COLOR_OPTIONS[0];
+                           return (
+                             <button
+                               type="button"
+                               key={index}
+                               onClick={() => {
+                                 setNewRange({ min: range.min.toString(), max: range.max.toString(), color: range.color });
+                                 setEditingRangeIndex(index);
+                               }}
+                               className={`inline-flex items-center justify-center px-1.5 h-[22px] rounded text-[10px] font-medium min-w-[60px] border transition-all ${colorStyle.bg} ${colorStyle.border} ${colorStyle.text} hover:opacity-80 ${editingRangeIndex === index ? 'ring-1 ring-indigo-500/50' : ''}`}
+                             >
+                               {range.min}-{range.max}%
+                               <button
+                                 type="button"
+                                 onClick={(e) => {
+                                   e.stopPropagation();
+                                   if (dividendRateColorRanges.length > 1) {
+                                     if (!window.confirm(`确定删除「${range.min}-${range.max}%」颜色区间？`)) return;
+                                     setDividendRateColorRanges(dividendRateColorRanges.filter((_, i) => i !== index));
+                                     if (editingRangeIndex === index) {
+                                       setEditingRangeIndex(null);
+                                       setNewRange({ min: '', max: '', color: 'gray' });
+                                     }
+                                   }
+                                 }}
+                                 className="ml-1 opacity-0 hover:opacity-100 hover:text-red-400 transition-all"
+                               >
+                                 <X size={10} />
+                               </button>
+                             </button>
+                           );
+                         })}
+                       </div>
+                    </div>
+                  )}
+                  </div>
+                </div>
               </div>
             )}
 

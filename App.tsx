@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
-import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Moon, Sun, Plus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Trash2, Eye, EyeOff, Tags, FileText } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Plus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Eye, EyeOff, Tags, FileText } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
@@ -223,11 +223,10 @@ export default function App() {
       }
       // 能朝 delta 方向滚动的容器
       const canScroll = scrollers.find(s => delta > 0 ? s.scrollTop + s.clientHeight < s.scrollHeight - 1 : s.scrollTop > 0);
-      if (canScroll) {
-        // 该容器在弹窗内（被 overlay 包含）→ 允许正常滚动；否则（在弹窗外的背景）→ 光标在弹窗内时阻止
-        if (overlayRoot && !overlayRoot.contains(canScroll)) e.preventDefault();
-        return;
-      }
+      // 有可滚动容器 → 一律交给浏览器原生滚动（不论它属于弹窗还是页面），
+      // 避免因光标落在不同控件上产生"这里能滚、那里滚不动"的差异；
+      // 弹窗内外层滚动的串扰由全局 overscroll-behavior: contain 拦住。
+      if (canScroll) return;
       // 无可滚动容器：光标在弹窗内时阻止背景滚动
       if (overlayRoot) e.preventDefault();
     };
@@ -2037,14 +2036,6 @@ export default function App() {
             >
               <RefreshCcw size={16} />
           </button>
-
-          <button
-              onClick={toggleTheme}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-brand-yellow hover:border-brand-yellow transition-colors w-7 h-7"
-              title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
-          >
-              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
       </div>
     </div>
   );
@@ -2181,7 +2172,7 @@ export default function App() {
         </div>
       )}
 
-      <div className="flex gap-1.5 lg:gap-2">
+      <div className="flex justify-end gap-0.5 sm:gap-1.5 lg:gap-2 shrink-0">
           {stockCloudDirty && (
             <button 
               onClick={(e) => { cloudAnchorRef.current = e.currentTarget; cloudConfirmPinnedRef.current = true; if (cloudConfirm !== 'upload') requestStockUpload(); }}
@@ -2201,13 +2192,6 @@ export default function App() {
             </button>
           )}
           <button 
-              onClick={() => setShowMemoModal(true)}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-400 hover:border-indigo-500 transition-colors w-7 h-7"
-              title="交易备忘录"
-            >
-              <FileText size={16} />
-          </button>
-          <button 
               onClick={() => setIsAddingStock(true)}
               className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-400 hover:border-indigo-500 transition-colors w-7 h-7"
               title="添加股票"
@@ -2215,18 +2199,11 @@ export default function App() {
               <Plus size={16} />
           </button>
           <button 
-              onClick={() => setStockResetSignal(s => s + 1)}
+              onClick={() => setShowMemoModal(true)}
               className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-400 hover:border-indigo-500 transition-colors w-7 h-7"
-              title="重置数据"
+              title="交易备忘录"
             >
-              <Trash2 size={16} />
-          </button>
-          <button
-              onClick={toggleTheme}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-400 hover:border-indigo-500 transition-colors w-7 h-7"
-              title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
-          >
-            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+              <FileText size={16} />
           </button>
           <button 
               onClick={(e) => { cloudAnchorRef.current = e.currentTarget; cloudConfirmPinnedRef.current = true; if (cloudConfirm !== 'download') { snapPopoverToAnchor(200, 150); requestCloudAction('download'); } }}
@@ -2295,6 +2272,9 @@ export default function App() {
         initialTab={settingsDefaultTab}
         divRateHoverEnabled={divRateHoverEnabled}
         onDivRateHoverEnabledChange={changeDivRateHoverEnabled}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onResetStockData={() => setStockResetSignal(s => s + 1)}
       />
 
       {showExportModal && (

@@ -5634,12 +5634,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       style={{ paddingBottom: bottomBarH > 0 ? bottomBarH + 2 : 0 }}
     >
       <div className="shrink-0 flex justify-center -mb-2.5">
-        <div className="w-full flex items-end gap-3" style={{ maxWidth: effectiveMaxWidth }}>
-          <div className="flex items-center gap-3 pb-2">
-            <h1 className={`text-3xl font-bold tracking-wide ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}>股息率{import.meta.env.DEV ? ' (debug)' : ''}</h1>
+        <div className="w-full flex items-end gap-2 md:gap-3" style={{ maxWidth: effectiveMaxWidth }}>
+          <div className="flex items-center gap-3 pb-2 shrink-0">
+            <h1 className={`text-sm sm:text-2xl md:text-3xl font-bold tracking-normal sm:tracking-wide whitespace-nowrap ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}>股息率{import.meta.env.DEV ? ' (debug)' : ''}</h1>
           </div>
           {actionButtons && (
-            <div className="ml-auto pb-1.5">
+            <div className="ml-auto pb-1.5 min-w-0 flex justify-end">
               {actionButtons}
             </div>
           )}
