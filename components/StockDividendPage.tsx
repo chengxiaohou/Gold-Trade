@@ -272,8 +272,10 @@ interface StockDividendPageProps {
   colorRanges?: DividendRateColorRange[];
   tagColors?: Record<string, string>;
   onTagColorsChange?: (colors: Record<string, string>) => void;
-  maxRows?: number;
+  maxHeight?: number;
+  onMaxHeightChange?: (height: number) => void; // 拖拽列表下边缘时回写"列表最大高度"设置
   maxWidth?: number;
+  onMaxWidthChange?: (width: number) => void; // 拖拽列表右边缘时回写"列表最大宽度"设置
   autoRefreshInterval?: number; // 股价自动刷新间隔（秒），0=关闭；设备本地设置
   divRateHoverEnabled?: boolean; // 股息率弹窗是否支持鼠标悬浮显示；设备本地设置，不上传云端
   actionButtons?: React.ReactNode;
@@ -2319,7 +2321,7 @@ const sortStocksByTag = (list: StockEntry[]): StockEntry[] =>
     return (a.tag || '').trim().localeCompare((b.tag || '').trim());
   });
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxRows = 15, maxWidth = 942, autoRefreshInterval = 60, divRateHoverEnabled = false, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxHeight = 528, onMaxHeightChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, divRateHoverEnabled = false, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
   useEffect(() => {
     const id = 'profit-month-scroller-style';
@@ -2541,6 +2543,50 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [memoUploading, setMemoUploading] = useState(false);
   const [memoToast, setMemoToast] = useState<string | null>(null);
   const memoToastTimer = useRef<number | null>(null);
+
+  // 备忘录高度：底部拖拽调整，仅保存在本机
+  const memoBoxRef = useRef<HTMLDivElement>(null);
+  const memoResizeStartRef = useRef<{ y: number; height: number; maxHeight: number } | null>(null);
+  const [memoHeight, setMemoHeight] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('stockDividendMemoHeight'));
+      return Number.isFinite(saved) && saved >= 80 ? saved : 96;
+    } catch {
+      return 96;
+    }
+  });
+  const [resizingMemoHeight, setResizingMemoHeight] = useState<number | null>(null);
+  const effectiveMemoHeight = resizingMemoHeight ?? memoHeight;
+
+  const handleMemoResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = memoBoxRef.current;
+    if (!el) return;
+    e.preventDefault();
+    const rect = el.getBoundingClientRect();
+    memoResizeStartRef.current = {
+      y: e.clientY,
+      height: rect.height,
+      maxHeight: Math.max(80, window.innerHeight - rect.top - 24),
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleMemoResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const start = memoResizeStartRef.current;
+    if (!start) return;
+    const next = start.height + (e.clientY - start.y);
+    setResizingMemoHeight(Math.round(Math.min(Math.max(next, 80), start.maxHeight)));
+  };
+
+  const handleMemoResizeEnd = () => {
+    const height = resizingMemoHeight;
+    memoResizeStartRef.current = null;
+    setResizingMemoHeight(null);
+    if (height != null) {
+      setMemoHeight(height);
+      try { localStorage.setItem('stockDividendMemoHeight', String(height)); } catch { /* ignore */ }
+    }
+  };
 
   // 添加股票的进度提示与错误状态
   const [addStep, setAddStep] = useState<string | null>(null);
@@ -4251,6 +4297,68 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // 列表最大宽度拖拽：拖动表格卡片右边缘实时调整宽度，松手后写回"列表最大宽度"设置
+  const tableCardRef = useRef<HTMLDivElement>(null);
+  const resizeStartRef = useRef<{ x: number; width: number } | null>(null);
+  const [resizingWidth, setResizingWidth] = useState<number | null>(null);
+  const effectiveMaxWidth = resizingWidth ?? maxWidth;
+
+  const handleResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = tableCardRef.current;
+    if (!el) return;
+    e.preventDefault();
+    resizeStartRef.current = { x: e.clientX, width: el.getBoundingClientRect().width };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const start = resizeStartRef.current;
+    if (!start) return;
+    // 列表居中：右边缘移动 1px 对应宽度变化 2px，保证边缘始终跟随光标
+    const next = start.width + (e.clientX - start.x) * 2;
+    const maxW = Math.max(320, window.innerWidth - 24);
+    setResizingWidth(Math.round(Math.min(Math.max(next, 320), maxW)));
+  };
+
+  const handleResizeEnd = () => {
+    const width = resizingWidth;
+    resizeStartRef.current = null;
+    setResizingWidth(null);
+    if (width != null) onMaxWidthChange?.(width);
+  };
+
+  // 列表最大高度拖拽：拖动表格卡片下边缘实时调整高度，松手后写回「列表最大高度」设置
+  const heightResizeStartRef = useRef<{ y: number; height: number; maxHeight: number } | null>(null);
+  const [resizingHeight, setResizingHeight] = useState<number | null>(null);
+  const effectiveMaxHeight = resizingHeight ?? maxHeight;
+
+  const handleHeightResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = tableCardRef.current;
+    if (!el) return;
+    e.preventDefault();
+    const rect = el.getBoundingClientRect();
+    heightResizeStartRef.current = {
+      y: e.clientY,
+      height: rect.height,
+      maxHeight: Math.max(120, window.innerHeight - rect.top - 24),
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleHeightResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const start = heightResizeStartRef.current;
+    if (!start) return;
+    const next = start.height + (e.clientY - start.y);
+    setResizingHeight(Math.round(Math.min(Math.max(next, 120), start.maxHeight)));
+  };
+
+  const handleHeightResizeEnd = () => {
+    const height = resizingHeight;
+    heightResizeStartRef.current = null;
+    setResizingHeight(null);
+    if (height != null) onMaxHeightChange?.(height);
+  };
+
   const availableTags = useMemo(() => {
     const tags = new Set<string>();
     stocks.forEach(s => { if (s.tag && s.tag.trim()) tags.add(s.tag.trim()); });
@@ -5534,7 +5642,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   return (
     <div className="flex flex-col gap-3 w-full">
       <div className="flex justify-center -mb-2.5">
-        <div className="w-full flex items-end gap-3" style={{ maxWidth }}>
+        <div className="w-full flex items-end gap-3" style={{ maxWidth: effectiveMaxWidth }}>
           <div className="flex items-center gap-3 pb-2">
             <h1 className={`text-3xl font-bold tracking-wide ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}>股息率{import.meta.env.DEV ? ' (debug)' : ''}</h1>
           </div>
@@ -5546,13 +5654,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         </div>
       </div>
       <div className="flex justify-center">
-        <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full" style={{ maxWidth }}>
+        <div className="relative w-full" style={{ maxWidth: effectiveMaxWidth }}>
+          <div
+            ref={tableCardRef}
+            className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full"
+          >
           <div 
             ref={scrollContainerRef}
             className="overflow-x-auto custom-scrollbar"
             style={{ 
-              maxHeight: maxRows > 0 ? `${maxRows * 32 + 48}px` : 'none',
-              overflowY: maxRows > 0 ? 'auto' : 'visible',
+              maxHeight: effectiveMaxHeight > 0 ? `${effectiveMaxHeight}px` : 'none',
+              overflowY: effectiveMaxHeight > 0 ? 'auto' : 'visible',
               WebkitOverflowScrolling: 'touch',
               scrollbarWidth: 'none',
               msOverflowStyle: 'none'
@@ -6310,45 +6422,77 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             </tbody>
           </table>
         </div>
+          </div>
+          {/* 右边缘拖拽手柄：热区中心对齐卡片右边界（一半在内、一半在外），调整"列表最大宽度" */}
+          <div
+            className="absolute right-0 top-0 bottom-0 z-20 w-1.5 translate-x-1/2 cursor-col-resize select-none touch-none before:absolute before:top-0 before:bottom-0 before:left-[calc(50%-1px)] before:w-px before:-translate-x-1/2 before:bg-gradient-to-b before:from-transparent before:via-transparent before:to-transparent before:transition-colors hover:before:via-indigo-500 active:before:via-indigo-500"
+            title="拖拽调整列表宽度"
+            onPointerDown={handleResizeStart}
+            onPointerMove={handleResizeMove}
+            onPointerUp={handleResizeEnd}
+            onPointerCancel={handleResizeEnd}
+          />
+          {/* 下边缘拖拽手柄：热区中心对齐卡片下边界，调整「列表最大高度」 */}
+          <div
+            className="absolute left-0 right-0 bottom-0 z-20 h-1.5 translate-y-1/2 cursor-row-resize select-none touch-none before:absolute before:left-0 before:right-0 before:top-[calc(50%-1px)] before:h-px before:-translate-y-1/2 before:bg-gradient-to-r before:from-transparent before:via-transparent before:to-transparent before:transition-colors hover:before:via-indigo-500 active:before:via-indigo-500"
+            title="拖拽调整列表高度"
+            onPointerDown={handleHeightResizeStart}
+            onPointerMove={handleHeightResizeMove}
+            onPointerUp={handleHeightResizeEnd}
+            onPointerCancel={handleHeightResizeEnd}
+          />
         </div>
       </div>
 
       {/* 备忘录模块（随云端同步） */}
       <div className="flex justify-center">
-        <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full mt-1" style={{ maxWidth }}>
-          <div className="flex items-center justify-between px-3 py-2 border-b border-app-border bg-app-input">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[12px] font-bold text-app-subtext tracking-wider uppercase">交易备忘录</span>
-              {memoDirty && (
-                <button
-                  onClick={handleMemoUploadClick}
-                  disabled={memoUploading}
-                  title="上传备忘录到云端"
-                  className="p-0.5 text-app-subtext hover:text-app-text transition-colors"
-                >
-                  {memoUploading ? (
-                    <RefreshCw className="w-3 h-3 animate-spin" />
-                  ) : (
-                    <CloudUpload className="w-3 h-3" />
-                  )}
-                </button>
-              )}
+        <div className="relative w-full mt-1" style={{ maxWidth: effectiveMaxWidth }}>
+          <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-sm w-full">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-app-border bg-app-input">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[12px] font-bold text-app-subtext tracking-wider uppercase">交易备忘录</span>
+                {memoDirty && (
+                  <button
+                    onClick={handleMemoUploadClick}
+                    disabled={memoUploading}
+                    title="上传备忘录到云端"
+                    className="p-0.5 text-app-subtext hover:text-app-text transition-colors"
+                  >
+                    {memoUploading ? (
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <CloudUpload className="w-3 h-3" />
+                    )}
+                  </button>
+                )}
+              </div>
+              <span className="text-[10px] text-app-rowtext font-mono opacity-60">{formatMemoTime(memoUpdatedAt)}</span>
             </div>
-            <span className="text-[10px] text-app-rowtext font-mono opacity-60">{formatMemoTime(memoUpdatedAt)}</span>
+            <textarea
+              ref={memoBoxRef}
+              value={memo || ''}
+              onChange={(e) => onMemoChange?.(e.target.value)}
+              placeholder="在这里记录备忘内容…"
+              rows={4}
+              style={{ height: effectiveMemoHeight }}
+              className="w-full bg-app-card text-app-subtext text-[11px] leading-relaxed tracking-wider p-3 outline-none resize-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all"
+            />
           </div>
-          <textarea
-            value={memo || ''}
-            onChange={(e) => onMemoChange?.(e.target.value)}
-            placeholder="在这里记录备忘内容…"
-            rows={4}
-            className="w-full bg-app-card text-app-subtext text-[11px] leading-relaxed tracking-wider p-3 outline-none resize-y focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all"
+          {/* 下边缘拖拽手柄：热区中心对齐卡片下边界，调整备忘录高度 */}
+          <div
+            className="absolute left-0 right-0 bottom-0 z-20 h-1.5 translate-y-1/2 cursor-row-resize select-none touch-none before:absolute before:left-0 before:right-0 before:top-[calc(50%-1px)] before:h-px before:-translate-y-1/2 before:bg-gradient-to-r before:from-transparent before:via-transparent before:to-transparent before:transition-colors hover:before:via-indigo-500 active:before:via-indigo-500"
+            title="拖拽调整备忘录高度"
+            onPointerDown={handleMemoResizeStart}
+            onPointerMove={handleMemoResizeMove}
+            onPointerUp={handleMemoResizeEnd}
+            onPointerCancel={handleMemoResizeEnd}
           />
         </div>
       </div>
 
       {/* 页面底部：版本号与黄金交易切换 */}
       <div className="flex justify-center">
-        <div className="w-full flex justify-end items-center gap-3" style={{ maxWidth }}>
+        <div className="w-full flex justify-end items-center gap-3" style={{ maxWidth: effectiveMaxWidth }}>
           {appVersion && <span className="select-all hover:text-app-text text-white/[0.01] text-[10px] font-mono">{appVersion}</span>}
           {onTogglePage && (
             <button

@@ -569,7 +569,11 @@ export default function App() {
         ],
         tagColors: parsed.tagColors || {},
         sortMode: parsed.sortMode || 'default',
-        maxRows: parsed.maxRows || 15,
+        maxHeight: typeof parsed.maxHeight === 'number'
+          ? parsed.maxHeight
+          : typeof parsed.maxRows === 'number' && parsed.maxRows > 0
+            ? parsed.maxRows * 32 + 48 // 兼容旧「最大行数」设置：按旧公式换算成像素高度
+            : 528,
         maxWidth: parsed.maxWidth || 942,
         memo: parsed.memo || '',
         memoUpdatedAt: parsed.memoUpdatedAt || 0,
@@ -588,7 +592,7 @@ export default function App() {
         ],
         tagColors: {},
         sortMode: 'default',
-        maxRows: 15,
+        maxHeight: 528,
         maxWidth: 942,
         memo: '',
         memoUpdatedAt: 0,
@@ -1208,7 +1212,7 @@ export default function App() {
       // 上传数据：本地全量（saveToGist 内部按 filesToWrite 裁剪写盘）
       const cloudStockSettings = stockSettings ? {
         ...stockSettings,
-        maxRows: undefined,
+        maxHeight: undefined,
         maxWidth: undefined,
         sortMode: undefined,
         autoRefreshInterval: undefined,
@@ -1268,7 +1272,7 @@ export default function App() {
   const buildCloudFilePayloads = useCallback((): Record<CloudFileName, string> => {
     const cloudStockSettings = stockSettings ? {
       ...stockSettings,
-      maxRows: undefined,
+      maxHeight: undefined,
       maxWidth: undefined,
       sortMode: undefined,
       autoRefreshInterval: undefined,
@@ -1449,7 +1453,7 @@ export default function App() {
           if (result.stockSettings) {
             const restoredStockSettings = {
               ...result.stockSettings,
-              maxRows: stockSettings?.maxRows ?? result.stockSettings.maxRows,
+              maxHeight: stockSettings?.maxHeight ?? result.stockSettings.maxHeight,
               maxWidth: stockSettings?.maxWidth ?? result.stockSettings.maxWidth,
               sortMode: stockSettings?.sortMode ?? result.stockSettings.sortMode,
               tagParams: result.stockSettings.tagParams || DEFAULT_TAG_PARAMS,
@@ -2868,8 +2872,10 @@ export default function App() {
               memoUpdatedAt: resolveMemoUpdatedAt(memo, memoBaseline, memoUpdatedAtBaseline, Date.now()),
             }))}
             onMemoUpload={handleMemoUpload}
-            maxRows={stockSettings.maxRows}
+            maxHeight={stockSettings.maxHeight}
+            onMaxHeightChange={(height) => setStockSettings(prev => ({ ...prev, maxHeight: height }))}
             maxWidth={stockSettings.maxWidth}
+            onMaxWidthChange={(width) => setStockSettings(prev => ({ ...prev, maxWidth: width }))}
             autoRefreshInterval={stockSettings.autoRefreshInterval ?? 60}
             divRateHoverEnabled={divRateHoverEnabled}
             actionButtons={renderStockActionButtons()}

@@ -214,7 +214,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   ]);
   const [newRange, setNewRange] = useState({ min: '', max: '', color: 'gray' });
   const [editingRangeIndex, setEditingRangeIndex] = useState<number | null>(null);
-  const [maxRows, setMaxRows] = useState<number>(stockSettings?.maxRows || 15);
+  const [maxHeight, setMaxHeight] = useState<number>(stockSettings?.maxHeight ?? 528);
   const [maxWidth, setMaxWidth] = useState<number>(stockSettings?.maxWidth || 942);
   const [apiSource, setApiSource] = useState<ApiSource>(appSettings.apiSource || 'tencent');
   const [tencentDomain, setTencentDomainState] = useState<string>(getTencentDomain());
@@ -422,7 +422,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         { min: 4.5, max: 5.5, color: 'gray' },
         { min: 6, max: 7, color: 'green' }
       ],
-      maxRows: maxRows ?? stockSettings?.maxRows ?? 15,
+      maxHeight: maxHeight ?? stockSettings?.maxHeight ?? 528,
       maxWidth: maxWidth ?? stockSettings?.maxWidth ?? 942,
       sortMode: stockSettings?.sortMode ?? 'default',
       memo: stockSettings?.memo ?? '',
@@ -530,7 +530,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       visibleColumns: currentPage === 'stock' ? visibleColumns : stockSettings?.visibleColumns,
       dividendRateColumns: currentPage === 'stock' ? dividendRateColumns : stockSettings?.dividendRateColumns,
       dividendRateColorRanges: currentPage === 'stock' ? dividendRateColorRanges : stockSettings?.dividendRateColorRanges,
-      maxRows: currentPage === 'stock' ? maxRows : stockSettings?.maxRows,
+      maxHeight: currentPage === 'stock' ? maxHeight : stockSettings?.maxHeight,
       maxWidth: currentPage === 'stock' ? maxWidth : stockSettings?.maxWidth,
       sortMode: stockSettings?.sortMode ?? 'default',
       memo: stockSettings?.memo ?? '',
@@ -1227,16 +1227,16 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                            </div>
                         </div>
 
-                        {/* Max Rows & Max Width：并列排列（复用交易窗口输入框，支持滚轮/手势调节） */}
+                        {/* Max Height & Max Width：并列排列（复用交易窗口输入框，支持滚轮/手势调节） */}
                         <div className="grid grid-cols-2 gap-3">
                            <InputGroup
-                             label="列表最大行数"
-                             value={maxRows}
+                             label="列表最大高度"
+                             value={maxHeight}
                              onChange={(v) => {
                                const val = parseInt(v) || 0;
-                               if (val >= 0) setMaxRows(val);
+                               if (val >= 0) setMaxHeight(val);
                              }}
-                             step={1}
+                             step={10}
                              precision={0}
                              min={0}
                              touchMode
