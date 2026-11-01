@@ -178,8 +178,35 @@ export interface GoldFileFingerprintInput {
   trades: TradeRecord[];
   settings?: Record<string, unknown>;
 }
+// 指纹专用序列化：与差异引擎的 norm 语义对齐——对象里“空值字段”（undefined/null/''）一律不输出。
+// 目的：代码里不再写入某个已废弃字段（例如以往为了剔除而赋 undefined 的 maxHeight）时，
+// 指纹不应因此变化；否则指纹判定“有改动”、而差异引擎又找不出任何语义变更，
+// 上传弹窗只能笼统提示“内容有更新”。
+function stableStringifyFingerprint(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableStringifyFingerprint).join(',')}]`;
+  if (v && typeof v === 'object') {
+    const o = v as AnyObj;
+    const keys = Object.keys(o).filter(k => norm(o[k]) !== null);
+    return `{${keys.sort()
+      .map(k => `${JSON.stringify(k)}:${stableStringifyFingerprint(o[k])}`)
+      .join(',')}}`;
+  }
+  const n = norm(v);
+  return n === null ? 'null' : JSON.stringify(n);
+}
+
+// 把历史基线（旧版序列化结果）归一化到当前语义，避免一次性的假“有改动”
+export function normalizeFingerprint(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    return stableStringifyFingerprint(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
 export function buildGoldFileFingerprint({ trades, settings }: GoldFileFingerprintInput): string {
-  return stableStringify({ trades, settings });
+  return stableStringifyFingerprint({ trades, settings });
 }
 
 export interface StocksFileFingerprintInput {
@@ -193,7 +220,7 @@ export function buildStocksFileFingerprint(input: StocksFileFingerprintInput): s
     ? { ...stockSettings, maxWidth: undefined, sortMode: undefined, autoRefreshInterval: undefined }
     : undefined;
   const { core } = splitFinancialsFromStocks(stripStockPriceCache(buildUploadStocks(stocks)));
-  return stableStringify({
+  return stableStringifyFingerprint({
     stocks: core,
     stockSettings: cloudStockSettings,
     backtestStrategyPresets,
@@ -202,7 +229,7 @@ export function buildStocksFileFingerprint(input: StocksFileFingerprintInput): s
 
 export function buildFinancialsFileFingerprint(stocks: StockEntry[]): string {
   const { financials } = splitFinancialsFromStocks(stocks);
-  return stableStringify({ financials });
+  return stableStringifyFingerprint({ financials });
 }
 
 // 编辑备忘录后应写入的时间戳：

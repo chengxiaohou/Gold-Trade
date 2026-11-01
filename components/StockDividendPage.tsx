@@ -5636,7 +5636,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       <div className="shrink-0 flex justify-center -mb-2.5">
         <div className="w-full flex items-end gap-2 md:gap-3" style={{ maxWidth: effectiveMaxWidth }}>
           <div className="flex items-center gap-3 pb-2 shrink-0">
-            <h1 className={`text-sm sm:text-2xl md:text-3xl font-bold tracking-normal sm:tracking-wide whitespace-nowrap ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}>股息率{import.meta.env.DEV ? ' (debug)' : ''}</h1>
+            <h1 className={`text-2xl md:text-3xl font-bold tracking-wide whitespace-nowrap ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}>股息率{import.meta.env.DEV ? ' debug' : ''}</h1>
           </div>
           {actionButtons && (
             <div className="ml-auto pb-1.5 min-w-0 flex justify-end">
@@ -7767,7 +7767,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   disabled={!addTradePrice || !addTradeShares}
                   className="h-10 text-sm font-bold rounded-lg border transition-all disabled:opacity-40 bg-indigo-500/90 text-white border-indigo-500 hover:opacity-90 shadow-sm"
                 >
-                  {editingTradeId ? '保存挂单' : (addTradeSide === 'buy' ? '买入挂单' : '卖出挂单')}{import.meta.env.DEV ? ' (debug)' : ''}
+                  {editingTradeId ? '保存挂单' : (addTradeSide === 'buy' ? '买入挂单' : '卖出挂单')}{import.meta.env.DEV ? ' debug' : ''}
                 </button>
                 <button
                   type="button"
@@ -7775,7 +7775,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   disabled={!addTradePrice || !addTradeShares}
                   className={`h-10 text-sm font-bold rounded-lg transition-all disabled:opacity-40 text-white shadow-sm ${addTradeSide === 'buy' ? 'bg-brand-red hover:opacity-90' : 'bg-brand-green hover:opacity-90'}`}
                 >
-                  {editingTradeId ? '保存成交' : (addTradeSide === 'buy' ? '买入成交' : '卖出成交')}{import.meta.env.DEV ? ' (debug)' : ''}
+                  {editingTradeId ? '保存成交' : (addTradeSide === 'buy' ? '买入成交' : '卖出成交')}{import.meta.env.DEV ? ' debug' : ''}
                 </button>
               </div>
 

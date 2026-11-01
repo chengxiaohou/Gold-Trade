@@ -194,6 +194,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   // Config States
   const [token, setToken] = useState(githubConfig.token);
   const [gistId, setGistId] = useState(githubConfig.gistId);
+  // 凭证输入区：第一行 Token（必填），第二行 Gist ID（可选，后加入）
+  const buildCloudCred = (t: string, g: string) => (g ? `${t}\n${g}` : t);
+  const [cloudCred, setCloudCred] = useState(() => buildCloudCred(githubConfig.token, githubConfig.gistId));
   const [priceStep, setPriceStep] = useState(appSettings.priceStep.toString());
   const [gramsStep, setGramsStep] = useState(appSettings.gramsStep.toString());
   const [touchMode, setTouchMode] = useState(appSettings.touchMode ?? true);
@@ -324,6 +327,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       console.log('初始化状态 - localStorage中的值:', localStorage.getItem('stock_dividend_settings'));
       setToken(githubConfig.token);
       setGistId(githubConfig.gistId);
+      setCloudCred(buildCloudCred(githubConfig.token, githubConfig.gistId));
       setPriceStep(appSettings.priceStep.toString());
       setGramsStep(appSettings.gramsStep.toString());
       setTouchMode(appSettings.touchMode ?? true);
@@ -1563,21 +1567,27 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
               <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-200">
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-app-text block">
-                    Personal Access Token (PAT)
+                    Token / Gist ID
                   </label>
-                  <input 
-                    type="text" 
-                    value={token}
-                    onChange={(e) => setToken(e.target.value)}
-                    placeholder="ghp_xxxxxxxxxxxx"
+                  <textarea
+                    value={cloudCred}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setCloudCred(raw);
+                      const [line1 = '', line2 = ''] = raw.split('\n');
+                      setToken(line1.trim());
+                      setGistId(line2.trim());
+                    }}
+                    rows={2}
+                    placeholder={'ghp_xxxxxxxxxxxx\nGist ID（可选，首次自动生成）'}
                     disabled={isVerifying}
-                    className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-mono text-sm disabled:opacity-50"
+                    className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-mono text-sm leading-6 resize-none disabled:opacity-50"
                     autoCapitalize="none"
                     autoCorrect="off"
                     spellCheck="false"
                   />
                   <p className="text-xs text-app-subtext leading-relaxed">
-                    需要拥有 <code>gist</code> 权限的 Token。
+                    第一行填 Token（必填，需 <code>gist</code> 权限），第二行填 Gist ID（可选）。
                     <a 
                       href="https://github.com/settings/tokens/new?scopes=gist&description=GoldCostPro" 
                       target="_blank" 
@@ -1587,22 +1597,6 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                       点击生成 <ExternalLink size={10} />
                     </a>
                   </p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-app-text block">
-                    Gist ID (可选)
-                  </label>
-                  <input 
-                    type="text" 
-                    value={gistId}
-                    onChange={(e) => setGistId(e.target.value)}
-                    placeholder="首次保存自动生成"
-                    disabled={isVerifying}
-                    className="w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-app-text focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-mono text-sm disabled:opacity-50"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                  />
                 </div>
               </div>
             )}

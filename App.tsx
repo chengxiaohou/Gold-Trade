@@ -15,7 +15,7 @@ import type { StockLedgerMap } from './services/stockLedgerStore';
 import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { calcPositionFromTrades } from './services/realizedPnl';
-import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, splitFinancialsFromStocks, resolveMemoUpdatedAt, diffStockCloudSnapshots, diffGoldSnapshots, buildGoldFileFingerprint, buildStocksFileFingerprint, buildFinancialsFileFingerprint, diffFinancialsSnapshots, collectStockNamesFromSnapshot } from './services/stockSync';
+import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, splitFinancialsFromStocks, resolveMemoUpdatedAt, diffStockCloudSnapshots, diffGoldSnapshots, buildGoldFileFingerprint, buildStocksFileFingerprint, buildFinancialsFileFingerprint, diffFinancialsSnapshots, collectStockNamesFromSnapshot, normalizeFingerprint } from './services/stockSync';
 import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
@@ -629,7 +629,12 @@ export default function App() {
       const raw = localStorage.getItem('stock_cloud_file_baselines');
       if (raw) {
         const o = JSON.parse(raw);
-        return { gold: o.gold ?? null, stocks: o.stocks ?? null, financials: o.financials ?? null };
+        // 历史基线按当前语义归一化（丢弃空值字段），避免旧版序列化差异被误判成"有改动"
+        return {
+          gold: normalizeFingerprint(o.gold ?? null),
+          stocks: normalizeFingerprint(o.stocks ?? null),
+          financials: normalizeFingerprint(o.financials ?? null),
+        };
       }
     } catch { /* 忽略解析异常 */ }
     return empty;
@@ -2404,7 +2409,7 @@ export default function App() {
       <div className={`max-w-[1400px] w-full flex flex-col ${currentPage === 'gold' ? 'pb-12' : 'h-full min-h-0 pb-0'}`}>
         {currentPage === 'gold' && (
         <header className="mb-6 flex items-end justify-between gap-4">
-          <h1 className={`text-3xl font-bold tracking-wide ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}>黄金交易模拟{import.meta.env.DEV ? ' (debug)' : ''}</h1>
+          <h1 className={`text-3xl font-bold tracking-wide ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}>黄金交易模拟{import.meta.env.DEV ? ' debug' : ''}</h1>
           <div className="flex items-center gap-3">{renderActionButtons()}</div>
         </header>
         )}
