@@ -239,6 +239,22 @@ export default function App() {
     setCurrentPage(prev => prev === 'gold' ? 'stocks' : 'gold');
   };
 
+  // 标题长按切换页面（黄金页入口）：按住 600ms 触发，松手/移出即取消
+  const titleLongPressTimerRef = useRef<number | null>(null);
+  const cancelTitleLongPress = () => {
+    if (titleLongPressTimerRef.current) {
+      window.clearTimeout(titleLongPressTimerRef.current);
+      titleLongPressTimerRef.current = null;
+    }
+  };
+  const startTitleLongPress = () => {
+    cancelTitleLongPress();
+    titleLongPressTimerRef.current = window.setTimeout(() => {
+      titleLongPressTimerRef.current = null;
+      togglePage();
+    }, 600);
+  };
+
   // --- Stock State ---
   const [stocks, setStocks] = useState<StockEntry[]>(() => {
     const saved = localStorage.getItem('stock_dividend_stocks');
@@ -2353,7 +2369,14 @@ export default function App() {
       <div className={`max-w-[1400px] w-full flex flex-col ${currentPage === 'gold' ? 'pb-12' : 'h-full min-h-0 pb-0'}`}>
         {currentPage === 'gold' && (
         <header className="mb-6 flex items-end justify-between gap-4">
-          <h1 className={`text-3xl font-bold tracking-wide ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}>黄金交易模拟{import.meta.env.DEV ? ' debug' : ''}</h1>
+          <h1
+            onPointerDown={startTitleLongPress}
+            onPointerUp={cancelTitleLongPress}
+            onPointerLeave={cancelTitleLongPress}
+            onPointerCancel={cancelTitleLongPress}
+            onContextMenu={(e) => e.preventDefault()}
+            className={`text-3xl font-bold tracking-wide select-none ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}
+          >黄金交易模拟{import.meta.env.DEV ? ' debug' : ''}</h1>
           <div className="flex items-center gap-3">{renderActionButtons()}</div>
         </header>
         )}

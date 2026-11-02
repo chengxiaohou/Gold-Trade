@@ -3062,6 +3062,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const divRateInfoRef = useRef<HTMLDivElement | null>(null);
   // 打开时单元格的垂直中心线，用于「实测高度后重新贴合单元格」的前置/后置校正
   const divRateInfoCenterRef = useRef(0);
+  // 标题长按切换页面（隐藏入口替代底部小字开关）：按住 600ms 触发，松手/移出即取消
+  const titleLongPressTimerRef = useRef<number | null>(null);
+  const cancelTitleLongPress = () => {
+    if (titleLongPressTimerRef.current) {
+      window.clearTimeout(titleLongPressTimerRef.current);
+      titleLongPressTimerRef.current = null;
+    }
+  };
+  const startTitleLongPress = () => {
+    if (!onTogglePage) return;
+    cancelTitleLongPress();
+    titleLongPressTimerRef.current = window.setTimeout(() => {
+      titleLongPressTimerRef.current = null;
+      onTogglePage();
+    }, 600);
+  };
   const divRateInfoActiveIdRef = useRef<string | undefined>(undefined);
   // 悬浮开启时：初次移入单元格的 100ms 宽限（避免鼠标路过误触发）
   const divRateHoverOpenTimerRef = useRef<number | undefined>(undefined);
@@ -5659,7 +5675,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       <div className="shrink-0 flex justify-center -mb-2.5">
         <div className="w-full flex items-end gap-2 md:gap-3" style={{ maxWidth: effectiveMaxWidth }}>
           <div className="flex items-center gap-3 pb-2 shrink-0">
-            <h1 className={`text-2xl md:text-3xl font-bold tracking-wide whitespace-nowrap ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}>股息率{import.meta.env.DEV ? ' debug' : ''}</h1>
+            <h1
+              onPointerDown={startTitleLongPress}
+              onPointerUp={cancelTitleLongPress}
+              onPointerLeave={cancelTitleLongPress}
+              onPointerCancel={cancelTitleLongPress}
+              onContextMenu={(e) => e.preventDefault()}
+              className={`text-2xl md:text-3xl font-bold tracking-wide whitespace-nowrap select-none ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}
+            >股息率{import.meta.env.DEV ? ' debug' : ''}</h1>
           </div>
           {actionButtons && (
             <div className="ml-auto pb-1.5 min-w-0 flex justify-end">
@@ -7730,7 +7753,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       setAddTradeShares(Number.isNaN(n) || n <= editingCap ? v : String(editingCap));
                     } else setAddTradeShares(v);
                   }}
-                  placeholder="100" step={100} min={0}
+                  placeholder="100" step={isEtf(s.name) ? 500 : 100} min={0}
                   max={editingCap}
                   touchMode
                   onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')}
