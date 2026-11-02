@@ -6136,7 +6136,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const sharesText = shares > 0
                       ? `${Number.isInteger(shares) ? shares : shares.toFixed(2)}股`
                       : '-';
-                    const costText = cost > 0 ? cost.toFixed(2) : '-';
+                    // 与列表其它价格列同口径：ETF 保留 3 位小数，股票 2 位
+                    const costText = cost > 0 ? formatPrice(cost, stock.name) : '-';
                     const costColor = cost > 0 ? (cost > (stock.price || 0) ? 'text-brand-green' : 'text-brand-red') : 'text-app-subtext';
                     const positionPct = cost > 0 && stock.price > 0 ? ((stock.price - cost) / cost) * 100 : 0;
                     const positionPctStr = cost > 0 && stock.price > 0 ? `${positionPct >= 0 ? '+' : ''}${positionPct.toFixed(2)}%` : '';
