@@ -261,25 +261,26 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   // 最近一次十字线所在的视口坐标（切换方位时据此就地重排，无需等鼠标再动）
   const lastHoverPointRef = useRef<{ x: number; y: number } | null>(null);
   // 按当前方位计算浮窗左上角（px/py 为光标视口坐标）；只读 ref，可在图表回调里安全调用
+  const POPOVER_GAP = 24; // 浮窗与光标的间距（越大越离手，避免遮挡十字线附近）
   const computePopoverPos = (px: number, py: number) => {
     const popH = popoverRef.current?.getBoundingClientRect().height || POPOVER_H_FALLBACK;
     const side = popoverSideRef.current;
     let left: number;
     let top: number;
     if (side === 'top') {
-      left = px - POPOVER_W / 2; top = py - 12 - popH;
-      if (top < 8) top = py + 12; // 上方空间不足 → 落到下方
+      left = px - POPOVER_W / 2; top = py - POPOVER_GAP - popH;
+      if (top < 8) top = py + POPOVER_GAP; // 上方空间不足 → 落到下方
     } else if (side === 'left') {
-      left = px - 12 - POPOVER_W;
-      if (left < 8) left = px + 12; // 左侧空间不足 → 改放右侧（避免贴边夹取后压住光标造成闪烁）
+      left = px - POPOVER_GAP - POPOVER_W;
+      if (left < 8) left = px + POPOVER_GAP; // 左侧空间不足 → 改放右侧（避免贴边夹取后压住光标造成闪烁）
       top = py - popH / 2;
     } else if (side === 'right') {
-      left = px + 12;
-      if (left + POPOVER_W > window.innerWidth - 8) left = px - 12 - POPOVER_W; // 右侧不足 → 改放左侧
+      left = px + POPOVER_GAP;
+      if (left + POPOVER_W > window.innerWidth - 8) left = px - POPOVER_GAP - POPOVER_W; // 右侧不足 → 改放左侧
       top = py - popH / 2;
     } else {
-      left = px - POPOVER_W / 2; top = py + 12;
-      if (top + popH > window.innerHeight - 8) top = py - 12 - popH; // 下方空间不足 → 翻到上方
+      left = px - POPOVER_W / 2; top = py + POPOVER_GAP;
+      if (top + popH > window.innerHeight - 8) top = py - POPOVER_GAP - popH; // 下方空间不足 → 翻到上方
     }
     // 视口内收拢，避免越界
     left = Math.max(8, Math.min(left, window.innerWidth - 8 - POPOVER_W));
@@ -321,6 +322,9 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       pinnedRef.current = null;
       setPinnedQuote(null);
       setHoverQuote(null); // 取消固定后隐藏弹窗（否者停留在旧位置，鼠标需重移到图上才恢复跟随）
+      // 主动取消固定 = 不再记忆位置，下次打开不再自动钉住
+      if (pinPosSaveTimerRef.current) window.clearTimeout(pinPosSaveTimerRef.current);
+      try { localStorage.removeItem('bt_pinned_pos'); } catch { /* 忽略 */ }
     } else if (hoverQuote) {
       pinnedRef.current = hoverQuote;
       setPinnedQuote(hoverQuote);
@@ -361,6 +365,54 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     target.addEventListener('pointerup', onUp);
     target.addEventListener('pointercancel', onUp);
   };
+  // —— 固定位置的记忆与恢复 ——
+  // 关闭回测后再次打开，浮窗仍固定在上次的位置（内容取最新一根日K，鼠标悬停后照常实时更新）
+  const PIN_POS_KEY = 'bt_pinned_pos';
+  const pinRestoredRef = useRef(false);
+  const pinPosSaveTimerRef = useRef<number | null>(null);
+  // 关闭弹窗时立即落盘（避免 300ms 防抖窗口内关闭导致最后位置丢失）
+  useEffect(() => () => {
+    if (pinPosSaveTimerRef.current) window.clearTimeout(pinPosSaveTimerRef.current);
+    const p = pinnedRef.current;
+    if (!p) return;
+    try { localStorage.setItem(PIN_POS_KEY, JSON.stringify({ left: Math.round(p.left), top: Math.round(p.top) })); } catch { /* 忽略 */ }
+  }, []);
+  // 位置变化频繁（拖动/十字线跟随时内容刷新），延迟落盘避免每帧写 localStorage
+  useEffect(() => {
+    if (!pinnedQuote) return;
+    const left = Math.round(pinnedQuote.left);
+    const top = Math.round(pinnedQuote.top);
+    if (pinPosSaveTimerRef.current) window.clearTimeout(pinPosSaveTimerRef.current);
+    pinPosSaveTimerRef.current = window.setTimeout(() => {
+      try { localStorage.setItem(PIN_POS_KEY, JSON.stringify({ left, top })); } catch { /* 忽略写入失败 */ }
+    }, 300);
+  }, [pinnedQuote]);
+  useEffect(() => {
+    if (pinRestoredRef.current || pinnedRef.current) return;
+    const data = rawKlines;
+    if (!data || data.length < 2) return;
+    let pos: { left: number; top: number } | null = null;
+    try {
+      const raw = localStorage.getItem(PIN_POS_KEY);
+      if (raw) pos = JSON.parse(raw) as { left: number; top: number };
+    } catch { /* 忽略损坏缓存 */ }
+    pinRestoredRef.current = true;
+    if (!pos || !Number.isFinite(pos.left) || !Number.isFinite(pos.top)) return;
+    // 视口变化（窗口/弹窗尺寸）后旧坐标可能出界，恢复时拉回可视区
+    const left = Math.max(8, Math.min(window.innerWidth - POPOVER_W - 8, pos.left));
+    const top = Math.max(8, Math.min(window.innerHeight - 80, pos.top));
+    const idx = data.length - 1;
+    const prefix = data.slice(0, idx + 1);
+    const ind = calcIndicators(prefix);
+    if (!ind) return;
+    const prevClose = data[idx - 1].close;
+    const changePercent = prevClose > 0 ? ((data[idx].close - prevClose) / prevClose) * 100 : null;
+    const q = { name: stock.name, price: data[idx].close, changePercent, data: ind, left, top, win: prefix, idx };
+    pinnedRef.current = q;
+    setPinnedQuote(q);
+    setHoverQuote(q);
+  }, [rawKlines, stock.name]);
+
   const rawKlinesRef = useRef<BollKline[] | null>(null);
   const tagParamsRef = useRef<TagParams | undefined>(tagParams);
   useEffect(() => { rawKlinesRef.current = rawKlines; }, [rawKlines]);
