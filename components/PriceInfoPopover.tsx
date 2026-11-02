@@ -90,6 +90,8 @@ export interface PriceInfoPopoverProps {
   footer?: React.ReactNode;          // 可选底部追加区（回测叠"当日信号标签"行）
   headerLeft?: React.ReactNode;      // 可选标题栏右侧操作区（回测放"取消固定"按钮）
   dividendRate?: number | null;      // 当日股息率（%）；null/undefined 时不显示该行（仅回测十字线悬浮传）
+  interactive?: boolean;             // 是否接收鼠标事件；false=鼠标穿透（不拦截图表的十字线悬停），默认 true
+  onTitlePointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void; // 标题栏拖拽（传入即可拖动浮窗）
 }
 
 // 弹窗标题栏 —— 单一实现：价格弹窗（列表页价格列悬浮）、支撑/压力位弹窗 共用。
@@ -165,17 +167,17 @@ export function usePopoverDrag(
 
 export default function PriceInfoPopover({
   name, date, price, changePercent, data, loading, left, top, width = 210,
-  innerRef, onMouseEnter, onMouseLeave, footer, headerLeft, dividendRate,
+  innerRef, onMouseEnter, onMouseLeave, footer, headerLeft, dividendRate, interactive = true, onTitlePointerDown,
 }: PriceInfoPopoverProps) {
   return (
     <div
       ref={innerRef}
       className="fixed z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden"
-      style={{ top, left, width }}
+      style={{ top, left, width, pointerEvents: interactive ? undefined : 'none' }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
-      <PopoverTitleBar title={name} date={date} right={headerLeft} />
+      <PopoverTitleBar title={name} date={date} right={headerLeft} onPointerDown={onTitlePointerDown} />
       <div className="px-2.5 py-1.5 bg-app-card">
         {loading && <div className="text-[10px] text-app-subtext py-2 text-center">加载中…</div>}
         {!loading && !data && <div className="text-[10px] text-app-subtext py-2 text-center">暂无数据</div>}

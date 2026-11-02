@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, GripHorizontal, Play, Pin, Tag, Eye, EyeOff, Link } from 'lucide-react';
+import { X, Plus, GripHorizontal, Play, Pin, Tag, Eye, EyeOff, Link, PanelLeft } from 'lucide-react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, LineData, MouseEventParams, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams, UserTagRule } from '../types';
@@ -17,6 +17,13 @@ import { TAG_COLOR_HEX, TAG_PALETTE } from './CloudSettingsModal';
 import { InputGroup } from './InputGroup';
 
 type ChartCandle = { time: string; open: number; high: number; low: number; close: number };
+// K线周期：日/周/月（各周期均直接使用数据中心的同名周期 K 线，均为 500 根）
+type KlinePeriod = 'daily' | 'weekly' | 'monthly';
+const KLINE_PERIODS: Array<{ key: KlinePeriod; label: string }> = [
+  { key: 'daily', label: '日' },
+  { key: 'weekly', label: '周' },
+  { key: 'monthly', label: '月' },
+];
 
 // 覆盖层买卖点标签规格：锚定 K 线的 time 与锚定价（卖=high/买=low），使圆点贴 K 线实体边缘外侧
 type TickSpec = { id: string; time: string; anchorPrice: number; action: 'buy' | 'sell' };
@@ -171,6 +178,57 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     return { rules: [], initialCapital: 100000 };
   };
   const [strategy, setStrategy] = useState<BacktestStrategy>(loadStrategy);
+  // 策略编辑侧栏的收起状态（设备本地记忆，下次打开回测弹窗沿用）
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem('backtestSidebarCollapsed') === '1'; } catch { return false; }
+  });
+  const toggleSidebar = () => {
+    setSidebarCollapsed(prev => {
+      const next = !prev;
+      try { localStorage.setItem('backtestSidebarCollapsed', next ? '1' : '0'); } catch { /* 忽略写入失败 */ }
+      return next;
+    });
+  };
+  // 图表高度：null = 未手动拖拽（打开时按交易记录内容量自动分配）；拖拽后取本次会话的手动高度
+  const [chartHeight, setChartHeight] = useState<number | null>(null);
+  const chartWrapRef = useRef<HTMLDivElement>(null);
+  const splitDragRef = useRef<{ startY: number; startH: number; maxH: number; latestH: number } | null>(null);
+  const handleSplitPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const wrap = chartWrapRef.current;
+    if (!wrap) return;
+    const startH = wrap.getBoundingClientRect().height;
+    const areaH = wrap.parentElement?.getBoundingClientRect().height ?? window.innerHeight;
+    splitDragRef.current = { startY: e.clientY, startH, maxH: Math.max(120, areaH - 200), latestH: startH };
+    // 拖拽期间直接改 DOM 高度（不走 React 状态），避免每帧整棵弹窗重渲染导致画面滞后
+    wrap.style.flex = '0 0 auto';
+    wrap.style.height = `${startH}px`;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  };
+  const handleSplitPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = splitDragRef.current;
+    if (!drag) return;
+    const next = Math.max(120, Math.min(drag.maxH, drag.startH + (e.clientY - drag.startY)));
+    drag.latestH = next;
+    const wrap = chartWrapRef.current;
+    if (wrap) wrap.style.height = `${next}px`;
+    // 同帧重排：按新高度 resize 图表并重算覆盖层标签，K 线布局实时跟随
+    const chart = chartInstance.current;
+    const w = chartRef.current?.clientWidth ?? 0;
+    if (chart && w > 0) {
+      try { chart.resize(w, next); } catch { /* 忽略 */ }
+      computeTicksRef.current?.();
+    }
+  };
+  const handleSplitPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = splitDragRef.current;
+    if (!drag) return;
+    splitDragRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* 忽略 */ }
+    // 松手后落到状态，高度值与拖拽末帧一致，无跳动
+    setChartHeight(drag.latestH);
+  };
+
   const initialCapital = strategy.initialCapital;
   const rules = strategy.rules; // 供渲染遍历（受控）
   // 策略或初始资金变化时自动保存
@@ -185,6 +243,79 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   const [pinnedQuote, setPinnedQuote] = useState<{ name: string; price: number; changePercent: number | null; data: IndicatorResult; left: number; top: number; win: BollKline[]; idx: number } | null>(null);
   const pinnedRef = useRef<{ name: string; price: number; changePercent: number | null; data: IndicatorResult; left: number; top: number; win: BollKline[]; idx: number } | null>(null);
   const displayQuote = pinnedQuote ?? hoverQuote;
+  // —— 浮窗相对鼠标的方位（方向键切换，设备本地记忆）——
+  // bottom=光标正下方（默认）/ top=上方 / left=左侧 / right=右侧
+  type PopoverSide = 'bottom' | 'top' | 'left' | 'right';
+  const POPOVER_W = 210;
+  const POPOVER_H_FALLBACK = 240; // 首帧浮窗尚未挂载时的估算高度
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [popoverSide, setPopoverSide] = useState<PopoverSide>(() => {
+    try {
+      const v = localStorage.getItem('bt_popover_side');
+      return v === 'top' || v === 'left' || v === 'right' ? v : 'bottom';
+    } catch { return 'bottom'; }
+  });
+  // 图表回调/键盘监听闭包里读 ref 取最新方位，避免依赖 React 重渲染
+  const popoverSideRef = useRef<PopoverSide>(popoverSide);
+  useEffect(() => { popoverSideRef.current = popoverSide; }, [popoverSide]);
+  // 最近一次十字线所在的视口坐标（切换方位时据此就地重排，无需等鼠标再动）
+  const lastHoverPointRef = useRef<{ x: number; y: number } | null>(null);
+  // 按当前方位计算浮窗左上角（px/py 为光标视口坐标）；只读 ref，可在图表回调里安全调用
+  const computePopoverPos = (px: number, py: number) => {
+    const popH = popoverRef.current?.getBoundingClientRect().height || POPOVER_H_FALLBACK;
+    const side = popoverSideRef.current;
+    let left: number;
+    let top: number;
+    if (side === 'top') {
+      left = px - POPOVER_W / 2; top = py - 12 - popH;
+      if (top < 8) top = py + 12; // 上方空间不足 → 落到下方
+    } else if (side === 'left') {
+      left = px - 12 - POPOVER_W;
+      if (left < 8) left = px + 12; // 左侧空间不足 → 改放右侧（避免贴边夹取后压住光标造成闪烁）
+      top = py - popH / 2;
+    } else if (side === 'right') {
+      left = px + 12;
+      if (left + POPOVER_W > window.innerWidth - 8) left = px - 12 - POPOVER_W; // 右侧不足 → 改放左侧
+      top = py - popH / 2;
+    } else {
+      left = px - POPOVER_W / 2; top = py + 12;
+      if (top + popH > window.innerHeight - 8) top = py - 12 - popH; // 下方空间不足 → 翻到上方
+    }
+    // 视口内收拢，避免越界
+    left = Math.max(8, Math.min(left, window.innerWidth - 8 - POPOVER_W));
+    top = Math.max(8, Math.min(top, window.innerHeight - 8 - popH));
+    return { left, top };
+  };
+  // 方向键调整浮窗相对鼠标的方位（不影响侧栏输入框等可编辑控件）
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      const side: PopoverSide | null = e.key === 'ArrowUp' ? 'top'
+        : e.key === 'ArrowDown' ? 'bottom'
+        : e.key === 'ArrowLeft' ? 'left'
+        : e.key === 'ArrowRight' ? 'right'
+        : null;
+      if (!side || side === popoverSideRef.current) return;
+      e.preventDefault();
+      popoverSideRef.current = side;
+      setPopoverSide(side);
+      try { localStorage.setItem('bt_popover_side', side); } catch { /* 忽略写入失败 */ }
+      // 立即按新方位重排当前浮窗；固定态也跟随方位调整（锚点仍是最近的光标位置）
+      const pt = lastHoverPointRef.current;
+      if (!pt) return;
+      const pos = computePopoverPos(pt.x, pt.y);
+      if (pinnedRef.current) {
+        const next = { ...pinnedRef.current, ...pos };
+        pinnedRef.current = next;
+        setPinnedQuote(next);
+      } else {
+        setHoverQuote(prev => (prev ? { ...prev, ...pos } : prev));
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
   const togglePin = () => {
     if (pinnedRef.current) {
       pinnedRef.current = null;
@@ -194,6 +325,41 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       pinnedRef.current = hoverQuote;
       setPinnedQuote(hoverQuote);
     }
+  };
+  // 固定态支持拖拽标题栏移动浮窗：位置同时写回 ref 与 state，
+  // 后续十字线驱动的内容刷新沿用拖动后的坐标
+  const movePinned = (patch: { left?: number; top?: number }) => {
+    const cur = pinnedRef.current;
+    if (!cur) return;
+    const next = { ...cur, ...patch };
+    pinnedRef.current = next;
+    setPinnedQuote(next);
+  };
+  // 固定态拖拽标题栏：直接用 pointer capture 在标题栏元素上接管指针（不依赖 window 监听，
+  // 拖动过程中指针始终归属标题栏，浮窗不会跟丢）
+  const onPinnedTitleDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = popoverRef.current;
+    if (!el || !pinnedRef.current || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = el.getBoundingClientRect();
+    const offX = e.clientX - rect.left;
+    const offY = e.clientY - rect.top;
+    const target = e.currentTarget;
+    try { target.setPointerCapture(e.pointerId); } catch { /* 忽略 */ }
+    const onMove = (ev: PointerEvent) => {
+      if (!pinnedRef.current) return;
+      movePinned({ left: ev.clientX - offX, top: ev.clientY - offY });
+    };
+    const onUp = () => {
+      target.removeEventListener('pointermove', onMove);
+      target.removeEventListener('pointerup', onUp);
+      target.removeEventListener('pointercancel', onUp);
+      try { target.releasePointerCapture(e.pointerId); } catch { /* 忽略 */ }
+    };
+    target.addEventListener('pointermove', onMove);
+    target.addEventListener('pointerup', onUp);
+    target.addEventListener('pointercancel', onUp);
   };
   const rawKlinesRef = useRef<BollKline[] | null>(null);
   const tagParamsRef = useRef<TagParams | undefined>(tagParams);
@@ -319,14 +485,29 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   const bollSeriesRef = useRef<ISeriesApi<'Line'>[] | null>(null);
   // 缓存最新图表K线，供覆盖层极值标注（最高/最低价）随平移/缩放重算时读取
   const klinesRef = useRef<ChartCandle[] | null>(null);
-  const [klines, setKlines] = useState<ChartCandle[] | null>(null); // 图表 K 线（含实时今日K线）
+  // K线周期切换（设备本地记忆）：日K取日线（含实时今日K线），周/月K取数据中心的同名周期数据
+  const [klinePeriod, setKlinePeriod] = useState<KlinePeriod>(() => {
+    try { const v = localStorage.getItem('bt_kline_period'); return v === 'weekly' || v === 'monthly' ? v : 'daily'; } catch { return 'daily'; }
+  });
+  useEffect(() => { try { localStorage.setItem('bt_kline_period', klinePeriod); } catch { /* ignore */ } }, [klinePeriod]);
+  // 周/月K直接取自数据中心的同名周期数据（各 500 根），不再由日K聚合，避免历史长度被日线根数截断
+  const [periodKlines, setPeriodKlines] = useState<ChartCandle[] | null>(null);
+  useEffect(() => { setPeriodKlines(null); }, [stock.code]);
+  const klines = useMemo<ChartCandle[] | null>(() => {
+    if (klinePeriod !== 'daily') return periodKlines;
+    if (!rawKlines?.length) return null;
+    return [...rawKlines]
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+      .map(k => ({ time: k.date, open: k.open, high: k.high, low: k.low, close: k.close }));
+  }, [rawKlines, klinePeriod, periodKlines]);
   useEffect(() => { klinesRef.current = klines; }, [klines]);
   // 初始真实成交记录：用父级 StockEntry.stockTrades（已成交、未软删）映射，作为"一打开就可见"的 B/S 标签和交易表。
   // 运行回测后 result 存在 → 自动优先用 result.trades，initialTrades 被覆盖。
   const initialTrades = useMemo(() => {
     const trades = stock?.stockTrades ?? [];
     if (trades.length === 0) return [] as { id: string; date: string; action: 'buy' | 'sell'; price: number; shares: number; amount: number; triggerLabel: string }[];
-    const kDateSet = new Set((klines ?? []).map(k => k.time));
+    const first = klines?.[0]?.time;
+    if (!first) return [] as { id: string; date: string; action: 'buy' | 'sell'; price: number; shares: number; amount: number; triggerLabel: string }[];
     return trades
       .filter(t => t.status === 'filled' && !t.isDeleted)
       .map(t => {
@@ -343,7 +524,8 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
           triggerLabel: t.note || '',
         };
       })
-      .filter(t => kDateSet.has(t.date)); // 过滤掉非交易日（周末/停牌），K线图上才有对应位置
+      // 只保留不早于图表最早那根K线的成交（周/月K下由 demoMarkers 映射到所属周期；晚于末根的归到末根）
+      .filter(t => t.date >= first);
   }, [stock?.stockTrades, klines]);
   // 初始真实统计：一打开就展示两套盈亏口径（均价 vs 做T），与列表页盈利统计同源。
   // 胜率/最大回撤属回测引擎特有概念，真实交易留 null → UI 显示 "—"。
@@ -365,6 +547,38 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       unrealizedDt: s.unrealizedDt,
     };
   }, [stock?.stockTrades, stock?.price]);
+
+  // 打开时按交易记录内容量自动分配高度：列表刚好能完整展示，且不超过可用高度的 50%
+  // （本次会话手动拖拽过则改用手动高度）
+  const statsBarRef = useRef<HTMLDivElement | null>(null);
+  const tradeTableRef = useRef<HTMLTableElement | null>(null);
+  const [autoChartHeight, setAutoChartHeight] = useState<number | null>(null);
+  useEffect(() => {
+    const wrap = chartWrapRef.current;
+    const col = wrap?.parentElement as HTMLElement | null;
+    if (!wrap || !col) return;
+    let raf = 0;
+    const compute = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        // 上方指标条等固定兄弟元素占用的高度需扣除，剩下的才是图表 + 统计条 + 表格的可用空间
+        const indicatorH = (wrap.previousElementSibling as HTMLElement | null)?.getBoundingClientRect().height ?? 0;
+        const availH = col.getBoundingClientRect().height - indicatorH;
+        const statsH = statsBarRef.current?.getBoundingClientRect().height ?? 0;
+        const tableH = tradeTableRef.current?.scrollHeight ?? 0;
+        if (availH <= 0 || tableH <= 0) return;
+        // 列表高度 = 统计条 + 全部记录，但不允许超过可用高度的一半
+        const listH = Math.min(statsH + tableH, availH * 0.5);
+        setAutoChartHeight(Math.max(120, Math.round(availH - listH)));
+      });
+    };
+    compute();
+    // 弹窗/窗口尺寸变化时重新分配，保证列表始终不超过一半
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(compute) : null;
+    ro?.observe(col);
+    return () => { cancelAnimationFrame(raf); ro?.disconnect(); };
+  }, [result, initialStats]);
+  const effectiveChartHeight = chartHeight ?? autoChartHeight;
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState<string | null>(null);
   // 图表指标模式：均线(默认) / 布林线
@@ -498,11 +712,35 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       if (from < 0) { const shift = -from; from = 0; to += shift; } // 左缘钳制
       ts.setVisibleLogicalRange({ from, to });
     };
-    // 前置capture阶段接管 wheel：捏合(ctrlKey)/⌘+滚轮 → 开原生缩放；纯滚轮/双指平移 → 关缩放、按 deltaY 自行平移
+    // Shift + 滚轮 → 以光标为锚点手动缩放（同时拦下 lightweight 原生的横向平移，避免边缩放边平移）
+    const zoomByWheel = (e: WheelEvent) => {
+      const ts = chart.timeScale();
+      const r = ts.getVisibleLogicalRange();
+      const width = el.clientWidth;
+      if (!r || width <= 0) return;
+      const span = r.to - r.from;
+      if (span <= 0) return;
+      // 部分平台 Shift+滚轮只给 deltaX，故纵向优先、横向兜底
+      const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+      if (delta === 0) return;
+      const px = Math.max(0, Math.min(width, e.clientX - el.getBoundingClientRect().left));
+      const factor = Math.exp(delta * 0.0015); // 向下滚=缩小(视野变宽)，向上滚=放大
+      const maxSpan = Math.max(10, (rawKlinesRef.current?.length ?? 0) + 10);
+      const nextSpan = Math.min(maxSpan, Math.max(10, span * factor));
+      const anchor = r.from + (px / width) * span; // 光标处的逻辑坐标保持不动
+      let from = anchor - (px / width) * nextSpan;
+      if (from < 0) from = 0;
+      ts.setVisibleLogicalRange({ from, to: from + nextSpan });
+    };
+    // 前置capture阶段接管 wheel：捏合(ctrlKey)/⌘+滚轮 → 原生缩放；Shift+滚轮 → 手动缩放；其余 → 平移
     const onWheel = (e: WheelEvent) => {
       e.preventDefault(); // 图表接管滚轮，阻止页面随之滚动/缩放
       if (e.ctrlKey || e.metaKey) {
         setScale(true); // 交给 lightweight 原生在光标处缩放
+      } else if (e.shiftKey) {
+        e.stopPropagation(); // 不让 lightweight 原生滚轮横向平移同时生效
+        setScale(false);
+        zoomByWheel(e);
       } else {
         setScale(false);
         panByWheel(e.deltaY); // deltaX 由 handleScroll 原生平移，这里只补纵向 deltaY（取正号以反转滚动方向）
@@ -567,18 +805,36 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       }
       if (!cachedInd) return null;
       const rect = el.getBoundingClientRect();
-      const popW = 210;
-      // 浮窗位于光标正下方：水平以光标为中心，垂直在光标下方 12px
-      let left = rect.left + param.point.x - popW / 2;
-      left = Math.max(8, Math.min(left, window.innerWidth - 8 - popW));
-      let top = rect.top + param.point.y + 12;
-      // 下方空间不足时翻到光标上方，避免超出视口
-      if (top + 240 > window.innerHeight - 8) top = Math.max(8, rect.top + param.point.y - 240 - 12);
+      // 光标视口坐标：按方向键设置的方位（上/下/左/右）换算浮窗左上角
+      const px = rect.left + param.point.x;
+      const py = rect.top + param.point.y;
+      lastHoverPointRef.current = { x: px, y: py };
+      const { left, top } = computePopoverPos(px, py);
       return { name: stock.name, price: data[idx].close, changePercent: cachedChange, data: cachedInd, left, top, win: prefix, idx };
     };
     const onCrosshairMove = (param: MouseEventParams) => {
-      if (pinnedRef.current) return; // 固定中：冻结弹窗，不随鼠标跨天切换也不关闭
       const q = tryBuildQuote(param);
+      const pinned = pinnedRef.current;
+      if (pinned) {
+        // 固定态：位置保持钉住时的坐标不动，内容跟随鼠标所在的那根 K 线实时更新
+        if (q) {
+          const next = { ...q, left: pinned.left, top: pinned.top };
+          pinnedRef.current = next;
+          setPinnedQuote(next);
+        }
+        return; // 鼠标移出图表（q 为 null）时保留固定弹窗
+      }
+      // 边界处浮窗被夹取后可能压在光标上：此时图表收不到移动 → q 为 null，
+      // 若立即隐藏，浮窗消失后光标又回到图表 → 反复显隐（闪烁）。光标仍落在浮窗内则保持显示。
+      if (!q) {
+        const box = popoverRef.current;
+        const pt = lastHoverPointRef.current;
+        if (box && pt) {
+          const r = box.getBoundingClientRect();
+          if (pt.x >= r.left && pt.x <= r.right && pt.y >= r.top && pt.y <= r.bottom) return;
+        }
+        if (box?.matches(':hover')) return;
+      }
       setHoverQuote(q); // null 即隐藏
     };
     // 点击图表 → 钉住当前悬停那根 K 线的弹窗（进入固定模式）。
@@ -630,10 +886,9 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       const res = await priceBureau.fetchAndAbsorb(stock.code, 'daily', 'tencent', 'qfq');
       if (cancelled) return;
       if (res.data?.klines?.length) {
-        // 画图（live）：含未收盘，末根最新价与股息页同一基准
+        // 画图（live）：含未收盘，末根最新价与股息页同一基准；
+        // 日线基座供日K图与回测/浮窗使用，周/月K另行按周期取数
         const merged = priceBureau.getTodayDailyKlines(stock.code, stock);
-        const candles: ChartCandle[] = merged.map(k => ({ time: k.date, open: k.open, high: k.high, low: k.low, close: k.close })).sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
-        setKlines(candles);
         setRawKlines(merged);
       } else {
         setChartError(res.error || '无K线数据');
@@ -644,19 +899,55 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     // stock.priceUpdatedAt：页面刷新出新实时价时，重新合成今日K线（基座仍命中日线缓存，今日K线实时更新）
   }, [stock.code, stock.priceUpdatedAt, stock.price, stock.open, stock.high, stock.low, stock.volume]);
 
+  // 周/月K：直接按周期向数据中心取数（各 500 根），不再由日K聚合——
+  // 日线只有约 1 年，聚合出的周/月K根数会明显偏少。取数失败时回退到已缓存数据。
+  useEffect(() => {
+    if (klinePeriod === 'daily') return;
+    let cancelled = false;
+    setChartLoading(true);
+    setChartError(null);
+    (async () => {
+      const res = await priceBureau.fetchAndAbsorb(stock.code, klinePeriod, 'tencent', 'qfq');
+      if (cancelled) return;
+      const src = res.data?.klines?.length ? res.data.klines : priceBureau.getClosedKlines(stock.code, klinePeriod);
+      if (src?.length) {
+        setPeriodKlines([...src]
+          .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+          .map(k => ({ time: k.date, open: k.open, high: k.high, low: k.low, close: k.close })));
+      } else {
+        setPeriodKlines(null);
+        setChartError(res.error || '无K线数据');
+      }
+      setChartLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [stock.code, klinePeriod]);
+
   // 回测买卖点：运行回测后取 result.trades；否则用初始真实成交记录（initialTrades）让用户一打开就能看到图
   const demoMarkers = useMemo<TickSpec[]>(() => {
     const src = result?.trades?.length ? result.trades : initialTrades;
-    if (!src || !src.length) return [];
-    const priceOf = new Map<string, ChartCandle>(klines?.map(k => [k.time, k]) ?? []);
-    return src.map(t => {
-      const candle = priceOf.get(t.date);
-      return {
-        id: t.id, time: t.date,
-        anchorPrice: t.action === 'buy' ? (candle?.low ?? t.price) : (candle?.high ?? t.price),
+    if (!src || !src.length || !klines?.length) return [];
+    // 成交日期 → 所属 K 线：日K为精确匹配；周/月K取"时间戳 >= 成交日"的第一根，
+    // 即包含该成交日的周期（组内时间取的是该周期最后一个交易日）
+    const candleOf = (date: string): ChartCandle | undefined => {
+      let lo = 0, hi = klines.length - 1, ans: ChartCandle | undefined;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (klines[mid].time >= date) { ans = klines[mid]; hi = mid - 1; } else lo = mid + 1;
+      }
+      return ans ?? klines[klines.length - 1]; // 晚于末根的成交归到末根
+    };
+    const out: TickSpec[] = [];
+    for (const t of src) {
+      const candle = candleOf(t.date);
+      if (!candle) continue;
+      out.push({
+        id: t.id, time: candle.time,
+        anchorPrice: t.action === 'buy' ? candle.low : candle.high,
         action: t.action as 'buy' | 'sell',
-      };
-    });
+      });
+    }
+    return out;
   }, [result, initialTrades, klines]);
 
   // 预览：扫描所选（最多 2 个）标签在完整历史 K 线中的命中位置（含判定依据），预览态在图上画缩写块。
@@ -735,8 +1026,17 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       for (const r of (customTags || [])) {
         defOf.set(`user-${r.id}`, { key: `user-${r.id}`, abbr: r.name.slice(0, 2), color: customHex[r.color] ?? '#94a3b8' } as never);
       }
-      const highOf = new Map<string, number>(rawKlines?.map(k => [k.date, k.high]) ?? []);
-      const lowOf = new Map<string, number>(rawKlines?.map(k => [k.date, k.low]) ?? []);
+      // 标签命中日期 → 当前周期所在 K 线（周/月K下同一周期内的多次命中会落在同一根上）
+      const bars = klinesRef.current;
+      const barOf = (date: string): ChartCandle | undefined => {
+        if (!bars?.length) return undefined;
+        let lo = 0, hi = bars.length - 1, ans: ChartCandle | undefined;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (bars[mid].time >= date) { ans = bars[mid]; hi = mid - 1; } else lo = mid + 1;
+        }
+        return ans ?? bars[bars.length - 1]; // 晚于最后一根的成交归到末根（如当天成交而周K末根仍是上周）
+      };
       const sideOf = new Map(previewKeys.map((k, i) => [k, i === 0 ? 'top' : 'bottom']));
       // 规则自定义颜色：key( tagKey|envKey ) → rule.color；未设置则回退目录/标签默认色
       const keyColorOf = new Map<string, string>();
@@ -749,8 +1049,10 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
         if (!def) continue;
         const side: 'top' | 'bottom' = (sideOf.get(o.key) as 'top' | 'bottom') ?? 'top';
         // 上方锚 K 线 high、下方锚 K 线 low；y 存"方块中心"，渲染时按 side 定偏移
-        const anchor = side === 'top' ? highOf.get(o.date) : lowOf.get(o.date);
-        const x = ts.timeToCoordinate(o.date);
+        const bar = barOf(o.date);
+        if (!bar) continue;
+        const anchor = side === 'top' ? bar.high : bar.low;
+        const x = ts.timeToCoordinate(bar.time);
         const y = anchor != null ? series.priceToCoordinate(anchor) : null;
         if (x == null || y == null) continue;
         if (x + half > rightLimit) continue;
@@ -810,7 +1112,13 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       // 由 id 定位到对应成交记录，取其 time 换算 K 线逻辑位置并滚动到可视区
       const row = tradeRows.find(r => r.id === id);
       if (row) {
-        const idx = klines.findIndex(k => k.time === row.time);
+        // 成交日期 → 所在 K 线下标（周/月K取包含该日期的周期，即"时间 >= 成交日"的第一根）
+        let idx = -1;
+        let lo = 0, hi = klines.length - 1;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (klines[mid].time >= row.time) { idx = mid; hi = mid - 1; } else lo = mid + 1;
+        }
         if (idx >= 0) {
           const n = klines.length;
           ts.setVisibleLogicalRange({ from: Math.max(0, idx - 40), to: Math.min(n, idx + 20) });
@@ -1011,6 +1319,9 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       {/* 十字线悬浮：复用列表页"当日行情"浮窗，底部叠加当日命中信号 */}
       {displayQuote && (
         <PriceInfoPopover
+          innerRef={popoverRef}
+          interactive={!!pinnedQuote} // 未固定时鼠标穿透，保证浮窗不吞掉图表的悬停跟随
+          onTitlePointerDown={pinnedQuote ? onPinnedTitleDrag : undefined} // 固定后可拖标题栏挪位置
           name={displayQuote.name}
           date={displayQuote.win?.[displayQuote.idx]?.date}
           price={displayQuote.price}
@@ -1073,7 +1384,8 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
 
         {/* 内容：左策略 + 右图表 */}
         <div className="flex-1 flex overflow-hidden">
-          {/* 左：策略编辑（紧凑；移动端进一步收窄） */}
+          {/* 左：策略编辑（紧凑；移动端进一步收窄；可完全收起） */}
+          {!sidebarCollapsed && (
           <div className="w-[220px] max-md:w-[170px] shrink-0 border-r border-app-border flex flex-col overflow-hidden">
             <div className="px-2.5 py-2 border-b border-app-border space-y-2">
               <div className="flex items-center justify-between">
@@ -1228,44 +1540,50 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
               )}
             </div>
           </div>
+          )}
 
           {/* 右：K线图 + 统计 + 记录表 */}
           <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="px-3 py-1.5 border-b border-app-border flex items-center gap-4 text-xs flex-wrap shrink-0">
-              <Stat label="初始资金" value={result ? initialCapital.toLocaleString() : initialStats ? Math.round(initialStats.buyAmt).toLocaleString() : initialCapital.toLocaleString()} />
-              <Stat label="期末市值" value={result ? Math.round(result.finalValue).toLocaleString() : initialStats ? Math.round(initialStats.finalValue).toLocaleString() : '—'} />
-              <Stat label={result ? '总收益' : '投入收益率'} value={result ? `${result.totalReturnPct >= 0 ? '+' : ''}${result.totalReturnPct.toFixed(2)}%` : initialStats ? `${initialStats.totalReturnPct >= 0 ? '+' : ''}${initialStats.totalReturnPct.toFixed(2)}%` : '—'} className={(result ? result.totalReturnPct : initialStats?.totalReturnPct) !== undefined && (result?.totalReturnPct ?? initialStats?.totalReturnPct ?? 0) >= 0 ? 'text-brand-red' : 'text-green-500'} title={!result && initialStats ? `(期末市值 − 累计买入) / 累计买入` : undefined} />
-              {!result && initialStats && (
-                <Stat label="总收益额" value={`${(initialStats.finalValue - initialStats.buyAmt) >= 0 ? '+' : ''}${Math.round(initialStats.finalValue - initialStats.buyAmt).toLocaleString()}`} className={(initialStats.finalValue - initialStats.buyAmt) >= 0 ? 'text-brand-red' : 'text-green-500'} title={`期末市值 − 累计买入 = ${Math.round(initialStats.finalValue)} − ${Math.round(initialStats.buyAmt)}`} />
-              )}
-              {!result && initialStats && (
-                <>
-                  <Stat label="均价盈亏" value={`${initialStats.realizedAvg >= 0 ? '+' : ''}${Math.round(initialStats.realizedAvg).toLocaleString()}`} className={initialStats.realizedAvg >= 0 ? 'text-brand-red' : 'text-green-500'} title={`均价口径 已实现：${Math.round(initialStats.realizedAvg)}；浮动：${Math.round(initialStats.unrealizedAvg)}；合计：${Math.round(initialStats.realizedAvg + initialStats.unrealizedAvg)}（= 总收益额）`} />
-                  <Stat label="T操作" value={`${initialStats.realizedDt >= 0 ? '+' : ''}${Math.round(initialStats.realizedDt).toLocaleString()}`} className={initialStats.realizedDt >= 0 ? 'text-brand-red' : 'text-green-500'} title={`做T口径 已实现：${Math.round(initialStats.realizedDt)}；浮动：${Math.round(initialStats.unrealizedDt)}；合计：${Math.round(initialStats.realizedDt + initialStats.unrealizedDt)}（与均价口径合计相等，属数学恒等式）`} />
-                </>
-              )}
-              <Stat label="胜率" value={result ? `${(result.winRate * 100).toFixed(1)}%` : initialStats?.winRate != null ? `${(initialStats.winRate * 100).toFixed(1)}%` : '—'} />
-              <Stat label="最大回撤" value={result ? `-${result.maxDrawdownPct.toFixed(2)}%` : initialStats?.maxDrawdownPct != null ? `-${initialStats.maxDrawdownPct.toFixed(2)}%` : '—'} />
-              <Stat label="交易次数" value={result ? String(result.tradeCount) : initialStats ? String(initialStats.tradeCount) : '0'} />
-            </div>
-
-            {/* 指标控件条：切换均线/布林线 + 当前各指标值 */}
+            {/* 指标控件条：切换均线/布林线 + 当前各指标值（最左侧为策略编辑侧栏的收起/展开） */}
             <div className="px-3 py-1.5 border-b border-app-border flex items-center gap-2 text-xs shrink-0 overflow-x-auto custom-scrollbar">
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                className="shrink-0 flex items-center justify-center w-6 h-6 rounded-md text-app-subtext hover:text-indigo-400 hover:bg-app-input transition-colors"
+                title={sidebarCollapsed ? '展开策略编辑' : '收起策略编辑'}
+              >
+                <PanelLeft size={15} className={sidebarCollapsed ? 'opacity-60' : ''} />
+              </button>
               <div className="flex items-center rounded-md border border-app-border overflow-hidden shrink-0 bg-app-input/40">
                 <button
                   type="button"
                   onClick={() => setIndicatorMode('ma')}
-                  className={`px-2.5 py-1 font-medium transition-colors ${indicatorMode === 'ma' ? 'bg-app-text/10 text-app-text' : 'text-app-subtext hover:text-app-text'}`}
+                  className={`px-2.5 py-1 font-medium transition-colors ${indicatorMode === 'ma' ? 'bg-app-text/10 text-indigo-400' : 'text-app-subtext hover:text-app-text'}`}
                 >均线</button>
                 <span className="w-px h-4 bg-app-border self-center" />
                 <button
                   type="button"
                   onClick={() => setIndicatorMode('boll')}
-                  className={`px-2.5 py-1 font-medium transition-colors ${indicatorMode === 'boll' ? 'bg-app-text/10 text-app-text' : 'text-app-subtext hover:text-app-text'}`}
+                  className={`px-2.5 py-1 font-medium transition-colors ${indicatorMode === 'boll' ? 'bg-app-text/10 text-indigo-400' : 'text-app-subtext hover:text-app-text'}`}
                 >布林线</button>
               </div>
               {/* 缩放模式切换按钮：已移至图表右下角标尺位 */}
-              <span className="shrink-0 bg-app-text/5 rounded-md px-2 py-1 text-app-text font-mono">{indicatorMode === 'ma' ? '日线' : 'BOLL (20, 2)'}</span>
+              <div className="flex items-center rounded-md border border-app-border overflow-hidden shrink-0 bg-app-input/40">
+                {KLINE_PERIODS.map((p, i) => (
+                  <React.Fragment key={p.key}>
+                    {i > 0 && <span className="w-px h-4 bg-app-border self-center" />}
+                    <button
+                      type="button"
+                      onClick={() => setKlinePeriod(p.key)}
+                      className={`px-2.5 py-1 font-medium transition-colors ${klinePeriod === p.key ? 'bg-app-text/10 text-indigo-400' : 'text-app-subtext hover:text-app-text'}`}
+                      title={`${p.label}K`}
+                    >{p.label}</button>
+                  </React.Fragment>
+                ))}
+              </div>
+              {indicatorMode === 'boll' && (
+                <span className="shrink-0 bg-app-text/5 rounded-md px-2 py-1 text-app-text font-mono">BOLL (20, 2)</span>
+              )}
               {indicatorMode === 'ma' ? (
                 <div className="flex items-center gap-3 overflow-x-auto custom-scrollbar">
                   {MA_SPECS.map((spec, i) => (
@@ -1287,8 +1605,12 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
               )}
             </div>
 
-            {/* K线图：flex-grow 抢剩余大部分空间，表格靠 min-h + 自身滚动兜底，任何屏幕都可用 */}
-            <div className="relative flex-1 min-h-[150px]">
+            {/* K线图：默认 flex-grow 抢空间；拖拽下方分界线后使用固定高度 */}
+            <div
+              ref={chartWrapRef}
+              className={`relative min-h-[120px] ${effectiveChartHeight ? 'shrink-0' : 'flex-1'}`}
+              style={effectiveChartHeight ? { height: effectiveChartHeight } : undefined}
+            >
               <div
                 ref={chartRef}
                 className="absolute inset-0"
@@ -1454,9 +1776,39 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
               )}
             </div>
 
-            {/* 操作记录表：与上方图表各占一半高度（flex-1 均分），超高滚动 */}
-            <div className="border-t border-app-border overflow-y-auto custom-scrollbar flex-1 min-h-0">
-              <table className="w-full table-fixed text-xs font-mono text-app-subtext">
+            {/* 交易统计条：置于操作记录表顶部；上下分割线 + 浅色底，与图表区分 */}
+            <div ref={statsBarRef} className="relative px-3 py-1.5 border-y border-app-border bg-app-card flex items-center gap-4 text-xs flex-wrap shrink-0">
+              {/* 图表 / 统计条交界处的拖拽手柄：命中区 8px 以边框为中心，悬停显示渐隐紫线 */}
+              <div
+                onPointerDown={handleSplitPointerDown}
+                onPointerMove={handleSplitPointerMove}
+                onPointerUp={handleSplitPointerUp}
+                onPointerCancel={handleSplitPointerUp}
+                className="group absolute -top-1 left-0 right-0 z-10 h-2 cursor-row-resize touch-none select-none"
+                title="拖拽调整图表高度"
+              >
+                <div className="pointer-events-none absolute left-0 right-0 top-1/2 -translate-y-1/2 h-px bg-gradient-to-r from-transparent via-indigo-500/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+              <Stat label="初始资金" value={result ? initialCapital.toLocaleString() : initialStats ? Math.round(initialStats.buyAmt).toLocaleString() : initialCapital.toLocaleString()} />
+              <Stat label="期末市值" value={result ? Math.round(result.finalValue).toLocaleString() : initialStats ? Math.round(initialStats.finalValue).toLocaleString() : '—'} />
+              <Stat label={result ? '总收益' : '投入收益率'} value={result ? `${result.totalReturnPct >= 0 ? '+' : ''}${result.totalReturnPct.toFixed(2)}%` : initialStats ? `${initialStats.totalReturnPct >= 0 ? '+' : ''}${initialStats.totalReturnPct.toFixed(2)}%` : '—'} className={(result ? result.totalReturnPct : initialStats?.totalReturnPct) !== undefined && (result?.totalReturnPct ?? initialStats?.totalReturnPct ?? 0) >= 0 ? 'text-brand-red' : 'text-green-500'} title={!result && initialStats ? `(期末市值 − 累计买入) / 累计买入` : undefined} />
+              {!result && initialStats && (
+                <Stat label="总收益额" value={`${(initialStats.finalValue - initialStats.buyAmt) >= 0 ? '+' : ''}${Math.round(initialStats.finalValue - initialStats.buyAmt).toLocaleString()}`} className={(initialStats.finalValue - initialStats.buyAmt) >= 0 ? 'text-brand-red' : 'text-green-500'} title={`期末市值 − 累计买入 = ${Math.round(initialStats.finalValue)} − ${Math.round(initialStats.buyAmt)}`} />
+              )}
+              {!result && initialStats && (
+                <>
+                  <Stat label="均价盈亏" value={`${initialStats.realizedAvg >= 0 ? '+' : ''}${Math.round(initialStats.realizedAvg).toLocaleString()}`} className={initialStats.realizedAvg >= 0 ? 'text-brand-red' : 'text-green-500'} title={`均价口径 已实现：${Math.round(initialStats.realizedAvg)}；浮动：${Math.round(initialStats.unrealizedAvg)}；合计：${Math.round(initialStats.realizedAvg + initialStats.unrealizedAvg)}（= 总收益额）`} />
+                  <Stat label="T操作" value={`${initialStats.realizedDt >= 0 ? '+' : ''}${Math.round(initialStats.realizedDt).toLocaleString()}`} className={initialStats.realizedDt >= 0 ? 'text-brand-red' : 'text-green-500'} title={`做T口径 已实现：${Math.round(initialStats.realizedDt)}；浮动：${Math.round(initialStats.unrealizedDt)}；合计：${Math.round(initialStats.realizedDt + initialStats.unrealizedDt)}（与均价口径合计相等，属数学恒等式）`} />
+                </>
+              )}
+              <Stat label="胜率" value={result ? `${(result.winRate * 100).toFixed(1)}%` : initialStats?.winRate != null ? `${(initialStats.winRate * 100).toFixed(1)}%` : '—'} />
+              <Stat label="最大回撤" value={result ? `-${result.maxDrawdownPct.toFixed(2)}%` : initialStats?.maxDrawdownPct != null ? `-${initialStats.maxDrawdownPct.toFixed(2)}%` : '—'} />
+              <Stat label="交易次数" value={result ? String(result.tradeCount) : initialStats ? String(initialStats.tradeCount) : '0'} />
+            </div>
+
+            {/* 操作记录表：与上方图表各占一半高度（flex-1 均分），超高滚动；浅色底与图表区分 */}
+            <div className="overflow-y-auto custom-scrollbar flex-1 min-h-0 bg-app-card">
+              <table ref={tradeTableRef} className="w-full table-fixed text-xs font-mono text-app-subtext">
                 <colgroup>
                   <col />
                   <col />
@@ -1467,7 +1819,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                   <col />
                   <col style={{ width: '150px' }} />
                 </colgroup>
-                <thead className="sticky top-0 bg-app-bg border-b border-app-border z-10">
+                <thead className="sticky top-0 bg-app-card border-b border-app-border z-10">
                   <tr className="text-app-subtext text-[11px]">
                     <th
                       className="px-2 py-1.5 text-left cursor-pointer select-none hover:text-app-text transition-colors"
