@@ -2280,7 +2280,7 @@ const AnnualDividendChart = React.memo(function AnnualDividendChart({ stock }: {
 // 支撑/压力位浮窗中的一行：plain 为纯文本行，cell 为带名称的表格行（名称可着色，price 为该行对应价格）
 type SrRow =
   | { kind: 'plain'; text: string }
-  | { kind: 'cell'; name: string; color?: string; rest: string; price?: number };
+  | { kind: 'cell'; name: string; color?: string; opacity?: number; rest: string; price?: number };
 
 // 支撑/压力位弹窗的表格体 —— 单一实现：MA & BOLL 入口弹窗 与 列表/交易入口弹窗共用。
 // 组件自身不决定点击用途，只把点击到的价格 + 名称通过 onPriceClick 抛给调用方；
@@ -2299,7 +2299,7 @@ const SupportResistanceRows: React.FC<{
           <div
             key={i}
             className={`whitespace-pre rounded-sm${clickable ? ' cursor-pointer hover:bg-app-text/10 hover:underline transition-colors' : ''}`}
-            style={row.color ? { color: row.color } : undefined}
+            style={row.color ? { color: row.color, opacity: row.opacity } : (row.opacity ? { opacity: row.opacity } : undefined)}
             onMouseDown={clickable ? (e) => e.stopPropagation() : undefined}
             onClick={clickable ? () => onPriceClick!(row.price as number, row.name) : undefined}
           >
@@ -2775,21 +2775,27 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const resistances = sorted.filter(l => l.price > (stock.price || 0)).sort((a, b) => a.price - b.price).slice(0, 15).reverse();
     const supports = sorted.filter(l => l.price < (stock.price || 0)).sort((a, b) => b.price - a.price).slice(0, 15);
     const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
-    // 彩虹色（红橙黄绿青蓝紫）用于「日5」~「日250」标题
+    // 彩虹色（红橙黄绿青蓝紫）用于「日5」~「日250」标题；日500 不着色（保持默认灰）
     const maRainbow: Record<string, string> = {
       '5': '#ef4444', '10': '#f97316', '20': '#facc15',
       '30': '#22c55e', '60': '#06b6d4', '120': '#3b82f6', '250': '#8b5cf6',
     };
+    // 透明度按周期统一：凡是周均线 → 0.8，凡是月均线 → 0.6；日250/日500 → 0.6；BOLL 三轨不加透明度
+    const opacityForName = (name: string) => {
+      if (/^(日|周|月)(上|中|下)$/.test(name)) return undefined;
+      if (name.startsWith('周')) return 0.8;
+      if (name.startsWith('月')) return 0.6;
+      if (/^日(250|500)$/.test(name)) return 0.6;
+      return undefined;
+    };
     const colorForName = (name: string) => {
       const m = /^日(\d+)$/.exec(name);
       if (m) return maRainbow[m[1]];
-      // BOLL 三轨采用「双编码」：色相固定表达轨道（上红/中蓝/下绿），明度表达周期（日 100% / 周 70% / 月 45%），
-      // 与上面 MA 的「色相=周期」彩虹编码互不抢占语义
+      // BOLL 三轨：色相固定表达轨道（上红/中蓝/下绿），三轨不随周期淡出
       const b = /^(日|周|月)(上|中|下)$/.exec(name);
       if (b) {
         const bandRgb: Record<string, string> = { '上': '239, 68, 68', '中': '59, 130, 246', '下': '34, 197, 94' };
-        const periodAlpha: Record<string, number> = { '日': 1, '周': 0.8, '月': 0.6 };
-        return `rgba(${bandRgb[b[2]]}, ${periodAlpha[b[1]]})`;
+        return `rgb(${bandRgb[b[2]]})`;
       }
       return undefined;
     };
@@ -2798,14 +2804,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       const diff = r.price - (stock.price || 0);
       const pct = (diff / (stock.price || 1)) * 100;
       const diffStr = (diff >= 0 ? '+' : '') + formatPrice(diff, stock.name);
-      rows.push({ kind: 'cell', name: r.name, color: colorForName(r.name), price: r.price, rest: `\t${formatPrice(r.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` });
+      rows.push({ kind: 'cell', name: r.name, color: colorForName(r.name), opacity: opacityForName(r.name), price: r.price, rest: `\t${formatPrice(r.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` });
     }
     rows.push({ kind: 'cell', name: '现价', color: undefined, price: stock.price, rest: `\t${fmt(stock.price)}\t------\t------` });
     for (const s of supports) {
       const diff = s.price - (stock.price || 0);
       const pct = (diff / (stock.price || 1)) * 100;
       const diffStr = (diff >= 0 ? '+' : '') + formatPrice(diff, stock.name);
-      rows.push({ kind: 'cell', name: s.name, color: colorForName(s.name), price: s.price, rest: `\t${formatPrice(s.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` });
+      rows.push({ kind: 'cell', name: s.name, color: colorForName(s.name), opacity: opacityForName(s.name), price: s.price, rest: `\t${formatPrice(s.price, stock.name)}\t${diffStr}\t${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` });
     }
     rows.push({ kind: 'plain', text: '───────────────────────────────' });
     const text = rows.map(r => (r.kind === 'plain' ? r.text : r.name + r.rest)).join('\n');
@@ -6312,12 +6318,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       const streak = pos && pos.band !== 'mid' ? explain?.streak ?? 0 : 0;
                       // 数字 + 轨道标签 + 箭头位置统一由共享实现拼装（SSOT）：数字写在「日上/日下」前面
                       const parts = pos && display ? buildBollBandTextParts(key, pos.band, display, streak) : null;
-                      // 轨道自身价格：常驻展示（着色与首行标签一致）
+                      // 轨道自身价格：常驻展示，置于首行（着色与轨道标签一致）
                       const bandValue = pos && data ? (pos.band === 'upper' ? data.upper : pos.band === 'lower' ? data.lower : data.mid) : undefined;
                       const cellInner = pos ? (
                         <div className="flex flex-col items-center leading-tight">
                           <span className={`text-[11px] font-bold ${bandColor}`}>{parts?.streakText ? <span className="text-[10px] font-semibold mr-0.5">{parts.streakText}</span> : ''}{parts?.arrowBefore}{parts?.label}{parts?.arrowAfter}</span>
-                          {bandValue != null && <span className={`font-mono text-[10px] font-semibold ${bandColor}`}>{formatPrice(bandValue, stock.name)}</span>}
+                          {bandValue != null && <span className={`font-mono text-[10px] font-normal ${bandColor}`}>{formatPrice(bandValue, stock.name)}</span>}
                           <span className="font-mono text-[10px] text-app-rowtext">{percentStr}</span>
                         </div>
                       ) : null;
