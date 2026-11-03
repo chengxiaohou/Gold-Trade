@@ -15,6 +15,7 @@ import { getLedgerFromStore, saveLedgerToStore } from './services/stockLedgerSto
 import type { StockLedgerMap } from './services/stockLedgerStore';
 import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
+import { fetchLondonGoldUsdPerOz } from './services/londonGoldService';
 import { calcPositionFromTrades } from './services/realizedPnl';
 import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, splitFinancialsFromStocks, resolveMemoUpdatedAt, diffStockCloudSnapshots, diffGoldSnapshots, buildGoldFileFingerprint, buildStocksFileFingerprint, buildFinancialsFileFingerprint, diffFinancialsSnapshots, collectStockNamesFromSnapshot, normalizeFingerprint } from './services/stockSync';
 import type { CloudDiffItem } from './services/stockSync';
@@ -381,6 +382,9 @@ export default function App() {
   const [showFxModal, setShowFxModal] = useState(false);
   const [fxLoading, setFxLoading] = useState(false);
   const [fxError, setFxError] = useState<string | null>(null);
+  // 参考市价旁「拉取伦敦金价」的加载与错误状态
+  const [goldPriceLoading, setGoldPriceLoading] = useState(false);
+  const [goldPriceError, setGoldPriceError] = useState<string | null>(null);
 
   // 实际生效汇率：实时 > 缓存 > 手动设置
   const effectiveFxRate = fxRate > 0 ? fxRate : (appSettings.manualFxRate && appSettings.manualFxRate > 0 ? appSettings.manualFxRate : 0);
@@ -1084,6 +1088,25 @@ export default function App() {
     const nextVal = Math.max(0, currentVal + delta);
     const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(2);
     handleMarketPriceChange(nextStr);
+  };
+
+  // 拉取最新伦敦金价（美元/盎司），按现有换算规则转成人民币/克并填入参考市价
+  const refreshLondonGoldPrice = async () => {
+    if (goldPriceLoading) return;
+    setGoldPriceLoading(true);
+    setGoldPriceError(null);
+    try {
+      const usdPerOz = await fetchLondonGoldUsdPerOz();
+      // 汇率缺失时主动拉取；已有实时/缓存汇率则直接复用
+      const rate = effectiveFxRate > 0 ? effectiveFxRate : await fetchFxRate();
+      if (!(rate > 0)) throw new Error('汇率不可用');
+      const cnyPerGram = (usdPerOz / OZ_PER_GRAM) * rate;
+      handleMarketPriceChange(cnyPerGram.toFixed(2));
+    } catch (e) {
+      setGoldPriceError(e instanceof Error ? e.message : '伦敦金价获取失败');
+    } finally {
+      setGoldPriceLoading(false);
+    }
   };
 
   // Switch Order Type logic: keeps price and grams unchanged
@@ -2467,7 +2490,17 @@ export default function App() {
                           </div>
                       </div>
                       <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 focus-within:border-brand-yellow transition-colors">
-                          <span className="text-xs text-app-subtext block mb-1">参考市价 (元/克)</span>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs text-app-subtext">参考市价 (元/克)</span>
+                            <button
+                              onClick={refreshLondonGoldPrice}
+                              disabled={goldPriceLoading}
+                              title="拉取最新伦敦金价，换算为人民币后填入"
+                              className="text-app-subtext hover:text-brand-yellow transition-colors disabled:opacity-60 cursor-pointer select-none p-0.5"
+                            >
+                              <RefreshCw size={14} className={goldPriceLoading ? 'animate-spin' : ''} />
+                            </button>
+                          </div>
                           <div className="flex items-center">
                               <input 
                                   ref={marketPriceInputRef} 
@@ -2482,6 +2515,7 @@ export default function App() {
                                   <button onClick={() => updateMarketPrice(-appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronDown size={10} strokeWidth={3} /></button>
                               </div>
                           </div>
+                          {goldPriceError && <div className="text-[11px] text-orange-400 mt-1">{goldPriceError}</div>}
                       </div>
                   </div>
                </div>
