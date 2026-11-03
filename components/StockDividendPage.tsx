@@ -2660,15 +2660,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       setDivRateSortMode(prev => (prev === 'rate' ? 'ratio' : 'rate'));
     }
   };
-  // 成本列排序方向：false=成本下方盈亏%从高到低，true=从低到高，两档切换
-  const [costPctSortReverse, setCostPctSortReverse] = useState(false);
-  const handleCostPctSortClick = () => {
-    if (sortMode !== 'costPct') {
-      if (onSortModeChange) onSortModeChange('costPct');
-      setCostPctSortReverse(false);
-    } else {
-      setCostPctSortReverse(prev => !prev);
-    }
+  // 成本列展示口径：'cost'=持仓成本（移动加权），'breakeven'=回本价（扣除已实现盈亏后的盈亏平衡价）；点击表头切换
+  const [costDisplayMode, setCostDisplayMode] = useState<'cost' | 'breakeven'>(() => {
+    try { return localStorage.getItem('stock_cost_display_mode') === 'breakeven' ? 'breakeven' : 'cost'; } catch { return 'cost'; }
+  });
+  const toggleCostDisplayMode = () => {
+    setCostDisplayMode(prev => {
+      const next = prev === 'breakeven' ? 'cost' : 'breakeven';
+      try { localStorage.setItem('stock_cost_display_mode', next); } catch { /* 忽略 */ }
+      return next;
+    });
   };
   // 交易列排序方向：false=成交价相对现价涨跌%从高到低，true=从低到高，两档切换
   const [tradePctSortReverse, setTradePctSortReverse] = useState(false);
@@ -3869,17 +3870,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       return [...displayStocks].sort((a, b) => changePctSortReverse
         ? (a.changePercent || 0) - (b.changePercent || 0)
         : (b.changePercent || 0) - (a.changePercent || 0));
-    } else if (sortMode === 'costPct') {
-      // 成本列排序：按成本下方盈亏%(现价相对成本的涨跌)高低，两档切换；空成本/无价格股票始终排在最后
-      const costPct = (s: StockEntry): number | null =>
-        s.positionCost > 0 && (s.price || 0) > 0 ? ((s.price - s.positionCost) / s.positionCost) * 100 : null;
-      return [...displayStocks].sort((a, b) => {
-        const pa = costPct(a), pb = costPct(b);
-        if (pa == null && pb == null) return 0;
-        if (pa == null) return 1; // 空数据排最后
-        if (pb == null) return -1;
-        return costPctSortReverse ? pa - pb : pb - pa;
-      });
     } else if (sortMode === 'tradePct') {
       // 交易列排序：按成交价相对现价涨跌%(最新成交价相对现价的涨跌)高低，两档切换；无交易/无价格股票始终排在最后
       const tradePct = (s: StockEntry): number | null => {
@@ -3927,7 +3917,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       });
     }
     return displayStocks;
-  }, [displayStocks, sortMode, stockBollMap, bollSortReverse, changePctSortReverse, divRateSortMode, divRatePeriod, dailyChartRange, costPctSortReverse, tradePctSortReverse, positionAmountSortReverse]);
+  }, [displayStocks, sortMode, stockBollMap, bollSortReverse, changePctSortReverse, divRateSortMode, divRatePeriod, dailyChartRange, tradePctSortReverse, positionAmountSortReverse]);
 
   // 请求日志状态
   const [requestLogs, setRequestLogs] = useState<RequestLogEntry[]>([]);
@@ -5904,10 +5894,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </th>
                   <th
                     className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
-                    onClick={handleCostPctSortClick}
-                    title="点击切换排序：成本下方盈亏%高→低 / 低→高"
+                    onClick={toggleCostDisplayMode}
+                    title={costDisplayMode === 'breakeven' ? '当前显示回本价，点击切换为持仓成本' : '当前显示持仓成本，点击切换为回本价'}
                   >
-                    成本
+                    {costDisplayMode === 'breakeven' ? '回本' : '成本'}
                   </th>
                   <th
                     className="w-[64px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
@@ -6174,17 +6164,27 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const sharesText = shares > 0
                       ? `${Number.isInteger(shares) ? shares : shares.toFixed(2)}股`
                       : '-';
+                    // 展示口径：持仓成本 或 回本价（回本价 = (持仓成本 × 份额 − 已实现盈亏) / 份额）
+                    const realizedTotal = (() => {
+                      if (shares <= 0 || cost <= 0) return 0;
+                      const tradesOfStock = getTrades(stock);
+                      return pnlCalcMode === 'dt'
+                        ? calcDtPnlForTrades(tradesOfStock, taxEnabled, stock.name).total
+                        : calcAvgPnlForTrades(tradesOfStock, taxEnabled, stock.name).total;
+                    })();
+                    const breakEvenCost = shares > 0 && cost > 0 ? Math.max(0, (cost * shares - realizedTotal) / shares) : 0;
+                    const shownCost = costDisplayMode === 'breakeven' && breakEvenCost > 0 ? breakEvenCost : cost;
                     // 与列表其它价格列同口径：ETF 保留 3 位小数，股票 2 位
-                    const costText = cost > 0 ? formatPrice(cost, stock.name) : '-';
-                    const costColor = cost > 0 ? (cost > (stock.price || 0) ? 'text-brand-green' : 'text-brand-red') : 'text-app-subtext';
-                    const positionPct = cost > 0 && stock.price > 0 ? ((stock.price - cost) / cost) * 100 : 0;
-                    const positionPctStr = cost > 0 && stock.price > 0 ? `${positionPct >= 0 ? '+' : ''}${positionPct.toFixed(2)}%` : '';
+                    const costText = shownCost > 0 ? formatPrice(shownCost, stock.name) : '-';
+                    const costColor = shownCost > 0 ? (shownCost > (stock.price || 0) ? 'text-brand-green' : 'text-brand-red') : 'text-app-subtext';
+                    const positionPct = shownCost > 0 && stock.price > 0 ? ((stock.price - shownCost) / shownCost) * 100 : 0;
+                    const positionPctStr = shownCost > 0 && stock.price > 0 ? `${positionPct >= 0 ? '+' : ''}${positionPct.toFixed(2)}%` : '';
                     // 股息率差值：基于成本的股息率 - 基于现价的股息率
                     const costYield = dividend > 0 && cost > 0 ? (dividend / cost) * 100 : null;
                     const priceYield = dividend > 0 && (stock.price || 0) > 0 ? (dividend / (stock.price || 0)) * 100 : null;
                     const yieldDiff = costYield != null && priceYield != null ? costYield - priceYield : null;
                     const yieldDiffStr = yieldDiff != null ? `${yieldDiff >= 0 ? '+' : ''}${yieldDiff.toFixed(2)}%` : '';
-                    const showCostPct = cost > 0 && stock.price > 0;
+                    const showCostPct = shownCost > 0 && stock.price > 0;
                     const totalAmount = shares > 0 && cost > 0 ? `¥${Math.round(shares * cost).toLocaleString()}` : '-';
                     const hasPosition = shares > 0 || cost > 0;
                     // 仓位占比：本股票金额 / 分红页账户总资金（dividendTotalCapital），而非已投入持仓总额
@@ -8857,7 +8857,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         )}
       </div>
       )}
-      {showAccountPage && <StockAccountPage onClose={() => onCloseAccountPage?.()} />}
+      {showAccountPage && (
+        <StockAccountPage
+          onClose={() => onCloseAccountPage?.()}
+          stockCodes={stocks.map(s => s.code)}
+          stockNames={stocks.map(s => s.name)}
+          heldStockCodes={stocks.filter(s => calcPositionFromTrades(s.stockTrades || []).shares > 0).map(s => s.code)}
+          heldStockNames={stocks.filter(s => calcPositionFromTrades(s.stockTrades || []).shares > 0).map(s => s.name)}
+        />
+      )}
       {backtestStock && (
         <BacktestModal stock={backtestStock} onClose={() => setBacktestStock(null)} onPresetsDirty={onBacktestPresetsDirty} tagParams={tagParams} customTags={customTags} />
       )}

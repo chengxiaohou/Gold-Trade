@@ -1,11 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Upload, Trash2, FileSpreadsheet, Wallet, AlertTriangle, LogOut } from 'lucide-react';
+import { X, Upload, FileSpreadsheet, Wallet, AlertTriangle, LogOut, Eye, EyeOff } from 'lucide-react';
 import { parseXlsxFile } from '../services/xlsxLite';
 import type { SheetCell } from '../services/xlsxLite';
 
 interface StockAccountPageProps {
   onClose: () => void;
+  // 已添加的股票（股息率列表），用于按「已添加 / 未添加」过滤 Excel 行
+  stockCodes?: string[];
+  stockNames?: string[];
+  // 当前有持仓的股票（份额 > 0），用于「已持仓」过滤
+  heldStockCodes?: string[];
+  heldStockNames?: string[];
 }
+
+// 股票代码归一化：去空格/点号/后缀，兼容 601318.SH / SH601318 / 601318 等写法
+const normCode = (raw: string): string =>
+  raw.toUpperCase().replace(/[\s._\-]/g, '').replace(/^(SH|SZ|BJ)/, '').replace(/(SH|SZ|BJ)$/, '');
 
 interface AccountSheet {
   fileName: string;
@@ -107,7 +117,7 @@ const cellColor = (v: SheetCell | undefined, header: string): string => {
 const formatMoney = (n: number | null) =>
   n == null ? '-' : n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose }) => {
+export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, stockCodes, stockNames, heldStockCodes, heldStockNames }) => {
   const [sheet, setSheet] = useState<AccountSheet | null>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -167,19 +177,71 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose }) =
   };
 
   const headers = sheet?.headers || [];
+  // 展示列顺序：把「本金」与「持有金额（显示为市值）」交换位置，内部仍按原索引取值/合计
+  const visibleCols = useMemo(() => {
+    const cols = headers.map((h, i) => ({ h, i }));
+    const a = cols.findIndex(c => c.h === '持有金额');
+    const b = cols.findIndex(c => c.h === '本金');
+    if (a >= 0 && b >= 0) {
+      const tmp = cols[a];
+      cols[a] = cols[b];
+      cols[b] = tmp;
+    }
+    return cols;
+  }, [headers]);
   const rows = sheet?.rows || [];
-  const hasPrincipal = headers.includes('本金');
   const amountIdx = headers.indexOf('持有金额');
   const principalIdx = headers.indexOf('本金');
   const pnlIdx = headers.indexOf('持有盈亏');
   const todayPnlIdx = headers.indexOf('当日盈亏');
   const cumPnlIdx = headers.indexOf('累计盈亏');
 
+  // Excel 行过滤：all=全部 / added=我已添加过的 / notAdded=我还没添加的 / held=我当前有持仓的
+  const [filterMode, setFilterMode] = useState<'all' | 'added' | 'notAdded' | 'held'>('all');
+  // 小眼睛开关：被排除的行不计入底部合计（仅影响合计，不影响行数与过滤）
+  const [excludedRows, setExcludedRows] = useState<Set<number>>(new Set());
+  useEffect(() => { setExcludedRows(new Set()); }, [rows]);
+  const toggleRowExcluded = (ri: number) => {
+    setExcludedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(ri)) next.delete(ri); else next.add(ri);
+      return next;
+    });
+  };
+  const codeIdx = headers.indexOf('代码');
+  const nameIdx = headers.indexOf('名称') >= 0 ? headers.indexOf('名称') : headers.indexOf('股票名称');
+  const visibleRowList = useMemo(() => {
+    const withIdx = rows.map((row, ri) => ({ row, ri }));
+    if (filterMode === 'all') return withIdx;
+    const addedCodes = new Set<string>((stockCodes || []).map(c => normCode(c)));
+    const addedNames = new Set<string>((stockNames || []).map(n => n.trim()));
+    const heldCodes = new Set<string>((heldStockCodes || []).map(c => normCode(c)));
+    const heldNames = new Set<string>((heldStockNames || []).map(n => n.trim()));
+    const matches = (row: SheetCell[], codes: Set<string>, names: Set<string>) => {
+      const code = codeIdx >= 0 ? row[codeIdx] : null;
+      if (code != null && String(code).trim() !== '') return codes.has(normCode(String(code)));
+      const name = nameIdx >= 0 ? row[nameIdx] : null;
+      return name != null && names.has(String(name).trim());
+    };
+    return withIdx.filter(({ row }) => {
+      switch (filterMode) {
+        case 'added': return matches(row, addedCodes, addedNames);
+        case 'notAdded': return !matches(row, addedCodes, addedNames);
+        case 'held': return matches(row, heldCodes, heldNames);
+        default: return true;
+      }
+    });
+  }, [rows, filterMode, codeIdx, nameIdx, stockCodes, stockNames, heldStockCodes, heldStockNames]);
+  const rowsForTotals = useMemo(
+    () => visibleRowList.filter(v => !excludedRows.has(v.ri)).map(v => v.row),
+    [visibleRowList, excludedRows],
+  );
+
   const sumOf = (idx: number) => {
     if (idx < 0) return null;
     let total = 0;
     let has = false;
-    for (const row of rows) {
+    for (const row of rowsForTotals) {
       const v = toNum(row[idx]);
       if (v != null) { total += v; has = true; }
     }
@@ -192,15 +254,18 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose }) =
     pnl: sumOf(pnlIdx),
     todayPnl: sumOf(todayPnlIdx),
     cumPnl: sumOf(cumPnlIdx),
-  }), [rows, amountIdx, principalIdx, pnlIdx, todayPnlIdx, cumPnlIdx]);
+  }), [rowsForTotals, amountIdx, principalIdx, pnlIdx, todayPnlIdx, cumPnlIdx]);
 
-  const footnote = useMemo(() => {
-    if (!sheet || amountIdx < 0 || !hasPrincipal) return null;
-    return '“持有金额”= 持有数量 × 最新价，属于市值；已按“持有金额 − 持有盈亏”反推新增“本金”列（缺盈亏时用 持有数量 × 单位成本）。';
-  }, [sheet, amountIdx, hasPrincipal]);
-
-  const deleteRow = (idx: number) => {
-    setSheet(prev => prev ? { ...prev, rows: prev.rows.filter((_, i) => i !== idx) } : prev);
+  // 市值合计 / 持有金额合计按持有盈亏方向着色（盈红亏绿，零灰、缺失用默认色）
+  const profitCls = totals.pnl == null
+    ? 'text-app-text'
+    : (totals.pnl === 0 ? 'text-gray-500' : (totals.pnl > 0 ? 'text-brand-red' : 'text-brand-green'));
+  // 个股「市值」单元格：按该行持有盈亏方向着色（零灰、缺失用默认色）
+  const pnlCellCls = (v: SheetCell | null | undefined) => {
+    const n = toNum(v);
+    if (n == null) return '';
+    if (n === 0) return 'text-gray-500';
+    return n > 0 ? 'text-brand-red' : 'text-brand-green';
   };
 
   return (
@@ -289,24 +354,43 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose }) =
         ) : (
           <>
             <div className="shrink-0 flex items-center gap-x-4 gap-y-1 flex-wrap px-3 py-2 rounded-lg border border-app-border bg-app-card/70 text-[11px]">
-              <span className="text-app-subtext">市值合计 <b className="font-mono text-app-text text-xs">{formatMoney(totals.amount)}</b></span>
+              <div className="flex items-center gap-0.5 rounded-lg bg-app-input p-0.5 shrink-0">
+                {([
+                  { key: 'all', label: '全部' },
+                  { key: 'held', label: '已持仓' },
+                  { key: 'added', label: '已添加' },
+                  { key: 'notAdded', label: '未添加' },
+                ] as const).map(m => (
+                  <button
+                    key={m.key}
+                    type="button"
+                    onClick={() => setFilterMode(m.key)}
+                    className={`px-2 py-0.5 rounded-md text-[11px] transition-colors ${filterMode === m.key ? 'bg-app-card text-indigo-400 font-semibold shadow-sm' : 'text-app-subtext hover:text-app-text'}`}
+                    title={
+                      m.key === 'all' ? '展示 Excel 全部股票'
+                        : m.key === 'held' ? '只保留股息率列表中当前有持仓的股票'
+                        : m.key === 'added' ? '只保留股息率列表中已添加的股票'
+                        : '只保留股息率列表中尚未添加的股票'
+                    }
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
               <span className="text-app-subtext">本金合计 <b className="font-mono text-indigo-400 text-xs">{formatMoney(totals.principal)}</b></span>
+              <span className="text-app-subtext">市值合计 <b className={`font-mono text-xs ${profitCls}`}>{formatMoney(totals.amount)}</b></span>
               <span className="text-app-subtext">持有盈亏 <b className={`font-mono text-xs ${(totals.pnl ?? 0) >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{formatMoney(totals.pnl)}</b></span>
               <span className="text-app-subtext">当日盈亏 <b className={`font-mono text-xs ${(totals.todayPnl ?? 0) >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{formatMoney(totals.todayPnl)}</b></span>
               <span className="text-app-subtext">累计盈亏 <b className={`font-mono text-xs ${(totals.cumPnl ?? 0) >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>{formatMoney(totals.cumPnl)}</b></span>
             </div>
 
-            {footnote && (
-              <div className="shrink-0 px-1 text-[10px] leading-relaxed text-app-subtext">{footnote}</div>
-            )}
-
             <div className="flex-1 min-h-0 overflow-auto custom-scrollbar rounded-lg border border-app-border bg-app-card">
               <table className="text-[11px] border-separate border-spacing-0" style={{ tableLayout: 'fixed', width: 'max-content' }}>
                 <colgroup>
                   <col style={{ width: '40px' }} />
-                  {headers.map(h => (
+                  {visibleCols.map(({ h, i }) => (
                     <col
-                      key={h}
+                      key={`${h}-${i}`}
                       style={{ width: h.includes('名称') ? '86px' : h === '代码' ? '76px' : isPercentCol(h) ? '76px' : isPriceCol(h) || isQtyCol(h) ? '82px' : isMoneyCol(h) ? '96px' : '84px' }}
                     />
                   ))}
@@ -314,36 +398,38 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose }) =
                 <thead>
                   <tr>
                     <th className="sticky top-0 z-20 px-1 py-2 bg-app-input border-b border-app-border border-r border-app-border text-[10px] font-bold text-app-subtext whitespace-nowrap">操作</th>
-                    {headers.map(h => (
+                    {visibleCols.map(({ h, i }) => (
                       <th
-                        key={h}
+                        key={`${h}-${i}`}
                         className={`sticky top-0 z-10 px-2 py-2 bg-app-input border-b border-app-border border-r border-app-border text-[10px] font-bold whitespace-nowrap ${h === '本金' ? 'text-indigo-400' : 'text-app-subtext'}`}
-                        title={h === '本金' ? '本金 = 持有金额 − 持有盈亏（缺盈亏时用 持有数量 × 单位成本）' : h}
+                        title={h === '本金' ? '本金 = 市值 − 持有盈亏（缺盈亏时用 持有数量 × 单位成本）' : h === '持有金额' ? '市值 = 持有数量 × 最新价' : h}
                       >
-                        {h}
+                        {h === '持有金额' ? '市值' : h}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, ri) => (
-                    <tr key={ri} className="group hover:bg-app-hover transition-colors">
+                  {visibleRowList.map(({ row, ri }) => (
+                    <tr key={ri} className={`group hover:bg-app-hover transition-colors ${excludedRows.has(ri) ? 'opacity-40' : ''}`}>
                       <td className="px-1 py-1.5 border-b border-app-border border-r border-app-border text-center">
-                        <button
-                          type="button"
-                          onClick={() => deleteRow(ri)}
-                          className="p-0.5 rounded text-app-subtext/50 hover:text-brand-red hover:bg-app-text/5 transition-colors"
-                          title="删除该行"
-                        >
-                          <Trash2 size={12} />
-                        </button>
+                        <div className="flex items-center justify-center">
+                          <button
+                            type="button"
+                            onClick={() => toggleRowExcluded(ri)}
+                            className={`p-0.5 rounded transition-colors ${excludedRows.has(ri) ? 'text-gray-500' : 'text-app-subtext hover:bg-app-input'}`}
+                            title={excludedRows.has(ri) ? '已排除，不计入合计（点击恢复）' : '计入合计（点击排除）'}
+                          >
+                            {excludedRows.has(ri) ? <EyeOff size={12} /> : <Eye size={12} />}
+                          </button>
+                        </div>
                       </td>
-                      {headers.map((h, ci) => {
+                      {visibleCols.map(({ h, i: ci }) => {
                         const v = row[ci];
                         return (
                           <td
-                            key={h}
-                            className={`px-2 py-1.5 border-b border-app-border border-r border-app-border font-mono whitespace-nowrap ${h === '本金' ? 'text-indigo-400 font-bold' : cellColor(v, h) || 'text-app-rowtext'}`}
+                            key={`${h}-${ci}`}
+                            className={`px-2 py-1.5 border-b border-app-border border-r border-app-border font-mono whitespace-nowrap ${h === '本金' ? 'text-indigo-400 font-bold' : h === '持有金额' ? (pnlCellCls(pnlIdx >= 0 ? row[pnlIdx] : null) || 'text-app-rowtext') : cellColor(v, h) || 'text-app-rowtext'}`}
                             title={h === '本金' ? '本金 = 持有金额 − 持有盈亏' : undefined}
                           >
                             {formatCell(v, h)}
@@ -356,15 +442,15 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose }) =
                 <tfoot>
                   <tr>
                     <td className="sticky bottom-0 z-20 px-1 py-2 bg-app-input border-t border-app-border border-r border-app-border text-[10px] font-bold text-app-text text-center">合计</td>
-                    {headers.map((h, ci) => {
+                    {visibleCols.map(({ h, i: ci }, pos) => {
                       let content = '';
-                      if (ci === 0) content = `${rows.length} 只`;
+                      if (pos === 0) content = `${rowsForTotals.length} 只`;
                       else if (canSum(h)) content = formatCell(sumOf(ci), h);
                       return (
                         <td
-                          key={h}
+                          key={`${h}-${ci}`}
                           className={`sticky bottom-0 z-10 px-2 py-2 bg-app-input border-t border-app-border border-r border-app-border font-mono font-bold whitespace-nowrap ${
-                            h === '本金' ? 'text-indigo-400' : canSum(h) ? cellColor(sumOf(ci), h) || 'text-app-text' : 'text-app-subtext'
+                            h === '本金' ? 'text-indigo-400' : h === '持有金额' ? profitCls : canSum(h) ? cellColor(sumOf(ci), h) || 'text-app-text' : 'text-app-subtext'
                           }`}
                         >
                           {content}
