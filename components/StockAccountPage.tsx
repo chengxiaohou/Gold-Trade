@@ -99,7 +99,9 @@ const formatCell = (v: SheetCell | undefined, header: string): string => {
   if (header === '代码') return String(v);
   if (isPercentCol(header)) {
     const pct = v * 100;
-    return `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+    // 仓位占比只展示比例，不加正号；涨幅/率等涨跌口径仍保留正负号
+    const sign = pct > 0 && !/占比/.test(header) ? '+' : '';
+    return `${sign}${pct.toFixed(2)}%`;
   }
   if (isPriceCol(header)) return v.toLocaleString('zh-CN', { maximumFractionDigits: 3 });
   if (isQtyCol(header)) return v.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
@@ -177,15 +179,25 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
   };
 
   const headers = sheet?.headers || [];
-  // 展示列顺序：把「本金」与「持有金额（显示为市值）」交换位置，内部仍按原索引取值/合计
+  // 展示列顺序：交换「本金」与「持有金额（显示为市值）」；并把「持有数量」「仓位占比」移到名称列右侧
   const visibleCols = useMemo(() => {
-    const cols = headers.map((h, i) => ({ h, i }));
+    let cols = headers.map((h, i) => ({ h, i }));
     const a = cols.findIndex(c => c.h === '持有金额');
     const b = cols.findIndex(c => c.h === '本金');
     if (a >= 0 && b >= 0) {
       const tmp = cols[a];
       cols[a] = cols[b];
       cols[b] = tmp;
+    }
+    // 数量/占比两列整体后移到名称之后（相对顺序保持不变）
+    const movables = cols.filter(c => c.h === '持有数量' || /占比/.test(c.h));
+    const namePos = cols.findIndex(c => c.h.includes('名称'));
+    if (namePos >= 0 && movables.length) {
+      const movableIdx = new Set(movables.map(m => m.i));
+      const rest = cols.filter(c => !movableIdx.has(c.i));
+      const restNamePos = rest.findIndex(c => c.h.includes('名称'));
+      rest.splice(restNamePos + 1, 0, ...movables);
+      cols = rest;
     }
     return cols;
   }, [headers]);
@@ -391,7 +403,7 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
                   {visibleCols.map(({ h, i }) => (
                     <col
                       key={`${h}-${i}`}
-                      style={{ width: h.includes('名称') ? '86px' : h === '代码' ? '76px' : isPercentCol(h) ? '76px' : isPriceCol(h) || isQtyCol(h) ? '82px' : isMoneyCol(h) ? '96px' : '84px' }}
+                      style={{ width: h.includes('名称') ? '86px' : h === '代码' ? '76px' : /占比/.test(h) ? '58px' : isPercentCol(h) ? '76px' : h === '持有数量' ? '62px' : isPriceCol(h) || isQtyCol(h) ? '82px' : isMoneyCol(h) ? '96px' : '84px' }}
                     />
                   ))}
                 </colgroup>
