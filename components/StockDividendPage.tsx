@@ -2782,7 +2782,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     };
     const colorForName = (name: string) => {
       const m = /^日(\d+)$/.exec(name);
-      return m ? maRainbow[m[1]] : undefined;
+      if (m) return maRainbow[m[1]];
+      // BOLL 三轨采用「双编码」：色相固定表达轨道（上红/中蓝/下绿），明度表达周期（日 100% / 周 70% / 月 45%），
+      // 与上面 MA 的「色相=周期」彩虹编码互不抢占语义
+      const b = /^(日|周|月)(上|中|下)$/.exec(name);
+      if (b) {
+        const bandRgb: Record<string, string> = { '上': '239, 68, 68', '中': '59, 130, 246', '下': '34, 197, 94' };
+        const periodAlpha: Record<string, number> = { '日': 1, '周': 0.8, '月': 0.6 };
+        return `rgba(${bandRgb[b[2]]}, ${periodAlpha[b[1]]})`;
+      }
+      return undefined;
     };
     const rows: SrRow[] = [];
     for (const r of resistances) {
@@ -6303,9 +6312,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       const streak = pos && pos.band !== 'mid' ? explain?.streak ?? 0 : 0;
                       // 数字 + 轨道标签 + 箭头位置统一由共享实现拼装（SSOT）：数字写在「日上/日下」前面
                       const parts = pos && display ? buildBollBandTextParts(key, pos.band, display, streak) : null;
+                      // 轨道自身价格：常驻展示（着色与首行标签一致）
+                      const bandValue = pos && data ? (pos.band === 'upper' ? data.upper : pos.band === 'lower' ? data.lower : data.mid) : undefined;
                       const cellInner = pos ? (
                         <div className="flex flex-col items-center leading-tight">
                           <span className={`text-[11px] font-bold ${bandColor}`}>{parts?.streakText ? <span className="text-[10px] font-semibold mr-0.5">{parts.streakText}</span> : ''}{parts?.arrowBefore}{parts?.label}{parts?.arrowAfter}</span>
+                          {bandValue != null && <span className={`font-mono text-[10px] font-semibold ${bandColor}`}>{formatPrice(bandValue, stock.name)}</span>}
                           <span className="font-mono text-[10px] text-app-rowtext">{percentStr}</span>
                         </div>
                       ) : null;
