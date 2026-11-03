@@ -285,7 +285,7 @@ const BollStreakTip: React.FC<Props> = ({ explain, pos, period, fmtPrice, childr
     <>
       <span
         ref={triggerRef}
-        className="inline-flex flex-col items-center w-full select-none"
+        className="flex flex-col items-center w-full select-none"
         onPointerDown={startLongPress}
         onPointerUp={cancelPressTimer}
         onPointerLeave={cancelPressTimer}
