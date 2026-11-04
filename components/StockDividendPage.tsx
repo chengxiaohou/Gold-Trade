@@ -151,10 +151,11 @@ interface EditTagBubbleProps {
   initialPosition: { top: number, left: number };
   tagColors: Record<string, string>;
   onTagColorChange: (tag: string, colorKey: string) => void;
+  centered?: boolean; // 遮罩模式：居中显示并限制在安全区域内，同时禁用拖拽
 }
 
 const EditTagBubble: React.FC<EditTagBubbleProps> = ({ 
-  stock, availableTags, onUpdate, onClose, initialPosition, tagColors, onTagColorChange 
+  stock, availableTags, onUpdate, onClose, initialPosition, tagColors, onTagColorChange, centered = false
 }) => {
   const initialSnapshot = useRef({
     tag: stock.tag || '',
@@ -175,7 +176,7 @@ const EditTagBubble: React.FC<EditTagBubbleProps> = ({
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!bubbleRef.current) return;
+    if (!bubbleRef.current || centered) return;
     e.preventDefault();
     e.stopPropagation();
     const rect = bubbleRef.current.getBoundingClientRect();
@@ -217,7 +218,16 @@ const EditTagBubble: React.FC<EditTagBubbleProps> = ({
       <div 
         ref={bubbleRef}
         className="fixed z-[9999] bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl w-80 flex flex-col overflow-hidden text-app-text"
-        style={{ top: position.top, left: position.left }}
+        style={centered
+          ? {
+              left: '50%',
+              top: '50%',
+              transform: 'translate(-50%, -50%)',
+              width: 'min(320px, calc(100vw - 24px))',
+              maxHeight: 'calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
+              overflowY: 'auto',
+            }
+          : { top: position.top, left: position.left }}
       >
         <div 
           onPointerDown={handlePointerDown}
@@ -276,6 +286,7 @@ interface StockDividendPageProps {
   onMaxWidthChange?: (width: number) => void; // 拖拽列表右边缘时回写"列表最大宽度"设置
   autoRefreshInterval?: number; // 股价自动刷新间隔（秒），0=关闭；设备本地设置
   divRateHoverEnabled?: boolean; // 股息率弹窗是否支持鼠标悬浮显示；设备本地设置，不上传云端
+  popupBackdropEnabled?: boolean; // 移动端弹窗背景遮罩开关；设备本地设置，不上传云端
   actionButtons?: React.ReactNode;
   appVersion?: string;
   onTogglePage?: () => void;
@@ -2332,7 +2343,7 @@ const sortStocksByTag = (list: StockEntry[]): StockEntry[] =>
     return (a.tag || '').trim().localeCompare((b.tag || '').trim());
   });
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, divRateHoverEnabled = false, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
   useEffect(() => {
     const id = 'profit-month-scroller-style';
@@ -4071,6 +4082,32 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     try { localStorage.setItem('stock_request_log_panel_open', showLogPanel ? '1' : '0'); } catch {}
   }, [showLogPanel]);
 
+  // 移动端判定：触屏设备（pointer: coarse）或窄屏（<768px）均视为移动端
+  const isMobileLike = () => {
+    try {
+      return window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(max-width: 767px)').matches;
+    } catch { return false; }
+  };
+  const isCoarsePointerNow = () => {
+    try { return window.matchMedia('(pointer: coarse)').matches; } catch { return false; }
+  };
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(isMobileLike);
+  const [isCoarsePointer, setIsCoarsePointer] = useState<boolean>(isCoarsePointerNow);
+  useEffect(() => {
+    const mqCoarse = window.matchMedia('(pointer: coarse)');
+    const mqNarrow = window.matchMedia('(max-width: 767px)');
+    const onChange = () => {
+      setIsMobileViewport(isMobileLike());
+      setIsCoarsePointer(isCoarsePointerNow());
+    };
+    mqCoarse.addEventListener?.('change', onChange);
+    mqNarrow.addEventListener?.('change', onChange);
+    return () => {
+      mqCoarse.removeEventListener?.('change', onChange);
+      mqNarrow.removeEventListener?.('change', onChange);
+    };
+  }, []);
+
   // 底部栏是 fixed 覆盖层：实时量取它的实际高度，回写到页面底部留白，
   // 这样收起/展开（请求日志面板）时列表区高度都会跟着变化，页面本身始终不滚动。
   const bottomBarRef = useRef<HTMLDivElement | null>(null);
@@ -5136,6 +5173,79 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     positionInfoStock?.id === stockId ||
     tradeInfoStock?.id === stockId;
 
+  // 弹窗背景遮罩：点击遮罩统一关闭列表页所有单元格弹窗
+  const closeAllListPopups = useCallback(() => {
+    priceInfoHoveredRef.current = false;
+    priceInfoActiveIdRef.current = undefined;
+    setPriceInfoPinned(false);
+    setPriceInfoStock(null);
+    setPriceInfoData(null);
+    setPriceInfoLoading(false);
+    positionInfoHoveredRef.current = false;
+    positionInfoActiveIdRef.current = undefined;
+    setPositionInfoPinned(false);
+    setPositionInfoStock(null);
+    closeDivRateInfo();
+    closeMktInfo();
+    listSrHoveredRef.current = false;
+    listSrActiveIdRef.current = undefined;
+    setListSrTooltipPinned(false);
+    setListSrPreviewText(null);
+    setListSrPreviewRows(null);
+    setListSrStock(null);
+    setListSrPricePickTo(null);
+    // 股息率九宫格/BOLL 详情弹窗（BOLL 三列单元格点击打开）
+    setShowRatesId(null);
+    // 标签编辑浮窗（标签列单元格点击打开）
+    setEditTagState(null);
+    closeTradeInfo();
+    setTradeSimpleStock(null);
+  }, [closeDivRateInfo, closeMktInfo, closeTradeInfo]);
+
+  // 列表中当前可见的单元格弹窗（含触摸点按经 mouseenter 打开、未固定的情况）
+  const hasVisibleListPopup = !!(
+    mktInfoStock ||
+    divRateInfoStock ||
+    priceInfoStock ||
+    (listSrPreviewText && listSrStock) ||
+    positionInfoStock ||
+    tradeInfoStock ||
+    tradeSimpleStock ||
+    showRatesId ||
+    editTagState
+  );
+  // 点击固定态的弹窗
+  const hasPinnedListPopup = !!(
+    (mktInfoPinned && mktInfoStock) ||
+    (divRateInfoPinned && divRateInfoStock) ||
+    (priceInfoPinned && priceInfoStock) ||
+    (listSrTooltipPinned && listSrPreviewText && listSrStock) ||
+    (positionInfoPinned && positionInfoStock) ||
+    (tradeInfoPinned && tradeInfoStock)
+  );
+  // 触屏设备没有真正的悬停：以“当前可见弹窗”为准，价格/涨跌幅等经 mouseenter 打开的弹窗也能有遮罩；
+  // 鼠标设备只用固定态，避免遮罩盖住单元格后触发 mouseleave 造成弹窗反复开关
+  const hasBackdropPopup = isCoarsePointer ? hasVisibleListPopup : hasPinnedListPopup;
+
+  // 遮罩与弹窗同帧出现；仅对出现后的极短时间内的点按做忽略，
+  // 避免打开弹窗的同一次点按落在遮罩上又把弹窗关掉（弹窗本身层级高于遮罩，不受影响）
+  const backdropClickGuardRef = useRef(0);
+  useEffect(() => {
+    if (hasBackdropPopup) backdropClickGuardRef.current = Date.now() + 400;
+  }, [hasBackdropPopup]);
+
+  // 遮罩模式：弹窗统一在屏幕中心显示，高度限制在浏览器安全区域内，超出时内部滚动
+  const backdropMode = !!(popupBackdropEnabled && isMobileViewport);
+  const centeredPopupStyle = (width?: number): React.CSSProperties => ({
+    left: '50%',
+    top: '50%',
+    transform: 'translate(-50%, -50%)',
+    maxHeight: 'calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
+    ...(width != null ? { width: `min(${width}px, calc(100vw - 24px))` } : {}),
+  });
+
   // 交易浮窗可拖拽（拖画画头部）——参考黄金项目 EditBubble，改用 window 级指针监听，
   // 不依赖 pointer capture，避免捕获残留导致拖拽后点击空白无法关闭
   const tradeDragOffset = useRef({ x: 0, y: 0 });
@@ -5709,7 +5819,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   return (
     <div
       className="flex flex-col gap-3 w-full h-full min-h-0"
-      style={{ paddingBottom: bottomBarH > 0 ? bottomBarH + 2 : 0 }}
+      style={{ paddingBottom: bottomBarH > 0 ? bottomBarH + 16 : 14 }}
     >
       <div className="shrink-0 flex justify-center -mb-2.5">
         <div className="w-full flex items-end gap-2 md:gap-3" style={{ maxWidth: effectiveMaxWidth }}>
@@ -6879,6 +6989,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           initialPosition={{ top: editTagState.top, left: editTagState.left }}
           tagColors={tagColors}
           onTagColorChange={handleTagColorChange}
+          centered={backdropMode}
         />
       )}
 
@@ -6967,13 +7078,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <div 
               ref={ratesPopupRef}
               className="fixed z-50 bg-app-card border border-app-border rounded-lg shadow-xl w-[340px] flex flex-col"
-              style={{ top: ratesPopupPos.top, left: ratesPopupPos.left, maxHeight: window.innerHeight * 2 / 3 }}
+              style={backdropMode
+                ? { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: 'min(340px, calc(100vw - 24px))', maxHeight: 'calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))' }
+                : { top: ratesPopupPos.top, left: ratesPopupPos.left, maxHeight: window.innerHeight * 2 / 3 }}
             >
               <div className="shrink-0">
                 <StockLinkTitleBar
                   title={stock.name}
                   link={stock.link}
-                  onPointerDown={ratesDrag.onPointerDown}
+                  onPointerDown={backdropMode ? undefined : ratesDrag.onPointerDown}
                   onSaveLink={(v) => onStocksChange(stocks.map(s => s.id === stock.id ? { ...s, link: v } : s))}
                   onClose={() => setShowRatesId(null)}
                 />
@@ -7052,12 +7165,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     <div
                       ref={srTooltipRef}
                       className="fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg overflow-hidden text-[11px] shadow-[0_8px_30px_rgba(0,0,0,0.55)] text-left flex flex-col"
-                      style={{ top: srTooltipAbove, left: srTooltipOffset, tabSize: 8, maxHeight: 'calc(100vh - 20px)' }}
+                      style={backdropMode
+                        ? { ...centeredPopupStyle(), maxWidth: 'calc(100vw - 24px)', tabSize: 8 }
+                        : { top: srTooltipAbove, left: srTooltipOffset, tabSize: 8, maxHeight: 'calc(100vh - 20px)' }}
                     >
                       <PopoverTitleBar
                         title={stock.name}
                         date={srPreviewDate}
-                        onPointerDown={srDrag.onPointerDown}
+                        onPointerDown={backdropMode ? undefined : srDrag.onPointerDown}
                         right={<>
                         <button
                           onClick={(e) => {
@@ -7546,6 +7661,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         document.body
       )}
 
+      {/* 移动端弹窗背景遮罩：与弹窗同帧出现，点击遮罩关闭全部单元格弹窗 */}
+      {popupBackdropEnabled && isMobileViewport && hasBackdropPopup && (
+        <div
+          className="fixed inset-0 z-[45] bg-black/60"
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (Date.now() < backdropClickGuardRef.current) return;
+            closeAllListPopups();
+          }}
+        />
+      )}
+
       {/* 列表页价格技术指标弹窗 */}
       {priceInfoStock && (
         <PriceInfoPopover
@@ -7616,7 +7745,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div
             ref={positionInfoRef}
             className="fixed z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden"
-            style={{ top: positionInfoPos.top, left: positionInfoPos.left, width: 220 }}
+            style={backdropMode ? centeredPopupStyle(220) : { top: positionInfoPos.top, left: positionInfoPos.left, width: 220 }}
             onMouseEnter={() => { positionInfoHoveredRef.current = true; }}
             onMouseLeave={handlePositionInfoFloatLeave}
           >
@@ -7713,13 +7842,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div
             ref={tradeInfoRef}
             className={`fixed z-[60] bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl overflow-hidden text-app-text ${tradeInfoSettled ? '' : 'pointer-events-none'}`}
-            style={{ top: tradeInfoPos.top, left: tradeInfoPos.left, width: 324, opacity: tradeInfoSettled ? 1 : 0, transform: tradeInfoSettled ? 'none' : 'translate(0,0)' }}
+            style={backdropMode
+              ? { ...centeredPopupStyle(324), opacity: tradeInfoSettled ? 1 : 0 }
+              : { top: tradeInfoPos.top, left: tradeInfoPos.left, width: 324, opacity: tradeInfoSettled ? 1 : 0, transform: tradeInfoSettled ? 'none' : 'translate(0,0)' }}
           >
             {/* 可拖拽头部（复用 StockLinkTitleBar，与股票详情弹窗同一实现） */}
             <StockLinkTitleBar
               title={s.name}
               link={s.link}
-              onPointerDown={handleTradeDragStart}
+              onPointerDown={backdropMode ? undefined : handleTradeDragStart}
               onSaveLink={(v) => onStocksChange(stocks.map(x => x.id === s.id ? { ...x, link: v } : x))}
               onClose={closeTradeInfo}
             />
@@ -7957,7 +8088,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div
             ref={tradeSimpleRef}
             className="fixed z-[59] bg-app-card border border-app-border rounded-lg px-2 py-2 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] text-app-text"
-            style={{ top: tradeSimplePos.top, left: tradeSimplePos.left, width: 324 }} // 宽度与交易窗口一致，保证备注完整展示
+            style={backdropMode ? centeredPopupStyle(324) : { top: tradeSimplePos.top, left: tradeSimplePos.left, width: 324 }} // 宽度与交易窗口一致，保证备注完整展示
             onMouseEnter={cancelTradeSimpleClose}
             onMouseLeave={scheduleTradeSimpleClose}
           >
@@ -8073,7 +8204,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div
             ref={mktInfoRef}
             className="fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden"
-            style={{ top: mktInfoPos.top, left: mktInfoPos.left, width: 260, scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+            style={backdropMode
+              ? { ...centeredPopupStyle(260), scrollbarWidth: 'none', msOverflowStyle: 'none' }
+              : { top: mktInfoPos.top, left: mktInfoPos.left, width: 260, scrollbarWidth: 'none', msOverflowStyle: 'none' }}
             onTouchStart={handleMktInfoTouchStart}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={() => setMktSelPinned(false)}
@@ -8082,7 +8215,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             <PopoverTitleBar
               title={mktInfoStock.name}
               date={envDate}
-              onPointerDown={handleMktDragStart}
+              onPointerDown={backdropMode ? undefined : handleMktDragStart}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
               right={<>
@@ -8213,7 +8346,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           ref={divRateInfoRef}
           onMouseLeave={handleDivRateInfoLeave}
           className="fixed z-[59] bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-y-auto custom-scrollbar"
-          style={{ top: divRateInfoPos.top, left: divRateInfoPos.left, width: 360, maxHeight: divRateInfoPos.maxHeight, transform: 'translateY(-50%)' }}
+          style={backdropMode
+            ? centeredPopupStyle(360)
+            : { top: divRateInfoPos.top, left: divRateInfoPos.left, width: 360, maxHeight: divRateInfoPos.maxHeight, transform: 'translateY(-50%)' }}
         >
           <div className="relative px-7 py-1.5 border-b border-app-border bg-app-input flex items-center justify-center">
             <span className="text-[11px] font-bold text-app-subtext truncate">{divRateInfoStock.name}</span>
@@ -8304,12 +8439,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           }}
           onMouseLeave={() => handleListSrHoverLeave()}
           className={`fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg overflow-hidden text-[11px] shadow-[0_8px_30px_rgba(0,0,0,0.55)] text-left flex flex-col ${listSrTooltipHidden ? ' invisible' : ''}`}
-          style={{ top: listSrTooltipAbove, left: listSrTooltipOffset, tabSize: 8, maxHeight: 'calc(100vh - 20px)' }}
+          style={backdropMode
+            ? { ...centeredPopupStyle(), maxWidth: 'calc(100vw - 24px)', tabSize: 8 }
+            : { top: listSrTooltipAbove, left: listSrTooltipOffset, tabSize: 8, maxHeight: 'calc(100vh - 20px)' }}
         >
           <PopoverTitleBar
             title={listSrStock.name}
             date={listSrPreviewDate}
-            onPointerDown={listSrDrag.onPointerDown}
+            onPointerDown={backdropMode ? undefined : listSrDrag.onPointerDown}
             right={<>
           <button
             onClick={(e) => {

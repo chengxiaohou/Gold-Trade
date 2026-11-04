@@ -171,6 +171,8 @@ interface CloudSettingsModalProps {
   initialTab?: 'general' | 'cloud' | 'tagmanage';
   divRateHoverEnabled?: boolean; // 股息率弹窗悬浮显示；设备本地设置，不写入 stockSettings/云端
   onDivRateHoverEnabledChange?: (v: boolean) => void;
+  popupBackdropEnabled?: boolean; // 移动端弹窗背景遮罩；设备本地设置，不写入 stockSettings/云端
+  onPopupBackdropEnabledChange?: (v: boolean) => void;
   theme?: 'dark' | 'light';
   onToggleTheme?: () => void;
   onResetStockData?: () => void;
@@ -187,6 +189,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   initialTab = 'general',
   divRateHoverEnabled = false,
   onDivRateHoverEnabledChange,
+  popupBackdropEnabled = false,
+  onPopupBackdropEnabledChange,
   theme = 'dark',
   onToggleTheme,
   onResetStockData,
@@ -1094,6 +1098,24 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                         className={`shrink-0 relative inline-flex items-center w-11 h-6 rounded-full transition-colors ${divRateHoverEnabled ? 'bg-indigo-500' : 'bg-app-border'}`}
                       >
                         <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${divRateHoverEnabled ? 'translate-x-5' : ''}`} />
+                      </button>
+                    </div>
+                  )}
+
+                  {currentPage === 'stock' && (
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm text-app-text">弹窗背景遮罩</div>
+                        <div className="text-xs text-app-subtext">移动端点击单元格弹窗后显示遮罩，点击遮罩关闭弹窗</div>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={!!popupBackdropEnabled}
+                        onClick={() => onPopupBackdropEnabledChange?.(!popupBackdropEnabled)}
+                        className={`shrink-0 relative inline-flex items-center w-11 h-6 rounded-full transition-colors ${popupBackdropEnabled ? 'bg-indigo-500' : 'bg-app-border'}`}
+                      >
+                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${popupBackdropEnabled ? 'translate-x-5' : ''}`} />
                       </button>
                     </div>
                   )}

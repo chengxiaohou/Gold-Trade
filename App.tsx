@@ -22,7 +22,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.222';
+const APP_VERSION = 'v2.18.229';
 
 // 上传文件大小的展示格式（UTF-8 字节数 → B/KB/MB）
 function formatByteSize(bytes: number): string {
@@ -440,6 +440,14 @@ export default function App() {
   const changeDivRateHoverEnabled = (v: boolean) => {
     setDivRateHoverEnabled(v);
     try { localStorage.setItem('divRateHoverEnabled', v ? '1' : '0'); } catch { /* 忽略 */ }
+  };
+  // 移动端弹窗背景遮罩开关：设备本地持久化，不进入 stockSettings、不上传云端
+  const [popupBackdropEnabled, setPopupBackdropEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem('popupBackdropEnabled') === '1'; } catch { return false; }
+  });
+  const changePopupBackdropEnabled = (v: boolean) => {
+    setPopupBackdropEnabled(v);
+    try { localStorage.setItem('popupBackdropEnabled', v ? '1' : '0'); } catch { /* 忽略 */ }
   };
   const [settingsDefaultTab, setSettingsDefaultTab] = useState<'general' | 'cloud'>('general');
   const [isSyncing, setIsSyncing] = useState(false);
@@ -2317,6 +2325,8 @@ export default function App() {
         initialTab={settingsDefaultTab}
         divRateHoverEnabled={divRateHoverEnabled}
         onDivRateHoverEnabledChange={changeDivRateHoverEnabled}
+        popupBackdropEnabled={popupBackdropEnabled}
+        onPopupBackdropEnabledChange={changePopupBackdropEnabled}
         theme={theme}
         onToggleTheme={toggleTheme}
         onResetStockData={() => setStockResetSignal(s => s + 1)}
@@ -2863,6 +2873,7 @@ export default function App() {
             onMaxWidthChange={(width) => setStockSettings(prev => ({ ...prev, maxWidth: width }))}
             autoRefreshInterval={stockSettings.autoRefreshInterval ?? 60}
             divRateHoverEnabled={divRateHoverEnabled}
+            popupBackdropEnabled={popupBackdropEnabled}
             actionButtons={renderStockActionButtons()}
             appVersion={APP_VERSION}
             onTogglePage={togglePage}
