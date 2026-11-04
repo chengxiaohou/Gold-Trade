@@ -434,7 +434,10 @@ const TRADE_STATUS_LABEL: Record<string, string> = {
   'buy-pending': '挂买', 'sell-pending': '挂卖',
   'buy-filled': '买入', 'sell-filled': '卖出',
 };
-const tradeStatusColor = (t: StockTrade) => t.status === 'pending' ? 'text-orange-400' : (t.side === 'buy' ? 'text-brand-red' : 'text-brand-green');
+// 状态文字颜色：挂单过期（带 ? 标记）用灰色，其余挂单橙色、成交按买卖红绿
+const tradeStatusColor = (t: StockTrade, now = Date.now()) => t.status === 'pending'
+  ? (pendingExpirySuffix(t, now) === '?' ? 'text-gray-500' : 'text-orange-400')
+  : (t.side === 'buy' ? 'text-brand-red' : 'text-brand-green');
 
 // 备注「网格」文本的单一实现：交易弹窗备注输入框 onFocus 自动填充 与 支撑/压力位价格行点击回填共用，
 // 改联动规则（股息率口径 / 文本格式 / 名称拼接）只改这里，两个入口自动同步。
@@ -1176,7 +1179,11 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
                   onToggle(t);
                 }
               }}
-              className={`shrink-0 text-[8px] px-1 py-px rounded-full border font-bold cursor-pointer ${t.status === 'pending' ? 'text-orange-400 border-orange-400/40 bg-orange-400/10' : t.side === 'buy' ? 'text-brand-red border-brand-red/40 bg-brand-red/10' : 'text-brand-green border-brand-green/40 bg-brand-green/10'}`}
+              className={`shrink-0 text-[8px] px-1 py-px rounded-full border font-bold cursor-pointer ${t.status === 'pending'
+                ? (pendingExpirySuffix(t, Date.now()) === '?'
+                  ? 'text-gray-500 border-app-border bg-app-text/5'
+                  : 'text-orange-400 border-orange-400/40 bg-orange-400/10')
+                : t.side === 'buy' ? 'text-brand-red border-brand-red/40 bg-brand-red/10' : 'text-brand-green border-brand-green/40 bg-brand-green/10'}`}
             >
               {tradeStatusLabel(t)}
             </button>
@@ -2671,14 +2678,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       return next;
     });
   };
-  // 交易列排序方向：false=成交价相对现价涨跌%从高到低，true=从低到高，两档切换
-  const [tradePctSortReverse, setTradePctSortReverse] = useState(false);
+  // 交易列排序：三档循环 —— 1=挂卖/挂买在前（按离成交的远近），2=买单在前（红色幅度大在前），3=卖单在前（绿色盈利幅度大在前）
+  const [tradePctSortState, setTradePctSortState] = useState<1 | 2 | 3>(1);
   const handleTradePctSortClick = () => {
     if (sortMode !== 'tradePct') {
       if (onSortModeChange) onSortModeChange('tradePct');
-      setTradePctSortReverse(false);
+      setTradePctSortState(1);
     } else {
-      setTradePctSortReverse(prev => !prev);
+      setTradePctSortState(prev => (prev === 3 ? 1 : (prev + 1) as 1 | 2 | 3));
     }
   };
   // 仓位列排序方向：false=持仓总金额从大到小，true=从小到大，两档切换
@@ -3871,20 +3878,47 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         ? (a.changePercent || 0) - (b.changePercent || 0)
         : (b.changePercent || 0) - (a.changePercent || 0));
     } else if (sortMode === 'tradePct') {
-      // 交易列排序：按成交价相对现价涨跌%(最新成交价相对现价的涨跌)高低，两档切换；无交易/无价格股票始终排在最后
-      const tradePct = (s: StockEntry): number | null => {
+      // 交易列三档排序：1=挂卖在前、挂买其次（涨跌幅绝对值越小越接近成交，越靠前）；
+      // 2=已成交买单在前（红色正向幅度越大越靠前）；3=已成交卖单在前（负得越多越靠前）
+      // 非主组也不再保持原顺序：按各组的固有规则（挂单看接近成交、买单看红色幅度、卖单看负数幅度）排在主组之后
+      const tradeInfo = (s: StockEntry): { group: 'pendingSell' | 'pendingBuy' | 'filledBuy' | 'filledSell' | 'none'; diff: number | null } => {
         const trades = s.stockTrades || [];
         const ordinary = trades.filter(t => !t.isMerged);
         const latest = ordinary.length ? [...ordinary].sort((a, b) => b.createdAt - a.createdAt)[0] : null;
-        if (!latest || latest.price <= 0 || (s.price || 0) <= 0) return null;
-        return ((s.price - latest.price) / latest.price) * 100;
+        if (!latest) return { group: 'none', diff: null };
+        const diff = latest.price > 0 && (s.price || 0) > 0
+          ? ((s.price - latest.price) / latest.price) * 100
+          : null;
+        const group = latest.status === 'pending'
+          ? (latest.side === 'sell' ? 'pendingSell' : 'pendingBuy')
+          : latest.status === 'filled'
+            ? (latest.side === 'buy' ? 'filledBuy' : 'filledSell')
+            : 'none';
+        return { group, diff };
+      };
+      // 每组固有的组内比较：挂单看离成交的远近（绝对值升序）、买单看红色幅度（降序）、卖单看负数幅度（升序）
+      const cmpInGroup = (group: string, da: number | null, db: number | null): number => {
+        if (da == null && db == null) return 0;
+        if (da == null) return 1; // 无价格数据组内排最后
+        if (db == null) return -1;
+        if (group === 'pendingSell' || group === 'pendingBuy') return Math.abs(da) - Math.abs(db);
+        if (group === 'filledBuy') return db - da;
+        if (group === 'filledSell') return da - db; // 负得越多越靠前
+        return 0;
+      };
+      // 三档分别决定主组顺序，其余组按固有规则接力排在其后
+      const groupOrder: Record<string, number> = {
+        pendingSell: tradePctSortState === 1 ? 0 : tradePctSortState === 2 ? 1 : 2,
+        pendingBuy: tradePctSortState === 1 ? 1 : tradePctSortState === 2 ? 2 : 3,
+        filledBuy: tradePctSortState === 1 ? 2 : tradePctSortState === 2 ? 0 : 4,
+        filledSell: tradePctSortState === 1 ? 3 : tradePctSortState === 2 ? 4 : 0,
+        none: 5,
       };
       return [...displayStocks].sort((a, b) => {
-        const pa = tradePct(a), pb = tradePct(b);
-        if (pa == null && pb == null) return 0;
-        if (pa == null) return 1; // 空数据排最后
-        if (pb == null) return -1;
-        return tradePctSortReverse ? pa - pb : pb - pa;
+        const ia = tradeInfo(a), ib = tradeInfo(b);
+        const ga = groupOrder[ia.group] ?? 5, gb = groupOrder[ib.group] ?? 5;
+        if (ga !== gb) return ga - gb;
+        return cmpInGroup(ia.group, ia.diff, ib.diff);
       });
     } else if (sortMode === 'positionAmount') {
       // 仓位列排序：按持仓总金额(份额×成本)高低，两档切换；无持仓股票始终排在最后
@@ -3917,7 +3951,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       });
     }
     return displayStocks;
-  }, [displayStocks, sortMode, stockBollMap, bollSortReverse, changePctSortReverse, divRateSortMode, divRatePeriod, dailyChartRange, tradePctSortReverse, positionAmountSortReverse]);
+  }, [displayStocks, sortMode, stockBollMap, bollSortReverse, changePctSortReverse, divRateSortMode, divRatePeriod, dailyChartRange, tradePctSortState, positionAmountSortReverse]);
 
   // 请求日志状态
   const [requestLogs, setRequestLogs] = useState<RequestLogEntry[]>([]);
@@ -5909,7 +5943,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   <th
                     className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors"
                     onClick={handleTradePctSortClick}
-                    title="点击切换排序：成交价涨跌%高→低 / 低→高"
+                    title="点击切换排序：挂单在前 / 买单在前 / 卖单在前"
                   >
                     交易
                   </th>
