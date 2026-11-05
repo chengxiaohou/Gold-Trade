@@ -11,6 +11,8 @@ interface StockAccountPageProps {
   // 当前有持仓的股票（份额 > 0），用于「已持仓」过滤
   heldStockCodes?: string[];
   heldStockNames?: string[];
+  // 与 heldStockCodes/heldStockNames 一一对应的记账持仓份额，用于核对 Excel 的「持有数量」
+  heldStockShares?: number[];
 }
 
 // 股票代码归一化：去空格/点号/后缀，兼容 601318.SH / SH601318 / 601318 等写法
@@ -119,7 +121,7 @@ const cellColor = (v: SheetCell | undefined, header: string): string => {
 const formatMoney = (n: number | null) =>
   n == null ? '-' : n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, stockCodes, stockNames, heldStockCodes, heldStockNames }) => {
+export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, stockCodes, stockNames, heldStockCodes, heldStockNames, heldStockShares }) => {
   const [sheet, setSheet] = useState<AccountSheet | null>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -208,8 +210,8 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
   const todayPnlIdx = headers.indexOf('当日盈亏');
   const cumPnlIdx = headers.indexOf('累计盈亏');
 
-  // Excel 行过滤：all=全部 / added=我已添加过的 / notAdded=我还没添加的 / held=我当前有持仓的
-  const [filterMode, setFilterMode] = useState<'all' | 'added' | 'notAdded' | 'held'>('all');
+  // Excel 行过滤：all=全部 / held=我当前有持仓的 / notHeld=我当前没持仓的 / added=我已添加过的 / notAdded=我还没添加的
+  const [filterMode, setFilterMode] = useState<'all' | 'held' | 'notHeld' | 'added' | 'notAdded'>('all');
   // 小眼睛开关：被排除的行不计入底部合计（仅影响合计，不影响行数与过滤）
   const [excludedRows, setExcludedRows] = useState<Set<number>>(new Set());
   useEffect(() => { setExcludedRows(new Set()); }, [rows]);
@@ -222,6 +224,40 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
   };
   const codeIdx = headers.indexOf('代码');
   const nameIdx = headers.indexOf('名称') >= 0 ? headers.indexOf('名称') : headers.indexOf('股票名称');
+  // 记账持仓份额（代码 / 名称双索引），用于核对 Excel 的「持有数量」
+  const heldSharesByCode = useMemo(() => {
+    const m = new Map<string, number>();
+    (heldStockCodes || []).forEach((c, i) => {
+      const s = heldStockShares?.[i];
+      if (s != null) m.set(normCode(c), s);
+    });
+    return m;
+  }, [heldStockCodes, heldStockShares]);
+  const heldSharesByName = useMemo(() => {
+    const m = new Map<string, number>();
+    (heldStockNames || []).forEach((n, i) => {
+      const s = heldStockShares?.[i];
+      if (s != null) m.set(n.trim(), s);
+    });
+    return m;
+  }, [heldStockNames, heldStockShares]);
+  const bookSharesFor = (row: SheetCell[]): number | null => {
+    if (codeIdx >= 0) {
+      const code = row[codeIdx];
+      if (code != null && String(code).trim() !== '') {
+        const v = heldSharesByCode.get(normCode(String(code)));
+        if (v != null) return v;
+      }
+    }
+    if (nameIdx >= 0) {
+      const name = row[nameIdx];
+      if (name != null) {
+        const v = heldSharesByName.get(String(name).trim());
+        if (v != null) return v;
+      }
+    }
+    return null;
+  };
   const visibleRowList = useMemo(() => {
     const withIdx = rows.map((row, ri) => ({ row, ri }));
     if (filterMode === 'all') return withIdx;
@@ -240,6 +276,7 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
         case 'added': return matches(row, addedCodes, addedNames);
         case 'notAdded': return !matches(row, addedCodes, addedNames);
         case 'held': return matches(row, heldCodes, heldNames);
+        case 'notHeld': return !matches(row, heldCodes, heldNames);
         default: return true;
       }
     });
@@ -370,6 +407,7 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
                 {([
                   { key: 'all', label: '全部' },
                   { key: 'held', label: '已持仓' },
+                  { key: 'notHeld', label: '未持仓' },
                   { key: 'added', label: '已添加' },
                   { key: 'notAdded', label: '未添加' },
                 ] as const).map(m => (
@@ -381,6 +419,7 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
                     title={
                       m.key === 'all' ? '展示 Excel 全部股票'
                         : m.key === 'held' ? '只保留股息率列表中当前有持仓的股票'
+                        : m.key === 'notHeld' ? '只保留股息率列表中当前没有持仓的股票'
                         : m.key === 'added' ? '只保留股息率列表中已添加的股票'
                         : '只保留股息率列表中尚未添加的股票'
                     }
@@ -438,13 +477,18 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
                       </td>
                       {visibleCols.map(({ h, i: ci }) => {
                         const v = row[ci];
+                        // 「已持仓」视图下核对持有数量：与记账份额不一致时标黄，并附上记账数量
+                        const bookShares = h === '持有数量' && filterMode === 'held' ? bookSharesFor(row) : null;
+                        const sheetQty = toNum(v);
+                        const mismatch = bookShares != null && sheetQty != null && Math.abs(sheetQty - bookShares) > 1e-6 ? bookShares : null;
                         return (
                           <td
                             key={`${h}-${ci}`}
-                            className={`px-2 py-1.5 border-b border-app-border border-r border-app-border font-mono whitespace-nowrap ${h === '本金' ? 'text-indigo-400 font-bold' : h === '持有金额' ? (pnlCellCls(pnlIdx >= 0 ? row[pnlIdx] : null) || 'text-app-rowtext') : cellColor(v, h) || 'text-app-rowtext'}`}
-                            title={h === '本金' ? '本金 = 持有金额 − 持有盈亏' : undefined}
+                            className={`px-2 py-1.5 border-b border-app-border border-r border-app-border font-mono whitespace-nowrap ${mismatch != null ? 'text-brand-softYellow' : h === '本金' ? 'text-indigo-400 font-bold' : h === '持有金额' ? (pnlCellCls(pnlIdx >= 0 ? row[pnlIdx] : null) || 'text-app-rowtext') : cellColor(v, h) || 'text-app-rowtext'}`}
+                            title={mismatch != null ? `Excel 持有数量与记账持仓不一致，记账为 ${mismatch.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}` : h === '本金' ? '本金 = 持有金额 − 持有盈亏' : undefined}
                           >
                             {formatCell(v, h)}
+                            {mismatch != null && <span> ({mismatch.toLocaleString('zh-CN', { maximumFractionDigits: 2 })})</span>}
                           </td>
                         );
                       })}

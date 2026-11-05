@@ -9029,15 +9029,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         )}
       </div>
       )}
-      {showAccountPage && (
-        <StockAccountPage
-          onClose={() => onCloseAccountPage?.()}
-          stockCodes={stocks.map(s => s.code)}
-          stockNames={stocks.map(s => s.name)}
-          heldStockCodes={stocks.filter(s => calcPositionFromTrades(s.stockTrades || []).shares > 0).map(s => s.code)}
-          heldStockNames={stocks.filter(s => calcPositionFromTrades(s.stockTrades || []).shares > 0).map(s => s.name)}
-        />
-      )}
+      {showAccountPage && (() => {
+        // 记账持仓（份额 > 0），代码/名称/份额三列一一对应，供 Excel 页核对「持有数量」
+        const held = stocks
+          .map(s => ({ code: s.code, name: s.name, shares: calcPositionFromTrades(s.stockTrades || []).shares }))
+          .filter(h => h.shares > 0);
+        return (
+          <StockAccountPage
+            onClose={() => onCloseAccountPage?.()}
+            stockCodes={stocks.map(s => s.code)}
+            stockNames={stocks.map(s => s.name)}
+            heldStockCodes={held.map(h => h.code)}
+            heldStockNames={held.map(h => h.name)}
+            heldStockShares={held.map(h => h.shares)}
+          />
+        );
+      })()}
       {backtestStock && (
         <BacktestModal stock={backtestStock} onClose={() => setBacktestStock(null)} onPresetsDirty={onBacktestPresetsDirty} tagParams={tagParams} customTags={customTags} />
       )}
