@@ -1,7 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X, Upload, FileSpreadsheet, Wallet, AlertTriangle, LogOut, Eye, EyeOff } from 'lucide-react';
 import { parseXlsxFile } from '../services/xlsxLite';
-import type { SheetCell } from '../services/xlsxLite';
+import type { ParsedSheet, SheetCell } from '../services/xlsxLite';
+import { calcPositionFromTrades } from '../services/realizedPnl';
+import type { StockTrade } from '../types';
+import { PopoverTitleBar, usePopoverDrag } from './PriceInfoPopover';
 
 interface StockAccountPageProps {
   onClose: () => void;
@@ -13,11 +16,27 @@ interface StockAccountPageProps {
   heldStockNames?: string[];
   // 与 heldStockCodes/heldStockNames 一一对应的记账持仓份额，用于核对 Excel 的「持有数量」
   heldStockShares?: number[];
+  // 项目记账的逐笔交易记录（按股票），用于差异浮窗对照展示
+  stockTradeInfo?: { code: string; name: string; trades: StockTrade[] }[];
 }
 
 // 股票代码归一化：去空格/点号/后缀，兼容 601318.SH / SH601318 / 601318 等写法
 const normCode = (raw: string): string =>
   raw.toUpperCase().replace(/[\s._\-]/g, '').replace(/^(SH|SZ|BJ)/, '').replace(/(SH|SZ|BJ)$/, '');
+
+// Excel「交易记录」工作表里的一行
+interface ExcelTradeRecord {
+  date: string;      // 成交日期（YYYY-MM-DD）
+  time: string;      // 成交时间（可能为空）
+  code: string;
+  name: string;
+  category: string;  // 买入 / 卖出 / 银行转存 …
+  shares: number | null;
+  price: number | null;
+  amount: number | null;
+  fee: number | null;
+  note: string;
+}
 
 interface AccountSheet {
   fileName: string;
@@ -25,6 +44,114 @@ interface AccountSheet {
   headers: string[];
   rows: SheetCell[][];
   updatedAt: number;
+  // Excel 文件中的「交易记录」工作表（第三个表），没有则为空
+  trades?: ExcelTradeRecord[];
+}
+
+// 从「交易记录」工作表解析成结构化记录
+const parseTradeSheet = (headers: string[], rows: SheetCell[][]): ExcelTradeRecord[] => {
+  const idx = (name: string) => headers.findIndex(h => h.trim() === name);
+  const di = idx('成交日期'), ti = idx('成交时间'), ci = idx('代码'), ni = idx('名称');
+  const ki = idx('交易类别'), si = idx('成交数量'), pi = idx('成交价格');
+  const ai = idx('成交金额'), fi = idx('费用'), mi = idx('备注');
+  if (di < 0 || ki < 0) return [];
+  return rows
+    .map(row => ({
+      date: String(row[di] ?? '').trim(),
+      time: ti >= 0 ? String(row[ti] ?? '').trim() : '',
+      code: ci >= 0 ? String(row[ci] ?? '').trim() : '',
+      name: ni >= 0 ? String(row[ni] ?? '').trim() : '',
+      category: String(row[ki] ?? '').trim(),
+      shares: si >= 0 ? toNum(row[si]) : null,
+      price: pi >= 0 ? toNum(row[pi]) : null,
+      amount: ai >= 0 ? toNum(row[ai]) : null,
+      fee: fi >= 0 ? toNum(row[fi]) : null,
+      note: mi >= 0 ? String(row[mi] ?? '').trim() : '',
+    }))
+    .filter(t => t.date !== '' && t.category !== '');
+};
+
+// 对账用的一行交易（项目记账 / Excel 两侧统一口径）
+interface TradeLine {
+  date: string;               // YYYY-MM-DD
+  time: string;               // HH:mm
+  side: 'buy' | 'sell';
+  label: string;              // 买入 / 卖出 / 挂买 / 挂卖
+  shares: number | null;
+  price: number | null;
+  amount: number | null;
+  pending?: boolean;
+}
+
+// 逐行 diff 结果：same=一致，del=仅项目，ins=仅 Excel，change=两侧都有但字段有差异
+type DiffRow = {
+  kind: 'same' | 'del' | 'ins' | 'change';
+  left?: TradeLine;
+  right?: TradeLine;
+  fieldDiffs?: string[];      // change 时哪些字段不一致（shares/price/amount/date）
+};
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const dateOf = (ts: number) => {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+};
+const timeOf = (ts: number) => {
+  const d = new Date(ts);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+
+// 两侧行键：日期 + 方向 + 数量 + 价格（时间不参与匹配，Excel 与记账时间口径不同）
+const tradeLineKey = (l: TradeLine) =>
+  `${l.date}|${l.side}|${l.shares ?? ''}|${l.price != null ? l.price.toFixed(3) : ''}`;
+
+// 逐行对齐（LCS），再把相邻的“仅项目/仅Excel”配成 change 行，方便像 git diff 一样看差异
+function diffTradeLines(left: TradeLine[], right: TradeLine[]): DiffRow[] {
+  const n = left.length, m = right.length;
+  const ka = left.map(tradeLineKey), kb = right.map(tradeLineKey);
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = ka[i] === kb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const base: DiffRow[] = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (ka[i] === kb[j]) { base.push({ kind: 'same', left: left[i], right: right[j] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { base.push({ kind: 'del', left: left[i] }); i++; }
+    else { base.push({ kind: 'ins', right: right[j] }); j++; }
+  }
+  while (i < n) { base.push({ kind: 'del', left: left[i] }); i++; }
+  while (j < m) { base.push({ kind: 'ins', right: right[j] }); j++; }
+
+  // 成对的删除/新增 → change（逐字段标记差异）
+  const out: DiffRow[] = [];
+  let k = 0;
+  while (k < base.length) {
+    if (base[k].kind === 'del') {
+      const dels: TradeLine[] = [];
+      while (k < base.length && base[k].kind === 'del') { if (base[k].left) dels.push(base[k].left!); k++; }
+      const inss: TradeLine[] = [];
+      while (k < base.length && base[k].kind === 'ins') { if (base[k].right) inss.push(base[k].right!); k++; }
+      const cnt = Math.max(dels.length, inss.length);
+      for (let x = 0; x < cnt; x++) {
+        const l = dels[x], r = inss[x];
+        if (l && r) {
+          const fieldDiffs: string[] = [];
+          if (l.date !== r.date) fieldDiffs.push('date');
+          if ((l.shares ?? null) !== (r.shares ?? null)) fieldDiffs.push('shares');
+          if (l.price == null || r.price == null ? l.price !== r.price : Math.abs(l.price - r.price) > 0.0005) fieldDiffs.push('price');
+          if (l.amount == null || r.amount == null ? l.amount !== r.amount : Math.abs(l.amount - r.amount) > 0.01) fieldDiffs.push('amount');
+          out.push({ kind: 'change', left: l, right: r, fieldDiffs });
+        } else if (l) out.push({ kind: 'del', left: l });
+        else if (r) out.push({ kind: 'ins', right: r });
+      }
+    } else if (base[k].kind === 'ins') {
+      while (k < base.length && base[k].kind === 'ins') { out.push(base[k]); k++; }
+    } else { out.push(base[k]); k++; }
+  }
+  return out;
 }
 
 const STORAGE_KEY = 'stock_account_sheet_v1';
@@ -121,7 +248,7 @@ const cellColor = (v: SheetCell | undefined, header: string): string => {
 const formatMoney = (n: number | null) =>
   n == null ? '-' : n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, stockCodes, stockNames, heldStockCodes, heldStockNames, heldStockShares }) => {
+export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, stockCodes, stockNames, heldStockCodes, heldStockNames, heldStockShares, stockTradeInfo }) => {
   const [sheet, setSheet] = useState<AccountSheet | null>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -166,12 +293,17 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
       const parsed = await parseXlsxFile(file);
       const withPrincipal = withPrincipalColumn(parsed.headers, parsed.rows);
       const ordered = reorderColumns(withPrincipal.headers, withPrincipal.rows);
+      // 交易记录：优先按名称找，找不到则取第三张表
+      const tradeSheet: ParsedSheet | undefined = parsed.sheets.find(s => s.sheetName === '交易记录')
+        || parsed.sheets[2];
+      const trades = tradeSheet ? parseTradeSheet(tradeSheet.headers, tradeSheet.rows) : [];
       setSheet({
         fileName: file.name,
         sheetName: parsed.sheetName,
         headers: ordered.headers,
         rows: ordered.rows,
         updatedAt: Date.now(),
+        trades,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : '解析失败，请检查文件');
@@ -257,6 +389,56 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
       }
     }
     return null;
+  };
+  // 项目记账交易记录（代码 / 名称双索引）
+  const tradesByCode = useMemo(() => {
+    const m = new Map<string, StockTrade[]>();
+    (stockTradeInfo || []).forEach(info => m.set(normCode(info.code), info.trades || []));
+    return m;
+  }, [stockTradeInfo]);
+  const tradesByName = useMemo(() => {
+    const m = new Map<string, StockTrade[]>();
+    (stockTradeInfo || []).forEach(info => m.set(info.name.trim(), info.trades || []));
+    return m;
+  }, [stockTradeInfo]);
+  const tradesFor = (row: SheetCell[]): StockTrade[] => {
+    if (codeIdx >= 0) {
+      const code = row[codeIdx];
+      if (code != null && String(code).trim() !== '') {
+        const v = tradesByCode.get(normCode(String(code)));
+        if (v) return v;
+      }
+    }
+    if (nameIdx >= 0) {
+      const name = row[nameIdx];
+      if (name != null && String(name).trim() !== '') {
+        const v = tradesByName.get(String(name).trim());
+        if (v) return v;
+      }
+    }
+    return [];
+  };
+  // 差异浮窗：点击标黄的持有数量时展开，展示项目记账与 Excel 的对账明细
+  const [diffPopover, setDiffPopover] = useState<{ row: SheetCell[]; ri: number; pos: { top: number; left: number } } | null>(null);
+  // 浮窗标题栏拖拽：与支撑/压力位弹窗共用同一套实现
+  const diffPopoverRef = useRef<HTMLDivElement | null>(null);
+  // setter 必须保持引用稳定，否则拖动时 usePopoverDrag 的 effect 会在每次刷新时移除监听，表现为“只能拖一点”
+  const setDiffTop = useCallback((top: number) => {
+    setDiffPopover(p => (p ? { ...p, pos: { ...p.pos, top } } : p));
+  }, []);
+  const setDiffLeft = useCallback((left: number) => {
+    setDiffPopover(p => (p ? { ...p, pos: { ...p.pos, left } } : p));
+  }, []);
+  const diffDrag = usePopoverDrag(diffPopoverRef, setDiffTop, setDiffLeft);
+  const openDiffPopover = (row: SheetCell[], ri: number, anchor: HTMLElement) => {
+    const rect = anchor.getBoundingClientRect();
+    const w = 560;
+    const h = Math.min(620, window.innerHeight - 24);
+    let left = rect.right + 8;
+    if (left + w > window.innerWidth - 8) left = rect.left - w - 8;
+    if (left < 8) left = Math.max(8, Math.min(rect.left, window.innerWidth - w - 8));
+    const top = Math.max(8, Math.min(rect.top - 8, window.innerHeight - h - 8));
+    setDiffPopover({ row, ri, pos: { top, left } });
   };
   const visibleRowList = useMemo(() => {
     const withIdx = rows.map((row, ri) => ({ row, ri }));
@@ -484,11 +666,14 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
                         return (
                           <td
                             key={`${h}-${ci}`}
-                            className={`px-2 py-1.5 border-b border-app-border border-r border-app-border font-mono whitespace-nowrap ${mismatch != null ? 'text-brand-softYellow' : h === '本金' ? 'text-indigo-400 font-bold' : h === '持有金额' ? (pnlCellCls(pnlIdx >= 0 ? row[pnlIdx] : null) || 'text-app-rowtext') : cellColor(v, h) || 'text-app-rowtext'}`}
+                            className={`px-2 py-1.5 border-b border-app-border border-r border-app-border font-mono whitespace-nowrap ${mismatch != null ? 'cursor-pointer hover:bg-app-input/40 text-brand-softYellow' : h === '本金' ? 'text-indigo-400 font-bold' : h === '持有金额' ? (pnlCellCls(pnlIdx >= 0 ? row[pnlIdx] : null) || 'text-app-rowtext') : cellColor(v, h) || 'text-app-rowtext'}`}
                             title={mismatch != null ? `Excel 持有数量与记账持仓不一致，记账为 ${mismatch.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}` : h === '本金' ? '本金 = 持有金额 − 持有盈亏' : undefined}
+                            onClick={mismatch != null ? (e) => openDiffPopover(row, ri, e.currentTarget) : undefined}
                           >
                             {formatCell(v, h)}
-                            {mismatch != null && <span> ({mismatch.toLocaleString('zh-CN', { maximumFractionDigits: 2 })})</span>}
+                            {mismatch != null && (
+                              <span>{' '}({mismatch.toLocaleString('zh-CN', { maximumFractionDigits: 2 })})</span>
+                            )}
                           </td>
                         );
                       })}
@@ -520,6 +705,163 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
           </>
         )}
       </div>
+
+      {/* 差异浮窗：项目记账与 Excel 对账明细 + 项目逐笔交易流水（从新到旧） */}
+      {diffPopover && (() => {
+        const { row, pos } = diffPopover;
+        const trades = tradesFor(row);
+        const position = calcPositionFromTrades(trades);
+        const nameVal = nameIdx >= 0 ? String(row[nameIdx] ?? '') : '';
+        const codeVal = codeIdx >= 0 ? String(row[codeIdx] ?? '') : '';
+        const exQty = headers.indexOf('持有数量') >= 0 ? toNum(row[headers.indexOf('持有数量')]) : null;
+        const exCost = headers.indexOf('单位成本') >= 0 ? toNum(row[headers.indexOf('单位成本')]) : null;
+        const exAmount = amountIdx >= 0 ? toNum(row[amountIdx]) : null;
+        const exPrincipal = principalIdx >= 0 ? toNum(row[principalIdx]) : null;
+        const exPnl = pnlIdx >= 0 ? toNum(row[pnlIdx]) : null;
+        const priceIdx = headers.indexOf('最新价');
+        const impliedPrice = exAmount != null && exQty ? exAmount / exQty : null;
+        const price = (priceIdx >= 0 ? toNum(row[priceIdx]) : null) ?? impliedPrice;
+        const projShares = position.shares;
+        const projCost = position.avgCost;
+        const projAmount = price != null ? projShares * price : null;
+        const projPrincipal = projShares * projCost;
+        const projPnl = projAmount != null ? projAmount - projPrincipal : null;
+        const rowsToCompare: { label: string; book: number | null; excel: number | null; tol: number; digits: number }[] = [
+          { label: '持有数量', book: projShares, excel: exQty, tol: 1e-6, digits: 2 },
+          { label: '单位成本', book: projCost, excel: exCost, tol: 0.0005, digits: 3 },
+          { label: '市值', book: projAmount, excel: exAmount, tol: 0.01, digits: 2 },
+          { label: '本金', book: projPrincipal, excel: exPrincipal, tol: 0.01, digits: 2 },
+          { label: '持有盈亏', book: projPnl, excel: exPnl, tol: 0.01, digits: 2 },
+        ];
+        const fmtNum = (n: number | null, digits: number) => n == null
+          ? '-'
+          : n.toLocaleString('zh-CN', { maximumFractionDigits: digits, minimumFractionDigits: digits });
+        // 左侧：项目记账（从新到旧）；右侧：Excel「交易记录」中的该股票买卖记录（从新到旧）
+        // 只对比已成交记录；挂单未成交，不参与对账
+        const pendingCount = trades.filter(t => !t.isDeleted && t.status === 'pending').length;
+        const projectLines: TradeLine[] = trades
+          .filter(t => !t.isDeleted && t.status !== 'pending')
+          .sort((a, b) => (b.filledAt ?? b.createdAt) - (a.filledAt ?? a.createdAt))
+          .map(t => {
+            const ts = t.filledAt ?? t.createdAt;
+            return {
+              date: dateOf(ts), time: timeOf(ts), side: t.side,
+              label: t.side === 'buy' ? '买入' : '卖出',
+              shares: t.shares ?? null,
+              price: t.price ?? null,
+              amount: t.amount ?? (t.price || 0) * (t.shares || 0),
+            };
+          });
+        const excelLines: TradeLine[] = (sheet?.trades || [])
+          .filter(t => /买入|卖出/.test(t.category))
+          .filter(t => (codeVal && normCode(t.code) === normCode(codeVal)) || (nameVal && t.name.trim() === nameVal))
+          .sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`))
+          .map(t => ({
+            date: t.date,
+            time: t.time.slice(0, 5),
+            side: t.category.includes('买') ? 'buy' as const : 'sell' as const,
+            label: t.category.includes('买') ? '买入' : '卖出',
+            shares: t.shares,
+            price: t.price,
+            amount: t.amount,
+          }));
+        const diffRows = diffTradeLines(projectLines, excelLines);
+        const diffCount = diffRows.filter(d => d.kind !== 'same').length;
+        const renderLineCell = (line: TradeLine | undefined, tone: 'same' | 'del' | 'ins' | 'change', fieldDiffs?: string[]) => {
+          if (!line) return <div className="px-2 py-1 text-[10px] text-app-subtext/60 bg-app-card">—</div>;
+          const sideCls = line.pending ? 'text-orange-400' : (line.side === 'buy' ? 'text-brand-red' : 'text-brand-green');
+          const flagCls = (f: string) => tone === 'change' && fieldDiffs?.includes(f)
+            ? 'bg-[var(--soft-yellow-bg)] text-brand-softYellow px-0.5 rounded'
+            : 'text-app-text';
+          return (
+            <div className={`px-2 py-1 text-[10px] font-mono flex items-center gap-1 whitespace-nowrap ${tone === 'change' ? 'bg-[var(--soft-yellow-bg)]/30' : ''}`}>
+              <span className={`w-[74px] shrink-0 text-app-subtext ${tone === 'change' && fieldDiffs?.includes('date') ? 'bg-[var(--soft-yellow-bg)] text-brand-softYellow px-0.5 rounded' : ''}`}>{line.date.slice(5)} {line.time}</span>
+              <span className={`w-[26px] shrink-0 font-bold ${sideCls}`}>{line.label}</span>
+              <span className={`flex-1 text-right ${flagCls('price')}`}>{line.price != null ? line.price.toLocaleString('zh-CN', { maximumFractionDigits: 3 }) : '-'}</span>
+              <span className={`w-[60px] text-right ${flagCls('shares')}`}>×{line.shares != null ? line.shares.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) : '-'}</span>
+            </div>
+          );
+        };
+        return (
+          <div className="fixed inset-0 z-40" onClick={() => setDiffPopover(null)}>
+            <div
+              ref={diffPopoverRef}
+              className="absolute flex flex-col bg-app-input border border-slate-500/40 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.55)] overflow-hidden"
+              style={{ top: pos.top, left: pos.left, width: 560, maxHeight: Math.min(620, window.innerHeight - 16) }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <PopoverTitleBar
+                title={<>{nameVal}{codeVal ? `（${codeVal}）` : ''} <span className="font-normal text-app-subtext">对账明细</span></>}
+                onPointerDown={diffDrag.onPointerDown}
+                right={(
+                  <button type="button" onClick={() => setDiffPopover(null)} className="p-0.5 rounded text-app-subtext hover:bg-app-input">
+                    <X size={12} />
+                  </button>
+                )}
+              />
+
+              <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-app-card">
+              <div className="px-3 py-2">
+                <div className="text-[10px] font-bold text-app-subtext mb-1">持仓数据核对</div>
+                <div className="grid grid-cols-4 gap-px bg-app-border rounded-md overflow-hidden border border-app-border text-[11px]">
+                  <div className="bg-app-input px-2 py-1 text-[10px] text-app-subtext">字段</div>
+                  <div className="bg-app-input px-2 py-1 text-[10px] text-app-subtext text-right">项目记账</div>
+                  <div className="bg-app-input px-2 py-1 text-[10px] text-app-subtext text-right">Excel</div>
+                  <div className="bg-app-input px-2 py-1 text-[10px] text-app-subtext text-right">差值</div>
+                  {rowsToCompare.map((r) => {
+                    const diff = r.book != null && r.excel != null ? r.book - r.excel : null;
+                    const flagged = diff != null && Math.abs(diff) > r.tol;
+                    return (
+                      <React.Fragment key={r.label}>
+                        <div className={`bg-app-card px-2 py-1 text-app-subtext ${flagged ? 'font-semibold' : ''}`}>{r.label}</div>
+                        <div className="bg-app-card px-2 py-1 text-right font-mono text-app-subtext">{fmtNum(r.book, r.digits)}</div>
+                        <div className="bg-app-card px-2 py-1 text-right font-mono text-app-subtext">{fmtNum(r.excel, r.digits)}</div>
+                        <div className={`bg-app-card px-2 py-1 text-right font-mono text-app-subtext ${flagged ? 'font-semibold' : ''}`}>{flagged && diff != null ? `${diff > 0 ? '+' : ''}${fmtNum(diff, r.digits)}` : '-'}</div>
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+                <div className="mt-3 flex items-center justify-center gap-3 text-[10px] text-app-subtext">
+                  <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-sm bg-red-500/40" />仅项目有</span>
+                  <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-sm bg-emerald-500/40" />仅 Excel 有</span>
+                  <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-sm bg-brand-softYellow/60" />两侧字段不一致</span>
+                </div>
+              </div>
+
+              <div className="px-3 pb-3">
+                <div className="mb-1 text-[10px] font-bold text-app-subtext">
+                  交易记录核对（{diffCount > 0 ? `${diffCount} 处差异` : '两侧一致'}）
+                </div>
+                {diffRows.length === 0 ? (
+                  <div className="text-[11px] text-app-subtext py-2">两侧都没有该股票的交易记录</div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-px bg-app-border rounded-md overflow-hidden border border-app-border">
+                    <div className="bg-app-input px-2 py-1 text-[10px] font-bold text-app-subtext">项目记账</div>
+                    <div className="bg-app-input px-2 py-1 text-[10px] font-bold text-app-subtext">Excel 交易记录</div>
+                    {diffRows.map((d, idx) => (
+                      <React.Fragment key={`diff-${idx}`}>
+                        <div className={`${d.kind === 'del' ? 'bg-red-500/10' : 'bg-app-card'}`}>
+                          {renderLineCell(d.left, d.kind, d.fieldDiffs)}
+                        </div>
+                        <div className={`${d.kind === 'ins' ? 'bg-emerald-500/10' : 'bg-app-card'}`}>
+                          {renderLineCell(d.right, d.kind, d.fieldDiffs)}
+                        </div>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                )}
+                {pendingCount > 0 && (
+                  <div className="mt-1 text-[10px] text-app-subtext">另有 {pendingCount} 条挂单未成交，不参与对账。</div>
+                )}
+                {excelLines.length === 0 && (
+                  <div className="mt-1 text-[10px] text-app-subtext">Excel「交易记录」中没有该股票的买入/卖出记录（请确认导入的文件含第三个表）。</div>
+                )}
+              </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

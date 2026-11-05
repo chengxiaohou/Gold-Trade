@@ -12,6 +12,11 @@ export interface ParsedSheet {
   rows: SheetCell[][];
 }
 
+export interface ParsedWorkbook extends ParsedSheet {
+  // 工作簿中的全部工作表（含持仓数据本身），按工作簿顺序
+  sheets: ParsedSheet[];
+}
+
 interface ZipEntry {
   name: string;
   method: number;
@@ -104,49 +109,8 @@ function textOf(el: Element): string {
   return s;
 }
 
-export async function parseXlsxFile(file: File): Promise<ParsedSheet> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const zip = await openZip(bytes);
-
-  // 1. 找到要解析的工作表（优先“持仓数据”，否则第一张表）
-  const wbBytes = await zip.read('xl/workbook.xml');
-  if (!wbBytes) throw new Error('xlsx 缺少 workbook.xml');
-  const wb = parseXml(wbBytes);
-  const sheets = Array.from(wb.getElementsByTagNameNS(XML_NS, 'sheet'));
-  if (sheets.length === 0) throw new Error('xlsx 中没有工作表');
-
-  const relBytes = await zip.read('xl/_rels/workbook.xml.rels');
-  const relMap = new Map<string, string>();
-  if (relBytes) {
-    const rels = parseXml(relBytes).getElementsByTagName('Relationship');
-    for (let i = 0; i < rels.length; i++) {
-      const id = rels[i].getAttribute('Id') || '';
-      const target = rels[i].getAttribute('Target') || '';
-      if (id && target) relMap.set(id, target);
-    }
-  }
-
-  const pick = sheets.find(s => s.getAttribute('name') === '持仓数据') || sheets[0];
-  const sheetName = pick.getAttribute('name') || 'Sheet1';
-  const rid = pick.getAttributeNS(REL_NS, 'id') || pick.getAttribute('r:id') || '';
-  const target = relMap.get(rid) || 'worksheets/sheet1.xml';
-  const sheetPath = target.startsWith('/')
-    ? target.slice(1)
-    : `xl/${target.replace(/^\.\//, '')}`;
-  const sheetBytes = await zip.read(sheetPath) || await zip.read('xl/worksheets/sheet1.xml');
-  if (!sheetBytes) throw new Error('xlsx 中找不到工作表数据');
-
-  // 2. 共享字符串
-  const shared: string[] = [];
-  const ssBytes = await zip.read('xl/sharedStrings.xml');
-  if (ssBytes) {
-    const ssDoc = parseXml(ssBytes);
-    const sis = ssDoc.getElementsByTagNameNS(XML_NS, 'si');
-    for (let i = 0; i < sis.length; i++) shared.push(textOf(sis[i]));
-  }
-
-  // 3. 读取单元格
-  const sheetDoc = parseXml(sheetBytes);
+// 读取单张工作表：第一行非空行作为表头，之后为数据；跳过“汇总”行
+function readSheet(sheetDoc: Document, sheetName: string, shared: string[]): ParsedSheet {
   const rowEls = Array.from(sheetDoc.getElementsByTagNameNS(XML_NS, 'row'));
   const matrix: SheetCell[][] = [];
   for (const rowEl of rowEls) {
@@ -180,10 +144,9 @@ export async function parseXlsxFile(file: File): Promise<ParsedSheet> {
     matrix.push(row);
   }
 
-  // 4. 第一行非空行作为表头，之后为数据；跳过“汇总”行
   const isBlank = (r: SheetCell[]) => r.every(v => v == null || String(v).trim() === '');
-  let headerRowIdx = matrix.findIndex(r => !isBlank(r));
-  if (headerRowIdx < 0) throw new Error('工作表内容为空');
+  const headerRowIdx = matrix.findIndex(r => !isBlank(r));
+  if (headerRowIdx < 0) return { sheetName, headers: [], rows: [] };
   const rawHeaders = matrix[headerRowIdx].map(v => v == null ? '' : String(v).trim());
   let lastCol = rawHeaders.length - 1;
   while (lastCol >= 0 && rawHeaders[lastCol] === '') lastCol--;
@@ -194,9 +157,57 @@ export async function parseXlsxFile(file: File): Promise<ParsedSheet> {
     const r = matrix[i];
     if (isBlank(r)) continue;
     if (String(r[0] ?? '').trim() === '汇总') continue;
-    const cells = headers.map((_, ci) => r[ci] ?? null);
-    rows.push(cells);
+    rows.push(headers.map((_, ci) => r[ci] ?? null));
+  }
+  return { sheetName, headers, rows };
+}
+
+export async function parseXlsxFile(file: File): Promise<ParsedWorkbook> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const zip = await openZip(bytes);
+
+  // 1. 读取工作簿结构：工作表名称 → rId → 文件路径
+  const wbBytes = await zip.read('xl/workbook.xml');
+  if (!wbBytes) throw new Error('xlsx 缺少 workbook.xml');
+  const wb = parseXml(wbBytes);
+  const sheetEls = Array.from(wb.getElementsByTagNameNS(XML_NS, 'sheet'));
+  if (sheetEls.length === 0) throw new Error('xlsx 中没有工作表');
+
+  const relBytes = await zip.read('xl/_rels/workbook.xml.rels');
+  const relMap = new Map<string, string>();
+  if (relBytes) {
+    const rels = parseXml(relBytes).getElementsByTagName('Relationship');
+    for (let i = 0; i < rels.length; i++) {
+      const id = rels[i].getAttribute('Id') || '';
+      const target = rels[i].getAttribute('Target') || '';
+      if (id && target) relMap.set(id, target);
+    }
   }
 
-  return { sheetName, headers, rows };
+  // 2. 共享字符串（所有工作表共用）
+  const shared: string[] = [];
+  const ssBytes = await zip.read('xl/sharedStrings.xml');
+  if (ssBytes) {
+    const ssDoc = parseXml(ssBytes);
+    const sis = ssDoc.getElementsByTagNameNS(XML_NS, 'si');
+    for (let i = 0; i < sis.length; i++) shared.push(textOf(sis[i]));
+  }
+
+  // 3. 依次读取全部工作表（持仓数据 + 交易记录等）
+  const sheets: ParsedSheet[] = [];
+  for (let i = 0; i < sheetEls.length; i++) {
+    const el = sheetEls[i];
+    const name = el.getAttribute('name') || `Sheet${i + 1}`;
+    const rid = el.getAttributeNS(REL_NS, 'id') || el.getAttribute('r:id') || '';
+    const target = relMap.get(rid) || `worksheets/sheet${i + 1}.xml`;
+    const sheetPath = target.startsWith('/') ? target.slice(1) : `xl/${target.replace(/^\.\//, '')}`;
+    const sheetBytes = await zip.read(sheetPath);
+    if (!sheetBytes) continue;
+    sheets.push(readSheet(parseXml(sheetBytes), name, shared));
+  }
+
+  if (sheets.length === 0) throw new Error('xlsx 中找不到工作表数据');
+  // 主表优先“持仓数据”，否则第一张表
+  const main = sheets.find(s => s.sheetName === '持仓数据') || sheets[0];
+  return { ...main, sheets };
 }

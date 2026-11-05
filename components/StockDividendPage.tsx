@@ -9042,6 +9042,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             heldStockCodes={held.map(h => h.code)}
             heldStockNames={held.map(h => h.name)}
             heldStockShares={held.map(h => h.shares)}
+            stockTradeInfo={stocks.map(s => ({ code: s.code, name: s.name, trades: s.stockTrades || [] }))}
           />
         );
       })()}
