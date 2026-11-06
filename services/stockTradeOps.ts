@@ -13,6 +13,24 @@ export interface StockTradePatch {
   status?: 'pending' | 'filled';
 }
 
+// 挂单默认有效天数（自然日，首日计 1）
+export const PENDING_TTL_DAYS = 5;
+
+// 从起始日到 now 经过了第几个自然日（整天 24h 为一单位，跨零点即 +1）
+export function pendingDayIndex(baseTime: number, now: number): number {
+  const start = new Date(baseTime); start.setHours(0, 0, 0, 0);
+  const end = new Date(now); end.setHours(0, 0, 0, 0);
+  if (end.getTime() <= start.getTime()) return 1;
+  return Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
+}
+
+// 挂单是否仍在有效期内（过期、已成交、已删除、合并汇总行都不算）
+export function isPendingTradeActive(t: StockTrade, now: number = Date.now()): boolean {
+  if (t.status !== 'pending' || t.isDeleted || t.isMerged) return false;
+  const ttl = t.ttlDays ?? PENDING_TTL_DAYS;
+  return pendingDayIndex(t.ttlUpdatedAt ?? t.createdAt, now) < ttl + 1;
+}
+
 function tradeExists(trades: StockTrade[], tradeId: string): StockTrade | undefined {
   const trade = trades.find(t => t.id === tradeId);
   return trade && !trade.isMerged ? trade : undefined;

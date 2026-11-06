@@ -3166,6 +3166,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 行情状态浮窗（近5交易日“破位”事件分析，数据复用 stockBollMap 日线，无需额外请求）
   const [mktInfoStock, setMktInfoStock] = useState<StockEntry | null>(null);
   const [backtestStock, setBacktestStock] = useState<StockEntry | null>(null);
+  // 回测弹窗始终取 stocks 中的最新对象：在图表上长按新增挂单后，虚线可立即刷新
+  useEffect(() => {
+    setBacktestStock(prev => (prev ? (stocks.find(s => s.id === prev.id) ?? prev) : prev));
+  }, [stocks]);
   const [mktInfoPos, setMktInfoPos] = useState({ left: 0, top: 0 });
   const [mktInfoPinned, setMktInfoPinned] = useState(false);
   const mktInfoBtnRef = useRef<HTMLTableCellElement | null>(null);
@@ -5077,16 +5081,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
   // 内容区高度上限（px）：空间不足时压缩+内部滚动，null 表示不限制（保持原生 max-h 由 CSS 决定）
   const [tradeBodyMaxH, setTradeBodyMaxH] = useState<number | null>(null);
-  const openTradeInfo = (btn: HTMLElement, stock: StockEntry) => {
-    tradeInfoBtnRef.current = btn as unknown as HTMLTableCellElement;
+  // 由回测 K 线长按呼出时，把交易浮窗层级抬到回测弹窗（z-9999）之上
+  const [tradeInfoAboveBacktest, setTradeInfoAboveBacktest] = useState(false);
+  const openTradeInfo = (
+    btn: HTMLElement | DOMRect,
+    stock: StockEntry,
+    preset?: { side?: 'buy' | 'sell'; price?: number; aboveBacktest?: boolean },
+  ) => {
+    tradeInfoBtnRef.current = btn instanceof Element ? (btn as unknown as HTMLTableCellElement) : null;
     setTradeInfoStock(stock);
     setTradeInfoSettled(false);
     tradeSettledOnceRef.current = false;
-    // 挂单价格默认预填当前现价（股票/ETF 分别 2/3 位小数）
-    setAddTradePrice(stock.price > 0 ? formatPrice(stock.price, stock.name) : '');
+    // 挂单价格默认预填当前现价（股票/ETF 分别 2/3 位小数）；从图表长按呼出时用光标所指价格
+    setAddTradePrice(preset?.price != null
+      ? formatPrice(preset.price, stock.name)
+      : (stock.price > 0 ? formatPrice(stock.price, stock.name) : ''));
+    if (preset?.side) setAddTradeSide(preset.side);
+    setTradeInfoAboveBacktest(!!preset?.aboveBacktest);
     // 数量初始值与步进保持一致：ETF 500，普通股票 100
     setAddTradeShares(isEtf(stock.name) ? '500' : '100');
-    const rect = btn.getBoundingClientRect();
+    const rect = btn instanceof Element ? btn.getBoundingClientRect() : btn;
     const popupW = 324;
     const estH = 520;
     const gap = 8;
@@ -5099,11 +5113,27 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setTradeInfoPos({ left, top });
   };
 
+  // 回测 K 线长按：以光标所指价格打开交易弹窗（上方挂卖 / 下方挂买）
+  const handleChartQuickTrade = (side: 'buy' | 'sell', price: number, clientX: number, clientY: number) => {
+    if (!backtestStock) return;
+    openTradeInfo(new DOMRect(clientX, clientY, 0, 0), backtestStock, { side, price, aboveBacktest: true });
+  };
+
+  // 点击价格轴上的挂单标签：打开交易弹窗并进入该挂单的编辑状态
+  const handlePendingPriceEdit = (tradeId: string, clientX: number, clientY: number) => {
+    const s = backtestStock;
+    const t = s?.stockTrades?.find(x => x.id === tradeId);
+    if (!s || !t) return;
+    openTradeInfo(new DOMRect(clientX, clientY, 0, 0), s, { aboveBacktest: true });
+    startEditTrade(s, t);
+  };
+
   // 交易浮窗统一关闭：必须同时清除 pinned 与 stock，否则浮窗仍显示
   const closeTradeInfo = useCallback(() => {
     setTradeInfoPinned(false);
     setTradeInfoStock(null);
     setTradeInfoSettled(false);
+    setTradeInfoAboveBacktest(false);
     setEditingTradeId(null);
     setAddTradeNote('' as string);
     setTradeBodyMaxH(null);
@@ -5113,6 +5143,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      // 交易浮窗叠在回测弹窗之上时：ESC 只关交易浮窗，阻止回测弹窗的 window 监听跟着触发
+      if (document.querySelector('[data-trade-popup="backtest"]')) e.stopImmediatePropagation();
       // 行编辑态（名称/链接）：ESC 取消并还原原始值，不做任何修改
       cancelRowEditRef.current();
       // 价格技术指标浮窗
@@ -7842,7 +7874,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         return (
           <div
             ref={tradeInfoRef}
-            className={`fixed z-[60] bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl overflow-hidden text-app-text ${tradeInfoSettled ? '' : 'pointer-events-none'}`}
+            data-trade-popup={tradeInfoAboveBacktest ? 'backtest' : 'normal'}
+            className={`fixed ${tradeInfoAboveBacktest ? 'z-[10000]' : 'z-[60]'} bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl overflow-hidden text-app-text ${tradeInfoSettled ? '' : 'pointer-events-none'}`}
             style={backdropMode
               ? { ...centeredPopupStyle(324), opacity: tradeInfoSettled ? 1 : 0 }
               : { top: tradeInfoPos.top, left: tradeInfoPos.left, width: 324, opacity: tradeInfoSettled ? 1 : 0, transform: tradeInfoSettled ? 'none' : 'translate(0,0)' }}
@@ -9047,7 +9080,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         );
       })()}
       {backtestStock && (
-        <BacktestModal stock={backtestStock} onClose={() => setBacktestStock(null)} onPresetsDirty={onBacktestPresetsDirty} tagParams={tagParams} customTags={customTags} />
+        <BacktestModal stock={backtestStock} onClose={() => setBacktestStock(null)} onPresetsDirty={onBacktestPresetsDirty} tagParams={tagParams} customTags={customTags} onQuickTrade={handleChartQuickTrade} suspendEsc={!!tradeInfoStock} onPendingTradeClick={handlePendingPriceEdit} />
       )}
     </div>
   );

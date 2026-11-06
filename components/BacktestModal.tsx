@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Plus, GripHorizontal, Play, Pin, Tag, Eye, EyeOff, Link, PanelLeft } from 'lucide-react';
-import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType, CrosshairMode } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi, LineData, MouseEventParams, Time } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, LineSeries, TickMarkType, CrosshairMode, LineStyle } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, IPriceLine, LineData, MouseEventParams, Time } from 'lightweight-charts';
 import type { StockEntry, BacktestStrategy, BacktestRule, BacktestResult, BacktestTrade, BacktestStrategyPreset, TagParams, UserTagRule } from '../types';
 import { priceBureau } from '../services/priceBureau';
 import type { BollKline } from '../services/bollService';
@@ -11,6 +11,7 @@ import { runBacktest, scanTagOccurrences, BACKTEST_TAG_CATALOG, BT_GROUP_LABEL }
 import { ENV_TAG_CATALOG, dividendRateForDay } from '../services/tagAnalyzers';
 import { calcIndicators, formatPrice, type IndicatorResult } from '../services/indicators';
 import { calcTradeStats, isEtf } from '../services/realizedPnl';
+import { isPendingTradeActive } from '../services/stockTradeOps';
 import PriceInfoPopover from './PriceInfoPopover';
 import SignalTagsFooter from './SignalTagsFooter';
 import { TAG_COLOR_HEX, TAG_PALETTE } from './CloudSettingsModal';
@@ -40,6 +41,12 @@ export interface BacktestModalProps {
   onPresetsDirty?: () => void; // 策略组有增删改时调用，用于告知上层"有改动需上传"
   tagParams?: TagParams; // 标签判定参数：与弹窗同一份，保证回测与弹窗信号判定严格一致
   customTags?: UserTagRule[]; // 用户自定义动态信号标签（随云端同步）
+  // 长按 K 线图快速挂单：按光标价格相对现价的位置决定方向（上方=挂卖、下方=挂买）
+  onQuickTrade?: (side: 'buy' | 'sell', price: number, clientX: number, clientY: number) => void;
+  // 有上层弹窗（如交易浮窗）打开时，ESC 交给上层处理，本弹窗不响应
+  suspendEsc?: boolean;
+  // 点击价格轴上的挂单价格标签 → 打开交易弹窗并进入该挂单的编辑状态
+  onPendingTradeClick?: (tradeId: string, clientX: number, clientY: number) => void;
 }
 
 interface RuleEditorProps {
@@ -152,14 +159,23 @@ const openScheme = (url: string): void => {
   document.body.removeChild(a);
 };
 
-export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, customTags }: BacktestModalProps) {
+export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, customTags, onQuickTrade, suspendEsc, onPendingTradeClick }: BacktestModalProps) {
   // 按下 ESC 关闭回测弹窗（挂载期内只挂一次监听；onClose 用 ref 取最新，
   // 避免父级内联 onClose 触发重挂导致"按两次才关"）
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  // 长按挂单回调：图表初始化 effect 只跑一次，用 ref 取最新实现，避免闭包过期
+  const quickTradeRef = useRef(onQuickTrade);
+  quickTradeRef.current = onQuickTrade;
+  // 上层弹窗打开时暂停 ESC：保证 ESC 只关闭上层（交易浮窗），不会连带关掉回测
+  const suspendEscRef = useRef(suspendEsc);
+  suspendEscRef.current = suspendEsc;
+  // 挂单标签点击：同样用 ref 取最新回调
+  const pendingTradeClickRef = useRef(onPendingTradeClick);
+  pendingTradeClickRef.current = onPendingTradeClick;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCloseRef.current();
+      if (e.key === 'Escape' && !suspendEscRef.current) onCloseRef.current();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -526,6 +542,9 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   const [previewTicks, setPreviewTicks] = useState<PreviewTick[]>([]);
   // 极值标注（可视区内最高/最低价K线价格）的像素坐标，随平移/缩放重算，复用覆盖层随K线同步移动逻辑
   const [extremeTicks, setExtremeTicks] = useState<ExtremeTick[]>([]);
+  // 有效挂单：挂单价格 → 右侧价格轴的像素位置，用于叠加可点击热区（点击进入该挂单的编辑）
+  const [activePending, setActivePending] = useState<{ id: string; price: number; side: 'buy' | 'sell' }[]>([]);
+  const [pendingAxisTicks, setPendingAxisTicks] = useState<{ id: string; y: number }[]>([]);
   // 预览标签判定依据浮窗（hover/点击预览标签时显示）
   const [previewPopup, setPreviewPopup] = useState<{ keyOf: string; date: string; x: number; y: number; detail: string[] } | null>(null);
   const chartRef = useRef<HTMLDivElement>(null);
@@ -685,8 +704,9 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       crosshair: {
         // Normal：十字光标完全跟随鼠标像素，不再吸附到 K 线的开/高/低/收
         mode: CrosshairMode.Normal,
-        vertLine: { color: 'rgba(148,163,184,0.4)', labelBackgroundColor: '#64748b' },
-        horzLine: { color: 'rgba(148,163,184,0.4)', labelBackgroundColor: '#64748b' },
+        // 十字光标 x/y 轴游走标签：底色跟挂单标签统一用深色，避免 slate-500 过亮
+        vertLine: { color: 'rgba(148,163,184,0.4)', labelBackgroundColor: '#1e293b' },
+        horzLine: { color: 'rgba(148,163,184,0.4)', labelBackgroundColor: '#1e293b' },
       },
     });
     chartInstance.current = chart;
@@ -800,6 +820,50 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     };
     el.addEventListener('wheel', onWheel, { capture: true, passive: false });
 
+    // —— 长按快速挂单 ——
+    // 在 K 线图上按住 500ms 不动：取光标所指价格为挂单价格，高于现价=挂卖、低于现价=挂买，
+    // 随后调用交易弹窗继续填写数量。移动超过 6px、松手、滚轮都会取消。
+    const LONG_PRESS_MS = 500;
+    let pressTimer: number | undefined;
+    let pressStartX = 0, pressStartY = 0;
+    let suppressNextClick = false;
+    const clearPress = () => {
+      if (pressTimer !== undefined) { window.clearTimeout(pressTimer); pressTimer = undefined; }
+    };
+    const onPressDown = (e: PointerEvent) => {
+      if (e.button !== 0 || !quickTradeRef.current) return;
+      clearPress();
+      pressStartX = e.clientX;
+      pressStartY = e.clientY;
+      const down = { clientX: e.clientX, clientY: e.clientY };
+      pressTimer = window.setTimeout(() => {
+        pressTimer = undefined;
+        const s = seriesRef.current;
+        if (!s) return;
+        const y = down.clientY - el.getBoundingClientRect().top;
+        const price = s.coordinateToPrice(y) as number | null;
+        if (price == null) return;
+        const lastClose = klinesRef.current?.length ? klinesRef.current[klinesRef.current.length - 1].close : 0;
+        const refPrice = stock.price > 0 ? stock.price : lastClose;
+        if (!(refPrice > 0)) return;
+        // 上方挂卖、下方挂买（与现价相等时按挂卖处理）
+        const side: 'buy' | 'sell' = price >= refPrice ? 'sell' : 'buy';
+        // 长按已触发：抑制松手时被当作点击（否则会误固定行情浮窗）
+        suppressNextClick = true;
+        quickTradeRef.current?.(side, price, down.clientX, down.clientY);
+      }, LONG_PRESS_MS);
+    };
+    const onPressMove = (e: PointerEvent) => {
+      if (pressTimer === undefined) return;
+      if (Math.abs(e.clientX - pressStartX) > 6 || Math.abs(e.clientY - pressStartY) > 6) clearPress();
+    };
+    const onPressEnd = () => clearPress();
+    el.addEventListener('pointerdown', onPressDown);
+    window.addEventListener('pointermove', onPressMove);
+    window.addEventListener('pointerup', onPressEnd);
+    window.addEventListener('pointercancel', onPressEnd);
+    window.addEventListener('wheel', onPressEnd, { passive: true });
+
     // 兜底：容器尺寸变化（flex 拉伸/弹窗缩放）时强制重绘一次，并重算覆盖层标签
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined' && el) {
@@ -892,6 +956,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     // 点击图表 → 钉住当前悬停那根 K 线的弹窗（进入固定模式）。
     // 固定模式下弹窗不再跟随鼠标移动，方便用户点击弹窗内标签查看「判定依据」「参考价值」。
     const onChartClick = (param: MouseEventParams) => {
+      if (suppressNextClick) { suppressNextClick = false; return; } // 长按已打开挂单弹窗，松手不算点击
       if (pinnedRef.current) { togglePin(); return; } // 已固定：点击图表任意处=取消固定并隐藏，恢复指哪显示哪
       const q = tryBuildQuote(param);
       if (!q) return;
@@ -908,6 +973,12 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       setHoverQuote(null);
       ro?.disconnect();
       el.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
+      clearPress();
+      el.removeEventListener('pointerdown', onPressDown);
+      window.removeEventListener('pointermove', onPressMove);
+      window.removeEventListener('pointerup', onPressEnd);
+      window.removeEventListener('pointercancel', onPressEnd);
+      window.removeEventListener('wheel', onPressEnd);
       el.style.touchAction = '';
       if (chartInstance.current) { chartInstance.current.remove(); chartInstance.current = null; }
       seriesRef.current = null;
@@ -927,6 +998,34 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       priceFormat: { type: 'price', precision: pricePrecision, minMove: pricePrecision === 3 ? 0.001 : 0.01 },
     });
   }, [pricePrecision, stock.code]);
+
+  // 有效挂单的价格虚线：一打开就在图上标出还没过期、未成交的挂单价格（过期的、已成交的不画）
+  const pendingLinesRef = useRef<IPriceLine[]>([]);
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    pendingLinesRef.current.forEach(line => series.removePriceLine(line));
+    pendingLinesRef.current = [];
+    const now = Date.now();
+    const active = (stock.stockTrades ?? []).filter(t => isPendingTradeActive(t, now));
+    setActivePending(active.map(t => ({ id: t.id, price: t.price, side: t.side })));
+    active.forEach(t => {
+        const isBuy = t.side === 'buy';
+        const line = series.createPriceLine({
+          price: t.price,
+          // 虚线保持实色；右侧标签用深色底 + 彩色文字（库会把 alpha 拍平，故不做半透明）
+          color: isBuy ? BUY_BG : SELL_BG,
+          axisLabelColor: '#1e293b',
+          axisLabelTextColor: isBuy ? BUY_BG : SELL_BG,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          // 只保留右侧价格轴的标签，不再在图上重复"挂买/挂卖 + 价格"文字
+          title: '',
+        });
+        pendingLinesRef.current.push(line);
+      });
+  }, [stock.stockTrades]);
 
   // 统一走价格数据部：取数收敛进数据中心（同一周期同源），画图用"含未收盘"形态——
   // 数据中心把自持实时现价(开/高/低/量/现价)合成进今日K线，保证与列表/浮窗显示一致。
@@ -1027,6 +1126,14 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     const priceScaleW = chart.priceScale('right').width();
     const half = TICK_SIZE / 2; // 方块半宽（右缘越界判断用）
     const rightLimit = cw - priceScaleW; // 绘图区右边界（方块右缘若越过标尺则隐藏）
+    // 有效挂单价格 → 价格轴上的 y，用于覆盖在标签上的可点击热区
+    const pendingAxis: { id: string; y: number }[] = [];
+    for (const t of activePending) {
+      const y = series.priceToCoordinate(t.price);
+      if (y == null || y < 0 || y > ch) continue;
+      pendingAxis.push({ id: t.id, y });
+    }
+    setPendingAxisTicks(pendingAxis);
     // 极值标注：可视区内最高价/最低价两条 K 线，价格数字挨着最高价尖端上方、最低价尖端下方展示，
     // 随 K 线同步移动；数字被钳制在展示区内，边缘处不会一半出屏幕。
     // 复用覆盖层随 K 线同步移动的定位逻辑：可见逻辑范围 → timeToCoordinate/priceToCoordinate 换算像素坐标。
@@ -1130,7 +1237,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     }
     setOverlayTicks(ticks);
     setPreviewTicks([]);
-  }, [demoMarkers, previewKeys, previewOccurrences, customTags, strategy.rules]);
+  }, [demoMarkers, previewKeys, previewOccurrences, customTags, strategy.rules, activePending]);
 
   // 成交记录：运行回测后取 result.trades；否则用初始真实成交记录（initialTrades）让用户一打开就能看到表
   const tradeRows = useMemo(() => {
@@ -1803,6 +1910,16 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                   );
                 })}
               </svg>
+              {/* 挂单价格标签的点击热区（透明覆盖在右侧价格轴标签上，点击进入该挂单编辑） */}
+              {pendingAxisTicks.map(t => (
+                <div
+                  key={t.id}
+                  className="absolute z-20 -translate-y-1/2 cursor-pointer"
+                  style={{ right: 0, top: t.y, width: 64, height: 18 }}
+                  title="点击编辑该挂单"
+                  onClick={(e) => pendingTradeClickRef.current?.(t.id, e.clientX, e.clientY)}
+                />
+              ))}
               {/* 预览标签判定依据浮窗 */}
               {previewPopup && (
                 <div
