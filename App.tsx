@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
-import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Plus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Eye, EyeOff, Tags, FileText } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Plus, SquarePlus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Eye, EyeOff, Tags, FileText, Sheet, NotepadText } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
@@ -2093,6 +2093,39 @@ export default function App() {
     </div>
   );
 
+  // 云端上传按钮独立渲染：由股息率页面放在按钮排最左侧，保证它始终在最左
+  const renderStockUploadButton = () => (
+    stockCloudDirty ? (
+      <button 
+        onClick={(e) => { cloudAnchorRef.current = e.currentTarget; cloudConfirmPinnedRef.current = true; if (cloudConfirm !== 'upload') requestStockUpload(); }}
+        onMouseEnter={(e) => hoverEnterConfirm(e, 'upload', 'stocks')}
+        onMouseLeave={hoverLeaveConfirm}
+        disabled={isSyncing || uploadSuccess}
+        className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-app-subtext hover:text-app-text hover:border-app-border'} disabled:opacity-30`}
+        aria-label="上传到云端"
+      >
+        {isSyncing ? (
+          <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+        ) : uploadSuccess ? (
+          <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
+        ) : (
+          <CloudUpload size={16} />
+        )}
+      </button>
+    ) : null
+  );
+
+  // 交易备忘录按钮独立渲染：由股息率页面放在加号按钮左侧
+  const renderStockMemoButton = () => (
+    <button 
+        onClick={() => setShowMemoModal(true)}
+        className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-border transition-colors w-7 h-7"
+        title="交易备忘录"
+      >
+        <NotepadText size={16} />
+    </button>
+  );
+
   const renderStockActionButtons = () => (
     <div ref={stockActionWrapperRef} className="relative">
       {cloudConfirm && (
@@ -2226,44 +2259,19 @@ export default function App() {
       )}
 
       <div className="flex justify-end gap-0.5 sm:gap-1.5 lg:gap-2 shrink-0">
-          {stockCloudDirty && (
-            <button 
-              onClick={(e) => { cloudAnchorRef.current = e.currentTarget; cloudConfirmPinnedRef.current = true; if (cloudConfirm !== 'upload') requestStockUpload(); }}
-              onMouseEnter={(e) => hoverEnterConfirm(e, 'upload', 'stocks')}
-              onMouseLeave={hoverLeaveConfirm}
-              disabled={isSyncing || uploadSuccess}
-              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-app-subtext hover:text-indigo-400 hover:border-indigo-500'} disabled:opacity-30`}
-              aria-label="上传到云端"
-            >
-              {isSyncing ? (
-                <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
-              ) : uploadSuccess ? (
-                <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
-              ) : (
-                <CloudUpload size={16} />
-              )}
-            </button>
-          )}
           <button 
               onClick={() => setIsAddingStock(true)}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-400 hover:border-indigo-500 transition-colors w-7 h-7"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-border transition-colors w-7 h-7"
               title="添加股票"
             >
-              <Plus size={16} />
-          </button>
-          <button 
-              onClick={() => setShowMemoModal(true)}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-400 hover:border-indigo-500 transition-colors w-7 h-7"
-              title="交易备忘录"
-            >
-              <FileText size={16} />
+              <SquarePlus size={16} />
           </button>
           <button 
               onClick={(e) => { cloudAnchorRef.current = e.currentTarget; cloudConfirmPinnedRef.current = true; if (cloudConfirm !== 'download') { snapPopoverToAnchor(200, 150); requestCloudAction('download'); } }}
               onMouseEnter={(e) => hoverEnterConfirm(e, 'download', 'stocks')}
               onMouseLeave={hoverLeaveConfirm}
               disabled={isDownloading || downloadSuccess}
-              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-app-subtext hover:text-indigo-400 hover:border-indigo-500'} disabled:opacity-30`}
+              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-app-subtext hover:text-app-text hover:border-app-border'} disabled:opacity-30`}
               aria-label="从云端下载"
             >
               {isDownloading ? (
@@ -2278,19 +2286,19 @@ export default function App() {
               onClick={() => setShowStockAccountPage(prev => !prev)}
               className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-7 h-7 ${
                 showStockAccountPage 
-                  ? 'border-indigo-500 text-indigo-400' 
-                  : 'border-app-border text-app-subtext hover:text-indigo-400 hover:border-indigo-500'
+                  ? 'border-app-border text-indigo-400' 
+                  : 'border-app-border text-app-subtext hover:text-app-text hover:border-app-border'
               }`}
-              title={showStockAccountPage ? '关闭股票账户' : '股票账户'}
+              title={showStockAccountPage ? '关闭对账单' : '对账单'}
             >
-              <Wallet size={16} />
+              <Sheet size={16} />
           </button>
           <button 
               onClick={() => setShowRequestStats(prev => !prev)}
               className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-7 h-7 ${
                 showRequestStats 
-                  ? 'border-indigo-500 text-indigo-400' 
-                  : 'border-app-border text-app-subtext hover:text-indigo-400 hover:border-indigo-500'
+                  ? 'border-app-border text-indigo-400' 
+                  : 'border-app-border text-app-subtext hover:text-app-text hover:border-app-border'
               }`}
               title={showRequestStats ? '隐藏请求统计' : '显示请求统计'}
             >
@@ -2298,7 +2306,7 @@ export default function App() {
           </button>
           <button 
               onClick={() => openSettings('general')}
-              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-indigo-400 hover:border-indigo-500 transition-colors w-7 h-7"
+              className="flex items-center justify-center bg-app-card border border-app-border text-app-subtext rounded-md hover:text-app-text hover:border-app-border transition-colors w-7 h-7"
               title="设置"
             >
               <Settings size={16} />
@@ -2875,6 +2883,8 @@ export default function App() {
             divRateHoverEnabled={divRateHoverEnabled}
             popupBackdropEnabled={popupBackdropEnabled}
             actionButtons={renderStockActionButtons()}
+            uploadButton={renderStockUploadButton()}
+            memoButton={renderStockMemoButton()}
             appVersion={APP_VERSION}
             onTogglePage={togglePage}
             apiSource={appSettings.apiSource || 'tencent'}

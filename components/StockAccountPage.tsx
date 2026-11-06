@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Upload, FileSpreadsheet, Wallet, AlertTriangle, LogOut, Eye, EyeOff } from 'lucide-react';
+import { X, Upload, FileSpreadsheet, Sheet, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { parseXlsxFile } from '../services/xlsxLite';
 import type { ParsedSheet, SheetCell } from '../services/xlsxLite';
 import { calcPositionFromTrades } from '../services/realizedPnl';
@@ -512,8 +512,8 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
       }}
     >
       <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-app-border bg-app-card/80 backdrop-blur">
-        <Wallet size={16} className="text-indigo-400 shrink-0" />
-        <span className="text-sm font-semibold text-app-text shrink-0">股票账户</span>
+        <Sheet size={16} className="text-app-subtext shrink-0" />
+        <span className="text-sm font-semibold text-app-subtext shrink-0">对账单</span>
         {sheet && (
           <span className="text-[10px] text-app-subtext truncate min-w-0">
             {sheet.fileName} · {sheet.sheetName} · {sheet.rows.length} 行
@@ -524,22 +524,20 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
             <button
               type="button"
               onClick={() => { setSheet(null); setError(null); }}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-app-border bg-app-input text-[11px] text-app-subtext hover:text-brand-red hover:border-brand-red/60 transition-colors"
-              title="关闭当前 Excel，回到未上传状态"
+              className="text-[11px] text-white/[0.01] hover:text-app-text transition-colors"
+              title="退出当前 Excel，回到未上传状态"
             >
-              <LogOut size={13} />
-              推出 Excel
+              退出
             </button>
           )}
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={loading}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-app-border bg-app-input text-[11px] text-app-subtext hover:text-indigo-400 hover:border-indigo-500 transition-colors disabled:opacity-50"
+            className="text-[11px] text-white/[0.01] hover:text-app-text transition-colors disabled:opacity-50"
             title="上传 xlsx（也会替换当前数据）"
           >
-            <Upload size={13} />
-            {loading ? '解析中…' : '上传 Excel'}
+            {loading ? '解析中…' : '上传'}
           </button>
           <button
             type="button"
@@ -572,7 +570,7 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
             className={`flex-1 flex flex-col items-center justify-center gap-3 m-2 rounded-xl border border-dashed transition-colors ${dragging ? 'border-indigo-500 bg-indigo-500/5' : 'border-app-border'}`}
           >
             <FileSpreadsheet size={40} className="text-app-subtext/60" />
-            <div className="text-sm text-app-text font-medium">拖入或上传股票账户 Excel</div>
+            <div className="text-sm text-app-text font-medium">拖入或上传对账单 Excel</div>
             <div className="text-[11px] text-app-subtext">支持 .xlsx，解析「持仓数据」工作表</div>
             <button
               type="button"
@@ -650,7 +648,7 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
                           <button
                             type="button"
                             onClick={() => toggleRowExcluded(ri)}
-                            className={`p-0.5 rounded transition-colors ${excludedRows.has(ri) ? 'text-gray-500' : 'text-app-subtext hover:bg-app-input'}`}
+                            className={`p-0.5 rounded transition-colors ${excludedRows.has(ri) ? 'text-gray-500 hover:text-app-text' : 'text-app-subtext hover:text-app-text'}`}
                             title={excludedRows.has(ri) ? '已排除，不计入合计（点击恢复）' : '计入合计（点击排除）'}
                           >
                             {excludedRows.has(ri) ? <EyeOff size={12} /> : <Eye size={12} />}

@@ -288,6 +288,8 @@ interface StockDividendPageProps {
   divRateHoverEnabled?: boolean; // 股息率弹窗是否支持鼠标悬浮显示；设备本地设置，不上传云端
   popupBackdropEnabled?: boolean; // 移动端弹窗背景遮罩开关；设备本地设置，不上传云端
   actionButtons?: React.ReactNode;
+  uploadButton?: React.ReactNode; // 云端上传按钮：固定渲染在按钮排最左，新增按钮一律排在它右侧
+  memoButton?: React.ReactNode; // 交易备忘录按钮：渲染在加号按钮左侧
   appVersion?: string;
   onTogglePage?: () => void;
   apiSource?: ApiSource;
@@ -2343,7 +2345,7 @@ const sortStocksByTag = (list: StockEntry[]): StockEntry[] =>
     return (a.tag || '').trim().localeCompare((b.tag || '').trim());
   });
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
   useEffect(() => {
     const id = 'profit-month-scroller-style';
@@ -4014,6 +4016,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     } catch { return ''; }
   });
   const [showProfitPanel, setShowProfitPanel] = useState(getSavedShowProfitPanel);
+  // 盈利统计顶部资金概况是否展示（点击仓位数圆环按钮切换，存 localStorage）
+  const [showCapitalStats, setShowCapitalStats] = useState(() => {
+    try { return localStorage.getItem('stock_capital_stats_visible') !== '0'; } catch { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('stock_capital_stats_visible', showCapitalStats ? '1' : '0'); } catch { /* ignore */ }
+  }, [showCapitalStats]);
   const [expandedProfitDays, setExpandedProfitDays] = useState<Set<string>>(new Set());
   // 盈利计算模式：均价盈亏 / 做T（全局，两处共用，默认做T，存 localStorage）
   const getSavedPnlCalcMode = (): PnlCalcMode => {
@@ -5856,7 +5865,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     >
       <div className="shrink-0 flex justify-center -mb-2.5">
         <div className="w-full flex items-end gap-2 md:gap-3" style={{ maxWidth: effectiveMaxWidth }}>
-          <div className="flex items-center gap-3 pb-2 shrink-0">
+          <div className="flex items-baseline gap-3 pb-2 shrink-0">
             <h1
               onPointerDown={startTitleLongPress}
               onPointerUp={cancelTitleLongPress}
@@ -5865,12 +5874,56 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               onContextMenu={(e) => e.preventDefault()}
               className={`text-2xl md:text-3xl font-bold tracking-wide whitespace-nowrap select-none ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}
             >股息率{import.meta.env.DEV ? ' debug' : ''}</h1>
+            {/* 资金概况：位于标题右侧，可用右侧圆环按钮显隐 */}
+            {showCapitalStats && (
+              <div className="flex items-center gap-3 text-[10px] whitespace-nowrap">
+                <span className="text-app-subtext">总资金:
+                  {editingCapital ? (
+                    <input
+                      autoFocus
+                      type="number"
+                      value={dividendTotalCapital || ''}
+                      onChange={(e) => onDividendTotalCapitalChange?.(parseFloat(e.target.value) || 0)}
+                      onBlur={() => setEditingCapital(false)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                      placeholder="0.00"
+                      className="no-spinners font-mono font-normal text-app-subtext bg-transparent border-b border-app-border outline-none w-14 text-left mx-1"
+                    />
+                  ) : (
+                    <span
+                      onClick={() => setEditingCapital(true)}
+                      className="font-mono font-normal text-app-subtext cursor-pointer hover:text-indigo-400 transition-colors ml-1"
+                      title="点击修改总资金"
+                    >
+                      {fmtCapital(accountSummary.total)}
+                    </span>
+                  )}
+                </span>
+                <span className="text-app-subtext">已投入: <span className="font-mono font-normal text-app-subtext">{fmtCapital(accountSummary.invested)}</span></span>
+                <span className="text-app-subtext">剩余: <span className="font-mono font-normal text-app-subtext">{fmtCapital(accountSummary.remaining)}</span></span>
+                <span className="text-app-subtext">仓位: <span className="font-mono font-normal text-app-subtext">{accountSummary.ratio.toFixed(1)}%</span></span>
+              </div>
+            )}
           </div>
-          {actionButtons && (
-            <div className="ml-auto pb-1.5 min-w-0 flex justify-end">
-              {actionButtons}
-            </div>
-          )}
+          <div className="ml-auto pb-1.5 min-w-0 flex justify-end items-center gap-0.5 sm:gap-1.5 lg:gap-2">{uploadButton}{/* 资金概况显隐开关：圆环进度 = 仓位占用（配色与同排按钮图标一致） */}
+            <button
+              type="button"
+              onClick={() => setShowCapitalStats(v => !v)}
+              className="flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 shrink-0 text-app-subtext hover:text-app-text hover:border-app-border"
+              title={`${showCapitalStats ? '隐藏' : '显示'}资金概况（仓位 ${accountSummary.ratio.toFixed(1)}%）`}
+            >
+              <svg width={18} height={18} viewBox="0 0 20 20" className="block">
+                <circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" strokeWidth="2" className="text-app-border" />
+                <circle
+                  cx="10" cy="10" r="7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                  strokeDasharray={`${(Math.min(Math.max(accountSummary.ratio, 0), 100) / 100) * 43.98} 43.98`}
+                  transform="rotate(-90 10 10)"
+                />
+              </svg>
+            </button>
+            {memoButton}
+            {actionButtons}
+          </div>
         </div>
       </div>
       <div className="flex-1 min-h-0 flex justify-center">
@@ -6608,7 +6661,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             s.id === stock.id ? { ...s, bollHidden: !s.bollHidden } : s
                           ));
                         }}
-                        className={`p-0.5 rounded transition-colors ${stock.bollHidden ? 'text-gray-500' : 'text-app-subtext hover:bg-app-input'}`}
+                        className={`p-0.5 rounded transition-colors ${stock.bollHidden ? 'text-gray-500 hover:text-app-text' : 'text-app-subtext hover:text-app-text'}`}
                         title={stock.bollHidden ? '显示布林线' : '隐藏布林线'}
                       >
                         {stock.bollHidden ? <EyeOff size={12} /> : <Eye size={12} />}
@@ -6624,10 +6677,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       ) : (
                         <button
                           onClick={() => beginRowEdit(stock)}
-                          className="p-0.5 hover:bg-app-input rounded transition-colors"
+                          className="p-0.5 rounded transition-colors text-app-subtext hover:text-app-text"
                           title="编辑"
                         >
-                          <Edit2 size={12} className="text-app-subtext" />
+                          <Edit2 size={12} />
                         </button>
                       )}
                       <button
@@ -6635,7 +6688,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           e.stopPropagation();
                           setDeletingStockId(stock.id);
                         }}
-                        className={`p-0.5 rounded transition-colors ${deletingStockId === stock.id ? 'bg-red-500/20 text-red-400' : 'text-app-subtext hover:bg-app-input'}`}
+                        className={`p-0.5 rounded transition-colors ${deletingStockId === stock.id ? 'bg-red-500/20 text-red-400' : 'text-app-subtext hover:text-app-text'}`}
                         title="删除"
                       >
                         <Trash2 size={12} />
@@ -8594,35 +8647,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <span className="text-blue-400">缓存: <span className="font-medium">{requestStats.cached}</span></span>
                 <span className="text-yellow-400">进行中: <span className="font-medium">{requestStats.pending}</span></span>
               </div>
-            ) : (
-              <div className="flex items-center gap-3 text-[10px] whitespace-nowrap">
-                <span className="text-app-subtext">总资金:
-                  {editingCapital ? (
-                    <input
-                      autoFocus
-                      type="number"
-                      value={dividendTotalCapital || ''}
-                      onChange={(e) => onDividendTotalCapitalChange?.(parseFloat(e.target.value) || 0)}
-                      onBlur={() => setEditingCapital(false)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                      placeholder="0.00"
-                      className="no-spinners font-mono font-medium bg-transparent border-b border-app-border outline-none w-20 text-right mx-1"
-                    />
-                  ) : (
-                    <span
-                      onClick={(e) => { e.stopPropagation(); setEditingCapital(true); }}
-                      className="font-mono font-medium text-app-text cursor-pointer hover:text-indigo-400 transition-colors"
-                      title="点击修改总资金"
-                    >
-                      {fmtCapital(accountSummary.total)}
-                    </span>
-                  )}
-                </span>
-                <span className="text-app-subtext">已投入: <span className="font-mono font-medium text-app-text">{fmtCapital(accountSummary.invested)}</span></span>
-                <span className="text-app-subtext">剩余: <span className="font-mono font-medium text-app-text">{fmtCapital(accountSummary.remaining)}</span></span>
-                <span className="text-app-subtext">仓位: <span className="font-mono font-medium text-app-text">{accountSummary.ratio.toFixed(1)}%</span></span>
-              </div>
-            )}
+            ) : null}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {bottomBarView === 'request' ? (<>
