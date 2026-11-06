@@ -452,6 +452,18 @@ const tradeStatusColor = (t: StockTrade, now = Date.now()) => t.status === 'pend
   ? (pendingExpirySuffix(t, now) === '?' ? 'text-gray-500' : 'text-orange-400')
   : (t.side === 'buy' ? 'text-brand-red' : 'text-brand-green');
 
+// 列表「交易」列的展示口径：优先展示最新一笔有效挂单（已过期、带 ? 标记的挂单跳过）；
+// 没有有效挂单时，退回最新一笔已成交交易；连成交都没有才展示最新一笔过期挂单。
+// 交易列展示与「交易」列排序共用这一口径，保证看到的行与排序依据一致。
+const latestTradeForDisplay = (trades: StockTrade[]): StockTrade | null => {
+  const ordinary = trades.filter(t => !t.isMerged);
+  if (ordinary.length === 0) return null;
+  const sorted = [...ordinary].sort((a, b) => b.createdAt - a.createdAt);
+  const now = Date.now();
+  const validPending = sorted.find(t => t.status === 'pending' && pendingExpirySuffix(t, now) !== '?');
+  return validPending ?? sorted.find(t => t.status === 'filled') ?? sorted[0];
+};
+
 // 备注「网格」文本的单一实现：交易弹窗备注输入框 onFocus 自动填充 与 支撑/压力位价格行点击回填共用，
 // 改联动规则（股息率口径 / 文本格式 / 名称拼接）只改这里，两个入口自动同步。
 // 股息率 = 选中年份分红 ÷ 价格，保留两位小数后去掉多余的 0；pickedName 为点中的支撑/压力位名称（聚焦填默认值时没有）。
@@ -1076,6 +1088,8 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
     if (!m || m.matched <= 0) return '';
     return m.matched >= m.original ? 'line-through opacity-60' : 'opacity-60';
   })();
+  // 买入行被卖出抵消时，状态徽标（「买入」/「挂买」按钮）同步使用与百分比数字相同的透明度
+  const buyMatchedDim = buyMatchStyle ? 'opacity-60' : '';
   const timeStr = (ts: number) => {
     const d = new Date(ts);
     return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -1124,44 +1138,47 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
             </FeeTip>
           )}
           <span className="font-normal text-app-subtext text-[8px]"> = </span>
-          <span className={`font-bold text-app-subtext ${buyMatchStyle}`}>
+          <span className="font-bold text-app-subtext">
             {amtFormula.total.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}
           </span>
         </span>
-        {(() => {
-          const grossAmt = (t.amount ?? (price * shares)) || 0;
-          const sellContent = isErrSell ? (
-            <ErrTip
-              price={price}
-              shares={shares}
-              amount={grossAmt}
-              errShares={shares}
-              availableShares={0}
-              dateLabel={`${new Date(t.filledAt ?? t.createdAt).getMonth() + 1}月${new Date(t.filledAt ?? t.createdAt).getDate()}日`}
-            >
-              <span className="font-mono text-[10px] font-bold text-orange-400">ERR</span>
-            </ErrTip>
-          ) : t.side === 'sell' && pnlMap[t.id] !== undefined ? (
-            <span className={`font-mono text-[10px] ${pnlMap[t.id] >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-              {`${pnlMap[t.id] >= 0 ? '+' : ''}${fmtProfit(pnlMap[t.id])}`}
-            </span>
-          ) : t.side === 'sell' && t.status === 'pending' && !!pendingMap && pendingMap[t.id] !== undefined ? (
-            // 卖出挂单：预估获利（橙色，与「挂卖」状态徽标同色）同样来自同一移动加权/做T口径，与成交共用一套算法，仅颜色区分
-            <span className="font-mono text-[10px] text-orange-400">
-              {`${pendingMap[t.id] >= 0 ? '+' : ''}${fmtProfit(pendingMap[t.id])}`}
-            </span>
-          ) : null;
-          const tradePairs = pairMap?.[t.id];
-          return tradePairs && tradePairs.length > 0
-            ? <PairTip pairs={tradePairs} fmtPrice={fmtP}>{sellContent}</PairTip>
-            : sellContent;
-        })()}
+        {/* 盈利金额靠右对齐：用空的 ml-auto 占位，无论有没有盈利内容都把右侧一组推到行尾 */}
+        <span className="ml-auto flex items-center">
+          {(() => {
+            const grossAmt = (t.amount ?? (price * shares)) || 0;
+            const sellContent = isErrSell ? (
+              <ErrTip
+                price={price}
+                shares={shares}
+                amount={grossAmt}
+                errShares={shares}
+                availableShares={0}
+                dateLabel={`${new Date(t.filledAt ?? t.createdAt).getMonth() + 1}月${new Date(t.filledAt ?? t.createdAt).getDate()}日`}
+              >
+                <span className="font-mono text-[10px] font-bold text-orange-400">ERR</span>
+              </ErrTip>
+            ) : t.side === 'sell' && pnlMap[t.id] !== undefined ? (
+              <span className={`font-mono text-[10px] ${pnlMap[t.id] >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                {`${pnlMap[t.id] >= 0 ? '+' : ''}${fmtProfit(pnlMap[t.id])}`}
+              </span>
+            ) : t.side === 'sell' && t.status === 'pending' && !!pendingMap && pendingMap[t.id] !== undefined ? (
+              // 卖出挂单：预估获利（橙色，与「挂卖」状态徽标同色）同样来自同一移动加权/做T口径，与成交共用一套算法，仅颜色区分
+              <span className="font-mono text-[10px] text-orange-400">
+                {`${pendingMap[t.id] >= 0 ? '+' : ''}${fmtProfit(pendingMap[t.id])}`}
+              </span>
+            ) : null;
+            const tradePairs = pairMap?.[t.id];
+            return tradePairs && tradePairs.length > 0
+              ? <PairTip pairs={tradePairs} fmtPrice={fmtP}>{sellContent}</PairTip>
+              : sellContent;
+          })()}
+        </span>
         {t.isMerged ? (
-          <span className="shrink-0 text-[8px] px-1 py-px rounded-full border font-bold ml-auto text-app-subtext/60 border-app-border/60 bg-app-text/5">
+          <span className="shrink-0 text-[8px] px-1 py-px rounded-full border font-bold text-app-subtext/60 border-app-border/60 bg-app-text/5">
             {t.side === 'buy' ? '买入汇总' : '卖出汇总'}
           </span>
         ) : (
-          <span className="ml-auto shrink-0 flex items-center gap-1.5">
+          <span className="shrink-0 flex items-center gap-1.5">
             {diffNum != null && (
               <span className={`font-mono text-[8px] font-semibold whitespace-nowrap ${pctColor} ${buyMatchStyle}`}>
                 {`${diffNum >= 0 ? '+' : ''}${diffNum.toFixed(2)}%`}
@@ -1192,7 +1209,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
                   onToggle(t);
                 }
               }}
-              className={`shrink-0 text-[8px] px-1 py-px rounded-full border font-bold cursor-pointer ${t.status === 'pending'
+              className={`shrink-0 text-[8px] px-1 py-px rounded-full border font-bold cursor-pointer ${buyMatchedDim} ${t.status === 'pending'
                 ? (pendingExpirySuffix(t, Date.now()) === '?'
                   ? 'text-gray-500 border-app-border bg-app-text/5'
                   : 'text-orange-400 border-orange-400/40 bg-orange-400/10')
@@ -3900,8 +3917,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       // 非主组也不再保持原顺序：按各组的固有规则（挂单看接近成交、买单看红色幅度、卖单看负数幅度）排在主组之后
       const tradeInfo = (s: StockEntry): { group: 'pendingSell' | 'pendingBuy' | 'filledBuy' | 'filledSell' | 'none'; diff: number | null } => {
         const trades = s.stockTrades || [];
-        const ordinary = trades.filter(t => !t.isMerged);
-        const latest = ordinary.length ? [...ordinary].sort((a, b) => b.createdAt - a.createdAt)[0] : null;
+        const latest = latestTradeForDisplay(trades);
         if (!latest) return { group: 'none', diff: null };
         const diff = latest.price > 0 && (s.price || 0) > 0
           ? ((s.price - latest.price) / latest.price) * 100
@@ -6480,8 +6496,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       >
                         {(() => {
                           const trades = getTrades(stock);
-                          const ordinary = trades.filter(t => !t.isMerged);
-                          const latest = ordinary.length ? [...ordinary].sort((a, b) => b.createdAt - a.createdAt)[0] : null;
+                          const latest = latestTradeForDisplay(trades);
                           if (!latest) return (
                             <div className="flex flex-col items-center leading-tight gap-px">
                               <span className="font-mono text-[10px]">&nbsp;</span>
