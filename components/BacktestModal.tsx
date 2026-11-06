@@ -1977,7 +1977,8 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
 
             {/* 操作记录表：与上方图表各占一半高度（flex-1 均分），超高滚动；浅色底与图表区分 */}
             <div className="overflow-y-auto custom-scrollbar flex-1 min-h-0 bg-app-card">
-              <table ref={tradeTableRef} className="w-full table-fixed text-xs font-mono text-app-subtext">
+              {/* border-separate：sticky 表头在 border-collapse 下会丢失单元格边框，改用它保证表头分隔线可见 */}
+              <table ref={tradeTableRef} className="w-full table-fixed text-xs font-mono text-app-subtext border-separate border-spacing-0 [&>tbody>tr>td]:border-b [&>tbody>tr>td]:border-r [&>tbody>tr>td]:border-app-border [&>thead>tr>th]:border-b [&>thead>tr>th]:border-r [&>thead>tr>th]:border-app-border">
                 <colgroup>
                   <col />
                   <col />
