@@ -2708,6 +2708,18 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       return next;
     });
   };
+  // 「持仓」与「BOLL」两个大列的顺序：点击持仓表头右侧的交换图标切换，本地记忆
+  const [swapPositionBoll, setSwapPositionBoll] = useState<boolean>(() => {
+    try { return localStorage.getItem('stock_position_boll_swapped') === '1'; } catch { return false; }
+  });
+  const togglePositionBollOrder = () => {
+    setSwapPositionBoll(prev => {
+      const next = !prev;
+      try { localStorage.setItem('stock_position_boll_swapped', next ? '1' : '0'); } catch { /* 忽略 */ }
+      return next;
+    });
+  };
+  const bollPositionOrder: ('position' | 'boll')[] = swapPositionBoll ? ['boll', 'position'] : ['position', 'boll'];
   // 交易列排序：三档循环 —— 1=挂卖/挂买在前（按离成交的远近），2=买单在前（红色幅度大在前），3=卖单在前（绿色盈利幅度大在前）
   const [tradePctSortState, setTradePctSortState] = useState<1 | 2 | 3>(1);
   const handleTradePctSortClick = () => {
@@ -5892,8 +5904,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             >股息率{import.meta.env.DEV ? ' debug' : ''}</h1>
             {/* 资金概况：位于标题右侧，可用右侧圆环按钮显隐 */}
             {showCapitalStats && (
-              <div className="flex items-center gap-3 text-[10px] whitespace-nowrap">
-                <span className="text-app-subtext">总资金:
+              <div className="flex items-center gap-3 text-[10px] whitespace-nowrap min-w-0">
+                <span className="hidden xl:inline text-app-subtext">总资金:
                   {editingCapital ? (
                     <input
                       autoFocus
@@ -5915,8 +5927,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </span>
                   )}
                 </span>
-                <span className="text-app-subtext">已投入: <span className="font-mono font-normal text-app-subtext">{fmtCapital(accountSummary.invested)}</span></span>
-                <span className="text-app-subtext">剩余: <span className="font-mono font-normal text-app-subtext">{fmtCapital(accountSummary.remaining)}</span></span>
+                <span className="hidden lg:inline text-app-subtext">已投入: <span className="font-mono font-normal text-app-subtext">{fmtCapital(accountSummary.invested)}</span></span>
+                <span className="hidden sm:inline text-app-subtext">剩余: <span className="font-mono font-normal text-app-subtext">{fmtCapital(accountSummary.remaining)}</span></span>
                 <span className="text-app-subtext">仓位: <span className="font-mono font-normal text-app-subtext">{accountSummary.ratio.toFixed(1)}%</span></span>
               </div>
             )}
@@ -5976,13 +5988,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               {cols.includes('dividendRate') && <col style={{ width: '70px' }} />}
               {cols.includes('price') && <col style={{ width: '60px' }} />}
               {cols.includes('changePercent') && <col style={{ width: '55px' }} />}
-              {cols.includes('position') && <col style={{ width: '56px' }} />}
-              {cols.includes('position') && <col style={{ width: '56px' }} />}
-              {cols.includes('position') && <col style={{ width: '64px' }} />}
-              {cols.includes('position') && <col style={{ width: '56px' }} />}
-              <col style={{ width: '65px' }} />
-              <col style={{ width: '65px' }} />
-              <col style={{ width: '65px' }} />
+              {bollPositionOrder.map(g => g === 'position'
+                ? cols.includes('position') && (
+                  <React.Fragment key="col-position">
+                    <col style={{ width: '56px' }} />
+                    <col style={{ width: '56px' }} />
+                    <col style={{ width: '64px' }} />
+                    <col style={{ width: '56px' }} />
+                  </React.Fragment>
+                )
+                : (
+                  <React.Fragment key="col-boll">
+                    <col style={{ width: '65px' }} />
+                    <col style={{ width: '65px' }} />
+                    <col style={{ width: '65px' }} />
+                  </React.Fragment>
+                ))}
               {dividendYearCols.map(yearCol => <col key={yearCol} style={{ width: '50px' }} />)}
               <col style={{ width: '60px' }} />
             </colgroup>
@@ -6015,13 +6036,27 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   title="点击切换下方展示：最低-最高 / 相对现价（收盘价）的差值"
                 >价格</th>}
                 {cols.includes('changePercent') && <th className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap cursor-pointer select-none" onClick={() => handleChangePctSortClick()}>涨跌幅</th>}
-                {cols.includes('position') && <th
-                  colSpan={4}
-                  className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-r border-app-border"
-                >
-                  持仓
-                </th>}
+                {bollPositionOrder.map(g => g === 'position' ? (
+                  cols.includes('position') && <th
+                    key="head-position"
+                    colSpan={4}
+                    className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider bg-app-input whitespace-nowrap border-b border-app-border border-r border-app-border"
+                  >
+                    <span className="inline-flex items-center justify-center gap-1">
+                      <span>持仓</span>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); togglePositionBollOrder(); }}
+                        className="p-0.5 rounded hover:bg-app-card transition-colors"
+                        title="交换「持仓」与「BOLL」两列的位置"
+                      >
+                        <ArrowLeftRight size={10} />
+                      </button>
+                    </span>
+                  </th>
+                ) : (
                 <th
+                key="head-boll"
                 className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap"
                 colSpan={3}
               >
@@ -6062,6 +6097,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </button>
                 </div>
               </th>
+                ))}
                 {dividendYearCols.length > 0 && <th
                   colSpan={dividendYearCols.length + 1}
                   className="px-1 py-2 text-center text-xs uppercase font-bold text-app-subtext tracking-wider border-b border-app-border border-r border-app-border bg-app-input whitespace-nowrap"
@@ -6132,7 +6168,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       </button>
                     </div>
                   </th>}
-                {cols.includes('position') && <>
+                {bollPositionOrder.map(g => g === 'position' ? (
+                  cols.includes('position') && <React.Fragment key="sub-position">
                   <th
                     className="w-[56px] px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border select-none"
                   >
@@ -6159,10 +6196,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   >
                     交易
                   </th>
-                </>}
+                  </React.Fragment>
+                ) : (
+                  <React.Fragment key="sub-boll">
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('daily')}>日线</th>
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('weekly')}>周线</th>
                 <th className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border cursor-pointer select-none hover:bg-app-card transition-colors" onClick={() => handleBollSortClick('monthly')}>月线</th>
+                  </React.Fragment>
+                ))}
                 {dividendYearCols.map((yearCol, idx) => (
                   <th key={yearCol} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border">
                     {yearCol === 'dividendLeft' ? dividendYearLeft : dividendYearRight}
@@ -6400,7 +6441,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       );
                     })()}
                   </td>}
-                  {cols.includes('position') && (() => {
+                  {bollPositionOrder.map(g => g === 'position' ? (
+                    cols.includes('position') && (() => {
                     const shares = stock.positionShares || 0;
                     const cost = stock.positionCost || 0;
                     const dividend = getDividendForYear(stock, getSelectedYear(stock)) || 0;
@@ -6538,8 +6580,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         {col3}
                       </React.Fragment>
                     );
-                  })()}
-                  {(() => {
+                  })()
+                  ) : (
+                  (() => {
                     const bollInfo = stockBollMap.get(stock.id);
                     const price = stock.price || 0;
                     const periods: { key: BollPeriod; data: BollData | null }[] = [
@@ -6617,7 +6660,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         </td>
                       );
                     });
-                  })()}
+                  })()
+                  ))}
                   {dividendYearCols.map((yearCol, idx) => {
                     const year = yearCol === 'dividendLeft' ? dividendYearLeft : dividendYearRight;
                     const value = getDividendForYear(stock, year);
