@@ -4051,6 +4051,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     try { localStorage.setItem('stock_capital_stats_visible', showCapitalStats ? '1' : '0'); } catch { /* ignore */ }
   }, [showCapitalStats]);
+  // 资金概况的展示档位：按标题行剩余空间动态决定，优先级「仓位 → 剩余 → 已投入 → 总资金」
+  // 0=只有仓位，1=+剩余，2=+已投入，3=全部
+  const [capitalStatsTier, setCapitalStatsTier] = useState(0);
+  const capitalHeaderRowRef = useRef<HTMLDivElement>(null);
+  const capitalHeaderTitleRef = useRef<HTMLHeadingElement>(null);
+  const capitalHeaderButtonsRef = useRef<HTMLDivElement>(null);
+  const capitalMeasureRef = useRef<HTMLDivElement>(null);
   const [expandedProfitDays, setExpandedProfitDays] = useState<Set<string>>(new Set());
   // 盈利计算模式：均价盈亏 / 做T（全局，两处共用，默认做T，存 localStorage）
   const getSavedPnlCalcMode = (): PnlCalcMode => {
@@ -4230,6 +4237,40 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return { invested, total, remaining, ratio };
   }, [effectiveLedger, dividendTotalCapital]);
   const fmtCapital = (v: number) => v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // 按标题行的真实剩余宽度决定资金概况展示几项（避免用视口断点判断导致有空间却少显示）
+  useLayoutEffect(() => {
+    const recompute = () => {
+      const row = capitalHeaderRowRef.current;
+      const measure = capitalMeasureRef.current;
+      if (!row || !measure) return;
+      const titleW = capitalHeaderTitleRef.current?.offsetWidth ?? 0;
+      // 用 scrollWidth：按钮组在被挤压时 offsetWidth 会变小，导致可用宽度被高估（宽→窄时冻结在旧档位）
+      const buttonsEl = capitalHeaderButtonsRef.current;
+      const buttonsW = buttonsEl ? Math.max(buttonsEl.offsetWidth, buttonsEl.scrollWidth) : 0;
+      const rowGap = window.innerWidth >= 768 ? 12 : 8;   // gap-2 md:gap-3
+      const titleGap = 12;                                 // 与标题之间的 gap-3
+      const available = row.clientWidth - titleW - buttonsW - rowGap * 2 - titleGap;
+      const items = Array.from(measure.children) as HTMLElement[];
+      // measure 子元素顺序：总资金 / 已投入 / 剩余 / 仓位
+      const widths = [items[3], items[2], items[1], items[0]].map(el => el?.offsetWidth ?? 0);
+      const gap = 12;
+      let used = widths[0];
+      let tier = 0;
+      for (let i = 1; i < widths.length; i++) {
+        const next = used + gap + widths[i];
+        if (next > available) break;
+        used = next;
+        tier = i;
+      }
+      setCapitalStatsTier(tier);
+    };
+    recompute();
+    const ro = new ResizeObserver(recompute);
+    if (capitalHeaderRowRef.current) ro.observe(capitalHeaderRowRef.current);
+    window.addEventListener('resize', recompute);
+    return () => { ro.disconnect(); window.removeEventListener('resize', recompute); };
+  }, [showCapitalStats, dividendTotalCapital, accountSummary.invested, accountSummary.remaining, accountSummary.ratio, capitalStatsTier]);
 
   const toggleProfitDay = (date: string) => {
     setExpandedProfitDays(prev => {
@@ -5891,10 +5932,22 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       className="flex flex-col gap-3 w-full h-full min-h-0"
       style={{ paddingBottom: bottomBarH > 0 ? bottomBarH + 16 : 14 }}
     >
-      <div className="shrink-0 flex justify-center -mb-2.5">
-        <div className="w-full flex items-end gap-2 md:gap-3" style={{ maxWidth: effectiveMaxWidth }}>
+      <div className="shrink-0 flex justify-center -mb-2.5 relative">
+        {/* 隐藏的测量行：始终按完整四项渲染，用于计算每项真实宽度 */}
+        <div
+          ref={capitalMeasureRef}
+          aria-hidden
+          className="absolute left-0 top-0 invisible pointer-events-none flex items-center gap-3 text-[10px] whitespace-nowrap"
+        >
+          <span>总资金: {fmtCapital(accountSummary.total)}</span>
+          <span>已投入: {fmtCapital(accountSummary.invested)}</span>
+          <span>剩余: {fmtCapital(accountSummary.remaining)}</span>
+          <span>仓位: {accountSummary.ratio.toFixed(1)}%</span>
+        </div>
+        <div ref={capitalHeaderRowRef} className="w-full flex items-end gap-2 md:gap-3" style={{ maxWidth: effectiveMaxWidth }}>
           <div className="flex items-baseline gap-3 pb-2 shrink-0">
             <h1
+              ref={capitalHeaderTitleRef}
               onPointerDown={startTitleLongPress}
               onPointerUp={cancelTitleLongPress}
               onPointerLeave={cancelTitleLongPress}
@@ -5905,7 +5958,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             {/* 资金概况：位于标题右侧，可用右侧圆环按钮显隐 */}
             {showCapitalStats && (
               <div className="flex items-center gap-3 text-[10px] whitespace-nowrap min-w-0">
-                <span className="hidden xl:inline text-app-subtext">总资金:
+                <span className={`${capitalStatsTier >= 3 ? 'inline' : 'hidden'} text-app-subtext`}>总资金:
                   {editingCapital ? (
                     <input
                       autoFocus
@@ -5927,13 +5980,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </span>
                   )}
                 </span>
-                <span className="hidden lg:inline text-app-subtext">已投入: <span className="font-mono font-normal text-app-subtext">{fmtCapital(accountSummary.invested)}</span></span>
-                <span className="hidden sm:inline text-app-subtext">剩余: <span className="font-mono font-normal text-app-subtext">{fmtCapital(accountSummary.remaining)}</span></span>
+                <span className={`${capitalStatsTier >= 2 ? 'inline' : 'hidden'} text-app-subtext`}>已投入: <span className="font-mono font-normal text-app-subtext">{fmtCapital(accountSummary.invested)}</span></span>
+                <span className={`${capitalStatsTier >= 1 ? 'inline' : 'hidden'} text-app-subtext`}>剩余: <span className="font-mono font-normal text-app-subtext">{fmtCapital(accountSummary.remaining)}</span></span>
                 <span className="text-app-subtext">仓位: <span className="font-mono font-normal text-app-subtext">{accountSummary.ratio.toFixed(1)}%</span></span>
               </div>
             )}
           </div>
-          <div className="ml-auto pb-1.5 min-w-0 flex justify-end items-center gap-0.5 sm:gap-1.5 lg:gap-2">{uploadButton}{/* 资金概况显隐开关：圆环进度 = 仓位占用（配色与同排按钮图标一致） */}
+          <div ref={capitalHeaderButtonsRef} className="ml-auto pb-1.5 shrink-0 flex justify-end items-center gap-0.5 sm:gap-1.5 lg:gap-2">{uploadButton}{/* 资金概况显隐开关：圆环进度 = 仓位占用（配色与同排按钮图标一致） */}
             <button
               type="button"
               onClick={() => setShowCapitalStats(v => !v)}
