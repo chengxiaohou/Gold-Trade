@@ -5615,7 +5615,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setAddTradeNote('');
     // Excel 回填只在这一次成交生效，提交后恢复为使用当前时间
     setTradeFilledAtOverride(null);
-  }, [stocks, onStocksChange, addTradeSide, addTradePrice, addTradeShares, addTradeNote, pushLedger, tradeFilledAtOverride]);
+    // 由对账明细回填呼出的弹窗：成交后直接关闭，方便逐条补录
+    if (tradeInfoAboveAccount) closeTradeInfo();
+  }, [stocks, onStocksChange, addTradeSide, addTradePrice, addTradeShares, addTradeNote, pushLedger, tradeFilledAtOverride, tradeInfoAboveAccount, closeTradeInfo]);
 
   // 保存编辑一条交易记录：先从原记录回退持仓影响，再按新字段与目标状态重算
   const handleSaveEditTrade = useCallback((stockId: string, tradeId: string, status: 'pending' | 'filled') => {
