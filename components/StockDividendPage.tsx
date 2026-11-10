@@ -5165,6 +5165,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [tradeInfoAboveAccount, setTradeInfoAboveAccount] = useState(false);
   // 由 Excel 回填时指定的成交时间（点击「成交」时用它替代当前时间）
   const [tradeFilledAtOverride, setTradeFilledAtOverride] = useState<number | null>(null);
+  // 备注输入框：从 Excel 差异行呼出弹窗时自动进入编辑态
+  const tradeNoteInputRef = useRef<HTMLInputElement | null>(null);
   const openTradeInfo = (
     btn: HTMLElement | DOMRect,
     stock: StockEntry,
@@ -5238,6 +5240,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setAddTradeNote('' as string);
     setTradeBodyMaxH(null);
   }, []);
+
+  // 从 Excel 差异行呼出的弹窗：浮窗定位完成后自动聚焦备注，触发原有的「进入编辑态自动填文字」逻辑
+  useEffect(() => {
+    if (!tradeInfoAboveAccount || !tradeInfoSettled) return;
+    const timer = window.setTimeout(() => tradeNoteInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [tradeInfoAboveAccount, tradeInfoSettled]);
 
   // 统一 ESC 关闭：无论临时(hover)还是固定(click)悬浮窗，按 ESC 一律关闭
   useEffect(() => {
@@ -8210,6 +8219,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <div className="flex items-center gap-2">
                 <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5 shrink-0">备注</label>
                 <input
+                  ref={tradeNoteInputRef}
                   type="text"
                   value={addTradeNote}
                   onChange={(e) => setAddTradeNote(e.target.value)}
