@@ -93,12 +93,13 @@ interface TradeLine {
   pending?: boolean;
 }
 
-// 逐行 diff 结果：same=一致，del=仅项目，ins=仅 Excel，change=两侧都有但字段有差异
+// 逐行 diff 结果：same=一致，del=仅项目，ins=仅 Excel，change=两侧都有但字段有差异，split=一单对多单的拆分成交（不算差异）
 type DiffRow = {
-  kind: 'same' | 'del' | 'ins' | 'change';
+  kind: 'same' | 'del' | 'ins' | 'change' | 'split';
   left?: TradeLine;
   right?: TradeLine;
   fieldDiffs?: string[];      // change 时哪些字段不一致（shares/price/amount/date）
+  split?: boolean;            // split 时标记该 Excel 行属于拆分成交
 };
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -114,6 +115,26 @@ const timeOf = (ts: number) => {
 // 两侧行键：日期 + 方向 + 数量 + 价格（时间不参与匹配，Excel 与记账时间口径不同）
 const tradeLineKey = (l: TradeLine) =>
   `${l.date}|${l.side}|${l.shares ?? ''}|${l.price != null ? l.price.toFixed(3) : ''}`;
+
+// 一侧一笔（项目记账，通常是合并后录入）对另一侧多笔（Excel 拆分成交）是否可视为同一单：
+// 日期/方向一致、数量合计相等，且金额（优先）或单价相当
+function isMergedGroup(one: TradeLine, parts: TradeLine[]): boolean {
+  if (parts.length < 2) return false;
+  if (parts.some(p => p.date !== one.date || p.side !== one.side)) return false;
+  if (one.shares == null) return false;
+  const sumShares = parts.reduce((s, p) => s + (p.shares ?? 0), 0);
+  if (Math.abs(sumShares - one.shares) > 1e-6) return false;
+  const partAmounts = parts.map(p => p.amount);
+  if (one.amount != null && partAmounts.every(a => a != null)) {
+    const sumAmount = partAmounts.reduce((s, a) => s + (a as number), 0);
+    return Math.abs(sumAmount - one.amount) <= Math.max(0.05, Math.abs(one.amount) * 0.01);
+  }
+  const partPrices = parts.map(p => p.price);
+  if (one.price != null && partPrices.every(p => p != null)) {
+    return partPrices.every(p => Math.abs((p as number) - one.price!) <= 0.0005);
+  }
+  return true;
+}
 
 // 逐行对齐（LCS），再把相邻的“仅项目/仅Excel”配成 change 行，方便像 git diff 一样看差异
 function diffTradeLines(left: TradeLine[], right: TradeLine[]): DiffRow[] {
@@ -135,7 +156,7 @@ function diffTradeLines(left: TradeLine[], right: TradeLine[]): DiffRow[] {
   while (i < n) { base.push({ kind: 'del', left: left[i] }); i++; }
   while (j < m) { base.push({ kind: 'ins', right: right[j] }); j++; }
 
-  // 成对的删除/新增 → change（逐字段标记差异）
+  // 成对的删除/新增 → change（逐字段标记差异）；一单对多单且能对上的，视为拆单、不算差异
   const out: DiffRow[] = [];
   let k = 0;
   while (k < base.length) {
@@ -144,9 +165,40 @@ function diffTradeLines(left: TradeLine[], right: TradeLine[]): DiffRow[] {
       while (k < base.length && base[k].kind === 'del') { if (base[k].left) dels.push(base[k].left!); k++; }
       const inss: TradeLine[] = [];
       while (k < base.length && base[k].kind === 'ins') { if (base[k].right) inss.push(base[k].right!); k++; }
-      const cnt = Math.max(dels.length, inss.length);
+
+      // 先挑出「一笔项目记录 ↔ 多笔 Excel 拆分成交」的组合
+      const usedIns = new Set<number>();
+      const splitOf = new Map<number, number[]>();
+      for (let a = 0; a < dels.length; a++) {
+        const cand = inss.map((t, i) => ({ t, i })).filter(({ t, i }) => !usedIns.has(i) && t.date === dels[a].date && t.side === dels[a].side);
+        for (let size = 2; size <= 4; size++) {
+          let hit: number[] | null = null;
+          for (let s = 0; s + size <= cand.length; s++) {
+            const group = cand.slice(s, s + size);
+            if (isMergedGroup(dels[a], group.map(g => g.t))) { hit = group.map(g => g.i); break; }
+          }
+          if (hit) {
+            hit.forEach(i => usedIns.add(i));
+            splitOf.set(a, hit);
+            break;
+          }
+        }
+      }
+
+      const restDels: TradeLine[] = [];
+      for (let a = 0; a < dels.length; a++) {
+        const idxs = splitOf.get(a);
+        if (!idxs) { restDels.push(dels[a]); continue; }
+        // 拆单如实逐条展示：项目侧只占第一行，Excel 侧每条一行，均不做差异着色
+        idxs.forEach((ii, n) => {
+          out.push({ kind: 'split', left: n === 0 ? dels[a] : undefined, right: inss[ii], split: true });
+        });
+      }
+      const restInss = inss.filter((_, i) => !usedIns.has(i));
+
+      const cnt = Math.max(restDels.length, restInss.length);
       for (let x = 0; x < cnt; x++) {
-        const l = dels[x], r = inss[x];
+        const l = restDels[x], r = restInss[x];
         if (l && r) {
           const fieldDiffs: string[] = [];
           if (l.date !== r.date) fieldDiffs.push('date');
@@ -794,8 +846,9 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
             amount: t.amount,
           }));
         const diffRows = diffTradeLines(projectLines, excelLines);
-        const diffCount = diffRows.filter(d => d.kind !== 'same').length;
-        const renderLineCell = (line: TradeLine | undefined, tone: 'same' | 'del' | 'ins' | 'change', fieldDiffs?: string[], onLabelClick?: (e: React.MouseEvent<HTMLElement>) => void) => {
+        // 拆单（一单对多单但能对上）不算差异
+        const diffCount = diffRows.filter(d => d.kind !== 'same' && d.kind !== 'split').length;
+        const renderLineCell = (line: TradeLine | undefined, tone: 'same' | 'del' | 'ins' | 'change' | 'split', fieldDiffs?: string[], onLabelClick?: (e: React.MouseEvent<HTMLElement>) => void, split?: boolean) => {
           if (!line) return <div className="px-2 py-1 text-[10px] text-app-subtext/60 bg-app-card">—</div>;
           const sideCls = line.pending ? 'text-orange-400' : (line.side === 'buy' ? 'text-brand-red' : 'text-brand-green');
           const flagCls = (f: string) => tone === 'change' && fieldDiffs?.includes(f)
@@ -805,9 +858,9 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
             <div className={`px-2 py-1 text-[10px] font-mono flex items-center gap-1 whitespace-nowrap ${tone === 'change' ? 'bg-[rgba(210,153,34,0.08)]' : ''}`}>
               <span className={`w-[74px] shrink-0 text-app-subtext ${tone === 'change' && fieldDiffs?.includes('date') ? 'bg-[rgba(210,153,34,0.25)] text-[#e3b341] px-0.5 rounded' : ''}`}>{line.date.slice(5)} {line.time}</span>
               <span
-                className={`w-[26px] shrink-0 font-bold ${sideCls} ${onLabelClick ? 'cursor-pointer hover:underline underline-offset-2 decoration-current' : ''}`}
+                className={`shrink-0 font-bold ${split ? '' : 'w-[26px]'} ${sideCls} ${onLabelClick ? 'cursor-pointer hover:underline underline-offset-2 decoration-current' : ''}`}
                 onClick={onLabelClick}
-              >{line.label}</span>
+              >{line.label}{split ? '（拆）' : ''}</span>
               <span className={`flex-1 text-right ${flagCls('price')}`}>{line.price != null ? line.price.toLocaleString('zh-CN', { maximumFractionDigits: 3 }) : '-'}</span>
               <span className={`w-[60px] text-right ${flagCls('shares')}`}>×{line.shares != null ? line.shares.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) : '-'}</span>
             </div>
@@ -871,8 +924,9 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
                     <div className="bg-app-input px-2 py-1 text-[10px] font-bold text-app-subtext">Excel 交易记录</div>
                     {diffRows.map((d, idx) => {
                       // 右侧 Excel 记录：有差异且具备价格/数量时，「买入/卖出」文字可点击回填交易弹窗（成交时间取 Excel 的记录时间）
+                      // 拆单行属于已对上的记录，不提供回填入口
                       const canBackfill = !!onCreateTradeFromExcel
-                        && d.kind !== 'same'
+                        && d.kind !== 'same' && d.kind !== 'split'
                         && d.right?.price != null && d.right?.shares != null;
                       const handleBackfill = (e: React.MouseEvent<HTMLElement>) => {
                         if (!canBackfill || !d.right) return;
@@ -899,7 +953,7 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
                           {renderLineCell(d.left, d.kind, d.fieldDiffs)}
                         </div>
                         <div className={`${d.kind === 'ins' ? 'bg-[rgba(63,185,80,0.20)]' : d.kind === 'change' ? 'bg-[rgba(210,153,34,0.12)]' : 'bg-app-card'}`}>
-                          {renderLineCell(d.right, d.kind, d.fieldDiffs, canBackfill ? handleBackfill : undefined)}
+                          {renderLineCell(d.right, d.kind, d.fieldDiffs, canBackfill ? handleBackfill : undefined, d.split)}
                         </div>
                       </React.Fragment>
                       );
