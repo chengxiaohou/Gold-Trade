@@ -631,8 +631,9 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
               document.body.appendChild(a);
               a.click();
               a.remove();
-              // 2 秒后用新的浏览器窗口打开在线对账单页（带窗口尺寸参数时浏览器才会开新窗口而不是新标签页）
+              // 3 秒后：先让本机辅助接口退出投资账本，再用新的浏览器窗口打开在线对账单页
               window.setTimeout(() => {
+                fetch('/api/quit-hxfinance', { method: 'POST' }).catch(() => {});
                 const width = Math.min(1440, Math.round(window.screen.availWidth * 0.85));
                 const height = Math.min(1000, Math.round(window.screen.availHeight * 0.9));
                 window.open(
@@ -640,7 +641,7 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
                   'tzzb_account_sync',
                   `popup=yes,width=${width},height=${height},left=120,top=80`,
                 );
-              }, 2000);
+              }, 3000);
             }}
             className="text-[11px] text-app-subtext hover:text-app-text transition-colors"
             title="唤起 HXFinance 同步数据"
