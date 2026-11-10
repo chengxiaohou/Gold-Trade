@@ -18,6 +18,16 @@ interface StockAccountPageProps {
   heldStockShares?: number[];
   // 项目记账的逐笔交易记录（按股票），用于差异浮窗对照展示
   stockTradeInfo?: { code: string; name: string; trades: StockTrade[] }[];
+  // 点击差异浮窗右侧（Excel）的一条有差异记录：回填交易弹窗并指定成交时间
+  onCreateTradeFromExcel?: (payload: {
+    code: string;
+    name: string;
+    side: 'buy' | 'sell';
+    price: number;
+    shares: number;
+    filledAt: number;
+    anchor: DOMRect;
+  }) => void;
 }
 
 // 股票代码归一化：去空格/点号/后缀，兼容 601318.SH / SH601318 / 601318 等写法
@@ -155,6 +165,8 @@ function diffTradeLines(left: TradeLine[], right: TradeLine[]): DiffRow[] {
 }
 
 const STORAGE_KEY = 'stock_account_sheet_v1';
+// 过滤档位（全部/已持仓/未持仓/已添加/未添加）的本地记忆键
+const FILTER_MODE_KEY = 'stock_account_filter_mode';
 // 固定挪到表格最右侧的列
 const MOVE_TO_END = ['关联板块', '板块涨幅', '组合盈亏', '组合涨幅'];
 
@@ -248,7 +260,7 @@ const cellColor = (v: SheetCell | undefined, header: string): string => {
 const formatMoney = (n: number | null) =>
   n == null ? '-' : n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, stockCodes, stockNames, heldStockCodes, heldStockNames, heldStockShares, stockTradeInfo }) => {
+export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, stockCodes, stockNames, heldStockCodes, heldStockNames, heldStockShares, stockTradeInfo, onCreateTradeFromExcel }) => {
   const [sheet, setSheet] = useState<AccountSheet | null>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -272,14 +284,6 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
       else localStorage.removeItem(STORAGE_KEY);
     } catch { /* ignore */ }
   }, [sheet]);
-
-  useEffect(() => {
-    const onEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onEsc);
-    return () => window.removeEventListener('keydown', onEsc);
-  }, [onClose]);
 
   const handleFile = async (file: File | undefined | null) => {
     if (!file) return;
@@ -343,7 +347,17 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
   const cumPnlIdx = headers.indexOf('累计盈亏');
 
   // Excel 行过滤：all=全部 / held=我当前有持仓的 / notHeld=我当前没持仓的 / added=我已添加过的 / notAdded=我还没添加的
-  const [filterMode, setFilterMode] = useState<'all' | 'held' | 'notHeld' | 'added' | 'notAdded'>('all');
+  // 选择结果本地记忆，下次打开沿用上次的过滤档位
+  const [filterMode, setFilterMode] = useState<'all' | 'held' | 'notHeld' | 'added' | 'notAdded'>(() => {
+    try {
+      const raw = localStorage.getItem(FILTER_MODE_KEY);
+      if (raw === 'all' || raw === 'held' || raw === 'notHeld' || raw === 'added' || raw === 'notAdded') return raw;
+    } catch { /* 忽略 */ }
+    return 'all';
+  });
+  useEffect(() => {
+    try { localStorage.setItem(FILTER_MODE_KEY, filterMode); } catch { /* 忽略 */ }
+  }, [filterMode]);
   // 小眼睛开关：被排除的行不计入底部合计（仅影响合计，不影响行数与过滤）
   const [excludedRows, setExcludedRows] = useState<Set<number>>(new Set());
   useEffect(() => { setExcludedRows(new Set()); }, [rows]);
@@ -430,6 +444,22 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
     setDiffPopover(p => (p ? { ...p, pos: { ...p.pos, left } } : p));
   }, []);
   const diffDrag = usePopoverDrag(diffPopoverRef, setDiffTop, setDiffLeft);
+
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // 由 Excel 差异行呼出的交易弹窗叠在本页之上时，ESC 只关交易弹窗，不关闭对账单页
+      if (document.querySelector('[data-trade-popup]')) return;
+      // 对账明细浮窗打开时，ESC 只关浮窗，页面保留
+      if (diffPopover) {
+        setDiffPopover(null);
+        return;
+      }
+      onClose();
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [onClose, diffPopover]);
   const openDiffPopover = (row: SheetCell[], ri: number, anchor: HTMLElement) => {
     const rect = anchor.getBoundingClientRect();
     const w = 560;
@@ -664,7 +694,7 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
                         return (
                           <td
                             key={`${h}-${ci}`}
-                            className={`px-2 py-1.5 border-b border-app-border border-r border-app-border font-mono whitespace-nowrap ${mismatch != null ? 'cursor-pointer hover:bg-app-input/40 text-brand-softYellow' : h === '本金' ? 'text-indigo-400 font-bold' : h === '持有金额' ? (pnlCellCls(pnlIdx >= 0 ? row[pnlIdx] : null) || 'text-app-rowtext') : cellColor(v, h) || 'text-app-rowtext'}`}
+                            className={`px-2 py-1.5 border-b border-app-border border-r border-app-border font-mono whitespace-nowrap ${mismatch != null ? 'cursor-pointer hover:bg-app-input/40 text-indigo-400' : h === '本金' ? 'text-indigo-400 font-bold' : h === '持有金额' ? (pnlCellCls(pnlIdx >= 0 ? row[pnlIdx] : null) || 'text-app-rowtext') : cellColor(v, h) || 'text-app-rowtext'}`}
                             title={mismatch != null ? `Excel 持有数量与记账持仓不一致，记账为 ${mismatch.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}` : h === '本金' ? '本金 = 持有金额 − 持有盈亏' : undefined}
                             onClick={mismatch != null ? (e) => openDiffPopover(row, ri, e.currentTarget) : undefined}
                           >
@@ -765,16 +795,19 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
           }));
         const diffRows = diffTradeLines(projectLines, excelLines);
         const diffCount = diffRows.filter(d => d.kind !== 'same').length;
-        const renderLineCell = (line: TradeLine | undefined, tone: 'same' | 'del' | 'ins' | 'change', fieldDiffs?: string[]) => {
+        const renderLineCell = (line: TradeLine | undefined, tone: 'same' | 'del' | 'ins' | 'change', fieldDiffs?: string[], onLabelClick?: (e: React.MouseEvent<HTMLElement>) => void) => {
           if (!line) return <div className="px-2 py-1 text-[10px] text-app-subtext/60 bg-app-card">—</div>;
           const sideCls = line.pending ? 'text-orange-400' : (line.side === 'buy' ? 'text-brand-red' : 'text-brand-green');
           const flagCls = (f: string) => tone === 'change' && fieldDiffs?.includes(f)
-            ? 'bg-[var(--soft-yellow-bg)] text-brand-softYellow px-0.5 rounded'
+            ? 'bg-[rgba(210,153,34,0.25)] text-[#e3b341] px-0.5 rounded'
             : 'text-app-text';
           return (
-            <div className={`px-2 py-1 text-[10px] font-mono flex items-center gap-1 whitespace-nowrap ${tone === 'change' ? 'bg-[var(--soft-yellow-bg)]/30' : ''}`}>
-              <span className={`w-[74px] shrink-0 text-app-subtext ${tone === 'change' && fieldDiffs?.includes('date') ? 'bg-[var(--soft-yellow-bg)] text-brand-softYellow px-0.5 rounded' : ''}`}>{line.date.slice(5)} {line.time}</span>
-              <span className={`w-[26px] shrink-0 font-bold ${sideCls}`}>{line.label}</span>
+            <div className={`px-2 py-1 text-[10px] font-mono flex items-center gap-1 whitespace-nowrap ${tone === 'change' ? 'bg-[rgba(210,153,34,0.08)]' : ''}`}>
+              <span className={`w-[74px] shrink-0 text-app-subtext ${tone === 'change' && fieldDiffs?.includes('date') ? 'bg-[rgba(210,153,34,0.25)] text-[#e3b341] px-0.5 rounded' : ''}`}>{line.date.slice(5)} {line.time}</span>
+              <span
+                className={`w-[26px] shrink-0 font-bold ${sideCls} ${onLabelClick ? 'cursor-pointer hover:underline underline-offset-2 decoration-current' : ''}`}
+                onClick={onLabelClick}
+              >{line.label}</span>
               <span className={`flex-1 text-right ${flagCls('price')}`}>{line.price != null ? line.price.toLocaleString('zh-CN', { maximumFractionDigits: 3 }) : '-'}</span>
               <span className={`w-[60px] text-right ${flagCls('shares')}`}>×{line.shares != null ? line.shares.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) : '-'}</span>
             </div>
@@ -820,9 +853,9 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
                   })}
                 </div>
                 <div className="mt-3 flex items-center justify-center gap-3 text-[10px] text-app-subtext">
-                  <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-sm bg-red-500/40" />仅项目有</span>
-                  <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-sm bg-emerald-500/40" />仅 Excel 有</span>
-                  <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-sm bg-brand-softYellow/60" />两侧字段不一致</span>
+                  <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-sm bg-[rgba(248,81,73,0.6)]" />仅项目有</span>
+                  <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-sm bg-[rgba(63,185,80,0.7)]" />仅 Excel 有</span>
+                  <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-sm bg-[rgba(210,153,34,0.6)]" />两侧字段不一致</span>
                 </div>
               </div>
 
@@ -836,16 +869,41 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
                   <div className="grid grid-cols-2 gap-px bg-app-border rounded-md overflow-hidden border border-app-border">
                     <div className="bg-app-input px-2 py-1 text-[10px] font-bold text-app-subtext">项目记账</div>
                     <div className="bg-app-input px-2 py-1 text-[10px] font-bold text-app-subtext">Excel 交易记录</div>
-                    {diffRows.map((d, idx) => (
+                    {diffRows.map((d, idx) => {
+                      // 右侧 Excel 记录：有差异且具备价格/数量时，「买入/卖出」文字可点击回填交易弹窗（成交时间取 Excel 的记录时间）
+                      const canBackfill = !!onCreateTradeFromExcel
+                        && d.kind !== 'same'
+                        && d.right?.price != null && d.right?.shares != null;
+                      const handleBackfill = (e: React.MouseEvent<HTMLElement>) => {
+                        if (!canBackfill || !d.right) return;
+                        const time = d.right.time && d.right.time.length >= 5 ? d.right.time : '09:30';
+                        const ts = new Date(`${d.right.date}T${time}:00`).getTime();
+                        // 以对账浮窗右边缘作为锚点，让交易弹窗出现在浮窗旁边，避免盖住对照表
+                        const cellRect = e.currentTarget.getBoundingClientRect();
+                        const popRect = diffPopoverRef.current?.getBoundingClientRect();
+                        onCreateTradeFromExcel!({
+                          code: codeVal,
+                          name: nameVal,
+                          side: d.right.side,
+                          price: d.right.price!,
+                          shares: d.right.shares!,
+                          filledAt: Number.isFinite(ts) ? ts : Date.now(),
+                          anchor: popRect
+                            ? new DOMRect(popRect.right, cellRect.top, 0, cellRect.height)
+                            : cellRect,
+                        });
+                      };
+                      return (
                       <React.Fragment key={`diff-${idx}`}>
-                        <div className={`${d.kind === 'del' ? 'bg-red-500/10' : 'bg-app-card'}`}>
+                        <div className={`${d.kind === 'del' ? 'bg-[rgba(248,81,73,0.12)]' : 'bg-app-card'}`}>
                           {renderLineCell(d.left, d.kind, d.fieldDiffs)}
                         </div>
-                        <div className={`${d.kind === 'ins' ? 'bg-emerald-500/10' : 'bg-app-card'}`}>
-                          {renderLineCell(d.right, d.kind, d.fieldDiffs)}
+                        <div className={`${d.kind === 'ins' ? 'bg-[rgba(63,185,80,0.20)]' : d.kind === 'change' ? 'bg-[rgba(210,153,34,0.12)]' : 'bg-app-card'}`}>
+                          {renderLineCell(d.right, d.kind, d.fieldDiffs, canBackfill ? handleBackfill : undefined)}
                         </div>
                       </React.Fragment>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
                 {pendingCount > 0 && (

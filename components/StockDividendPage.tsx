@@ -1284,7 +1284,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
       </div>
       {/* 第二行：时间 + 撤单(确认) + 编辑 + 备注 */}
       <div className="flex items-center gap-2 text-[9px] text-app-subtext leading-none">
-        <span className="font-mono font-bold whitespace-nowrap self-center leading-none">{timeStr(t.createdAt)}</span>
+        <span className="font-mono font-bold whitespace-nowrap self-center leading-none">{timeStr(t.filledAt ?? t.createdAt)}</span>
         {!t.isMerged && (
           confirming ? (
             <span className="flex items-center -space-x-1 -ml-1 select-none">
@@ -5161,6 +5161,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [tradeBodyMaxH, setTradeBodyMaxH] = useState<number | null>(null);
   // 由回测 K 线长按呼出时，把交易浮窗层级抬到回测弹窗（z-9999）之上
   const [tradeInfoAboveBacktest, setTradeInfoAboveBacktest] = useState(false);
+  // 由对账单页的 Excel 差异行呼出时，把交易浮窗层级抬到对账单页（z-95）之上
+  const [tradeInfoAboveAccount, setTradeInfoAboveAccount] = useState(false);
+  // 由 Excel 回填时指定的成交时间（点击「成交」时用它替代当前时间）
+  const [tradeFilledAtOverride, setTradeFilledAtOverride] = useState<number | null>(null);
   const openTradeInfo = (
     btn: HTMLElement | DOMRect,
     stock: StockEntry,
@@ -5176,6 +5180,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       : (stock.price > 0 ? formatPrice(stock.price, stock.name) : ''));
     if (preset?.side) setAddTradeSide(preset.side);
     setTradeInfoAboveBacktest(!!preset?.aboveBacktest);
+    // 普通呼出（列表、图表、Excel 回填以外）不携带成交时间覆盖
+    setTradeFilledAtOverride(null);
     // 数量初始值与步进保持一致：ETF 500，普通股票 100
     setAddTradeShares(isEtf(stock.name) ? '500' : '100');
     const rect = btn instanceof Element ? btn.getBoundingClientRect() : btn;
@@ -5197,6 +5203,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     openTradeInfo(new DOMRect(clientX, clientY, 0, 0), backtestStock, { side, price, aboveBacktest: true });
   };
 
+  // 对账单页 Excel 差异行：回填交易弹窗（方向/价格/数量），并把成交时间锁定为 Excel 记录的时间
+  const handleCreateTradeFromExcel = useCallback((payload: {
+    code: string; name: string; side: 'buy' | 'sell'; price: number; shares: number; filledAt: number; anchor: DOMRect;
+  }) => {
+    const target = stocks.find(s => bareCode(s.code) === bareCode(payload.code))
+      || stocks.find(s => s.name === payload.name);
+    if (!target) return;
+    openTradeInfo(new DOMRect(payload.anchor.left, payload.anchor.top, 0, 0), target, { side: payload.side, price: payload.price });
+    // openTradeInfo 会把数量重置为默认值，这里覆盖为 Excel 的数量
+    setAddTradeShares(String(payload.shares));
+    setTradeInfoAboveAccount(true);
+    setTradeFilledAtOverride(payload.filledAt);
+  }, [stocks]);
+
   // 点击价格轴上的挂单标签：打开交易弹窗并进入该挂单的编辑状态
   const handlePendingPriceEdit = (tradeId: string, clientX: number, clientY: number) => {
     const s = backtestStock;
@@ -5212,6 +5232,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setTradeInfoStock(null);
     setTradeInfoSettled(false);
     setTradeInfoAboveBacktest(false);
+    setTradeInfoAboveAccount(false);
+    setTradeFilledAtOverride(null);
     setEditingTradeId(null);
     setAddTradeNote('' as string);
     setTradeBodyMaxH(null);
@@ -5582,7 +5604,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           shares2 = Math.max(0, shares2 - shares);
           if (shares2 === 0) cost = 0;
         }
-        newTrade = { ...baseTrade, filledAt: Date.now() };
+        newTrade = { ...baseTrade, filledAt: tradeFilledAtOverride ?? Date.now() };
       }
       let newTrades = [...(s.stockTrades || []), newTrade];
       pushLedger(s.id, newTrades);
@@ -5591,7 +5613,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // 挂单/成交后仅清空数量与备注，保留价格（常为现价，方便连续操作）
     setAddTradeShares('');
     setAddTradeNote('');
-  }, [stocks, onStocksChange, addTradeSide, addTradePrice, addTradeShares, addTradeNote, pushLedger]);
+    // Excel 回填只在这一次成交生效，提交后恢复为使用当前时间
+    setTradeFilledAtOverride(null);
+  }, [stocks, onStocksChange, addTradeSide, addTradePrice, addTradeShares, addTradeNote, pushLedger, tradeFilledAtOverride]);
 
   // 保存编辑一条交易记录：先从原记录回退持仓影响，再按新字段与目标状态重算
   const handleSaveEditTrade = useCallback((stockId: string, tradeId: string, status: 'pending' | 'filled') => {
@@ -7964,7 +7988,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {tradeInfoStock && (() => {
         const s = stocks.find(x => x.id === tradeInfoStock.id) || tradeInfoStock;
         const trades = getTrades(s);
-        const sortedTrades = [...trades].sort((a, b) => b.createdAt - a.createdAt);
+        // 历史记录按展示时间（成交优先，其次创建）从新到旧，保证与行内显示的时间顺序一致
+        const sortedTrades = [...trades].sort((a, b) => (b.filledAt ?? b.createdAt) - (a.filledAt ?? a.createdAt));
         const orderAmount = (parseFloat(addTradePrice) || 0) * (parseFloat(addTradeShares) || 0);
         // 挂单金额展示：消除浮点误差后，小数为 0 则不显示小数，否则保留两位
         const orderAmtClean = Math.round(orderAmount * 100) / 100;
@@ -8040,7 +8065,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div
             ref={tradeInfoRef}
             data-trade-popup={tradeInfoAboveBacktest ? 'backtest' : 'normal'}
-            className={`fixed ${tradeInfoAboveBacktest ? 'z-[10000]' : 'z-[60]'} bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl overflow-hidden text-app-text ${tradeInfoSettled ? '' : 'pointer-events-none'}`}
+            className={`fixed ${tradeInfoAboveBacktest ? 'z-[10000]' : tradeInfoAboveAccount ? 'z-[100]' : 'z-[60]'} bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl overflow-hidden text-app-text ${tradeInfoSettled ? '' : 'pointer-events-none'}`}
             style={backdropMode
               ? { ...centeredPopupStyle(324), opacity: tradeInfoSettled ? 1 : 0 }
               : { top: tradeInfoPos.top, left: tradeInfoPos.left, width: 324, opacity: tradeInfoSettled ? 1 : 0, transform: tradeInfoSettled ? 'none' : 'translate(0,0)' }}
@@ -8102,7 +8127,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
               {/* 交易方向：买入/卖出 */}
               <div className="space-y-1.5">
-                <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">交易方向</label>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-[10px] uppercase font-bold text-app-subtext tracking-wider ml-0.5">交易方向</label>
+                  {/* Excel 回填的成交时间：紧邻「交易方向」右侧，成交时使用该时间 */}
+                  {tradeFilledAtOverride != null && (() => {
+                    const d = new Date(tradeFilledAtOverride);
+                    const pad = (n: number) => String(n).padStart(2, '0');
+                    return (
+                      <span className="text-[9px] font-normal text-indigo-400 font-mono">
+                        {`${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`}
+                      </span>
+                    );
+                  })()}
+                </div>
                 <div className="grid grid-cols-2 rounded-lg overflow-hidden border border-app-border bg-app-input/50 h-8">
                   <button
                     type="button"
@@ -9213,6 +9250,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             heldStockNames={held.map(h => h.name)}
             heldStockShares={held.map(h => h.shares)}
             stockTradeInfo={stocks.map(s => ({ code: s.code, name: s.name, trades: s.stockTrades || [] }))}
+            onCreateTradeFromExcel={handleCreateTradeFromExcel}
           />
         );
       })()}
