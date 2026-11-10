@@ -623,6 +623,32 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
           </button>
           <button
             type="button"
+            onClick={() => {
+              // 先通过自定义 URL scheme 唤起本机 HXFinance.app（投资账本），2 秒后再打开在线对账单页
+              const a = document.createElement('a');
+              a.href = 'tzzbdk://';
+              a.rel = 'noopener';
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              // 2 秒后用新的浏览器窗口打开在线对账单页（带窗口尺寸参数时浏览器才会开新窗口而不是新标签页）
+              window.setTimeout(() => {
+                const width = Math.min(1440, Math.round(window.screen.availWidth * 0.85));
+                const height = Math.min(1000, Math.round(window.screen.availHeight * 0.9));
+                window.open(
+                  'https://tzzb.10jqka.com.cn/pc/index.html#/myAccount',
+                  'tzzb_account_sync',
+                  `popup=yes,width=${width},height=${height},left=120,top=80`,
+                );
+              }, 2000);
+            }}
+            className="text-[11px] text-app-subtext hover:text-app-text transition-colors"
+            title="唤起 HXFinance 同步数据"
+          >
+            同步
+          </button>
+          <button
+            type="button"
             onClick={onClose}
             className="text-app-subtext hover:text-app-text transition-colors p-1 rounded"
             title="关闭 (ESC)"
