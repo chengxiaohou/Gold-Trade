@@ -849,7 +849,7 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
         // 拆单（一单对多单但能对上）不算差异
         const diffCount = diffRows.filter(d => d.kind !== 'same' && d.kind !== 'split').length;
         const renderLineCell = (line: TradeLine | undefined, tone: 'same' | 'del' | 'ins' | 'change' | 'split', fieldDiffs?: string[], onLabelClick?: (e: React.MouseEvent<HTMLElement>) => void, split?: boolean) => {
-          if (!line) return <div className="px-2 py-1 text-[10px] text-app-subtext/60 bg-app-card">—</div>;
+          if (!line) return <div className="px-2 py-1 text-[10px] font-mono text-app-subtext/60 bg-app-card">-</div>;
           const sideCls = line.pending ? 'text-orange-400' : (line.side === 'buy' ? 'text-brand-red' : 'text-brand-green');
           const flagCls = (f: string) => tone === 'change' && fieldDiffs?.includes(f)
             ? 'bg-[rgba(210,153,34,0.25)] text-[#e3b341] px-0.5 rounded'
