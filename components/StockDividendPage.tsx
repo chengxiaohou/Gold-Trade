@@ -3082,7 +3082,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const [bollError, setBollError] = useState<string | null>(null);
   const [bollUnsupported, setBollUnsupported] = useState<boolean>(false);
   const [bollPeriod, setBollPeriod] = useState<BollPeriod>('daily');
-  const [bollAdjust, setBollAdjust] = useState<BollAdjust>('qfq');
+  // 复权方式已移除切换入口，固定使用前复权
+  const bollAdjust: BollAdjust = 'qfq';
 
   const [srPreviewText, setSrPreviewText] = useState<string | null>(null);
   const [srPreviewRows, setSrPreviewRows] = useState<SrRow[] | null>(null);
@@ -4383,19 +4384,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // 价格数据部持权威数据与订阅；这里只做：源切换清场 + 委托批量加载 + 维护刷新态信号。
     // 请求取消/缓存判定/逐个落地/250ms 节流/日志全在 priceBureau.ensureBatch 内完成。
     const currentVersion = ++fetchVersionRef.current;
-
-    // 只在前复权模式下批量获取所有股票的BOLL数据
-    // 新浪不支持不复权模式，跳过批量获取
-    if (apiSource === 'sina' && bollAdjust === 'none') {
-      priceBureau.clear();
-      return;
-    }
-
-    // 不复权模式下腾讯也需要处理实时价格，减少批量请求
-    if (bollAdjust === 'none') {
-      priceBureau.clear();
-      return;
-    }
 
     setIsRefreshingBoll(true);
 
@@ -7535,7 +7523,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               </div>
               <div className="border-t border-app-border pt-2">
                 <div className="flex items-center gap-1 mb-2">
-                  <span ref={maBollLabelRef} className="text-[10px] text-app-subtext">MA & BOLL (20, 2)</span>
+                  <span ref={maBollLabelRef} className="text-[10px] text-app-subtext">BOLL (20, 2) & MA</span>
                   <button
                     ref={srBtnRef}
                     onClick={(e) => handleSrIconTrigger(e, stock, true)}
@@ -7552,6 +7540,18 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   >
                     {srCopied ? <Check size={12} className="text-indigo-400" /> : <BarChart3 size={12} className="text-app-subtext" />}
                   </button>
+                  {/* 日/周/月 切换与标题同一行，右对齐 */}
+                  <div className="ml-auto flex items-center gap-1 shrink-0">
+                    {(['daily', 'weekly', 'monthly'] as BollPeriod[]).map(p => (
+                      <button
+                        key={p}
+                        onClick={() => { popupScrollPosRef.current = popupContentRef.current?.scrollTop || 0; setBollPeriod(p); setDividendRateChartRange(120); setDividendRateChartOffset(0); reloadBoll(p, bollAdjust, popupScrollPosRef.current); }}
+                        className={`px-2 py-0.5 text-[11px] rounded transition-colors ${bollPeriod === p ? 'bg-indigo-500/20 text-indigo-400' : 'bg-app-input text-app-subtext hover:bg-app-input/80'}`}
+                      >
+                        {p === 'daily' ? '日线' : p === 'weekly' ? '周线' : '月线'}
+                      </button>
+                    ))}
+                  </div>
                   {srPreviewText && (
                     <div
                       ref={srTooltipRef}
@@ -7663,59 +7663,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </div>
                   )}
                 </div>
-                <div className="flex items-center gap-1 mb-2">
-                  {(['daily', 'weekly', 'monthly'] as BollPeriod[]).map(p => (
-                    <button
-                      key={p}
-                      onClick={() => { popupScrollPosRef.current = popupContentRef.current?.scrollTop || 0; setBollPeriod(p); setDividendRateChartRange(120); setDividendRateChartOffset(0); reloadBoll(p, bollAdjust, popupScrollPosRef.current); }}
-                      className={`px-2 py-1 text-[11px] rounded transition-colors ${bollPeriod === p ? 'bg-indigo-500/20 text-indigo-400' : 'bg-app-input text-app-subtext hover:bg-app-input/80'}`}
-                    >
-                      {p === 'daily' ? '日线' : p === 'weekly' ? '周线' : '月线'}
-                    </button>
-                  ))}
-                  <div className="w-px h-3 bg-app-border mx-0.5" />
-                  {(['qfq', 'none'] as BollAdjust[]).map(a => (
-                    <button
-                      key={a}
-                      onClick={() => { popupScrollPosRef.current = popupContentRef.current?.scrollTop || 0; setBollAdjust(a); setDividendRateChartRange(120); setDividendRateChartOffset(0); reloadBoll(bollPeriod, a, popupScrollPosRef.current); }}
-                      className={`px-2 py-1 text-[11px] rounded transition-colors ${bollAdjust === a ? 'bg-indigo-500/20 text-indigo-400' : 'bg-app-input text-app-subtext hover:bg-app-input/80'}`}
-                    >
-                      {a === 'qfq' ? '前复权' : '除权'}
-                    </button>
-                  ))}
-                </div>
-                {/* 关键均线（与 BOLL 合并标题，无分隔线） */}
-                <div className="mb-1">
-                  <div className="grid grid-cols-4 gap-1 mb-1">
-                    {([
-                      'MA5', 'MA10', 'MA20', 'MA30',
-                    ] as string[]).map(label => {
-                      const value = label === 'MA5' ? bollData?.ma?.ma5 : label === 'MA10' ? bollData?.ma?.ma10 : label === 'MA20' ? bollData?.ma?.ma20 : bollData?.ma?.ma30;
-                      const color = value != null ? (value > (stock.price || 0) ? 'text-brand-green' : value < (stock.price || 0) ? 'text-red-500' : 'text-blue-400') : 'text-gray-400';
-                      return (
-                        <div key={label} className="flex flex-col items-center p-1 rounded bg-app-input">
-                          <span className="text-[10px] text-app-subtext">{label}</span>
-                          <span className={`font-mono text-xs font-bold ${color}`}>{value != null ? formatPrice(value, stock.name) : '-'}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="grid grid-cols-4 gap-1">
-                    {([
-                      'MA60', 'MA120', 'MA250', 'MA500',
-                    ] as string[]).map(label => {
-                      const value = label === 'MA60' ? bollData?.ma?.ma60 : label === 'MA120' ? bollData?.ma?.ma120 : label === 'MA250' ? bollData?.ma?.ma250 : bollData?.ma?.ma500;
-                      const color = value != null ? (value > (stock.price || 0) ? 'text-brand-green' : value < (stock.price || 0) ? 'text-red-500' : 'text-blue-400') : 'text-gray-400';
-                      return (
-                        <div key={label} className="flex flex-col items-center p-1 rounded bg-app-input">
-                          <span className="text-[10px] text-app-subtext">{label}</span>
-                          <span className={`font-mono text-xs font-bold ${color}`}>{value != null ? formatPrice(value, stock.name) : '-'}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-1">
+                {/* BOLL 轨道（与 MA 合并标题，无分隔线） */}
+                <div className="grid grid-cols-3 gap-1 mb-1">
                     {(() => {
                       const bandLabels: { band: BollBandInfo['band']; label: string; value: number | undefined; labelColor: string; valueColor: string }[] = [
                         { band: 'lower', label: bollBandLabel(bollPeriod, 'lower'), value: bollData?.lower, labelColor: 'text-brand-green', valueColor: 'text-brand-green' },
@@ -7747,6 +7696,37 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         );
                       });
                     })()}
+                </div>
+                {/* 关键均线（与 BOLL 合并标题，无分隔线） */}
+                <div className="mb-1">
+                  <div className="grid grid-cols-4 gap-1 mb-1">
+                    {([
+                      'MA5', 'MA10', 'MA20', 'MA30',
+                    ] as string[]).map(label => {
+                      const value = label === 'MA5' ? bollData?.ma?.ma5 : label === 'MA10' ? bollData?.ma?.ma10 : label === 'MA20' ? bollData?.ma?.ma20 : bollData?.ma?.ma30;
+                      const color = value != null ? (value > (stock.price || 0) ? 'text-brand-green' : value < (stock.price || 0) ? 'text-red-500' : 'text-blue-500') : 'text-gray-400';
+                      return (
+                        <div key={label} className="flex flex-col items-center p-1 rounded bg-app-input">
+                          <span className="text-[10px] text-app-subtext">{label}</span>
+                          <span className={`font-mono text-xs font-bold ${color}`}>{value != null ? formatPrice(value, stock.name) : '-'}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {([
+                      'MA60', 'MA120', 'MA250', 'MA500',
+                    ] as string[]).map(label => {
+                      const value = label === 'MA60' ? bollData?.ma?.ma60 : label === 'MA120' ? bollData?.ma?.ma120 : label === 'MA250' ? bollData?.ma?.ma250 : bollData?.ma?.ma500;
+                      const color = value != null ? (value > (stock.price || 0) ? 'text-brand-green' : value < (stock.price || 0) ? 'text-red-500' : 'text-blue-500') : 'text-gray-400';
+                      return (
+                        <div key={label} className="flex flex-col items-center p-1 rounded bg-app-input">
+                          <span className="text-[10px] text-app-subtext">{label}</span>
+                          <span className={`font-mono text-xs font-bold ${color}`}>{value != null ? formatPrice(value, stock.name) : '-'}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
                 </div>
             </div>
