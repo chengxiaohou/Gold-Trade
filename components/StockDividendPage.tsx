@@ -1260,9 +1260,9 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
               deadline.setHours(0, 0, 0, 0);
               deadline.setDate(deadline.getDate() + ttl - 1);
               const deadlineStr = `${deadline.getFullYear()}/${deadline.getMonth() + 1}/${deadline.getDate()}`;
-              const opts = [5, 10, 20, 30];
+              const opts = [1, 5, 10, 20, 30];
               const suffix = pendingExpirySuffix(t, Date.now());
-              const panelW = 160;
+              const panelW = 190;
               let left = rect.right - panelW;
               left = Math.max(4, left); // 避免贴左边
               return createPortal(
@@ -1270,7 +1270,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
                   ref={ttlPanelRef}
                   role="dialog"
                   style={{ top: rect.bottom + 4, left }}
-                  className="fixed z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.55)] py-2 px-2 text-[10px] text-app-text w-[160px]"
+                  className="fixed z-[9999] bg-app-card border border-app-border rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.55)] py-2 px-2 text-[10px] text-app-text w-[190px]"
                   onMouseEnter={() => clearHideTimer()}
                   onMouseLeave={() => scheduleHide()}
                   onMouseDown={(e) => e.stopPropagation()}
@@ -1287,7 +1287,7 @@ const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendi
                   </div>
                   <div className="my-1.5 h-px bg-app-border" />
                   {/* 中间：TTL 天数选择 */}
-                  <div className="grid grid-cols-4 gap-1">
+                  <div className="grid grid-cols-5 gap-1">
                     {opts.map(n => (
                       <button
                         key={n}
