@@ -175,8 +175,8 @@ describe('buildGoldFileFingerprint', () => {
     expect(mk(100000)).not.toBe(mk(120000));
   });
 
-  it('全局设置 dividendTotalCapital（分红页总资金）变化改变指纹', () => {
-    const mk = (v: number) => buildGoldFileFingerprint({ trades: [], settings: { dividendTotalCapital: v } });
+  it('股票页设置 stockTotalCapital（股票页总资金）变化改变 stocks.json 指纹', () => {
+    const mk = (v: number) => buildStocksFileFingerprint({ stocks: [], stockSettings: { stockTotalCapital: v } });
     expect(mk(100000)).not.toBe(mk(120000));
   });
 

@@ -22,7 +22,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.236';
+const APP_VERSION = 'v2.18.240';
 
 // 上传文件大小的展示格式（UTF-8 字节数 → B/KB/MB）
 function formatByteSize(bytes: number): string {
@@ -358,7 +358,6 @@ export default function App() {
       touchMode: parsed.touchMode ?? true,
       priceDisplayMode: parsed.priceDisplayMode || 'both',
       totalCapital: parsed.totalCapital || 0,
-      dividendTotalCapital: parsed.dividendTotalCapital || 0,
       visibleColumns: parsed.visibleColumns,
       buyTaxFee: parsed.buyTaxFee ?? 5,
       sellTaxFee: parsed.sellTaxFee ?? 5,
@@ -600,6 +599,7 @@ export default function App() {
         maxWidth: parsed.maxWidth || 942,
         memo: parsed.memo || '',
         memoUpdatedAt: parsed.memoUpdatedAt || 0,
+        stockTotalCapital: parsed.stockTotalCapital ?? parsed.dividendTotalCapital,
         autoRefreshInterval: parsed.autoRefreshInterval ?? 60,
         tagParams: parsed.tagParams || DEFAULT_TAG_PARAMS,
         customTags: parsed.customTags || []
@@ -628,6 +628,17 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('stock_dividend_settings', JSON.stringify(stockSettings));
   }, [stockSettings]);
+
+  // 一次性迁移：股票页总资金原本存在全局设置（gold.json），改到 stockSettings（stocks.json）后才随云端同步
+  useEffect(() => {
+    if (stockSettings.stockTotalCapital != null) return;
+    let legacy = 0;
+    try {
+      const raw = localStorage.getItem('gold_app_settings');
+      legacy = raw ? (JSON.parse(raw).dividendTotalCapital || 0) : 0;
+    } catch { legacy = 0; }
+    if (legacy > 0) setStockSettings(prev => ({ ...prev, stockTotalCapital: legacy }));
+  }, [stockSettings.stockTotalCapital]);
 
   // 备忘录最近一次成功上传/下载的文字基线，用于判断是否有未同步的改动
   const [memoBaseline, setMemoBaseline] = useState<string>(() => stockSettings.memo || '');
@@ -2906,8 +2917,8 @@ export default function App() {
             onExportFullBackup={handleStockFullExport}
             onImportFullBackup={handleStockFullImport}
             onBacktestPresetsDirty={bumpBacktestPresets}
-            dividendTotalCapital={appSettings.dividendTotalCapital || 0}
-            onDividendTotalCapitalChange={(v) => handleSettingsUpdate({ dividendTotalCapital: v })}
+            stockTotalCapital={stockSettings.stockTotalCapital ?? 0}
+            onStockTotalCapitalChange={(v) => setStockSettings(prev => ({ ...prev, stockTotalCapital: v }))}
             />
           </PageErrorBoundary>
         )}

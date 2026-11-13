@@ -572,6 +572,7 @@ const STOCK_SETTINGS_HINTS: DiffHints = {
     tagColors: '标签颜色',
     memo: '备忘录',
     memoUpdatedAt: '备忘录时间',
+    stockTotalCapital: '总资金',
     tagParams: '标签参数',
     customTags: '自定义标签',
     buyOrderPlaceholder: '买入占位文字',
@@ -600,7 +601,7 @@ const APP_SETTINGS_HINTS: DiffHints = {
   labels: {
     priceStep: '价格步进', gramsStep: '克数步进', tagColors: '标签颜色',
     touchMode: '触控模式', priceDisplayMode: '价格显示',
-    totalCapital: '黄金页总资金', dividendTotalCapital: '分红页总资金', visibleColumns: '可见列',
+    totalCapital: '黄金页总资金', visibleColumns: '可见列',
     buyTaxFee: '买入税费', sellTaxFee: '卖出税费', apiSource: '行情源',
     cacheTTLMinutes: '行情缓存时长', bollCacheTTLMinutes: 'BOLL缓存时长',
     dividendYearLeft: '左分红年份', dividendYearRight: '右分红年份', manualFxRate: '手动汇率',

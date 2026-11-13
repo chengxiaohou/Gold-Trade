@@ -313,8 +313,8 @@ interface StockDividendPageProps {
   showRequestStats?: boolean;
   showAccountPage?: boolean;
   onCloseAccountPage?: () => void;
-  dividendTotalCapital?: number;          // 分红页账户总资金（随云端同步）
-  onDividendTotalCapitalChange?: (v: number) => void;
+  stockTotalCapital?: number;             // 股票页账户总资金（随云端同步）
+  onStockTotalCapitalChange?: (v: number) => void;
   ledgerMap?: StockLedgerMap;
   onLedgerMapChange?: (updater: (prev: StockLedgerMap) => StockLedgerMap) => void;
   onExportFullBackup?: () => void;           // 全量备份导出（stocks + ledger + stockSettings）
@@ -2414,7 +2414,7 @@ const sortStocksByTag = (list: StockEntry[]): StockEntry[] =>
     return (a.tag || '').trim().localeCompare((b.tag || '').trim());
   });
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, dividendTotalCapital = 0, onDividendTotalCapitalChange }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, stockTotalCapital = 0, onStockTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
   useEffect(() => {
     const id = 'profit-month-scroller-style';
@@ -4296,11 +4296,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       });
       invested += shares * cost;
     }
-    const total = dividendTotalCapital || 0;
+    const total = stockTotalCapital || 0;
     const remaining = Math.max(0, total - invested);
     const ratio = total > 0 ? (invested / total) * 100 : 0;
     return { invested, total, remaining, ratio };
-  }, [effectiveLedger, dividendTotalCapital, stocks, pnlCalcMode, taxEnabled]);
+  }, [effectiveLedger, stockTotalCapital, stocks, pnlCalcMode, taxEnabled]);
   const fmtCapital = (v: number) => v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   // 按标题行的真实剩余宽度决定资金概况展示几项（避免用视口断点判断导致有空间却少显示）
@@ -4335,7 +4335,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (capitalHeaderRowRef.current) ro.observe(capitalHeaderRowRef.current);
     window.addEventListener('resize', recompute);
     return () => { ro.disconnect(); window.removeEventListener('resize', recompute); };
-  }, [showCapitalStats, dividendTotalCapital, accountSummary.invested, accountSummary.remaining, accountSummary.ratio, capitalStatsTier]);
+  }, [showCapitalStats, stockTotalCapital, accountSummary.invested, accountSummary.remaining, accountSummary.ratio, capitalStatsTier]);
 
   const toggleProfitDay = (date: string) => {
     setExpandedProfitDays(prev => {
@@ -6144,8 +6144,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     <input
                       autoFocus
                       type="number"
-                      value={dividendTotalCapital || ''}
-                      onChange={(e) => onDividendTotalCapitalChange?.(parseFloat(e.target.value) || 0)}
+                      value={stockTotalCapital || ''}
+                      onChange={(e) => onStockTotalCapitalChange?.(parseFloat(e.target.value) || 0)}
                       onBlur={() => setEditingCapital(false)}
                       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                       placeholder="0.00"
@@ -6709,9 +6709,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const showCostPct = shownCost > 0 && stock.price > 0;
                     const totalAmount = shares > 0 && cost > 0 ? `¥${Math.round(shares * cost).toLocaleString()}` : '-';
                     const hasPosition = shares > 0 || cost > 0;
-                    // 仓位占比：本股票金额 / 分红页账户总资金（dividendTotalCapital），而非已投入持仓总额
+                    // 仓位占比：本股票金额 / 股票页账户总资金（stockTotalCapital），而非已投入持仓总额
                     const myAmt = shares > 0 && cost > 0 ? shares * cost : 0;
-                    const positionRatioStr = myAmt > 0 && (dividendTotalCapital || 0) > 0 ? `${((myAmt / dividendTotalCapital) * 100).toFixed(1)}%` : '';
+                    const positionRatioStr = myAmt > 0 && (stockTotalCapital || 0) > 0 ? `${((myAmt / stockTotalCapital) * 100).toFixed(1)}%` : '';
                     // 子列1：恒常展示股息率
                     const col1 = (
                       <td

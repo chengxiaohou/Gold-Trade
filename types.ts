@@ -59,7 +59,6 @@ export interface AppSettings {
   touchMode: boolean; // New: Enable touch drag to adjust values
   priceDisplayMode: 'breakEven' | 'avgCost' | 'both';
   totalCapital?: number; // New: Total planned investment capital
-  dividendTotalCapital?: number; // 分红页账户总资金（独立于黄金页 totalCapital，随云端同步）
   visibleColumns?: string[]; // New: Which columns to show in trade list
   buyTaxFee?: number; // New: Tax fee per buy transaction
   sellTaxFee?: number; // New: Tax fee per sell transaction
@@ -269,6 +268,7 @@ export interface StockSettings {
   tagColors?: Record<string, string>; // 标签颜色配置，与黄金页面独立
   sortMode?: 'default' | 'dividendRate' | 'tag' | 'daily' | 'weekly' | 'monthly' | 'changePercent' | 'costPct' | 'tradePct'; // 列表排序规则
   memo?: string; // 股息率列表下方备忘录文字（随云端同步）
+  stockTotalCapital?: number; // 股票页账户总资金（随 stocks.json 同步）
   memoUpdatedAt?: number; // 备忘录最后编辑时间戳（ms）
   tagParams?: TagParams; // 标签判定比例/容差参数（风系 + 原有），随云端同步
   customTags?: UserTagRule[]; // 用户自定义动态信号标签，随云端同步
