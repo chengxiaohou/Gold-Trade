@@ -468,11 +468,44 @@ const latestTradeForDisplay = (trades: StockTrade[]): StockTrade | null => {
 // 改联动规则（股息率口径 / 文本格式 / 名称拼接）只改这里，两个入口自动同步。
 // 股息率 = 选中年份分红 ÷ 价格，保留两位小数后去掉多余的 0；pickedName 为点中的支撑/压力位名称（聚焦填默认值时没有）。
 const GRID_NOTE_PREFIX = '网格';
-const buildGridNoteText = (dividend: number, price: number, pickedName?: string): string => {
+const buildGridNoteText = (dividend: number, price: number, pickedName?: string, relation?: string): string => {
   const divRate = dividend > 0 && price > 0 ? (dividend / price) * 100 : 0;
   if (divRate <= 0) return '';
   const gridStr = `${GRID_NOTE_PREFIX}${String(parseFloat(divRate.toFixed(2)))}`;
-  return pickedName ? `${gridStr} ${pickedName} ` : `${gridStr} `;
+  // 名称、偏上/偏下描述按空格拼接；末尾用竖线当分隔符（替代原来的空格），其后是用户手写内容
+  return [gridStr, pickedName, relation].filter(Boolean).join(' ') + '｜';
+};
+
+// 自动备注与用户手写内容的合并：竖线之后是用户文字，原样保留；没有竖线时整段按新格式覆盖
+const mergeAutoGridNote = (prev: string, generated: string): string => {
+  if (!generated) return prev;
+  const idx = prev.indexOf('｜');
+  return idx >= 0 ? `${generated}${prev.slice(idx + 1)}` : generated;
+};
+
+// 同一价位可能对应多条线：最多展示两条，其余用「+N线」概括（如 日中 日20 +3线）
+const formatLevelNames = (names: string[]): string => {
+  const uniq = Array.from(new Set(names.filter(Boolean)));
+  if (uniq.length <= 2) return uniq.join(' ');
+  return `${uniq.slice(0, 2).join(' ')} +${uniq.length - 2}线`;
+};
+
+// 按价格找最近的支撑/压力位：返回该价位上的名称摘要，以及相对它的位置描述
+// 相差 2% 以内用「偏上 / 偏下」，超过 2% 用「上方 / 下方」，完全相等则不加描述
+const describeNearestLevel = (
+  levels: { price: number; name: string }[],
+  price: number,
+): { names: string; relation: string } => {
+  if (!levels.length || !(price > 0)) return { names: '', relation: '' };
+  let best = levels[0];
+  for (const l of levels) if (Math.abs(l.price - price) < Math.abs(best.price - price)) best = l;
+  const names = formatLevelNames(levels.filter(l => Math.abs(l.price - best.price) < 1e-9).map(l => l.name));
+  const diffPct = best.price > 0 ? ((price - best.price) / best.price) * 100 : 0;
+  if (Math.abs(diffPct) < 1e-9) return { names, relation: '' };
+  const relation = Math.abs(diffPct) > 2
+    ? (price > best.price ? '上方' : '下方')
+    : (price > best.price ? '偏上' : '偏下');
+  return { names, relation };
 };
 // 备注是否仍是自动生成的（空 或 以「网格」开头）：只有这种情况才允许自动覆盖，避免丢失用户手写内容
 const isAutoGridNote = (note: string): boolean => !note || note.startsWith(GRID_NOTE_PREFIX);
@@ -2338,7 +2371,17 @@ const SupportResistanceRows: React.FC<{
             className={`whitespace-pre rounded-sm${clickable ? ' cursor-pointer hover:bg-app-text/10 hover:underline transition-colors' : ''}`}
             style={row.color ? { color: row.color, opacity: row.opacity } : (row.opacity ? { opacity: row.opacity } : undefined)}
             onMouseDown={clickable ? (e) => e.stopPropagation() : undefined}
-            onClick={clickable ? () => onPriceClick!(row.price as number, row.name) : undefined}
+            onClick={clickable ? () => {
+              // 同一价格可能对应多个位置（如 日中 / 日20），全部如实带上，按展示顺序去重
+              const names: string[] = [];
+              rows.forEach(r => {
+                if (r.kind === 'plain' || r.price == null) return;
+                if (Math.abs(r.price - (row.price as number)) > 1e-9) return;
+                const n = r.name.trim();
+                if (n && !names.includes(n)) names.push(n);
+              });
+              onPriceClick!(row.price as number, formatLevelNames(names));
+            } : undefined}
           >
             <span>{row.name}</span>
             <span>{row.rest}</span>
@@ -2822,6 +2865,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       }
     }
     const sorted = all.sort((a, b) => b.price - a.price);
+    // 缓存该股票的全部点位（未截断），供交易弹窗备注实时推导最近点位
+    setSrLevelsMap(prev => (prev[stock.id] ? prev : { ...prev, [stock.id]: all }));
     const resistances = sorted.filter(l => l.price > (stock.price || 0)).sort((a, b) => a.price - b.price).slice(0, 15).reverse();
     const supports = sorted.filter(l => l.price < (stock.price || 0)).sort((a, b) => b.price - a.price).slice(0, 15);
     const fmt = (v: number | null | undefined) => (v != null ? formatPrice(v, stock.name) : '-');
@@ -2957,7 +3002,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const applyGridNoteForPickedPrice = (stock: StockEntry, price: number, pickedName: string) => {
     const note = buildGridNoteText(getDividendForYear(stock, getSelectedYear(stock)) || 0, price, pickedName);
     if (!note) return;
-    if (isAutoGridNote(addTradeNote)) setAddTradeNote(note);
+    // 竖线之后是用户手写内容：保留；没有竖线则整段覆盖
+    setAddTradeNote(prev => (isAutoGridNote(prev) || prev.includes('｜') ? mergeAutoGridNote(prev, note) : prev));
   };
 
   // 支撑/压力位价格行点击：
@@ -3031,6 +3077,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   const [srPreviewText, setSrPreviewText] = useState<string | null>(null);
   const [srPreviewRows, setSrPreviewRows] = useState<SrRow[] | null>(null);
+  // 支撑/压力位原始点位缓存（按股票）：供备注「最近点位 + 偏上/偏下」实时推导使用
+  const [srLevelsMap, setSrLevelsMap] = useState<Record<string, { price: number; name: string }[]>>({});
+  const srLevelsLoadingRef = useRef<Set<string>>(new Set());
   const [srPreviewDate, setSrPreviewDate] = useState('');
   const [srTooltipOffset, setSrTooltipOffset] = useState(0);
   const [srTooltipAbove, setSrTooltipAbove] = useState<number>(0);
@@ -4551,6 +4600,55 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return Array.from(tags).sort();
   }, [stocks]);
 
+  // 长按标签：切回「按标签排序」，并滚动定位到这只股票所在的标签位置
+  const tagLongPressTimerRef = useRef<number | null>(null);
+  const tagLongPressedRef = useRef(false);
+
+  const cancelTagLongPress = () => {
+    if (tagLongPressTimerRef.current !== null) {
+      window.clearTimeout(tagLongPressTimerRef.current);
+      tagLongPressTimerRef.current = null;
+    }
+  };
+
+  const startTagLongPress = (stock: StockEntry) => {
+    if (tagLongPressTimerRef.current !== null) return;
+    tagLongPressedRef.current = false;
+    tagLongPressTimerRef.current = window.setTimeout(() => {
+      tagLongPressTimerRef.current = null;
+      tagLongPressedRef.current = true;
+      if (sortMode !== 'tag') onSortModeChange?.('tag');
+      // 排序切换后等列表重排完成，再把该行滚到「一屏偏上」的位置（约可视高度的 1/3 处）
+      window.setTimeout(() => {
+        const row = document.querySelector<HTMLElement>(`[data-stock-row="${stock.id}"]`);
+        if (!row) return;
+        // 找到最近的可滚动容器，按 1/3 高度偏移计算目标 scrollTop
+        let scroller = row.parentElement;
+        while (scroller && scroller !== document.body) {
+          const oy = getComputedStyle(scroller).overflowY;
+          if ((oy === 'auto' || oy === 'scroll') && scroller.scrollHeight > scroller.clientHeight) break;
+          scroller = scroller.parentElement;
+        }
+        if (scroller && scroller !== document.body) {
+          const top = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+          scroller.scrollTo({ top: Math.max(0, top - scroller.clientHeight / 3), behavior: 'smooth' });
+        } else {
+          row.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        }
+      }, 80);
+    }, 600);
+  };
+
+  // 长按触发后吞掉随后的 click，避免同时弹出标签编辑浮窗
+  const handleTagClick = (e: React.MouseEvent, id: string) => {
+    if (tagLongPressedRef.current) {
+      tagLongPressedRef.current = false;
+      e.stopPropagation();
+      return;
+    }
+    handleEditTagClick(e, id);
+  };
+
   const handleEditTagClick = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
@@ -5170,7 +5268,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const openTradeInfo = (
     btn: HTMLElement | DOMRect,
     stock: StockEntry,
-    preset?: { side?: 'buy' | 'sell'; price?: number; aboveBacktest?: boolean },
+    preset?: { side?: 'buy' | 'sell'; price?: number; aboveBacktest?: boolean; editTrade?: StockTrade },
   ) => {
     tradeInfoBtnRef.current = btn instanceof Element ? (btn as unknown as HTMLTableCellElement) : null;
     setTradeInfoStock(stock);
@@ -5186,6 +5284,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setTradeFilledAtOverride(null);
     // 数量初始值与步进保持一致：ETF 500，普通股票 100
     setAddTradeShares(isEtf(stock.name) ? '500' : '100');
+    // 编辑已有交易：默认值之后统一由 startEditTrade 回填，避免各处自己拼一遍
+    if (preset?.editTrade) startEditTrade(preset.editTrade);
     const rect = btn instanceof Element ? btn.getBoundingClientRect() : btn;
     const popupW = 324;
     const estH = 520;
@@ -5224,8 +5324,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const s = backtestStock;
     const t = s?.stockTrades?.find(x => x.id === tradeId);
     if (!s || !t) return;
-    openTradeInfo(new DOMRect(clientX, clientY, 0, 0), s, { aboveBacktest: true });
-    startEditTrade(s, t);
+    openTradeInfo(new DOMRect(clientX, clientY, 0, 0), s, { aboveBacktest: true, editTrade: t });
   };
 
   // 交易浮窗统一关闭：必须同时清除 pinned 与 stock，否则浮窗仍显示
@@ -5247,6 +5346,37 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const timer = window.setTimeout(() => tradeNoteInputRef.current?.focus(), 0);
     return () => window.clearTimeout(timer);
   }, [tradeInfoAboveAccount, tradeInfoSettled]);
+
+  // 备注当前值（只读，不进依赖）：用于判断编辑既有交易时是否已有内容
+  const addTradeNoteValueRef = useRef('');
+  addTradeNoteValueRef.current = addTradeNote;
+
+  // 交易弹窗内价格变化：实时重算「网格{股息率} {最近点位} {偏上/偏下}｜」，竖线之后的手写内容原样保留
+  // 只要有价格就一定写上备注；编辑既有交易时仅在备注为空时补
+  useEffect(() => {
+    if (!tradeInfoStock) return;
+    // 用最新股票对象（分红数据可能晚到），保证股息率口径正确
+    const s = stocks.find(x => x.id === tradeInfoStock.id) || tradeInfoStock;
+    if (editingTradeId && addTradeNoteValueRef.current) return;
+    const priceNum = parseFloat(addTradePrice);
+    if (!(priceNum > 0)) return;
+    const levels = srLevelsMap[s.id] || [];
+    // 点位还没算过：后台算一次（先用股息率生成备注，算完由 srLevelsMap 变化再补上点位与偏上/偏下）
+    if (levels.length === 0 && !srLevelsLoadingRef.current.has(s.id)) {
+      srLevelsLoadingRef.current.add(s.id);
+      buildSupportResistanceRows(s, bollAdjust, '支撑/压力位预览：1 只股票 · 3 条请求')
+        .catch(() => {})
+        .finally(() => { srLevelsLoadingRef.current.delete(s.id); });
+    }
+    const dividend = getDividendForYear(s, getSelectedYear(s)) || 0;
+    const { names, relation } = describeNearestLevel(levels, priceNum);
+    // 有分红数据时按股息率生成；没有分红数据时至少写出最近点位，保证备注不为空
+    const generated = buildGridNoteText(dividend, priceNum, names || undefined, relation || undefined)
+      || ([names, relation].filter(Boolean).join(' ') ? `${[names, relation].filter(Boolean).join(' ')}｜` : '');
+    if (!generated) return;
+    setAddTradeNote(prev => mergeAutoGridNote(prev, generated));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addTradePrice, tradeInfoStock?.id, stocks, editingTradeId, srLevelsMap]);
 
   // 统一 ESC 关闭：无论临时(hover)还是固定(click)悬浮窗，按 ESC 一律关闭
   useEffect(() => {
@@ -5484,7 +5614,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
 
   // 进入交易记录编辑模式（交易窗口与简易浮窗共用："编辑"按钮填回表单）
-  const startEditTrade = (s: StockEntry, t: StockTrade) => {
+  const startEditTrade = (t: StockTrade) => {
     setEditingTradeId(t.id);
     setAddTradeSide(t.side);
     setAddTradePrice(String(t.price));
@@ -6304,6 +6434,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               {sortedStocks.map(stock => (
                 <tr 
                     key={stock.id} 
+                    data-stock-row={stock.id}
                     onDragOver={(e) => handleDragOver(e, stock.id)}
                     onDragLeave={handleDragLeave}
                     onDrop={(e) => handleDrop(e, stock.id)}
@@ -6316,9 +6447,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onDragEnd={handleDragEnd}
                   >
                     <div 
-                      onClick={(e) => handleEditTagClick(e, stock.id)}
+                      onPointerDown={() => startTagLongPress(stock)}
+                      onPointerUp={cancelTagLongPress}
+                      onPointerLeave={cancelTagLongPress}
+                      onPointerCancel={cancelTagLongPress}
+                      onClick={(e) => handleTagClick(e, stock.id)}
                       className="cursor-pointer group/tag flex justify-center"
-                      title="点击编辑标签"
+                      title="点击编辑标签，长按按标签排序并定位"
                     >
                       {(() => {
                         const displayTag = stock.tag || '-';
@@ -8313,7 +8448,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       taxEnabled={taxEnabled}
                       onToggle={(x) => handleToggleTrade(s.id, x.id)}
                       onDelete={(x) => handleRemoveTrade(s.id, x.id)}
-                      onEdit={(x) => startEditTrade(s, x)}
+                      onEdit={(x) => startEditTrade(x)}
                       onSetTTL={(x, ttlDays) => handleSetTradeTTL(s.id, x.id, ttlDays)}
                     />
                   ))}
@@ -8354,9 +8489,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   taxEnabled={taxEnabled}
                   onToggle={(x) => handleToggleTrade(s.id, x.id)}
                   onDelete={(x) => handleRemoveTrade(s.id, x.id)}
-                  onEdit={(x) => { // 点击编辑：切换到交易窗口的编辑模式
-                    startEditTrade(s, x);
-                    if (tradeSimpleBtnRef.current) openTradeInfo(tradeSimpleBtnRef.current, s);
+                  onEdit={(x) => { // 点击编辑：呼出交易窗口并直接进入该笔交易的编辑态
+                    if (tradeSimpleBtnRef.current) openTradeInfo(tradeSimpleBtnRef.current, s, { editTrade: x });
                     setTradeInfoPinned(true);
                     setTradeSimpleStock(null);
                   }}
