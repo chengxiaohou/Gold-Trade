@@ -14,7 +14,7 @@ import { getNickname } from '../services/nicknameService';
 import { safeSetItem } from '../services/storageSafe';
 import { StockAccountPage } from './StockAccountPage';
 import type { StockLedgerMap } from '../services/stockLedgerStore';
-import { calcRealizedPnlForRange, calcPositionFromTrades, calcDtPnlForTrades, calcAvgPnlForTrades, calcTradeFees, tradeAmountFormula, estimatePendingSell, isEtf, roundCost, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
+import { calcRealizedPnlForRange, calcPositionFromTrades, calcPositionView, calcDtPnlForTrades, calcAvgPnlForTrades, calcTradeFees, tradeAmountFormula, estimatePendingSell, isEtf, roundCost, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
 import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, volBucket, buildLatestShrinkTags, buildShrinkTagsForModule, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, analyzeStandEvents, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5, type StandEvent } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
@@ -4282,18 +4282,24 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 账户汇总：已投入（持仓成本） / 总资金 / 剩余 / 仓位占比（不关联现价）
   const [editingCapital, setEditingCapital] = useState(false);
   const accountSummary = useMemo(() => {
+    const nameById = new Map<string, string>(stocks.map(s => [s.id, s.name] as [string, string]));
     let invested = 0;
     for (const key of Object.keys(effectiveLedger)) {
       const entry = effectiveLedger[key];
       if (!entry || !entry.trades) continue;
-      const { shares, avgCost } = calcPositionFromTrades(entry.trades);
-      invested += shares * avgCost;
+      // 与列表持仓列同口径（calcPositionView），避免汇总值与逐行加总不一致
+      const { shares, cost } = calcPositionView(entry.trades, {
+        mode: pnlCalcMode,
+        withTax: taxEnabled,
+        stockName: nameById.get(key),
+      });
+      invested += shares * cost;
     }
     const total = dividendTotalCapital || 0;
     const remaining = Math.max(0, total - invested);
     const ratio = total > 0 ? (invested / total) * 100 : 0;
     return { invested, total, remaining, ratio };
-  }, [effectiveLedger, dividendTotalCapital]);
+  }, [effectiveLedger, dividendTotalCapital, stocks, pnlCalcMode, taxEnabled]);
   const fmtCapital = (v: number) => v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   // 按标题行的真实剩余宽度决定资金概况展示几项（避免用视口断点判断导致有空间却少显示）
@@ -5238,6 +5244,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return res;
   };
   const getTrades = (stock: StockEntry): StockTrade[] => stock.stockTrades || [];
+
+  // 持仓视图 SSOT：列表持仓列、持仓详情浮窗、交易弹窗都从这里取值，避免同一概念多套算法
+  const getPositionView = (stock: StockEntry) =>
+    calcPositionView(getTrades(stock), { mode: pnlCalcMode, withTax: taxEnabled, stockName: stock.name });
 
   // 交易浮窗状态
   const [tradeInfoStock, setTradeInfoStock] = useState<StockEntry | null>(null);
@@ -6684,8 +6694,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   </td>}
                   {bollPositionOrder.map(g => g === 'position' ? (
                     cols.includes('position') && (() => {
-                    const shares = stock.positionShares || 0;
-                    const cost = stock.positionCost || 0;
+                    // 持仓口径统一走 getPositionView（与交易弹窗、持仓浮窗同一套计算）
+                    const position = getPositionView(stock);
+                    const shares = position.shares;
+                    const cost = position.cost;
                     const dividend = getDividendForYear(stock, getSelectedYear(stock)) || 0;
                     const yieldPct = shares > 0 && cost > 0 && dividend > 0
                       ? ((dividend / cost) * 100).toFixed(2) + '%'
@@ -6693,15 +6705,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     const sharesText = shares > 0
                       ? `${Number.isInteger(shares) ? shares : shares.toFixed(2)}股`
                       : '-';
-                    // 展示口径：持仓成本 或 回本价（回本价 = (持仓成本 × 份额 − 已实现盈亏) / 份额）
-                    const realizedTotal = (() => {
-                      if (shares <= 0 || cost <= 0) return 0;
-                      const tradesOfStock = getTrades(stock);
-                      return pnlCalcMode === 'dt'
-                        ? calcDtPnlForTrades(tradesOfStock, taxEnabled, stock.name).total
-                        : calcAvgPnlForTrades(tradesOfStock, taxEnabled, stock.name).total;
-                    })();
-                    const breakEvenCost = shares > 0 && cost > 0 ? Math.max(0, (cost * shares - realizedTotal) / shares) : 0;
+                    // 展示口径：持仓成本 或 回本价（回本价同样由 getPositionView 统一给出）
+                    const breakEvenCost = position.breakEven;
                     const shownCost = costDisplayMode === 'breakeven' && breakEvenCost > 0 ? breakEvenCost : cost;
                     // 与列表其它价格列同口径：ETF 保留 3 位小数，股票 2 位
                     const costText = shownCost > 0 ? formatPrice(shownCost, stock.name) : '-';
@@ -8105,8 +8110,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {/* 列表页持仓详情浮窗（朝左侧展示，数据来自本地持仓） */}
       {positionInfoStock && (() => {
         const s = positionInfoStock;
-        const shares = s.positionShares || 0;
-        const cost = s.positionCost || 0;
+        // 与列表持仓列、交易弹窗同口径
+        const { shares, cost } = getPositionView(s);
         const price = s.price || 0;
         const dividend = getDividendForYear(s, getSelectedYear(s)) || 0;
         const fmtP = (v: number) => formatPrice(v, s.name);
@@ -8114,7 +8119,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const marketValue = shares > 0 && price > 0 ? `¥${Math.round(shares * price).toLocaleString()}` : '-';
         const totalCost = shares > 0 && cost > 0 ? `¥${Math.round(shares * cost).toLocaleString()}` : '-';
         const profit = shares > 0 && cost > 0 && price > 0 ? shares * (price - cost) : 0;
-        const profitText = profit !== 0 ? `${profit >= 0 ? '+' : ''}${fmtP(profit)}` : '-';
+        // 金额统一 2 位小数（不能复用价格格式化的 3 位，否则与交易弹窗的浮盈对不上）
+        const profitText = (() => {
+          if (profit === 0) return '-';
+          const abs = Math.abs(Math.round(profit * 100) / 100);
+          return `${profit >= 0 ? '+' : '-'}${abs.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        })();
         const profitPct = cost > 0 && price > 0 ? ((price - cost) / cost) * 100 : 0;
         const profitPctText = cost > 0 && price > 0 ? `${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(2)}%` : '-';
         const yieldText = shares > 0 && cost > 0 && dividend > 0 ? ((dividend / cost) * 100).toFixed(2) + '%' : '-';
@@ -8162,9 +8172,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           : orderAmtClean.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const fmtP = (v: number) => formatPrice(v, s.name);
         const noteCls = "no-spinners w-full bg-app-input border border-app-border rounded-lg px-3 py-2 text-[11px] text-app-text outline-none focus:border-brand-yellow/50 focus:ring-1 focus:ring-brand-yellow/50 transition-all placeholder:text-app-subtext/40";
-        // 当前持仓概要：持仓只从交易记录重算，不再兜底旧的手动成本
-        const posShares = s.positionShares || 0;
-        const avgCost = s.positionCost || 0;
+        // 当前持仓概要：统一走 getPositionView（与列表持仓列同源）
+        const position = getPositionView(s);
+        const posShares = position.shares;
+        const costBasis = position.cost;
+        const breakEven = position.breakEven;
         const marketPrice = s.price || 0;
         // 按成交顺序重算每笔卖出的已实现盈亏（不依赖可能为 0 的存储 positionCost/realizedPnL）；
         // 支持两种口径：均价（移动加权）/ 做T（卖出匹配最近买入）。
@@ -8173,9 +8185,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const dtPnL = calcDtPnlForTrades(tradesOfS, taxEnabled, s.name);
         const modeIsDt = pnlCalcMode === 'dt';
         const shownPnl = modeIsDt ? dtPnL : recalcPnL;
-        // 做T口径成本 = 剩余未匹配买入的加权均价；均价口径 = 移动加权成本
-        const costBasis = modeIsDt && dtPnL.positionShares > 0 ? dtPnL.positionCost : avgCost;
-        const realizedPnl = shownPnl.total;
+        const realizedPnl = position.realizedTotal;
         // 挂单预览：金额 / 距现价 / 股息率相对持仓成本的差异
         const orderPriceNum = parseFloat(addTradePrice) || 0;
         const orderDividend = getDividendForYear(s, getSelectedYear(s)) || 0;
@@ -8194,8 +8204,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const orderSellEstimate = addTradeSide === 'sell'
           ? estimatePendingSell(tradesOfS, { price: orderPriceNum, shares: parseFloat(addTradeShares) || 0 }, pnlCalcMode, taxEnabled, s.name)
           : null;
-        const totalCost = posShares * costBasis;
-        const breakEven = posShares > 0 ? Math.max(0, (totalCost - realizedPnl) / posShares) : 0;
         const floatingPnl = marketPrice > 0 && posShares > 0 ? (marketPrice - costBasis) * posShares : 0;
         // 盈亏金额展示：带正负号；末位两位小数都是 0 时省略小数，否则保留两位（先消除浮点误差）
         const fmtPnl = (v: number): string => {

@@ -200,6 +200,35 @@ export function calcAvgPnlForTrades(trades?: StockTrade[], withTax = false, stoc
   return result;
 }
 
+// 当前持仓的统一视图（SSOT）：列表页持仓列、持仓详情浮窗、交易弹窗一律从这里取值。
+// 之前各处分头计算（列表用落库的 positionCost、弹窗用重算值/做T口径），会出现 0.001 级别的对不上。
+// 口径选择只在这里发生，保证「持仓均价 / 已实现盈亏 / 回本价」始终来自同一次计算。
+export interface PositionView {
+  shares: number;        // 当前持仓份额
+  cost: number;          // 持仓均价（每股，按所选盈亏口径，含税开关生效）
+  realizedTotal: number; // 累计已实现盈亏
+  breakEven: number;     // 回本价 = (持仓均价 × 份额 − 已实现盈亏) / 份额
+}
+
+export function calcPositionView(
+  trades: StockTrade[] | undefined,
+  opts: { mode?: 'avg' | 'dt'; withTax?: boolean; stockName?: string } = {}
+): PositionView {
+  const { mode = 'avg', withTax = false, stockName } = opts;
+  const list = trades ?? [];
+  if (list.length === 0) return { shares: 0, cost: 0, realizedTotal: 0, breakEven: 0 };
+  const avg = calcAvgPnlForTrades(list, withTax, stockName);
+  const used = mode === 'dt' ? calcDtPnlForTrades(list, withTax, stockName) : avg;
+  const shares = used.positionShares;
+  const cost = shares > 0 ? used.positionCost : 0;
+  return {
+    shares,
+    cost,
+    realizedTotal: used.total,
+    breakEven: shares > 0 && cost > 0 ? Math.max(0, (cost * shares - used.total) / shares) : 0,
+  };
+}
+
 // 整只股票的「投入 → 现状」摘要（回测页初始态用）：
 // 一次扫描同时输出均价口径和做T口径两套 realized/unrealized，外加累计买入/卖出金额、
 // 期末市值、总收益率（收益率口径一致：(期末市值 − 累计买入) / 累计买入）。
