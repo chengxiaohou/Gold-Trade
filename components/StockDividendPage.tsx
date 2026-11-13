@@ -1071,6 +1071,8 @@ interface TradeRecordRowProps {
   onToggle: (t: StockTrade) => void; onEdit: (t: StockTrade) => void; onDelete: (t: StockTrade) => void;
   // 修改挂单剩余有效天数（用户点击天数下拉触发）
   onSetTTL?: (t: StockTrade, ttlDays: number) => void;
+  // 有效期面板开合通知：面板是 body 级 portal，宿主浮窗需据此避免被鼠标移出误关闭
+  onTTLPanelChange?: (open: boolean) => void;
   // 做T模式：卖超记录的 id 集合（仅成交卖出的 ERR 徽标；不参与获利预估）
   errIds?: Set<string>;
   // 做T模式：卖出记录 id → 与其配对的买入记录明细（盈利数字悬停/点击可追溯）
@@ -1080,13 +1082,20 @@ interface TradeRecordRowProps {
   // 是否计入税费（含税模式下每条记录展示税费详情）
   taxEnabled?: boolean;
 }
-const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendingMap, onToggle, onEdit, onDelete, onSetTTL, errIds, pairMap, buyMatchMap, taxEnabled }) => {
+const TradeRecordRow: React.FC<TradeRecordRowProps> = ({ t, stock, pnlMap, pendingMap, onToggle, onEdit, onDelete, onSetTTL, onTTLPanelChange, errIds, pairMap, buyMatchMap, taxEnabled }) => {
   const [confirming, setConfirming] = useState(false);
   const [ttlPanelOpen, setTtlPanelOpen] = useState(false);
   const [ttlPanelPinned, setTtlPanelPinned] = useState(false);
   const ttlBtnRef = useRef<HTMLButtonElement>(null);
   const ttlPanelRef = useRef<HTMLDivElement>(null);
   const ttlHideTimer = useRef<number | null>(null);
+  // 有效期面板是 body 级 portal（在宿主元素之外），宿主浮窗需据此保持打开，
+  // 否则鼠标移入面板会触发宿主的 mouseleave，浮窗连同面板一起被卸载，表现为"点了没反应"
+  useEffect(() => {
+    if (!onTTLPanelChange || !ttlPanelOpen) return;
+    onTTLPanelChange(true);
+    return () => onTTLPanelChange(false);
+  }, [ttlPanelOpen, onTTLPanelChange]);
   const stockName = stock.name;
   const currentPrice = stock.price || 0;
   const fmtP = (v: number) => formatPrice(v, stockName);
@@ -5246,6 +5255,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const tradeSimpleRef = useRef<HTMLDivElement | null>(null);
   const tradeSimpleCloseTimerRef = useRef<number | undefined>(undefined); // 悬停宽限关闭计时
   const tradeSimpleShowTimerRef = useRef<number | undefined>(undefined); // 悬停宽限出现计时
+  const tradeSimpleHoldRef = useRef(false); // 挂单有效期面板打开中：暂不关闭浮窗
   const tradeTouchGuardRef = useRef(false); // 触摸点按中不展示简易浮窗（只有鼠标 hover 触发）
   const tradeTouchTimerRef = useRef<number | undefined>(undefined);
 
@@ -5649,12 +5659,20 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 否则没有机会把鼠标跨过单元格与浮窗之间的空隙去点按钮。
   // 因此采用“悬停宽限”：移出后延迟 CLOSE_GRACE 毫秒再关，期间鼠标进入浮窗则取消关闭。
   const scheduleTradeSimpleClose = () => {
+    // 挂单有效期面板（body 级 portal）打开时先不关：鼠标进入面板会被视作移出浮窗
+    if (tradeSimpleHoldRef.current) return;
     if (tradeSimpleCloseTimerRef.current !== undefined) clearTimeout(tradeSimpleCloseTimerRef.current);
     tradeSimpleCloseTimerRef.current = window.setTimeout(() => {
       tradeSimpleCloseTimerRef.current = undefined;
       setTradeSimpleStock(null);
     }, 200);
   };
+  // 有效期面板开合：打开时挂起关闭；关闭后若鼠标不在浮窗内则补一次延迟关闭
+  const handleTradeSimpleTTLPanel = useCallback((open: boolean) => {
+    tradeSimpleHoldRef.current = open;
+    if (open) { cancelTradeSimpleClose(); return; }
+    if (!tradeSimpleRef.current?.matches(':hover')) scheduleTradeSimpleClose();
+  }, []);
   const cancelTradeSimpleClose = () => {
     if (tradeSimpleCloseTimerRef.current !== undefined) {
       clearTimeout(tradeSimpleCloseTimerRef.current);
@@ -8494,6 +8512,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     setTradeInfoPinned(true);
                     setTradeSimpleStock(null);
                   }}
+                  onSetTTL={(x, ttlDays) => handleSetTradeTTL(s.id, x.id, ttlDays)}
+                  onTTLPanelChange={handleTradeSimpleTTLPanel}
                 />
               ))}
             </div>
