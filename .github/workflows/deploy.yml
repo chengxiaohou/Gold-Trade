@@ -28,7 +28,9 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: rm -f package-lock.json && npm install --no-audit --no-fund
+        # 必须用 package-lock.json 安装：lightweight-charts 存在 patches/ 里的补丁，
+        # 一旦删掉 lock 让 npm 自由解析到更高版本，postinstall 的 patch-package 就会因版本不符而失败
+        run: npm ci --no-audit --no-fund
 
       - name: Build
         env:
