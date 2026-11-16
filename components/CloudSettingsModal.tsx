@@ -441,6 +441,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       sellOrderPlaceholder: currentPage === 'stock' ? sellOrderPlaceholder : stockSettings?.sellOrderPlaceholder,
       tagParams,
       customTags,
+      stockTotalCapital: stockSettings?.stockTotalCapital,
     };
 
     // If Cloud tab is not active and no changes to cloud config, just save app settings

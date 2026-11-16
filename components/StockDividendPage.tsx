@@ -5514,6 +5514,45 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (hasBackdropPopup) backdropClickGuardRef.current = Date.now() + 400;
   }, [hasBackdropPopup]);
 
+  // 遮罩穿透防护
+  // 遮罩是普通 div，stopPropagation 只能挡住"冒泡到祖先"的事件；触摸设备在 touchend 后还会
+  // 合成 mousedown/mouseup/click，若遮罩此时已关闭，这些后续事件就会落到被遮住的下层元素上。
+  // 因此在遮罩显示期间（以及关闭后的短暂宽限期内）于捕获阶段统一拦截，弹窗自身（层级高于遮罩）放行。
+  const backdropActiveRef = useRef(false);
+  backdropActiveRef.current = !!(popupBackdropEnabled && isMobileViewport && hasBackdropPopup);
+  useEffect(() => {
+    if (!(popupBackdropEnabled && isMobileViewport)) return;
+    const swallowUntilRef = { current: 0 };
+    // 目标是否位于遮罩之上（弹窗）：向上找定位祖先的 z-index，> 遮罩的 45 即放行
+    const isAboveMask = (node: EventTarget | null): boolean => {
+      let el = node as Element | null;
+      while (el) {
+        const cs = window.getComputedStyle(el);
+        if (cs.position === 'fixed' || cs.position === 'absolute' || cs.position === 'sticky') {
+          const z = parseInt(cs.zIndex || '', 10);
+          if (!Number.isNaN(z) && z > 45) return true;
+        }
+        el = el.parentElement;
+      }
+      return false;
+    };
+    const onCapture = (e: Event) => {
+      const active = backdropActiveRef.current || Date.now() < swallowUntilRef.current;
+      if (!active) return;
+      if (isAboveMask(e.target)) return; // 弹窗内部交互放行
+      e.stopPropagation();
+      if (e.cancelable) e.preventDefault();
+      // 按下即关闭，并进入宽限期吞掉触摸合成的后续事件，彻底杜绝点穿
+      if (backdropActiveRef.current && Date.now() >= backdropClickGuardRef.current) {
+        swallowUntilRef.current = Date.now() + 400;
+        closeAllListPopups();
+      }
+    };
+    const types = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'click', 'dblclick', 'contextmenu'];
+    types.forEach(t => document.addEventListener(t, onCapture, true));
+    return () => types.forEach(t => document.removeEventListener(t, onCapture, true));
+  }, [popupBackdropEnabled, isMobileViewport, closeAllListPopups]);
+
   // 遮罩模式：弹窗统一在屏幕中心显示，高度限制在浏览器安全区域内，超出时内部滚动
   const backdropMode = !!(popupBackdropEnabled && isMobileViewport);
   const centeredPopupStyle = (width?: number): React.CSSProperties => ({
@@ -8036,8 +8075,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {popupBackdropEnabled && isMobileViewport && hasBackdropPopup && (
         <div
           className="fixed inset-0 z-[45] bg-black/60"
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
+          onMouseUp={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
+          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
           onClick={(e) => {
             e.stopPropagation();
             if (Date.now() < backdropClickGuardRef.current) return;
@@ -8468,7 +8512,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {/* 交易列简易浮窗：鼠标移入时展示最近多笔交易（交易弹窗优先，两者不同时显示） */}
       {tradeSimpleStock && tradeInfoStock == null && tradeInfoPinned === false && (() => {
         const s = stocks.find(x => x.id === tradeSimpleStock.id) || tradeSimpleStock;
-        const trades = getTrades(s).filter(x => !x.isMerged).sort((a, b) => b.createdAt - a.createdAt);
+        // 与交易弹窗历史列表同一排序口径：优先按成交时间（filledAt），缺省回退创建时间
+        const trades = getTrades(s).filter(x => !x.isMerged).sort((a, b) => (b.filledAt ?? b.createdAt) - (a.filledAt ?? a.createdAt));
         if (trades.length === 0) return null;
         // 与交易弹窗保持同一盈利口径：均价 / 做T
         const simpleAvg = calcAvgPnlForTrades(getTrades(s), taxEnabled, s.name);
