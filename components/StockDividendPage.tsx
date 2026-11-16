@@ -56,6 +56,13 @@ const getTagStyle = (colorKey?: string) => {
   return TAG_PALETTE.find(p => p.key === colorKey) || TAG_PALETTE[0];
 };
 
+// 点按是否落在列表页弹窗遮罩上。
+// 遮罩必须由它自己的 click 统一收尾：一旦某个"点击外部关闭"在 mousedown 阶段就把遮罩卸载，
+// 同一次点按后续的 mouseup/click 会重新命中遮罩下方的单元格（穿透，弹出新弹窗）。
+// 所以所有这些外部关闭判定都要先跳过遮罩。
+const isPopupBackdropTarget = (t: EventTarget | null): boolean =>
+  !!(t as HTMLElement | null)?.closest?.('[data-popup-backdrop]');
+
 // 标签编辑控件（输入框 + 预览 + 配色 + 已有标签）：标签编辑气泡与添加股票确认弹窗共用。
 // 在输入框直接输入新标签即可新增；输入后可点下方色块给该标签配色。
 interface TagEditFieldsProps {
@@ -3312,6 +3319,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const handleMktInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
     // 编辑该行或处于拖拽中：不触发浮窗（热区已改为整格，需避免误触）
     if (editingId === stock.id || draggedId) return;
+    // 触屏没有悬停：合成 mouseenter 会在 click 前开窗，遮罩随即盖住手指，
+    // 同一序列里的 mouseleave 又把它关掉，出现"闪现/消失再出现"。触屏一律走 click 开窗并固定。
+    if (isCoarsePointer) return;
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
     if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned || mktInfoPinned) return;
     mktInfoHoveredRef.current = true;
@@ -3768,6 +3778,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 悬停持仓显示（临时，不固定）
   const handlePositionInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
+    // 触屏没有真正的悬停：点按时浏览器会在 click 之前合成 mouseenter，
+    // 浮窗一出现，遮罩立刻挂载并盖在手指下方，随后合成的 mouseleave 就把浮窗关掉，
+    // 表现为“弹出来就消失”（触摸保护只有 400ms，稍慢的点按必然过期）。
+    // 因此触屏只在 click 里打开并固定，彻底绕开这条悬停链路。
+    if (isCoarsePointer) return;
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
     if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned || mktInfoPinned) return;
     positionInfoHoveredRef.current = true;
@@ -3778,6 +3793,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 移动端"点按闪现"由触摸保护(positionInfoTouchGuardRef)处理。
   const handlePositionInfoLeave = (e?: React.MouseEvent) => {
     positionInfoHoveredRef.current = false;
+    // 触屏没有悬停，合成的 mouseleave 不可信（遮罩挂载/手指抬起都会触发），一律不据此关闭
+    if (isCoarsePointer) return;
     if (positionInfoPinned) return;
     if (positionInfoTouchGuardRef.current) return; // 触摸点按中：跳过合成 mouseleave，等待 click 固定
     positionInfoActiveIdRef.current = undefined;
@@ -3796,6 +3813,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 浮窗悬停离开：仍在浮窗内部（子元素间移动）则保留，真正离开且未固定时关闭
   const handlePositionInfoFloatLeave = (e: React.MouseEvent) => {
+    if (isCoarsePointer) return; // 触屏：合成 mouseleave 不可信，关闭交给遮罩/再次点按
     if (positionInfoPinned) return;
     if (isInsidePositionInfo(e.relatedTarget as Node | null)) return;
     positionInfoHoveredRef.current = false;
@@ -4441,6 +4459,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     if (!priceInfoPinned) return;
     const handler = (e: MouseEvent) => {
+      if (isPopupBackdropTarget(e.target)) return; // 遮罩点击交给遮罩自身 click 收尾，避免穿透
       if (priceInfoRef.current && !priceInfoRef.current.contains(e.target as Node) &&
           priceInfoBtnRef.current && !priceInfoBtnRef.current.contains(e.target as Node)) {
         priceInfoHoveredRef.current = false;
@@ -4459,6 +4478,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     if (!positionInfoPinned) return;
     const handler = (e: MouseEvent) => {
+      if (isPopupBackdropTarget(e.target)) return; // 遮罩点击交给遮罩自身 click 收尾，避免穿透
       if (positionInfoRef.current && !positionInfoRef.current.contains(e.target as Node) &&
           positionInfoBtnRef.current && !positionInfoBtnRef.current.contains(e.target as Node)) {
         positionInfoHoveredRef.current = false;
@@ -4477,6 +4497,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     if (!divRateInfoPinned) return;
     const handler = (e: MouseEvent) => {
+      if (isPopupBackdropTarget(e.target)) return; // 遮罩点击交给遮罩自身 click 收尾，避免穿透
       const target = e.target as HTMLElement | null;
       if (target?.closest?.('[data-divrate-cell]')) return;
       if (divRateInfoRef.current && !divRateInfoRef.current.contains(e.target as Node) &&
@@ -4492,6 +4513,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     if (!mktInfoPinned) return;
     const handler = (e: MouseEvent) => {
+      if (isPopupBackdropTarget(e.target)) return; // 遮罩点击交给遮罩自身 click 收尾，避免穿透
       if (mktInfoRef.current && !mktInfoRef.current.contains(e.target as Node) &&
           mktInfoBtnRef.current && !mktInfoBtnRef.current.contains(e.target as Node)) {
         mktInfoHoveredRef.current = false;
@@ -4509,6 +4531,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     if (!srTooltipPinned) return;
     const handler = (e: MouseEvent) => {
+      if (isPopupBackdropTarget(e.target)) return; // 遮罩点击交给遮罩自身 click 收尾，避免穿透
       if (srTooltipRef.current && !srTooltipRef.current.contains(e.target as Node) &&
           srBtnRef.current && !srBtnRef.current.contains(e.target as Node)) {
         setSrTooltipPinned(false);
@@ -4524,6 +4547,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     if (!listSrTooltipPinned) return;
     const handler = (e: MouseEvent) => {
+      if (isPopupBackdropTarget(e.target)) return; // 遮罩点击交给遮罩自身 click 收尾，避免穿透
       if (listSrTooltipRef.current && !listSrTooltipRef.current.contains(e.target as Node) &&
           listSrBtnRef.current && !listSrBtnRef.current.contains(e.target as Node)) {
         setListSrTooltipPinned(false);
@@ -5507,51 +5531,18 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 鼠标设备只用固定态，避免遮罩盖住单元格后触发 mouseleave 造成弹窗反复开关
   const hasBackdropPopup = isCoarsePointer ? hasVisibleListPopup : hasPinnedListPopup;
 
-  // 遮罩与弹窗同帧出现；仅对出现后的极短时间内的点按做忽略，
-  // 避免打开弹窗的同一次点按落在遮罩上又把弹窗关掉（弹窗本身层级高于遮罩，不受影响）
-  const backdropClickGuardRef = useRef(0);
+  // 遮罩关闭判定：只认"按下起点就在遮罩上"的这一下点按。
+  // 部分列（持仓成本）是 mouseenter 先开弹窗，遮罩会在同一次点按的 click 派发前挂载，
+  // 浏览器可能把这个合成 click 命中到遮罩上；用时间窗判断会因点按时长不同而偶发误关，
+  // 因此改为记录 pointerdown 的落点，未落在遮罩上的 click 一律忽略。
+  const backdropPressedRef = useRef(false);
   useEffect(() => {
-    if (hasBackdropPopup) backdropClickGuardRef.current = Date.now() + 400;
+    if (!hasBackdropPopup) backdropPressedRef.current = false;
   }, [hasBackdropPopup]);
 
   // 遮罩穿透防护
-  // 遮罩是普通 div，stopPropagation 只能挡住"冒泡到祖先"的事件；触摸设备在 touchend 后还会
-  // 合成 mousedown/mouseup/click，若遮罩此时已关闭，这些后续事件就会落到被遮住的下层元素上。
-  // 因此在遮罩显示期间（以及关闭后的短暂宽限期内）于捕获阶段统一拦截，弹窗自身（层级高于遮罩）放行。
-  const backdropActiveRef = useRef(false);
-  backdropActiveRef.current = !!(popupBackdropEnabled && isMobileViewport && hasBackdropPopup);
-  useEffect(() => {
-    if (!(popupBackdropEnabled && isMobileViewport)) return;
-    const swallowUntilRef = { current: 0 };
-    // 目标是否位于遮罩之上（弹窗）：向上找定位祖先的 z-index，> 遮罩的 45 即放行
-    const isAboveMask = (node: EventTarget | null): boolean => {
-      let el = node as Element | null;
-      while (el) {
-        const cs = window.getComputedStyle(el);
-        if (cs.position === 'fixed' || cs.position === 'absolute' || cs.position === 'sticky') {
-          const z = parseInt(cs.zIndex || '', 10);
-          if (!Number.isNaN(z) && z > 45) return true;
-        }
-        el = el.parentElement;
-      }
-      return false;
-    };
-    const onCapture = (e: Event) => {
-      const active = backdropActiveRef.current || Date.now() < swallowUntilRef.current;
-      if (!active) return;
-      if (isAboveMask(e.target)) return; // 弹窗内部交互放行
-      e.stopPropagation();
-      if (e.cancelable) e.preventDefault();
-      // 按下即关闭，并进入宽限期吞掉触摸合成的后续事件，彻底杜绝点穿
-      if (backdropActiveRef.current && Date.now() >= backdropClickGuardRef.current) {
-        swallowUntilRef.current = Date.now() + 400;
-        closeAllListPopups();
-      }
-    };
-    const types = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'click', 'dblclick', 'contextmenu'];
-    types.forEach(t => document.addEventListener(t, onCapture, true));
-    return () => types.forEach(t => document.removeEventListener(t, onCapture, true));
-  }, [popupBackdropEnabled, isMobileViewport, closeAllListPopups]);
+  // 与设置弹窗保持一致：只在遮罩自身的 click 里关闭弹窗，不在 pointerdown/touchstart 等更早阶段关闭。
+  // 提前关闭会让遮罩在 click 派发前卸载，事件重新命中下层单元格，造成"关掉弹窗又弹出新弹窗"。
 
   // 遮罩模式：弹窗统一在屏幕中心显示，高度限制在浏览器安全区域内，超出时内部滚动
   const backdropMode = !!(popupBackdropEnabled && isMobileViewport);
@@ -5754,6 +5745,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     if (!tradeInfoPinned) return;
     const handler = (e: MouseEvent) => {
+      if (isPopupBackdropTarget(e.target)) return; // 遮罩点击交给遮罩自身 click 收尾，避免穿透
       // 交易弹窗内图标呼出的支撑/压力位弹窗：点击或拖动它不应关闭交易弹窗
       if (listSrTooltipRef.current?.contains(e.target as Node)) return;
       if (tradeInfoRef.current && !tradeInfoRef.current.contains(e.target as Node) &&
@@ -7054,7 +7046,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
       {/* 交易备忘录弹窗（入口在右上角按钮栏） */}
       {memoOpen && (
-        <div className="fixed inset-0 z-[120] bg-black/50 flex items-center justify-center p-4" onClick={onMemoClose}>
+        <div className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm animate-in fade-in duration-200 flex items-center justify-center p-4" onClick={onMemoClose}>
           <div className="relative w-full max-w-[640px]" onClick={(e) => e.stopPropagation()}>
             <div className="bg-app-card border border-app-border rounded-xl overflow-hidden shadow-2xl flex flex-col">
               <div className="flex items-center justify-between px-3 py-2 border-b border-app-border bg-app-input">
@@ -7796,7 +7788,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         return createPortal(
           <>
             <div
-              className="fixed inset-0 z-40 bg-black/40"
+              className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
               onClick={() => setDeletingStockId(null)}
             />
             <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -7836,7 +7828,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {showResetConfirm && createPortal(
         <>
           <div
-            className="fixed inset-0 z-40 bg-black/40"
+            className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
             onClick={() => setShowResetConfirm(false)}
           />
           <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -7879,7 +7871,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         return createPortal(
           <>
             <div
-              className="fixed inset-0 z-[9998] bg-black/40"
+              className="fixed inset-0 z-[9998] bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
               onClick={() => setDividendDiff(null)}
             />
             <div className="fixed inset-0 z-[9999] flex items-center justify-center p-2 sm:p-4">
@@ -8074,17 +8066,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       {/* 移动端弹窗背景遮罩：与弹窗同帧出现，点击遮罩关闭全部单元格弹窗 */}
       {popupBackdropEnabled && isMobileViewport && hasBackdropPopup && (
         <div
-          className="fixed inset-0 z-[45] bg-black/60"
-          onPointerDown={(e) => e.stopPropagation()}
-          onPointerUp={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-          onMouseUp={(e) => e.stopPropagation()}
+          data-popup-backdrop="1"
+          className="fixed inset-0 z-[45] bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
+          onPointerDown={(e) => { e.stopPropagation(); backdropPressedRef.current = true; }}
           onTouchStart={(e) => e.stopPropagation()}
-          onTouchEnd={(e) => e.stopPropagation()}
           onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
           onClick={(e) => {
             e.stopPropagation();
-            if (Date.now() < backdropClickGuardRef.current) return;
+            if (!backdropPressedRef.current) return; // 起点不在遮罩上的合成 click 忽略
+            backdropPressedRef.current = false;
             closeAllListPopups();
           }}
         />
