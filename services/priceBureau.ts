@@ -56,6 +56,27 @@ function rtFromRealtime(q: RealTimeQuote): TodayBarInput {
   return { price: q.price, open: q.open, high: q.high, low: q.low, volume: q.volume };
 }
 
+/** store 里 daily 的唯一写入形态：有有效实时行情时并入今日合成 bar 再重算三轨/均线/区间。
+ *  所有写入（缓存批量落地、取数落地、实时行情刷新）都必须经过这里，
+ *  否则同一时刻"列表读 store"与"浮窗自行合成"会算出不同数值（如日上 22.25 vs 22.50）。 */
+function buildLiveDaily(data: BollData | null, rt: RealTimeQuote | null): BollData | null {
+  if (!data) return null;
+  if (asOfDate) return data; // 历史模式不掺实时价
+  if (!rt || rt.price <= 0 || rt.open <= 0) return data;
+  const base = toClosedKlines(data.klines, getMarketStatus()) ?? [];
+  const merged = mergeTodayBarToKlines(base, rtFromRealtime(rt), getMarketStatus());
+  return buildBollDataFromKlines(merged, data.fetchedAt ?? Date.now()) ?? data;
+}
+
+/** 写入某只股票的实时行情并同步重算 store 日线（不 notify，批量场景由调用方统一通知）。 */
+function applyRealtimeQuote(code: string, q: TencentQuote): boolean {
+  if (asOfDate) return false;
+  const cur = store.get(code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
+  const realtime: RealTimeQuote = { ...q, updatedAt: Date.now() };
+  store.set(code, { ...cur, realtime, daily: buildLiveDaily(cur.daily, realtime) });
+  return true;
+}
+
 export interface BureauStock {
   id: string;
   code: string;
@@ -242,31 +263,20 @@ export const priceBureau = {
     if (isEmpty(entry)) {
       store.delete(code);
     } else {
-      store.set(code, entry);
+      // 日线统一按"含今日实时价"形态落库，避免缓存里的仅收盘序列直接成为列表口径
+      store.set(code, { ...entry, daily: buildLiveDaily(entry.daily, entry.realtime) });
     }
     notify();
   },
 
   /** 写入单个周期结果（供内部喂入，保证全项目同一 code 的同一周期同源） */
   absorb(code: string, period: BollPeriod, result: { data: BollData | null }): void {
+    if (!result.data) return;
     const cur = store.get(code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
-    if (result.data) {
-      let dataToStore: BollData = result.data;
-      // daily：入 store 前自动按"含未收盘"形态重算一遍
-      // （不能调 getTodayDailyKlines——那时 store 里 daily 还是旧值；直接用 result.data.klines 合成再 buildBollDataFromKlines）
-      if (period === 'daily' && !asOfDate) {
-        const base = toClosedKlines(result.data.klines, getMarketStatus()) ?? [];
-        const rt = cur.realtime;
-        let liveKlines: BollKline[] = base;
-        if (rt && rt.price > 0 && rt.open > 0) {
-          liveKlines = mergeTodayBarToKlines(base, rtFromRealtime(rt), getMarketStatus());
-        }
-        const rebuilt = buildBollDataFromKlines(liveKlines, result.data.fetchedAt ?? Date.now());
-        if (rebuilt) dataToStore = rebuilt;
-      }
-      store.set(code, { ...cur, [period]: dataToStore });
-      notify();
-    }
+    // 日线入 store 前统一按"含未收盘"形态重算（与缓存落地、实时刷新同一实现）
+    const stored = period === 'daily' ? buildLiveDaily(result.data, cur.realtime) ?? result.data : result.data;
+    store.set(code, { ...cur, [period]: stored });
+    notify();
   },
 
   /** 一次性批量写入（用于缓存全命中/初扫） */
@@ -275,7 +285,8 @@ export const priceBureau = {
       if (isEmpty(entry)) {
         store.delete(code);
       } else {
-        store.set(code, entry);
+        // 批量落地同样统一按"含今日实时价"形态写入日线（缓存本身只有收盘序列）
+        store.set(code, { ...entry, daily: buildLiveDaily(entry.daily, entry.realtime) });
       }
     }
     notify();
@@ -303,22 +314,9 @@ export const priceBureau = {
     priceBureau.absorb(code, period, result);
   },
 
-  /** 写入单只最新实时行情（供刷新/回填复用），写实会 notify。历史模式下拒绝写入。 */
+  /** 写入某只最新的实时行情（供刷新/回填复用），写实会 notify。历史模式下拒绝写入。 */
   setRealtime(code: string, q: TencentQuote): void {
-    if (asOfDate) return;
-    const cur = store.get(code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
-    // 写入新 realtime 后，daily 里的 BOLL 三轨/均线/klines 也要同步重算（含未收盘形态）——
-    // 否则股价一变，三轨还停留在上次 fetchAndAbsorb 时的那份，BOLL 弹窗/缩略的数值就会漂
-    let dailyNext = cur.daily;
-    if (cur.daily) {
-      const withRt = { ...cur, realtime: { ...q, updatedAt: Date.now() } };
-      store.set(code, withRt); // 先把 realtime 写进去，getTodayDailyKlines 就能合成新今日 bar
-      const liveKlines = priceBureau.getTodayDailyKlines(code);
-      const rebuilt = buildBollDataFromKlines(liveKlines, cur.daily.fetchedAt ?? Date.now());
-      if (rebuilt) dailyNext = rebuilt;
-    }
-    store.set(code, { ...cur, realtime: { ...q, updatedAt: Date.now() }, daily: dailyNext });
-    notify();
+    if (applyRealtimeQuote(code, q)) notify();
   },
 
   /** 取数 + 写回（对外唯一"重新拉取某周期 K 线"入口）：取数请求统一收在数据中心，
@@ -357,11 +355,9 @@ export const priceBureau = {
     let changed = false;
     for (const s of stocks) {
       const q = quotes.get(toTencentCode(s.code));
-      if (q) {
-        if (!changed) changed = true;
-        const cur = store.get(s.code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
-        store.set(s.code, { ...cur, realtime: { ...q, updatedAt: Date.now() } });
-      }
+      // 实时行情写入必须同时重算 store 日线，否则列表读到的日线仍是旧形态（如仅收盘），
+      // 与浮窗自行合成实时形态产生数值差异
+      if (q && applyRealtimeQuote(s.code, q)) changed = true;
     }
     if (changed) notify();
   },
@@ -372,9 +368,7 @@ export const priceBureau = {
     const logCtx: LogBatchContext = requestLogService.beginBatch(`${trigger}：1 只股票 · 1 条请求`);
     const quotes = await fetchTencentRealtime([code], logCtx);
     const q = quotes.get(toTencentCode(code));
-    if (q) {
-      const cur = store.get(code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
-      store.set(code, { ...cur, realtime: { ...q, updatedAt: Date.now() } });
+    if (q && applyRealtimeQuote(code, q)) {
       notify();
       return true;
     }
@@ -464,7 +458,8 @@ export const priceBureau = {
       const code = stock.code;
       const cur = store.get(code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
       store.set(code, {
-        daily: dailyR.data ?? cur.daily,
+        // 日线统一按"含今日实时价"形态写入（与 absorb / 实时刷新同一实现）
+        daily: buildLiveDaily(dailyR.data ?? cur.daily, cur.realtime),
         weekly: weeklyR.data ?? cur.weekly,
         monthly: monthlyR.data ?? cur.monthly,
         realtime: cur.realtime,

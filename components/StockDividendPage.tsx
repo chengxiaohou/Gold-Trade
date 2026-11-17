@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen } from 'lucide-react';
 import { LineChart, ComposedChart, Line, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { StockEntry, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
-import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition, bollBandLabel, buildBollBandTextParts, buildBollDataFromKlines } from '../services/bollService';
+import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition, bollBandLabel, buildBollBandTextParts } from '../services/bollService';
 import type { BollData, BollPeriod, BollAdjust, BollKline, BollBandInfo, BollStreakExplain } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime } from '../services/cacheService';
 import { priceBureau } from '../services/priceBureau';
@@ -2837,13 +2837,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       priceBureau.fetchAndAbsorb(stock.code, 'weekly', apiSource, adjust, popupLogCtx),
       priceBureau.fetchAndAbsorb(stock.code, 'monthly', apiSource, adjust, popupLogCtx),
     ]);
-    // 日线必须用「含今日实时价」的合并序列 + 共享 BOLL 计算：只用收盘序列会算出与列表/同花顺不符的轨道
-    // （例：海尔智家 日上 22.25 vs 22.50）。weekly/monthly 不合成实时价，直接读数据中心权威形态。
-    const dailyLiveKlines = priceBureau.getTodayDailyKlines(stock.code, stock);
-    const dailyLiveData = dailyLiveKlines.length >= 20
-      ? buildBollDataFromKlines(dailyLiveKlines, Date.now())
-      : null;
-    const dailyData = dailyLiveData ?? priceBureau.getTodayBoll(stock.code, 'daily') ?? dailyR.data;
+    // 三轨/均线一律只读数据中心 store 里的形态（写入侧已保证日线并入今日实时价），
+    // 弹窗不再自行用 klines 重算一遍——两处各算一次必然出现末位差异（如 22.50 vs 22.51）。
+    const dailyData = priceBureau.getTodayBoll(stock.code, 'daily') ?? dailyR.data;
     const periodLabels: { period: string; data: BollData | null }[] = [
       { period: '日', data: dailyData },
       { period: '周', data: priceBureau.getTodayBoll(stock.code, 'weekly') },
