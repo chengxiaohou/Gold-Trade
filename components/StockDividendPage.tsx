@@ -644,13 +644,37 @@ function pendingExpirySuffix(t: StockTrade, now: number): string {
   if (idx === ttl) return '!';     // 最后一个有效日
   return '';
 }
-// 生成挂单/成交的状态文字（挂单状态内嵌剩余天数或 ! / ? 标记）
+// 交易体量罗马数字：按成交金额每 2500 元一档并取最接近的档位，但第一档（2500 元）不写罗马数字，
+// 从 5000 元起为 I：2500→无、5000→I、7500→II、10000→III（2000 / 3000 仍属第一档，不写）。
+// 汇总记录优先用其记录的成交总金额，普通记录用 价格 × 股数。
+const TRADE_VOLUME_STEP = 2500;
+const toRomanNumeral = (n: number): string => {
+  if (!Number.isFinite(n) || n <= 0) return '';
+  const table: Array<[number, string]> = [
+    [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'],
+    [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I'],
+  ];
+  let rest = Math.floor(n);
+  let out = '';
+  for (const [value, symbol] of table) {
+    while (rest >= value) { out += symbol; rest -= value; }
+  }
+  return out;
+};
+const tradeVolumeTier = (t: StockTrade): string => {
+  const amount = Math.abs(t.amount ?? t.price * t.shares);
+  // 档位从 1 起算；第一档不显示，故减 1 后再转罗马数字（0 → 空串）
+  return toRomanNumeral(Math.round(amount / TRADE_VOLUME_STEP) - 1);
+};
+// 生成挂单/成交的状态文字：方向 + 体量罗马数字，挂单天数（或 ! / ? 标记）用「-」接在最后，
+// 如 挂卖Ⅲ-3、挂买-!（第一档无罗马数字时省略方向与天数间的空档）；成交为 买入Ⅱ 这类「方向 + 体量」顺序
 const tradeStatusLabel = (t: StockTrade): string => {
   const base = TRADE_STATUS_LABEL[`${t.side}-${t.status}`];
-  if (t.status !== 'pending') return base;
+  const vol = tradeVolumeTier(t);
+  if (t.status !== 'pending') return `${base}${vol}`;
   const suffix = pendingExpirySuffix(t, Date.now());
-  if (suffix) return `${base}${suffix}`;
-  return `${base}${pendingRemainingDays(t, Date.now())}`;
+  const days = suffix || pendingRemainingDays(t, Date.now());
+  return vol ? `${base}${vol}-${days}` : `${base}${days}`;
 };
 // 挂单剩余有效自然日：默认 PENDING_TTL_DAYS=5，用户改写后优先使用 t.ttlDays（从 t.ttlUpdatedAt 起算）
 const pendingRemainingDays = (t: StockTrade, now: number): number => {
