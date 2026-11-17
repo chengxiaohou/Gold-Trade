@@ -27,6 +27,10 @@ import { requestLogService, type LogBatchContext } from './requestLogService';
 import { fetchTencentRealtime } from './realtimeQuote';
 import { toTencentCode, type TencentQuote } from './tencentQuote';
 
+// 批量请求的熔断阈值：连续这么多次网络失败（不含"数据源不支持"）即中止本批剩余请求，
+// 避免被数据源限流/封禁后仍把剩余股票逐只撞一遍，进一步加重封禁
+const MAX_CONSECUTIVE_FAILURES = 6;
+
 export interface RealTimeQuote extends TencentQuote {
   updatedAt: number; // 拉取时刻
 }
@@ -89,6 +93,10 @@ export interface EnsureBatchOpts {
   order?: BureauStock[];
   /** 返回 true 时中止本轮（对应页面 fetchVersionRef 取消旧请求） */
   cancelCheck?: () => boolean;
+  /** 相邻两只股票之间的等待毫秒数（设置页可调，默认 250ms） */
+  intervalMs?: number;
+  /** 连续失败达到阈值、本批被熔断中止时回调（用于 UI 提示） */
+  onFailureAbort?: (info: { failures: number; remaining: number }) => void;
 }
 
 // code → 条目（code 沿用 stock.code 原始字符串，与 fetchBollData 同一口径）
@@ -437,6 +445,7 @@ export const priceBureau = {
 
     const order = opts.order ?? stocks;
     const targetIds = new Set(stocks.map(s => s.id));
+    let consecutiveFailures = 0;
     for (let i = 0; i < order.length; i++) {
       if (opts.cancelCheck?.()) return madeRequest;
       const stock = order[i];
@@ -466,9 +475,26 @@ export const priceBureau = {
       });
       notify();
 
-      // 网络请求后等待 250ms 再请求下一只（其间仍可取消）
-      if (i < order.length - 1) {
-        for (let w = 0; w < 25; w++) {
+      // 连续失败计数（"数据源不支持该周期/复权"不算网络失败，跳过；
+      // 返回过期缓存兜底的 degraded 结果本质仍是本次请求失败，计入失败）
+      for (const r of [dailyR, weeklyR, monthlyR]) {
+        if (r.unsupported) continue;
+        consecutiveFailures = r.data && !r.degraded ? 0 : consecutiveFailures + 1;
+      }
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        const remaining = order.length - i - 1;
+        console.warn(
+          `[priceBureau] 连续 ${consecutiveFailures} 次 BOLL 请求失败，中止本批剩余 ${remaining} 只股票的请求`,
+        );
+        opts.onFailureAbort?.({ failures: consecutiveFailures, remaining });
+        break;
+      }
+
+      // 网络请求后按设置间隔（默认 250ms）等待再请求下一只（其间仍可取消）
+      const waitMs = Math.max(0, opts.intervalMs ?? 250);
+      if (i < order.length - 1 && waitMs > 0) {
+        const ticks = Math.ceil(waitMs / 10);
+        for (let w = 0; w < ticks; w++) {
           await new Promise(resolve => setTimeout(resolve, 10));
           if (opts.cancelCheck?.()) return madeRequest;
         }

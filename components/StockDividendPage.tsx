@@ -292,6 +292,7 @@ interface StockDividendPageProps {
   maxWidth?: number;
   onMaxWidthChange?: (width: number) => void; // 拖拽列表右边缘时回写"列表最大宽度"设置
   autoRefreshInterval?: number; // 股价自动刷新间隔（秒），0=关闭；设备本地设置
+  bollRequestInterval?: number; // 布林线批量请求间隔（毫秒）；设备本地设置
   divRateHoverEnabled?: boolean; // 股息率弹窗是否支持鼠标悬浮显示；设备本地设置，不上传云端
   popupBackdropEnabled?: boolean; // 移动端弹窗背景遮罩开关；设备本地设置，不上传云端
   actionButtons?: React.ReactNode;
@@ -2451,7 +2452,7 @@ const sortStocksByTag = (list: StockEntry[]): StockEntry[] =>
     return (a.tag || '').trim().localeCompare((b.tag || '').trim());
   });
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, stockTotalCapital = 0, onStockTotalCapitalChange }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, bollRequestInterval = 250, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, stockTotalCapital = 0, onStockTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
   useEffect(() => {
     const id = 'profit-month-scroller-style';
@@ -3437,6 +3438,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const nameLongPressTimerRef = useRef<number | null>(null);
   const nameLongPressFiredRef = useRef(false);
 
+  // 操作列小眼睛：长按 600ms 把"被按这只的目标状态"套用到全部股票（点一下仍只切当前行）
+  const eyeLongPressTimerRef = useRef<number | null>(null);
+  const eyeLongPressFiredRef = useRef(false);
+  const eyeLongPressStockIdRef = useRef<string | null>(null);
+
   // 行编辑（名称/链接）快照：进入编辑态时记录原始值，ESC 取消时还原，做到"不做任何修改"
   const editSnapshotRef = useRef<{ id: string; name: string; nickname?: string; link?: string } | null>(null);
 
@@ -3485,6 +3491,41 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       nameLongPressFiredRef.current = false;
       e.stopPropagation();
     }
+  };
+
+  const startEyeLongPress = (stock: StockEntry) => {
+    if (eyeLongPressTimerRef.current !== null) return;
+    eyeLongPressFiredRef.current = false;
+    eyeLongPressStockIdRef.current = stock.id;
+    const nextHidden = !stock.bollHidden;
+    eyeLongPressTimerRef.current = window.setTimeout(() => {
+      eyeLongPressTimerRef.current = null;
+      eyeLongPressFiredRef.current = true;
+      // 长按：把被按这只的目标状态套用到全部股票
+      onStocksChange(stocks.map(s => ({ ...s, bollHidden: nextHidden })));
+    }, 600);
+  };
+
+  const stopEyeLongPress = () => {
+    if (eyeLongPressTimerRef.current !== null) {
+      clearTimeout(eyeLongPressTimerRef.current);
+      eyeLongPressTimerRef.current = null;
+    }
+  };
+
+  const handleEyeClick = (stock: StockEntry) => {
+    if (eyeLongPressFiredRef.current && eyeLongPressStockIdRef.current === stock.id) {
+      // 长按已处理，拦截这次 click 的单行切换
+      eyeLongPressFiredRef.current = false;
+      eyeLongPressStockIdRef.current = null;
+      return;
+    }
+    stopEyeLongPress();
+    eyeLongPressFiredRef.current = false;
+    eyeLongPressStockIdRef.current = null;
+    onStocksChange(stocks.map(s =>
+      s.id === stock.id ? { ...s, bollHidden: !s.bollHidden } : s
+    ));
   };
 
   // 精确单击股票名称文字 → 直接打开回测页面（不触发标签弹窗）
@@ -4453,7 +4494,18 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       trigger,
       order: fetchOrder,
       cancelCheck: () => fetchVersionRef.current !== currentVersion,
+      intervalMs: bollRequestInterval,
+      onFailureAbort: ({ failures, remaining }) => {
+        showNotice(
+          remaining > 0
+            ? `连续 ${failures} 次请求失败，已停止后续 ${remaining} 只股票的 BOLL 请求`
+            : `连续 ${failures} 次请求失败，本轮 BOLL 请求已中止`,
+        );
+      },
     });
+
+    // 被取消（或已被更新的批次接管）：直接退出，刷新态由取消动作/新批次负责，避免误清
+    if (fetchVersionRef.current !== currentVersion) return;
 
     // 全量（批量）刷新完成：仅在本次确实发起了网络请求时，才更新"全量刷新时间戳"
     // （表头与设置面板读取）。全部命中缓存、无需请求时保留旧时间，避免被缓存命中刷成"刚刚"。
@@ -4462,7 +4514,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     }
 
     setIsRefreshingBoll(false);
-  }, [stocks, bollAdjust, apiSource, sortMode, onSortModeChange, histDate]);
+  }, [stocks, bollAdjust, apiSource, sortMode, onSortModeChange, histDate, bollRequestInterval, showNotice]);
+
+  // 取消当前批量刷新：递增版本号后，ensureBatch 在下一个检查点起不再发出任何后续请求
+  const cancelBollRefresh = useCallback(() => {
+    fetchVersionRef.current += 1;
+    setIsRefreshingBoll(false);
+    showNotice('已取消后续 BOLL 请求');
+  }, [showNotice]);
 
   // 防止 StrictMode 双重调用：标志在 effect 层设置，与 fetchAllBoll 内部守卫无关
   const didAutoRefreshBollRef = useRef(false);
@@ -5037,19 +5096,43 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     setIsFetchingDividends(true);
 
     // 小并发池：固定 4 路，按原顺序回填结果
+    // 熔断：连续 3 次请求失败（同花顺+东财均失败）即停止，避免被反爬/限流后仍把剩余股票逐只撞一遍
     const CONCURRENCY = 4;
+    const MAX_CONSECUTIVE_FAILURES = 3;
     const results: YearlyDividends[] = new Array(stocks.length);
     let cursor = 0;
+    let consecutiveFailures = 0;
+    let aborted = false;
     const worker = async () => {
       for (;;) {
+        if (aborted) return;
         const index = cursor++;
         if (index >= stocks.length) return;
-        results[index] = await fetchYearlyDividends(stocks[index].code, logCtx);
+        const result = await fetchYearlyDividends(stocks[index].code, logCtx);
+        results[index] = result;
+        if (result?.error) {
+          consecutiveFailures++;
+          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) aborted = true;
+        } else {
+          consecutiveFailures = 0;
+        }
       }
     };
     await Promise.all(
       Array.from({ length: Math.min(CONCURRENCY, stocks.length) }, () => worker())
     );
+
+    // 触发熔断：不再继续后续流程（避免把未拉到的股票以"无数据"混入差异弹窗）
+    if (aborted) {
+      const remaining = results.filter(r => !r).length;
+      showNotice(
+        remaining > 0
+          ? `连续 ${MAX_CONSECUTIVE_FAILURES} 次分红请求失败，已停止后续 ${remaining} 只股票的请求`
+          : `连续 ${MAX_CONSECUTIVE_FAILURES} 次分红请求失败，本轮分红请求已中止`,
+      );
+      setIsFetchingDividends(false);
+      return;
+    }
 
     // 全部失败才提示网络异常；个别失败仍在差异弹窗里按股票展示
     if (results.every(r => r?.error)) {
@@ -6386,11 +6469,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      fetchAllBoll('点击「布林线」列头刷新按钮');
+                      if (isRefreshingBoll) cancelBollRefresh();
+                      else fetchAllBoll('点击「布林线」列头刷新按钮');
                     }}
-                    disabled={isRefreshingBoll}
-                    className="p-0.5 hover:bg-app-card rounded transition-colors disabled:opacity-50"
-                    title="刷新所有BOLL数据"
+                    className="p-0.5 hover:bg-app-card rounded transition-colors"
+                    title={isRefreshingBoll ? '取消刷新（停止后续请求）' : '刷新所有BOLL数据'}
                   >
                     <RefreshCw size={10} className={isRefreshingBoll ? 'animate-spin' : ''} />
                   </button>
@@ -7015,12 +7098,18 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          onStocksChange(stocks.map(s =>
-                            s.id === stock.id ? { ...s, bollHidden: !s.bollHidden } : s
-                          ));
+                          handleEyeClick(stock);
                         }}
-                        className={`p-0.5 rounded transition-colors ${stock.bollHidden ? 'text-gray-500 hover:text-app-text' : 'text-app-subtext hover:text-app-text'}`}
-                        title={stock.bollHidden ? '显示布林线' : '隐藏布林线'}
+                        onPointerDown={(e) => {
+                          if (e.button !== 0) return;
+                          startEyeLongPress(stock);
+                        }}
+                        onPointerUp={stopEyeLongPress}
+                        onPointerLeave={stopEyeLongPress}
+                        onPointerCancel={stopEyeLongPress}
+                        onContextMenu={(e) => e.preventDefault()}
+                        className={`p-0.5 rounded transition-colors select-none ${stock.bollHidden ? 'text-gray-500 hover:text-app-text' : 'text-app-subtext hover:text-app-text'}`}
+                        title={`${stock.bollHidden ? '显示布林线' : '隐藏布林线'}（长按切换全部）`}
                       >
                         {stock.bollHidden ? <EyeOff size={12} /> : <Eye size={12} />}
                       </button>

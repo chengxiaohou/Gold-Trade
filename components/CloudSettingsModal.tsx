@@ -265,6 +265,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [sellOrderPlaceholder, setSellOrderPlaceholder] = useState<string>(stockSettings?.sellOrderPlaceholder || '');
   // 股价自动刷新间隔（秒），0=关闭；设备本地设置不与云端同步
   const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(stockSettings?.autoRefreshInterval ?? 60);
+  // 布林线批量请求间隔（毫秒）；设备本地设置不与云端同步
+  const [bollRequestInterval, setBollRequestInterval] = useState<number>(stockSettings?.bollRequestInterval ?? 250);
 
   // 标签判定参数操作辅助
   const updateTagParam = (group: 'feng' | 'classic', key: string, patch: Partial<TagParamEntry>) => {
@@ -437,6 +439,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       memo: stockSettings?.memo ?? '',
       memoUpdatedAt: stockSettings?.memoUpdatedAt ?? 0,
       autoRefreshInterval,
+      bollRequestInterval,
       buyOrderPlaceholder: currentPage === 'stock' ? buyOrderPlaceholder : stockSettings?.buyOrderPlaceholder,
       sellOrderPlaceholder: currentPage === 'stock' ? sellOrderPlaceholder : stockSettings?.sellOrderPlaceholder,
       tagParams,
@@ -547,6 +550,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       buyOrderPlaceholder: currentPage === 'stock' ? buyOrderPlaceholder : stockSettings?.buyOrderPlaceholder,
       sellOrderPlaceholder: currentPage === 'stock' ? sellOrderPlaceholder : stockSettings?.sellOrderPlaceholder,
       autoRefreshInterval: currentPage === 'stock' ? autoRefreshInterval : stockSettings?.autoRefreshInterval,
+      bollRequestInterval: currentPage === 'stock' ? bollRequestInterval : stockSettings?.bollRequestInterval,
       tagParams,
       customTags,
     };
@@ -831,22 +835,46 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                                 <button
                                   key={domain}
                                   type="button"
+                                  title={domain}
                                   onClick={() => {
                                     setTencentDomain(domain);
                                     setTencentDomainState(domain);
                                   }}
-                                  className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all truncate ${
+                                  className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-all truncate ${
                                     tencentDomain === domain
                                       ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50'
                                       : 'bg-app-input text-app-subtext border border-app-border hover:border-app-text/30'
                                   }`}
                                 >
-                                  {domain}
+                                  {domain === 'proxy.finance.qq.com' ? 'proxy.finance' : domain.replace('.gtimg.cn', '')}
                                 </button>
                               ))}
                             </div>
                           </div>
                         )}
+
+                        {/* 布林线批量请求间隔（仅本地记忆） */}
+                        <div className="flex items-center justify-between gap-3 pt-2">
+                          <div className="min-w-0">
+                            <div className="text-sm text-app-text">BOLL 请求间隔（毫秒）</div>
+                            <div className="text-xs text-app-subtext">批量拉取布林线时，相邻两只股票之间的等待时间</div>
+                          </div>
+                          <div className="w-[71px] shrink-0">
+                            <InputGroup
+                              value={bollRequestInterval}
+                              onChange={(v) => {
+                                const val = parseInt(v) || 0;
+                                if (val >= 0) setBollRequestInterval(val);
+                              }}
+                              step={50}
+                              precision={0}
+                              min={0}
+                              touchMode
+                              hideControls
+                              className="!py-1.5 !pl-2 !pr-2 !text-xs text-center"
+                            />
+                          </div>
+                        </div>
                      </div>
 
                      {/* Cache Management */}

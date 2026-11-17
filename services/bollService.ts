@@ -157,6 +157,7 @@ export interface BollResult {
   data: BollData | null;
   error?: string;
   unsupported?: boolean; // 数据源不支持该周期
+  degraded?: boolean; // 本次网络请求失败、返回的是过期缓存兜底数据
 }
 
 // 请求频率限制已移至 fetchAllBoll，此处仅保留缓存相关逻辑
@@ -811,8 +812,19 @@ const SINA_SUPPORTED_ADJUST: Record<BollAdjust, boolean> = {
 };
 
 // 腾讯 K 线可选域名
-export const TENCENT_DOMAINS = ['ifzq.gtimg.cn', 'web.ifzq.gtimg.cn'];
+export const TENCENT_DOMAINS = ['ifzq.gtimg.cn', 'web.ifzq.gtimg.cn', 'proxy.finance.qq.com'];
 const TENCENT_DOMAIN_KEY = 'tencent_boll_domain';
+
+// 各域名下 K 线接口的路径前缀：proxy.finance.qq.com 的接口挂在 /ifzqgtimg 下，
+// 其余域名直接以 /appstock 开头
+const TENCENT_HOST_PREFIX: Record<string, string> = {
+  'proxy.finance.qq.com': '/ifzqgtimg',
+};
+
+// 拼接腾讯 K 线真实请求地址（域名 + 域名专属前缀 + 接口路径）
+export function buildTencentKlineUrl(domain: string, urlPath: string): string {
+  return `https://${domain}${TENCENT_HOST_PREFIX[domain] ?? ''}${urlPath}`;
+}
 
 // 读取腾讯 K 线选中的域名（仅本地记忆，不同步云端）
 export function getTencentDomain(): string {
@@ -904,13 +916,13 @@ export async function fetchBollData(
       : await fetchBollFromSina(market, code, period, adjust, apiSource, batchTimestamp, logCtx);
     // 网络层失败但存在缓存 → 降级到缓存（数据可能旧，但胜过空白）
     if (!result.data && degraded) {
-      return { data: degraded };
+      return { data: degraded, degraded: true, error: result.error };
     }
     return result;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (degraded) {
-      return { data: degraded };
+      return { data: degraded, degraded: true, error: `获取失败: ${msg}` };
     }
     return { data: null, error: `获取失败: ${msg}` };
   }
@@ -941,7 +953,7 @@ async function fetchBollFromTencent(
   const urlPath = `/appstock/app/fqkline/get?param=${code},${periodParam},,,${count},${adjustParam}`;
   // 使用设置页选中的腾讯 K 线域名（默认 ifzq.gtimg.cn），共享缓存不随域名隔离
   const domain = getTencentDomain();
-  const realUrl = `https://${domain}${urlPath}`;
+  const realUrl = buildTencentKlineUrl(domain, urlPath);
   const logUrl = logTencentUrl(urlPath);
 
   // 开始请求，记录日志
