@@ -2832,15 +2832,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     batchLabel: string,
   ): Promise<{ rows: SrRow[]; text: string; w: number; h: number; date: string }> => {
     const popupLogCtx = requestLogService.beginBatch(batchLabel);
-    const [dailyR, weeklyR, monthlyR] = await Promise.all([
+    const [dailyR] = await Promise.all([
       priceBureau.fetchAndAbsorb(stock.code, 'daily', apiSource, adjust, popupLogCtx),
       priceBureau.fetchAndAbsorb(stock.code, 'weekly', apiSource, adjust, popupLogCtx),
       priceBureau.fetchAndAbsorb(stock.code, 'monthly', apiSource, adjust, popupLogCtx),
     ]);
+    // 三轨/均线一律读数据中心的权威形态（getTodayBoll：日线已并入今日实时价，历史模式则为截止日投影），
+    // 不得直接使用 fetchAndAbsorb 的返回值——那是「仅收盘 K 线」的原始结果，
+    // 会让弹窗里的「日上」与列表 BOLL 列（读 store）算出不同的数值。
+    const dailyData = priceBureau.getTodayBoll(stock.code, 'daily') ?? dailyR.data;
     const periodLabels: { period: string; data: BollData | null }[] = [
-      { period: '日', data: dailyR.data },
-      { period: '周', data: weeklyR.data },
-      { period: '月', data: monthlyR.data },
+      { period: '日', data: dailyData },
+      { period: '周', data: priceBureau.getTodayBoll(stock.code, 'weekly') },
+      { period: '月', data: priceBureau.getTodayBoll(stock.code, 'monthly') },
     ];
     const trackKeys: { key: keyof BollData; label: string }[] = [
       { key: 'upper', label: '上' },
@@ -2861,10 +2865,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // 多周期绝对最高最低价，不额外发请求：日线(500条≈2年)覆盖短窗口，周线(500条≈9.6年)覆盖中长期，月线(500条≈41年)覆盖长期
     // 统一按周期长度从长到短收集，同价位只保留周期最长的（参考价值更高）
     {
+      // 区间高低同样基于权威形态的 K 线（日线含今日实时价），与列表/三轨口径保持一致
       const srcs: Record<string, BollKline[] | undefined> = {
-        daily: dailyR.data?.klines,
-        weekly: weeklyR.data?.klines,
-        monthly: monthlyR.data?.klines,
+        daily: periodLabels[0].data?.klines,
+        weekly: periodLabels[1].data?.klines,
+        monthly: periodLabels[2].data?.klines,
       };
       const windows: { label: string; bars: number; source: 'daily' | 'weekly' | 'monthly' }[] = [
         { label: '一月', bars: 20, source: 'daily' },
@@ -2957,7 +2962,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const w = measureEl.offsetWidth;
     const h = measureEl.offsetHeight;
     document.body.removeChild(measureEl);
-    return { rows, text, w, h, date: dailyR.data?.date ?? '' };
+    return { rows, text, w, h, date: dailyData?.date ?? '' };
   };
 
   // MA & BOLL (20, 2) 图标：展示支撑/压力位（复用共享内容，定位跟随主弹窗）
