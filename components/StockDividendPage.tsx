@@ -5343,7 +5343,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // 编辑已有交易：默认值之后统一由 startEditTrade 回填，避免各处自己拼一遍
     if (preset?.editTrade) startEditTrade(preset.editTrade);
     const rect = btn instanceof Element ? btn.getBoundingClientRect() : btn;
-    const popupW = 324;
+    const popupW = 360;
     const estH = 520;
     const gap = 8;
     let left = rect.right + gap;
@@ -8277,8 +8277,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             data-trade-popup={tradeInfoAboveBacktest ? 'backtest' : 'normal'}
             className={`fixed ${tradeInfoAboveBacktest ? 'z-[10000]' : tradeInfoAboveAccount ? 'z-[100]' : 'z-[60]'} bg-app-card border border-app-border shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] rounded-xl overflow-hidden text-app-text ${tradeInfoSettled ? '' : 'pointer-events-none'}`}
             style={backdropMode
-              ? { ...centeredPopupStyle(324), opacity: tradeInfoSettled ? 1 : 0 }
-              : { top: tradeInfoPos.top, left: tradeInfoPos.left, width: 324, opacity: tradeInfoSettled ? 1 : 0, transform: tradeInfoSettled ? 'none' : 'translate(0,0)' }}
+              ? { ...centeredPopupStyle(360), opacity: tradeInfoSettled ? 1 : 0 }
+              : { top: tradeInfoPos.top, left: tradeInfoPos.left, width: 360, opacity: tradeInfoSettled ? 1 : 0, transform: tradeInfoSettled ? 'none' : 'translate(0,0)' }}
           >
             {/* 可拖拽头部（复用 StockLinkTitleBar，与股票详情弹窗同一实现） */}
             <StockLinkTitleBar
@@ -8536,7 +8536,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div
             ref={tradeSimpleRef}
             className="fixed z-[59] bg-app-card border border-app-border rounded-lg px-2 py-2 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] text-app-text"
-            style={backdropMode ? centeredPopupStyle(324) : { top: tradeSimplePos.top, left: tradeSimplePos.left, width: 324 }} // 宽度与交易窗口一致，保证备注完整展示
+            style={backdropMode ? centeredPopupStyle(360) : { top: tradeSimplePos.top, left: tradeSimplePos.left, width: 360 }} // 宽度与交易窗口一致，保证备注完整展示
             onMouseEnter={cancelTradeSimpleClose}
             onMouseLeave={scheduleTradeSimpleClose}
           >
