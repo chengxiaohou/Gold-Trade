@@ -12,7 +12,6 @@ import {
   emitBollCacheHits,
   getBollCacheTimestamps,
   ensureBollCacheRestored,
-  subscribeBollKlinesHydrated,
   mergeTodayBarToKlines,
   projectBollAsOf,
   buildBollDataFromKlines,
@@ -24,7 +23,7 @@ import {
   type BollResult,
 } from './bollService';
 import { getDynamicBollCacheTTL, isTradingHours, formatCacheTime, getMarketStatus } from './cacheService';
-import { requestLogService, BOOT_DIAG_CTX, type LogBatchContext } from './requestLogService';
+import { requestLogService, type LogBatchContext } from './requestLogService';
 import { fetchTencentRealtime } from './realtimeQuote';
 import { toTencentCode, type TencentQuote } from './tencentQuote';
 
@@ -94,30 +93,6 @@ export interface EnsureBatchOpts {
 
 // code → 条目（code 沿用 stock.code 原始字符串，与 fetchBollData 同一口径）
 const store = new Map<string, PriceEntry>();
-
-// 最近一次批量加载的上下文：K 线缓存后台补齐后，按同一批股票重新落地，
-// 让依赖 K 线的标签 / 区间比例自动补上（只补不删，避免把已取到的数据清掉）
-let lastBatchContext: { stocks: BureauStock[]; adjust: BollAdjust; apiSource: ApiSource } | null = null;
-
-// 把缓存判定结果转成 store 键（cachedData 按 stock.id 索引，本模块按 stock.code 索引）
-function buildCachedByCode(
-  cachedData: Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>,
-  stocks: BureauStock[],
-  onlyComplete = false,
-): Map<string, PriceEntry> {
-  const idToCode = new Map<string, string>();
-  for (const s of stocks) idToCode.set(s.id, s.code);
-  const cachedByCode = new Map<string, PriceEntry>();
-  for (const [id, entry] of cachedData) {
-    const code = idToCode.get(id);
-    if (!code) continue;
-    // 后台补齐场景：跳过不完整条目，避免把已落地的数据删掉
-    if (onlyComplete && (!entry.daily || !entry.weekly || !entry.monthly)) continue;
-    const prevRt = store.get(code)?.realtime ?? null;
-    cachedByCode.set(code, { realtime: prevRt, ...entry });
-  }
-  return cachedByCode;
-}
 
 // ── 历史展示模式（截止日投影）──
 // asOfDate 非空时，本部门对外输出的一切数据都以该日为截止日：K 线截断到该日（含当日），
@@ -401,21 +376,6 @@ export const priceBureau = {
   },
 
   /**
-   * 只读预判：这批股票是否还有需要网络请求的缓存缺口。
-   * 供调用方在批量加载前决定是否需要把列表切到「标签」排序重排；
-   * 全部命中有效缓存时不产生任何副作用（判定逻辑与 ensureBatch 同源）。
-   */
-  async needsFetch(stocks: BureauStock[], apiSource: ApiSource, adjust: BollAdjust): Promise<boolean> {
-    if (asOfDate) return false;
-    const __t0 = performance.now();
-    await ensureBollCacheRestored();
-    const __restoreMs = performance.now() - __t0;
-    const plan = planBollCache(stocks, adjust, apiSource, new Date(), getDynamicBollCacheTTL());
-    requestLogService.cacheHit(`[诊断] needsFetch 等待缓存 ${__restoreMs.toFixed(1)}ms，allCached=${plan.allCached}`, BOOT_DIAG_CTX);
-    return !plan.allCached;
-  },
-
-  /**
    * 批量加载（等价于原 fetchAllBoll）：
    * 判定缓存→一次应用命中→逐个缺失项顺序请求（含250ms节流），全部写回本模块并通知。
    * 日志语义与既有一致（beginBatch/缓存命中/有效期）。
@@ -428,9 +388,7 @@ export const priceBureau = {
   ): Promise<boolean> {
     // 历史展示模式：不发起任何批量拉取（照常读取截止日投影即可）
     if (asOfDate) return false;
-    const __batchT0 = performance.now();
     await ensureBollCacheRestored();
-    const __restoreMs = performance.now() - __batchT0;
     const trigger = opts.trigger ?? '自动刷新布林线';
     const batchTimestamp = Date.now();
     // 是否真正发起过网络请求（全部命中缓存时为 false，供调用方决定是否刷新"全量刷新时间戳"）
@@ -442,8 +400,15 @@ export const priceBureau = {
     const { allCached, cachedData, staleCount, visibleTotal } = plan;
 
     const cacheTimestamps = getBollCacheTimestamps(stocks, adjust, apiSource);
-    lastBatchContext = { stocks, adjust, apiSource };
-    const cachedByCode = buildCachedByCode(cachedData, stocks);
+    // cachedData 按 stock.id 索引，本模块按 stock.code 索引 → 建立 id→code 映射
+    const idToCode = new Map<string, string>();
+    for (const s of stocks) idToCode.set(s.id, s.code);
+    const cachedByCode = new Map<string, PriceEntry>();
+    for (const [id, entry] of cachedData) {
+      const code = idToCode.get(id);
+      const prevRt = store.get(code)?.realtime ?? null;
+      if (code) cachedByCode.set(code, { realtime: prevRt, ...entry });
+    }
     let cacheInfoStr = '';
     let oldCacheInfoStr = '';
     if (cacheTimestamps.length > 0) {
@@ -463,9 +428,7 @@ export const priceBureau = {
     emitBollCacheHits(plan.hitKeys, logCtx);
 
     if (allCached) {
-      const __applyT0 = performance.now();
       priceBureau.setEntries(cachedByCode);
-      requestLogService.cacheHit(`[诊断] ensureBatch 等缓存 ${__restoreMs.toFixed(1)}ms，首次落地 ${(performance.now() - __applyT0).toFixed(1)}ms，共 ${cachedByCode.size} 只`, BOOT_DIAG_CTX);
       return madeRequest;
     }
 
@@ -514,12 +477,3 @@ export const priceBureau = {
     return madeRequest;
   },
 };
-
-// K 线缓存从 IndexedDB 后台补齐完成后，按最近一次批量加载的股票重新落地一次：
-// 首屏只用摘要先把 BOLL 数字画出来，依赖 K 线的标签 / 区间比例在这里补齐。
-subscribeBollKlinesHydrated(() => {
-  const ctx = lastBatchContext;
-  if (!ctx || asOfDate) return;
-  const plan = planBollCache(ctx.stocks, ctx.adjust, ctx.apiSource, new Date(), getDynamicBollCacheTTL());
-  priceBureau.setEntries(buildCachedByCode(plan.cachedData, ctx.stocks, true));
-});

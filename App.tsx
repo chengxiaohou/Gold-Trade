@@ -17,16 +17,12 @@ import { clearAllCache } from './services/bollService';
 import { clearCacheRecord } from './services/cacheService';
 import { fetchLondonGoldUsdPerOz } from './services/londonGoldService';
 import { calcPositionFromTrades } from './services/realizedPnl';
-import { requestLogService, BOOT_DIAG_CTX } from './services/requestLogService';
-
-requestLogService.cacheHit(`[诊断] 应用模块加载 t=${performance.now().toFixed(0)}ms`, BOOT_DIAG_CTX);
-let __stocksParseLogged = false;
 import { mergeCloudStocks, buildUploadStocks, stripStockPriceCache, splitFinancialsFromStocks, resolveMemoUpdatedAt, diffStockCloudSnapshots, diffGoldSnapshots, buildGoldFileFingerprint, buildStocksFileFingerprint, buildFinancialsFileFingerprint, diffFinancialsSnapshots, collectStockNamesFromSnapshot, normalizeFingerprint } from './services/stockSync';
 import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.248';
+const APP_VERSION = 'v2.18.247';
 
 // 上传文件大小的展示格式（UTF-8 字节数 → B/KB/MB）
 function formatByteSize(bytes: number): string {
@@ -262,13 +258,12 @@ export default function App() {
 
   // --- Stock State ---
   const [stocks, setStocks] = useState<StockEntry[]>(() => {
-    const __parseT0 = performance.now();
     const saved = localStorage.getItem('stock_dividend_stocks');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const mapped = parsed.map((s: StockEntry) => {
+          return parsed.map((s: StockEntry) => {
             // 持仓只从交易记录重算，不再保留旧的手动填写成本
             const { shares, avgCost } = calcPositionFromTrades(s.stockTrades);
             // 兼容极老数据：曾用固定字段 dividend2024/2025 存两年派息，这里一次性迁移进 dividendByYear
@@ -286,11 +281,6 @@ export default function App() {
               positionCost: avgCost,
             };
           });
-          if (!__stocksParseLogged) {
-            __stocksParseLogged = true;
-            requestLogService.cacheHit(`[诊断] 读取股票列表 ${(performance.now() - __parseT0).toFixed(1)}ms，${mapped.length} 只，${(saved.length / 1024).toFixed(0)}KB`, BOOT_DIAG_CTX);
-          }
-          return mapped;
         }
       } catch {
         // fall through to default

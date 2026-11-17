@@ -35,10 +35,6 @@ const STORAGE_KEY = 'gold_request_logs';
 const SESSION_STORAGE_KEY = 'gold_request_logs_session';
 const MAX_LOGS = 500;
 
-// 启动诊断日志统一使用的批次上下文：让诊断条目在面板里归到「启动诊断」组下，
-// 与真实网络请求区分开，展开后可见具体内容
-export const BOOT_DIAG_CTX: LogBatchContext = { reason: '启动诊断', batchKey: 'boot_diag' };
-
 class RequestLogService {
   private logs: RequestLogEntry[] = [];
   private listeners: Set<RequestLogListener> = new Set();

@@ -7,7 +7,7 @@ import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition, bollBa
 import type { BollData, BollPeriod, BollAdjust, BollKline, BollBandInfo, BollStreakExplain } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime } from '../services/cacheService';
 import { priceBureau } from '../services/priceBureau';
-import { requestLogService, BOOT_DIAG_CTX, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
+import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import type { TencentQuote } from '../services/tencentQuote';
 import { fetchYearlyDividends, fetchParentNetProfitBatch, fetchTotalSharesByPeriod, DividendRecord, type YearlyDividends } from '../services/dividendService';
 import { getNickname } from '../services/nicknameService';
@@ -3871,16 +3871,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
 
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
-  const bollFirstSyncRef = useRef(false);
-  const bootPaintLoggedRef = useRef(false);
-  // 首帧渲染时刻（临时诊断，StrictMode 下只记一次）
-  useEffect(() => {
-    requestAnimationFrame(() => {
-      if (bootPaintLoggedRef.current) return;
-      bootPaintLoggedRef.current = true;
-      requestLogService.cacheHit(`[诊断] 股息页首帧渲染 t=${performance.now().toFixed(0)}ms`, BOOT_DIAG_CTX);
-    });
-  }, []);
   const [isRefreshingBoll, setIsRefreshingBoll] = useState(false);
 
   // 价格数据部订阅：权威数据只存于 priceBureau，本状态仅为渲染镜像。
@@ -3891,15 +3881,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       for (const s of stocks) {
         const e = priceBureau.getEntry(s.code);
         if (e) m.set(s.id, e);
-      }
-      if (!bollFirstSyncRef.current && m.size > 0) {
-        bollFirstSyncRef.current = true;
-        const __syncT0 = performance.now();
-        requestLogService.cacheHit(`[诊断] 列表首次拿到布林数据 ${__syncT0.toFixed(0)}ms，${m.size} 只`, BOOT_DIAG_CTX);
-        // 数据落地后等下一帧，量出"布林列真正完成绘制"的时刻
-        requestAnimationFrame(() => {
-          requestLogService.cacheHit(`[诊断] 布林列完成绘制 距拿到数据 ${(performance.now() - __syncT0).toFixed(0)}ms`, BOOT_DIAG_CTX);
-        });
       }
       setStockBollMap(m);
     };
@@ -4131,34 +4112,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 请求日志状态
   const [requestLogs, setRequestLogs] = useState<RequestLogEntry[]>([]);
   const [requestStats, setRequestStats] = useState<RequestLogStats>({ total: 0, success: 0, failed: 0, cached: 0, pending: 0 });
-  // 一键复制诊断日志（仅筛选 [诊断] 前缀条目，按时间正序拼接）
-  const handleCopyDiagLogs = async () => {
-    const lines = requestLogService.getLogs()
-      .filter(l => typeof l.url === 'string' && l.url.startsWith('[诊断]'))
-      .sort((a, b) => a.timestamp - b.timestamp)
-      .map(l => `${new Date(l.timestamp).toLocaleTimeString('zh-CN', { hour12: false })} ${l.url}`);
-    if (lines.length === 0) { showNotice('暂无可复制的诊断日志'); return; }
-    const text = lines.join('\n');
-    try {
-      // 必须先 await：Promise 未完成就提示会导致复制静默失败
-      await navigator.clipboard.writeText(text);
-      showNotice('诊断日志已复制');
-    } catch {
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        showNotice('诊断日志已复制');
-      } catch {
-        showNotice('复制失败，请手动选择日志');
-      }
-    }
-  };
   // 页面底部轻提示（自动消失）
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
@@ -4486,14 +4439,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
     setIsRefreshingBoll(true);
 
-    // 先判定这次是否真的需要请求：全部命中有效缓存时保持用户当前排序，不重排列表；
-    // 仅当确有缺失/过期数据要拉取时，才切到「标签」排序并按该顺序发请求：
+    // 批量拉取前统一切换到「标签」排序，并按该顺序发请求：
     // 其它排序（尤其日/周/月线、股息率区间比例）依赖尚未拉取的 K 线，数据未到时会退化成原序，
     // 等数据陆续返回后列表又要重排，导致请求顺序与"从上到下"对不上；
     // 标签排序只依赖本地已有字段，切过去后排序立即稳定，请求顺序即用户看到的行顺序。
-    const needsFetch = await priceBureau.needsFetch(stocks, apiSource, bollAdjust);
-    if (needsFetch && sortMode !== 'tag') onSortModeChange?.('tag');
-    const fetchOrder = needsFetch ? sortStocksByTag(stocks) : stocks;
+    if (sortMode !== 'tag') onSortModeChange?.('tag');
+    const fetchOrder = sortStocksByTag(stocks);
 
     // 清空旧数据，显示加载状态
     priceBureau.clear();
@@ -9073,8 +9024,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div className="flex items-center gap-2 shrink-0">
             {bottomBarView === 'request' ? (<>
             <button
-              onClick={(e) => {
-                e.stopPropagation();
+              onClick={() => {
                 const csvContent = requestLogService.exportLogs();
                 const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
@@ -9091,14 +9041,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <Download size={12} />
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); void handleCopyDiagLogs(); }}
-              className="flex items-center justify-center px-2 py-0.5 text-xs text-app-subtext hover:text-app-text border border-app-border rounded hover:border-app-text/50 transition-colors"
-              title="复制诊断日志"
-            >
-              <Copy size={12} />
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); requestLogService.reset(); }}
+              onClick={() => requestLogService.reset()}
               disabled={requestLogs.length === 0}
               className="flex items-center justify-center px-2 py-0.5 text-xs text-app-subtext hover:text-red-400 border border-app-border rounded hover:border-red-400/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="重置"
