@@ -298,10 +298,9 @@ export const priceBureau = {
     if (store.get(code)?.[period]) return;
     await ensureBollCacheRestored();
     const result = await fetchBollData(code, period, adjust, apiSource);
-    const cur = store.get(code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
-    const next: PriceEntry = { ...cur, [period]: result.data };
-    store.set(code, next);
-    notify();
+    // 写入统一走 absorb（日线会自动并入今日实时价），避免此处写入"仅收盘"形态
+    // 导致后续读取 store 的消费方拿到与列表/浮窗不一致的三轨数值
+    priceBureau.absorb(code, period, result);
   },
 
   /** 写入单只最新实时行情（供刷新/回填复用），写实会 notify。历史模式下拒绝写入。 */
