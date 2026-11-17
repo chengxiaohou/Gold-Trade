@@ -1,8 +1,8 @@
 // 布林线缓存的"判定 / 使用 / 请求"决策纯函数，无副作用，便于单元测试。
-// 真实市场状态、当前时间、缓存内容均作为入参注入，函数内部不再 new Date()。
-// 盘中/午休/盘后/盘前 的新鲜度口径由调用方从 cacheService 的 getMarketStatus/getLastTradingClose 注入。
-import type { ApiSource, MarketStatus } from '../types';
-import { getMarketStatus, getLastTradingClose } from './cacheService';
+// 真实时间与缓存内容均作为入参注入，函数内部不再 new Date()。
+// 缓存新鲜度口径统一由 cacheService 的 getLastTradingClose 注入。
+import type { ApiSource } from '../types';
+import { getLastTradingClose } from './cacheService';
 import type { BollData } from './bollService';
 
 const periods: BollPeriod[] = ['daily', 'weekly', 'monthly'];
@@ -25,31 +25,19 @@ export interface BollStockInput {
 }
 
 export interface BollFreshnessParams {
-  marketStatus: MarketStatus;
   cachedAt: number | null; // 缓存时间戳；null 视为无缓存
-  nowMs: number;
-  tradingTTL: number; // 盘中判定用 TTL(ms)，由调用方从 getDynamicBollCacheTTL 注入
-  lastCloseMs: number | null; // 非盘中判定基准"最近一次数据落定时点"(收盘/午休后的稳定时点)，由调用方从 getLastTradingClose 注入
+  lastCloseMs: number; // 最近一次"已落定收盘时点"（交易日 15:00），由调用方从 getLastTradingClose 注入
   hasCompleteData?: boolean; // 是否含完整字段（ma.ma30）；缺失视为过期
 }
 
 /**
- * 单条缓存新鲜度：
- * - 盘中(morning/afternoon)：缓存年龄在 TTL 内视为新鲜。
- * - 非盘中(午休/盘后/盘前/全天休市)：只要缓存是在"最近一次数据落定时点"之后
- *   拉取的即视为新鲜（接口已把当日 K 线最终值写死，到下次落定时点之间不会变）。
- * 这个落定时点：
- *   midday_break → 当天 11:31（早盘收盘后）
- *   closed       → 当天 15:01（全天收盘后）
- *   pre_open/full_day_closed → 最近一个交易日 15:01
- * 保证：盘中 14:50 拉的缓存（today=15:01 之前）→ 非盘中判定会判 false，允许收盘后重拉拿到最终值。
+ * 单条缓存新鲜度（唯一口径）：
+ * 只要缓存是在"最近一次已落定收盘时点"之后拉取的即视为新鲜。
+ * 即每个交易日收盘后允许全量拉取一次，成功后到下一个交易日收盘前都复用这份数据，
+ * 盘中不再因为缓存年龄而重复全量拉取（今日形态由实时价合成）。
  */
 export function isBollFresh(p: BollFreshnessParams): boolean {
   if (p.cachedAt == null || p.hasCompleteData === false) return false;
-  if (p.marketStatus === 'morning_session' || p.marketStatus === 'afternoon_session') {
-    return p.nowMs - p.cachedAt < p.tradingTTL;
-  }
-  if (p.lastCloseMs == null) return false;
   return p.cachedAt >= p.lastCloseMs;
 }
 
@@ -75,8 +63,9 @@ export interface PlanBollCacheInput {
   now: Date;
   cacheKeyFor: (stock: BollStockInput, period: BollPeriod) => string;
   cacheGet: (key: string) => BollCacheEntry | undefined;
-  tradingTTL: number;
   hasComplete?: (entry: BollCacheEntry) => boolean;
+  /** 强制刷新：忽略新鲜度，全部视为需要重新请求（命中项也不再批量应用） */
+  force?: boolean;
 }
 
 /**
@@ -87,10 +76,7 @@ export interface PlanBollCacheInput {
  * - allCached=true 且 staleCount=0 时无需任何网络请求。
  */
 export function planBollCacheUse(input: PlanBollCacheInput): BollCachePlan {
-  const marketStatus = getMarketStatus(input.now);
-  const isTrading = marketStatus === 'morning_session' || marketStatus === 'afternoon_session';
-  const lastCloseMs = isTrading ? null : getLastTradingClose(input.now)?.getTime() ?? null;
-  const nowMs = input.now.getTime();
+  const lastCloseMs = getLastTradingClose(input.now).getTime();
   const hasComplete = input.hasComplete ?? ((e: BollCacheEntry) => Boolean(e.data?.ma?.ma30));
 
   const cachedData = new Map<string, BollPeriodData>();
@@ -112,12 +98,9 @@ export function planBollCacheUse(input: PlanBollCacheInput): BollCachePlan {
     for (const period of BOLL_PERIODS) {
       const key = input.cacheKeyFor(stock, period);
       const entry = input.cacheGet(key);
-      const fresh = entry
+      const fresh = !input.force && entry
         ? isBollFresh({
-            marketStatus,
             cachedAt: entry.timestamp,
-            nowMs,
-            tradingTTL: input.tradingTTL,
             lastCloseMs,
             hasCompleteData: hasComplete(entry),
           })

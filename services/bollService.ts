@@ -1,5 +1,5 @@
 import { ApiSource } from '../types';
-import { getDynamicBollCacheTTL, getLastTradingClose, getMarketStatus, setLastFetchTime } from './cacheService';
+import { getLastTradingClose, getMarketStatus, setLastFetchTime } from './cacheService';
 import { requestLogService, type LogBatchContext } from './requestLogService';
 import { getBollCacheFromStore, saveBollCacheToStore, clearBollCacheFromStore } from './bollCacheStore';
 import { planBollCacheUse, isBollFresh, type BollCacheEntry, type BollStockInput } from './bollSync';
@@ -254,8 +254,7 @@ function isBollCacheFresh(
   stock: { code: string; bollHidden?: boolean },
   period: BollPeriod,
   adjust: BollAdjust,
-  apiSource: ApiSource,
-  dynamicTTL: number
+  apiSource: ApiSource
 ): boolean {
   // 跳过已隐藏布林线的股票
   if (stock.bollHidden) return false;
@@ -267,24 +266,13 @@ function isBollCacheFresh(
   if (!cached) return false;
   if (!cached.data?.ma?.ma30) return false;
 
-  const now = Date.now();
-  const marketStatus = getMarketStatus();
-  let fresh: boolean;
-
-  if (marketStatus === 'morning_session' || marketStatus === 'afternoon_session') {
-    // 交易时段：缓存年龄在 TTL 内视为新鲜
-    const age = now - cached.timestamp;
-    fresh = age < dynamicTTL;
-  } else {
-    // 非交易时段（午间休市/已收盘/盘前/全天休市）：接口已把当日 K 线最终值写死，
-    // 只要缓存是在"最近一次数据落定时点"之后拉取的即视为新鲜。
-    // 落定时点：midday 11:31 / closed 15:01 / 前一交易日 15:01。
-    const lastClose = getLastTradingClose();
-    fresh = lastClose != null && cached.timestamp >= lastClose.getTime();
-  }
+  // 唯一口径：缓存是在最近一次已落定收盘时点（交易日 15:00）之后拉取的即视为新鲜。
+  // 即每个交易日收盘后允许全量拉取一次，到下一个交易日收盘前都复用这份数据。
+  const lastClose = getLastTradingClose();
+  const fresh = cached.timestamp >= lastClose.getTime();
 
   if (!fresh) {
-    console.warn(`[isBollCacheFresh] 缓存已过期: ${cacheKey}, ts=${new Date(cached.timestamp).toLocaleString('zh-CN', { hour12: false })}, marketStatus=${marketStatus}`);
+    console.warn(`[isBollCacheFresh] 缓存已过期: ${cacheKey}, ts=${new Date(cached.timestamp).toLocaleString('zh-CN', { hour12: false })}`);
   }
   return fresh;
 }
@@ -294,15 +282,14 @@ function isBollCacheFresh(
 export function countStaleBollCache(
   stocks: Array<{ code: string; bollHidden?: boolean }>,
   adjust: BollAdjust,
-  apiSource: ApiSource,
-  dynamicTTL: number
+  apiSource: ApiSource
 ): number {
   let stale = 0;
   const periods: BollPeriod[] = ['daily', 'weekly', 'monthly'];
   for (const stock of stocks) {
     if (stock.bollHidden) continue; // 隐藏的股票不参与计数
     for (const period of periods) {
-      if (!isBollCacheFresh(stock, period, adjust, apiSource, dynamicTTL)) {
+      if (!isBollCacheFresh(stock, period, adjust, apiSource)) {
         stale++;
       }
     }
@@ -345,7 +332,6 @@ export function checkAllBollCache(
   stocks: Array<{ id: string; code: string; bollHidden?: boolean }>,
   adjust: BollAdjust,
   apiSource: ApiSource,
-  dynamicTTL: number,
   logCtx?: LogBatchContext
 ): { allCached: boolean; cachedData: Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }> } {
   const cachedData = new Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>();
@@ -368,7 +354,7 @@ export function checkAllBollCache(
     };
     
     for (const period of periods) {
-      if (isBollCacheFresh(stock, period, adjust, apiSource, dynamicTTL)) {
+      if (isBollCacheFresh(stock, period, adjust, apiSource)) {
         const cacheKey = getCacheKey(fullCode, period, adjust, apiSource);
         const cached = cache.get(cacheKey);
         if (cached) {
@@ -397,14 +383,14 @@ export function planBollCache(
   adjust: BollAdjust,
   apiSource: ApiSource,
   now: Date,
-  dynamicTTL: number
+  force = false
 ): ReturnType<typeof planBollCacheUse> {
   return planBollCacheUse({
     stocks,
     adjust,
     apiSource,
     now,
-    tradingTTL: dynamicTTL,
+    force,
     cacheGet: (key) => cache.get(key),
     cacheKeyFor: (stock: BollStockInput, period) => {
       const { market, code } = getMarketPrefix(stock.code);
@@ -850,19 +836,12 @@ export function setTencentDomain(domain: string): void {
 
 // 单条 BOLL 缓存新鲜度判定（统一数据部门）
 // 与全量加载 planBollCache → planBollCacheUse 同源，全部走 bollSync.isBollFresh：
-//   - 盘中：缓存年龄 < TTL 为新鲜；
-//   - 午休/盘后/盘前/全天休市：只要缓存是在"最近一次数据落定时点"之后拉取的即新鲜
-//     （接口已把当日 K 线最终值写死），落定时点 = midday 11:31 / closed 15:01 / 前一交易日 15:01。
+// 只要缓存是在"最近一次已落定收盘时点"（交易日 15:00）之后拉取的即为新鲜，
+// 即每个交易日收盘后允许全量拉取一次，到下一个交易日收盘前都复用这份数据。
 function isBollEntryFresh(timestamp: number, data: BollData | undefined): boolean {
-  const now = new Date();
-  const marketStatus = getMarketStatus(now);
-  const isTrading = marketStatus === 'morning_session' || marketStatus === 'afternoon_session';
   return isBollFresh({
-    marketStatus,
     cachedAt: timestamp,
-    nowMs: now.getTime(),
-    tradingTTL: getDynamicBollCacheTTL(),
-    lastCloseMs: isTrading ? null : getLastTradingClose(now)?.getTime() ?? null,
+    lastCloseMs: getLastTradingClose().getTime(),
     hasCompleteData: Boolean(data?.ma?.ma30 && data?.klines),
   });
 }
@@ -885,7 +864,8 @@ export async function fetchBollData(
   adjust: BollAdjust = 'qfq',
   apiSource: ApiSource = 'tencent',
   batchTimestamp?: number,
-  logCtx?: LogBatchContext
+  logCtx?: LogBatchContext,
+  force = false
 ): Promise<BollResult> {
   const { market, code } = getMarketPrefix(stockCode);
   const fullCode = `${market}${code}`;
@@ -896,7 +876,7 @@ export async function fetchBollData(
   const degraded = pickDegradedBoll(cached);
 
   // 缓存命中（与全量加载同一口径 isBollFresh）：直接返回，不发网络请求，也不记录日志（只有真正发生的请求才记入日志）
-  if (cached && isBollEntryFresh(cached.timestamp, cached.data)) {
+  if (!force && cached && isBollEntryFresh(cached.timestamp, cached.data)) {
     return { data: cached.data };
   }
 

@@ -229,7 +229,6 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [apiSource, setApiSource] = useState<ApiSource>(appSettings.apiSource || 'tencent');
   const [tencentDomain, setTencentDomainState] = useState<string>(getTencentDomain());
   const [cacheTTLMinutes, setCacheTTLMinutes] = useState<number>(appSettings.cacheTTLMinutes || 10);
-  const [bollCacheTTLMinutes, setBollCacheTTLMinutes] = useState<number>(appSettings.bollCacheTTLMinutes || 120);
   const [manualFxRate, setManualFxRate] = useState<string>((appSettings.manualFxRate || '').toString());
   const [cacheInfo, setCacheInfo] = useState<{ sina: CacheInfo; tencent: CacheInfo }>({
     sina: getCacheInfo('sina'),
@@ -266,7 +265,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   // 股价自动刷新间隔（秒），0=关闭；设备本地设置不与云端同步
   const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(stockSettings?.autoRefreshInterval ?? 60);
   // 布林线批量请求间隔（毫秒）；设备本地设置不与云端同步
-  const [bollRequestInterval, setBollRequestInterval] = useState<number>(stockSettings?.bollRequestInterval ?? 250);
+  const [bollRequestInterval, setBollRequestInterval] = useState<number>(stockSettings?.bollRequestInterval ?? 1000);
 
   // 标签判定参数操作辅助
   const updateTagParam = (group: 'feng' | 'classic', key: string, patch: Partial<TagParamEntry>) => {
@@ -360,7 +359,6 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       setSellTaxFee((appSettings.sellTaxFee ?? 5).toString());
       setApiSource(appSettings.apiSource || 'tencent');
       setCacheTTLMinutes(appSettings.cacheTTLMinutes || 10);
-      setBollCacheTTLMinutes(appSettings.bollCacheTTLMinutes || 120);
       setManualFxRate((appSettings.manualFxRate || '').toString());
       setIsVerifying(false);
       setLogState(null);
@@ -420,7 +418,6 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
         sellTaxFee: parseFloat(sellTaxFee) || 5,
         apiSource: apiSource,
         cacheTTLMinutes: cacheTTLMinutes,
-        bollCacheTTLMinutes: bollCacheTTLMinutes,
         dividendYearLeft: dividendYearLeft,
         dividendYearRight: dividendYearRight,
     };
@@ -531,7 +528,6 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       sellTaxFee: parseFloat(sellTaxFee) || 5,
       apiSource: sourceOverride || apiSource,
       cacheTTLMinutes: cacheTTLMinutes,
-      bollCacheTTLMinutes: bollCacheTTLMinutes,
       dividendYearLeft: dividendYearLeft,
       dividendYearRight: dividendYearRight,
       manualFxRate: parseFloat(manualFxRate) || 0,
@@ -1024,34 +1020,19 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                         </div>
 
                         {/* Cache TTL Settings */}
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-xs text-app-subtext">价格缓存: {cacheTTLMinutes}分钟</label>
-                            <input
-                              type="range"
-                              min="1"
-                              max="60"
-                              value={cacheTTLMinutes}
-                              onChange={(e) => setCacheTTLMinutes(Number(e.target.value))}
-                              className="w-full h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-gray-500 
-                              [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500
-                              [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-gray-500 [&::-moz-range-thumb]:border-0"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs text-app-subtext">BOLL缓存: {bollCacheTTLMinutes}分钟</label>
-                            <input
-                              type="range"
-                              min="10"
-                              max="240"
-                              step="10"
-                              value={bollCacheTTLMinutes}
-                              onChange={(e) => setBollCacheTTLMinutes(Number(e.target.value))}
-                              className="w-full h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-gray-500 
-                              [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500
-                              [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-gray-500 [&::-moz-range-thumb]:border-0"
-                            />
-                          </div>
+                        <div className="space-y-1">
+                          <label className="text-xs text-app-subtext">价格缓存: {cacheTTLMinutes}分钟</label>
+                          <input
+                            type="range"
+                            min="1"
+                            max="60"
+                            value={cacheTTLMinutes}
+                            onChange={(e) => setCacheTTLMinutes(Number(e.target.value))}
+                            className="w-full h-1.5 bg-app-input rounded-lg appearance-none cursor-pointer accent-gray-500 
+                            [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500
+                            [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-gray-500 [&::-moz-range-thumb]:border-0"
+                          />
+                          <p className="text-xs text-app-subtext">BOLL 数据每个交易日收盘后自动全量拉取一次，盘中复用该数据。</p>
                         </div>
                      </div>
 

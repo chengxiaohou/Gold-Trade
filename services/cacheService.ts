@@ -102,60 +102,39 @@ export function getNextTradingOpen(date: Date = new Date()): Date {
   }
 }
 
-// 获取最近一次"数据基准开盘时间"（非交易时段判断缓存新鲜度用）
-// 午间休市：当天上午9:30开盘；已收盘：当天下午13:00开盘；盘前/全天休市：最近一个交易日9:30
-// 注意：此函数为旧逻辑保留；BOLL 缓存新鲜度现已改用 getLastTradingClose（以"收盘落定时点"为基准）
-export function getLastTradingOpen(date: Date = new Date()): Date {
+// 获取最近一次"已落定的收盘时点"（交易日 15:00）。
+// 作为 BOLL 缓存新鲜度的唯一基准：
+//   每个交易日收盘后允许全量拉取一次，成功后再到下一个交易日收盘前都复用这份数据；
+//   closed → 当天 15:00
+//   盘中 / 午休 / 盘前 / 全天休市 → 上一个交易日 15:00
+// 取 15:00（收盘瞬间）而非 15:01：收盘后才发起的一批请求耗时可能跨过 15:01，
+// 若基准取 15:01，批内前半段落盘的缓存会被永久判为"过期"，导致之后每次刷新都重复请求这些条目。
+export function getLastTradingClose(date: Date = new Date()): Date {
   const status = getMarketStatus(date);
   const d = new Date(date);
 
   if (status === 'closed') {
-    d.setHours(9, 30, 0, 0);
+    d.setHours(15, 0, 0, 0);
     return d;
   }
 
-  if (status === 'morning_session' || status === 'midday_break' || status === 'afternoon_session') {
-    d.setHours(9, 30, 0, 0);
-    return d;
-  }
-
-  // pre_open / full_day_closed：今天未开盘，取最近一个交易日的9:30
+  // 其余状态都以上一个交易日的收盘落定时点为基准
   do {
     d.setDate(d.getDate() - 1);
   } while (!isTradingDay(d));
-  d.setHours(9, 30, 0, 0);
+  d.setHours(15, 0, 0, 0);
   return d;
 }
 
-// 获取最近一次"数据落定时点"（收盘/午休后的稳定时点，腾讯接口会在此时点后写入最终值）。
-// 作为 BOLL / 实时价缓存新鲜度判定的统一基准：
-//   midday_break   → 当天 11:31  （早盘收盘，接口落定）
-//   closed         → 当天 15:01  （全天收盘，接口落定）
-//   pre_open / full_day_closed → 最近一个交易日 15:01
-// 盘中（morning/afternoon）返回 null，调用方走盘中 TTL 判定。
-export function getLastTradingClose(date: Date = new Date()): Date | null {
-  const status = getMarketStatus(date);
-  const d = new Date(date);
-
-  if (status === 'morning_session' || status === 'afternoon_session') {
-    return null; // 盘中不走这个逻辑
+// 缓存的失效时点：拉取时间之后（含当日）第一个交易日的 15:00，用于请求日志展示"缓存有效期至"。
+// 例：周五 15:10 拉取 → 下周一 15:00；周四 10:00 拉取 → 周四 15:00。
+export function getCacheExpiryPoint(cachedAt: number): Date {
+  const d = new Date(cachedAt);
+  d.setHours(15, 0, 0, 0);
+  while (d.getTime() <= cachedAt || !isTradingDay(d)) {
+    d.setDate(d.getDate() + 1);
+    d.setHours(15, 0, 0, 0);
   }
-
-  if (status === 'midday_break') {
-    d.setHours(11, 31, 0, 0);
-    return d;
-  }
-
-  if (status === 'closed') {
-    d.setHours(15, 1, 0, 0);
-    return d;
-  }
-
-  // pre_open / full_day_closed：向前找最近交易日的 15:01
-  do {
-    d.setDate(d.getDate() - 1);
-  } while (!isTradingDay(d));
-  d.setHours(15, 1, 0, 0);
   return d;
 }
 
@@ -368,19 +347,6 @@ export function clearCacheRecord(source: ApiSource): void {
 // 根据当前市场状态获取价格缓存TTL（毫秒）
 export function getDynamicCacheTTL(): number {
   const ttlMinutes = getCacheTTLMinutes();
-  const marketStatus = getMarketStatus();
-
-  if (marketStatus === 'morning_session' || marketStatus === 'afternoon_session') {
-    return ttlMinutes * 60 * 1000;
-  } else {
-    const nextOpen = getNextTradingOpen();
-    return nextOpen.getTime() - Date.now();
-  }
-}
-
-// 根据当前市场状态获取BOLL缓存TTL（毫秒）
-export function getDynamicBollCacheTTL(): number {
-  const ttlMinutes = getBollCacheTTLMinutes();
   const marketStatus = getMarketStatus();
 
   if (marketStatus === 'morning_session' || marketStatus === 'afternoon_session') {

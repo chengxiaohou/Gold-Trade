@@ -22,7 +22,7 @@ import {
   type TodayBarInput,
   type BollResult,
 } from './bollService';
-import { getDynamicBollCacheTTL, isTradingHours, formatCacheTime, getMarketStatus } from './cacheService';
+import { getCacheExpiryPoint, formatCacheTime, getMarketStatus } from './cacheService';
 import { requestLogService, type LogBatchContext } from './requestLogService';
 import { fetchTencentRealtime } from './realtimeQuote';
 import { toTencentCode, type TencentQuote } from './tencentQuote';
@@ -93,10 +93,12 @@ export interface EnsureBatchOpts {
   order?: BureauStock[];
   /** 返回 true 时中止本轮（对应页面 fetchVersionRef 取消旧请求） */
   cancelCheck?: () => boolean;
-  /** 相邻两只股票之间的等待毫秒数（设置页可调，默认 250ms） */
+  /** 相邻两只股票之间的等待毫秒数（设置页可调，默认 1000ms） */
   intervalMs?: number;
   /** 连续失败达到阈值、本批被熔断中止时回调（用于 UI 提示） */
   onFailureAbort?: (info: { failures: number; remaining: number }) => void;
+  /** 强制刷新：忽略缓存新鲜度，全部重新请求 */
+  force?: boolean;
 }
 
 // code → 条目（code 沿用 stock.code 原始字符串，与 fetchBollData 同一口径）
@@ -402,9 +404,8 @@ export const priceBureau = {
     // 是否真正发起过网络请求（全部命中缓存时为 false，供调用方决定是否刷新"全量刷新时间戳"）
     let madeRequest = false;
 
-    const dynamicTTL = getDynamicBollCacheTTL();
     const nowDate = new Date();
-    const plan = planBollCache(stocks, adjust, apiSource, nowDate, dynamicTTL);
+    const plan = planBollCache(stocks, adjust, apiSource, nowDate, opts.force);
     const { allCached, cachedData, staleCount, visibleTotal } = plan;
 
     const cacheTimestamps = getBollCacheTimestamps(stocks, adjust, apiSource);
@@ -418,20 +419,18 @@ export const priceBureau = {
       if (code) cachedByCode.set(code, { realtime: prevRt, ...entry });
     }
     let cacheInfoStr = '';
-    let oldCacheInfoStr = '';
     if (cacheTimestamps.length > 0) {
+      // 有效期 = 该缓存失效的时点：拉取之后第一个交易日的 15:00
       const maxTs = Math.max(...cacheTimestamps);
-      const nowMs = nowDate.getTime();
-      const isTrading = isTradingHours(nowDate);
-      const expiryTime = isTrading ? maxTs + dynamicTTL : nowMs + dynamicTTL;
-      cacheInfoStr = `（缓存有效期至：${formatCacheTime(expiryTime)}）`;
-      oldCacheInfoStr = `（原缓存有效期至 ${formatCacheTime(maxTs + dynamicTTL)}）`;
+      cacheInfoStr = `（缓存有效期至：${formatCacheTime(getCacheExpiryPoint(maxTs).getTime())}）`;
     }
 
     const logCtx = requestLogService.beginBatch(
-      staleCount === 0
-        ? `${trigger}：${visibleTotal} 项缓存均未过期，无需请求${cacheInfoStr}`
-        : `${trigger}：${staleCount}/${visibleTotal} 项已过期${oldCacheInfoStr}，重新请求 ${staleCount} 条请求${cacheInfoStr}`
+      opts.force
+        ? `${trigger}：强制刷新，重新请求 ${visibleTotal} 条请求${cacheInfoStr}`
+        : staleCount === 0
+          ? `${trigger}：${visibleTotal} 项缓存均未过期，无需请求${cacheInfoStr}`
+          : `${trigger}：${staleCount}/${visibleTotal} 项已过期，重新请求 ${staleCount} 条请求${cacheInfoStr}`
     );
     emitBollCacheHits(plan.hitKeys, logCtx);
 
@@ -458,9 +457,9 @@ export const priceBureau = {
       }
 
       const [dailyR, weeklyR, monthlyR] = await Promise.all([
-        fetchBollData(stock.code, 'daily', adjust, apiSource, batchTimestamp, logCtx),
-        fetchBollData(stock.code, 'weekly', adjust, apiSource, batchTimestamp, logCtx),
-        fetchBollData(stock.code, 'monthly', adjust, apiSource, batchTimestamp, logCtx),
+        fetchBollData(stock.code, 'daily', adjust, apiSource, batchTimestamp, logCtx, opts.force),
+        fetchBollData(stock.code, 'weekly', adjust, apiSource, batchTimestamp, logCtx, opts.force),
+        fetchBollData(stock.code, 'monthly', adjust, apiSource, batchTimestamp, logCtx, opts.force),
       ]);
       madeRequest = true; // 本次确实发起了网络请求
       if (opts.cancelCheck?.()) return madeRequest;
@@ -490,8 +489,8 @@ export const priceBureau = {
         break;
       }
 
-      // 网络请求后按设置间隔（默认 250ms）等待再请求下一只（其间仍可取消）
-      const waitMs = Math.max(0, opts.intervalMs ?? 250);
+      // 网络请求后按设置间隔（默认 1000ms）等待再请求下一只（其间仍可取消）
+      const waitMs = Math.max(0, opts.intervalMs ?? 1000);
       if (i < order.length - 1 && waitMs > 0) {
         const ticks = Math.ceil(waitMs / 10);
         for (let w = 0; w < ticks; w++) {

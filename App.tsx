@@ -22,7 +22,7 @@ import type { CloudDiffItem } from './services/stockSync';
 import { HoldingState, OrderState, SimulationResult, AIAnalysisState, TradeRecord, OrderType, GithubConfig, AppSettings, StockEntry, StockSettings, BacktestStrategyPreset, DEFAULT_TAG_PARAMS } from './types';
 import { safeSetItem, freeCacheSpace } from './services/storageSafe';
 
-const APP_VERSION = 'v2.18.248';
+const APP_VERSION = 'v2.18.249';
 
 // 上传文件大小的展示格式（UTF-8 字节数 → B/KB/MB）
 function formatByteSize(bytes: number): string {
@@ -601,7 +601,7 @@ export default function App() {
         memoUpdatedAt: parsed.memoUpdatedAt || 0,
         stockTotalCapital: parsed.stockTotalCapital ?? parsed.dividendTotalCapital,
         autoRefreshInterval: parsed.autoRefreshInterval ?? 60,
-        bollRequestInterval: parsed.bollRequestInterval ?? 250,
+        bollRequestInterval: parsed.bollRequestInterval ?? 1000,
         tagParams: parsed.tagParams || DEFAULT_TAG_PARAMS,
         customTags: parsed.customTags || []
       };
@@ -620,7 +620,7 @@ export default function App() {
         memo: '',
         memoUpdatedAt: 0,
         autoRefreshInterval: 60,
-        bollRequestInterval: 250,
+        bollRequestInterval: 1000,
         tagParams: DEFAULT_TAG_PARAMS,
         customTags: []
       };
@@ -2895,7 +2895,7 @@ export default function App() {
             maxWidth={stockSettings.maxWidth}
             onMaxWidthChange={(width) => setStockSettings(prev => ({ ...prev, maxWidth: width }))}
             autoRefreshInterval={stockSettings.autoRefreshInterval ?? 60}
-            bollRequestInterval={stockSettings.bollRequestInterval ?? 250}
+            bollRequestInterval={stockSettings.bollRequestInterval ?? 1000}
             divRateHoverEnabled={divRateHoverEnabled}
             popupBackdropEnabled={popupBackdropEnabled}
             actionButtons={renderStockActionButtons()}

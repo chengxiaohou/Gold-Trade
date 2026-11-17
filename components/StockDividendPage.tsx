@@ -3,9 +3,9 @@ import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen } from 'lucide-react';
 import { LineChart, ComposedChart, Line, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { StockEntry, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
-import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition, bollBandLabel, buildBollBandTextParts } from '../services/bollService';
+import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition, bollBandLabel, buildBollBandTextParts, getBollCacheTimestamps } from '../services/bollService';
 import type { BollData, BollPeriod, BollAdjust, BollKline, BollBandInfo, BollStreakExplain } from '../services/bollService';
-import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime } from '../services/cacheService';
+import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime, getCacheExpiryPoint } from '../services/cacheService';
 import { priceBureau } from '../services/priceBureau';
 import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
 import type { TencentQuote } from '../services/tencentQuote';
@@ -3913,6 +3913,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
   const [isRefreshingBoll, setIsRefreshingBoll] = useState(false);
+  // 手动刷新时判定"本交易日收盘后已拉取过、无需重复请求"的提示弹窗
+  const [bollRefreshNoop, setBollRefreshNoop] = useState<{ lastFetchAt: number; nextAt: number } | null>(null);
 
   // 价格数据部订阅：权威数据只存于 priceBureau，本状态仅为渲染镜像。
   // 任何写入（缓存命中/逐只落地/清场）都会 notify，这里重建镜像触发重渲。
@@ -4472,7 +4474,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 请求版本号：每次切换数据源递增，用于取消旧请求
   const fetchVersionRef = useRef(0);
 
-  const fetchAllBoll = useCallback(async (trigger = '打开股息页自动刷新布林线') => {
+  const fetchAllBoll = useCallback(async (
+    trigger = '打开股息页自动刷新布林线',
+    opts: { manual?: boolean; force?: boolean } = {},
+  ) => {
     if (histDate) { showNotice('历史展示模式下不刷新布林线数据'); return; }
     // 价格数据部持权威数据与订阅；这里只做：源切换清场 + 委托批量加载 + 维护刷新态信号。
     // 请求取消/缓存判定/逐个落地/250ms 节流/日志全在 priceBureau.ensureBatch 内完成。
@@ -4495,6 +4500,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       order: fetchOrder,
       cancelCheck: () => fetchVersionRef.current !== currentVersion,
       intervalMs: bollRequestInterval,
+      force: opts.force,
       onFailureAbort: ({ failures, remaining }) => {
         showNotice(
           remaining > 0
@@ -4506,6 +4512,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
     // 被取消（或已被更新的批次接管）：直接退出，刷新态由取消动作/新批次负责，避免误清
     if (fetchVersionRef.current !== currentVersion) return;
+
+    // 手动刷新但全部命中缓存（本交易日收盘后已拉取过）：不重复请求，弹窗告知并允许强制刷新
+    if (!madeRequest && opts.manual && !opts.force) {
+      const timestamps = getBollCacheTimestamps(stocks, bollAdjust, apiSource);
+      const lastFetchAt = timestamps.length > 0 ? Math.max(...timestamps) : getBollFullFetchTime(apiSource);
+      if (lastFetchAt) {
+        setBollRefreshNoop({ lastFetchAt, nextAt: getCacheExpiryPoint(lastFetchAt).getTime() });
+      }
+      setIsRefreshingBoll(false);
+      return;
+    }
 
     // 全量（批量）刷新完成：仅在本次确实发起了网络请求时，才更新"全量刷新时间戳"
     // （表头与设置面板读取）。全部命中缓存、无需请求时保留旧时间，避免被缓存命中刷成"刚刚"。
@@ -6470,7 +6487,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onClick={(e) => {
                       e.stopPropagation();
                       if (isRefreshingBoll) cancelBollRefresh();
-                      else fetchAllBoll('点击「布林线」列头刷新按钮');
+                      else fetchAllBoll('点击「布林线」列头刷新按钮', { manual: true });
                     }}
                     className="p-0.5 hover:bg-app-card rounded transition-colors"
                     title={isRefreshingBoll ? '取消刷新（停止后续请求）' : '刷新所有BOLL数据'}
@@ -7979,6 +7996,52 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/90 text-white hover:bg-red-500 transition-colors"
                 >
                   重置
+                </button>
+              </div>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+
+      {bollRefreshNoop && createPortal(
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => setBollRefreshNoop(null)}
+          />
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="bg-app-card border border-app-border rounded-xl shadow-xl p-5 w-80">
+              <div className="text-sm font-bold text-app-text mb-1">无需刷新</div>
+              <div className="text-xs text-app-subtext mb-4 space-y-1">
+                <div>
+                  当前 BOLL 数据已是本交易日收盘后的最新数据（上次拉取：
+                  <span className="text-app-text font-medium">{formatCacheTime(bollRefreshNoop.lastFetchAt)}</span>）。
+                </div>
+                <div>
+                  BOLL 每个交易日收盘后只需全量拉取一次，下次可拉取时间：{formatCacheTime(bollRefreshNoop.nextAt)}。
+                </div>
+                <div>如需立即重新拉取，可点「强制刷新」。</div>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setBollRefreshNoop(null);
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium border border-app-border text-app-subtext hover:bg-app-input transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setBollRefreshNoop(null);
+                    fetchAllBoll('点击「布林线」列头刷新按钮（强制刷新）', { manual: true, force: true });
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-500/90 text-white hover:bg-indigo-500 transition-colors"
+                >
+                  强制刷新
                 </button>
               </div>
             </div>
