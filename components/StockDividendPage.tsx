@@ -498,20 +498,26 @@ const formatLevelNames = (names: string[]): string => {
 };
 
 // 按价格找最近的支撑/压力位：返回该价位上的名称摘要，以及相对它的位置描述
-// 相差 2% 以内用「偏上 / 偏下」，超过 2% 用「上方 / 下方」，完全相等则不加描述
+// 相差 2% 以内用「偏上 / 偏下」，超过 2% 用「上方 / 下方」，按展示精度取整后相等则不加描述
+// （用户输入的是界面上看到的价格，故比较前统一过 formatPrice，避免 22.49 对 22.4925 被判成「偏下」）
 const describeNearestLevel = (
   levels: { price: number; name: string }[],
   price: number,
+  stockName?: string,
 ): { names: string; relation: string } => {
   if (!levels.length || !(price > 0)) return { names: '', relation: '' };
   let best = levels[0];
   for (const l of levels) if (Math.abs(l.price - price) < Math.abs(best.price - price)) best = l;
   const names = formatLevelNames(levels.filter(l => Math.abs(l.price - best.price) < 1e-9).map(l => l.name));
-  const diffPct = best.price > 0 ? ((price - best.price) / best.price) * 100 : 0;
-  if (Math.abs(diffPct) < 1e-9) return { names, relation: '' };
+  const priceStr = formatPrice(price, stockName);
+  const levelStr = formatPrice(best.price, stockName);
+  if (priceStr === levelStr) return { names, relation: '' };
+  const shownPrice = Number(priceStr);
+  const shownLevel = Number(levelStr);
+  const diffPct = shownLevel > 0 ? ((shownPrice - shownLevel) / shownLevel) * 100 : 0;
   const relation = Math.abs(diffPct) > 2
-    ? (price > best.price ? '上方' : '下方')
-    : (price > best.price ? '偏上' : '偏下');
+    ? (shownPrice > shownLevel ? '上方' : '下方')
+    : (shownPrice > shownLevel ? '偏上' : '偏下');
   return { names, relation };
 };
 // 备注是否仍是自动生成的（空 或 以「网格」开头）：只有这种情况才允许自动覆盖，避免丢失用户手写内容
@@ -5429,7 +5435,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         .finally(() => { srLevelsLoadingRef.current.delete(s.id); });
     }
     const dividend = getDividendForYear(s, getSelectedYear(s)) || 0;
-    const { names, relation } = describeNearestLevel(levels, priceNum);
+    const { names, relation } = describeNearestLevel(levels, priceNum, s.name);
     // 有分红数据时按股息率生成；没有分红数据时至少写出最近点位，保证备注不为空
     const generated = buildGridNoteText(dividend, priceNum, names || undefined, relation || undefined)
       || ([names, relation].filter(Boolean).join(' ') ? `${[names, relation].filter(Boolean).join(' ')}｜` : '');
