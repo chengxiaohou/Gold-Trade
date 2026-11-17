@@ -1,7 +1,13 @@
 import { ApiSource } from '../types';
 import { getDynamicBollCacheTTL, getLastTradingClose, getMarketStatus, setLastFetchTime } from './cacheService';
-import { requestLogService, type LogBatchContext } from './requestLogService';
-import { getBollCacheFromStore, saveBollCacheToStore, clearBollCacheFromStore } from './bollCacheStore';
+import { requestLogService, BOOT_DIAG_CTX, type LogBatchContext } from './requestLogService';
+import {
+  getBollSummariesFromStore,
+  saveBollSummaryToStore,
+  saveBollKlinesToStore,
+  hydrateBollKlinesFromStore,
+  clearBollCacheFromStore,
+} from './bollCacheStore';
 import { planBollCacheUse, isBollFresh, type BollCacheEntry, type BollStockInput } from './bollSync';
 
 // 生产环境配置
@@ -165,14 +171,18 @@ const cache = new Map<string, { data: BollData; timestamp: number }>();
 const CACHE_STORAGE_KEY = 'boll_cache_v2';
 const CACHE_EXPIRY_MS = 4 * 60 * 60 * 1000; // 4小时
 
-// 从 IndexedDB 恢复缓存（替代原 localStorage 方案）。不做迁移：版本切换后旧 localStorage 缓存直接移除。
+// 从 IndexedDB 恢复缓存（v2：摘要 / K 线分键存储）。
+// 摘要很小，先一次性恢复并让调用方立刻可用；K 线随后在后台分批补齐（不阻塞首屏）。
+// 不做迁移：版本升级后旧 localStorage 缓存与 v1 整包缓存直接移除。
 async function restoreCacheFromStore(): Promise<void> {
   try {
     // 移除旧的 localStorage BOLL 缓存（一次性释放存储空间，数据重新拉取后存 IndexedDB）
     localStorage.removeItem(CACHE_STORAGE_KEY);
   } catch { /* 忽略 */ }
   try {
-    const stored = await getBollCacheFromStore();
+    const __t0 = performance.now();
+    const stored = await getBollSummariesFromStore();
+    const __summaryMs = performance.now() - __t0;
 
     // 各数据源最新的拉取时间
     let latestTencent = 0;
@@ -188,27 +198,66 @@ async function restoreCacheFromStore(): Promise<void> {
       // 全部恢复到内存（含过期数据），便于日志展示原缓存有效期；
       // 是否判定过期/是否真正使用由 freshness 判断（isBollCacheFresh）决定，过期数据不会被命中。
       if (!cache.has(key)) {
-        cache.set(key, entry);
+        cache.set(key, { data: entry.data as BollData, timestamp: entry.timestamp });
       }
     }
 
     // 恢复缓存管理中的"上次拉取时间"
     if (latestTencent > 0) setLastFetchTime('tencent', latestTencent);
     if (latestSina > 0) setLastFetchTime('sina', latestSina);
-    console.log(`[BOLL] 从 IndexedDB 恢复缓存 ${cache.size} 条`);
-  } catch (e) {
+    console.log(`[BOLL] 从 IndexedDB 恢复摘要缓存 ${cache.size} 条`);
+    requestLogService.cacheHit(`[诊断] 读取摘要缓存 ${__summaryMs.toFixed(1)}ms，条目数 ${Object.keys(stored).length}`, BOOT_DIAG_CTX);  } catch (e) {
     console.warn('Failed to restore BOLL cache from IndexedDB:', e);
   }
+
+  // 摘要恢复完成后，K 线在后台分批补齐（依赖 K 线的标签/区间比例随后自动补上）
+  klinesHydrationPromise = hydrateKlinesFromStore();
 }
 
-// 保存缓存到 IndexedDB（异步 fire-and-forget，不阻塞主线程）
-function saveCacheToStore(): void {
+// K 线补齐 promise：取数命中缓存但缓存条目还没有 K 线时，等它补齐再返回，避免上层拿到空 K 线
+let klinesHydrationPromise: Promise<void> | null = null;
+
+/** 等待 K 线缓存补齐（未开始或已结束都立即返回） */
+export function ensureBollKlinesHydrated(): Promise<void> {
+  return klinesHydrationPromise ?? Promise.resolve();
+}
+
+// K 线补齐完成后的回调集合（供价格数据部把补齐后的条目重新落地给列表）
+const klinesHydratedListeners = new Set<() => void>();
+
+/** 订阅"K 线已从 IndexedDB 补齐"事件（整批完成后触发一次） */
+export function subscribeBollKlinesHydrated(cb: () => void): () => void {
+  klinesHydratedListeners.add(cb);
+  return () => klinesHydratedListeners.delete(cb);
+}
+
+// 分批把 K 线挂回内存缓存，全部完成后通知订阅方
+async function hydrateKlinesFromStore(): Promise<void> {
   try {
-    const obj: Record<string, { data: BollData; timestamp: number }> = {};
-    cache.forEach((value, key) => {
-      obj[key] = value;
+    await hydrateBollKlinesFromStore(25, (items) => {
+      for (const { key, klines } of items) {
+        const entry = cache.get(key);
+        if (entry && !entry.data.klines && klines.length > 0) {
+          entry.data.klines = klines;
+        }
+      }
     });
-    saveBollCacheToStore(obj);
+  } catch (e) {
+    console.warn('Failed to hydrate BOLL klines from IndexedDB:', e);
+  }
+  klinesHydratedListeners.forEach(cb => {
+    try { cb(); } catch { /* 忽略单个订阅方异常 */ }
+  });
+}
+
+// 写入单条缓存到 IndexedDB（摘要与 K 线分键写入，避免整包重写）
+function persistCacheEntry(key: string): void {
+  const entry = cache.get(key);
+  if (!entry) return;
+  try {
+    const { klines, ...summary } = entry.data;
+    saveBollSummaryToStore(key, { timestamp: entry.timestamp, data: summary });
+    if (klines && klines.length > 0) saveBollKlinesToStore(key, klines);
   } catch (e) {
     console.warn('Failed to save BOLL cache to IndexedDB:', e);
   }
@@ -885,6 +934,8 @@ export async function fetchBollData(
 
   // 缓存命中（与全量加载同一口径 isBollFresh）：直接返回，不发网络请求，也不记录日志（只有真正发生的请求才记入日志）
   if (cached && isBollEntryFresh(cached.timestamp, cached.data)) {
+    // 摘要缓存先于 K 线恢复：命中时若 K 线尚未补齐，等补齐再返回（首屏 BOLL 数字不受影响）
+    if (!cached.data.klines) await ensureBollKlinesHydrated();
     return { data: cached.data };
   }
 
@@ -1003,7 +1054,7 @@ async function fetchBollFromTencent(
 
     const cacheKey = getCacheKey(code, period, adjust, 'tencent');
     cache.set(cacheKey, { data: result_data, timestamp: fetchedAt });
-    saveCacheToStore();
+    persistCacheEntry(cacheKey);
 
     // 记录腾讯数据源的拉取时间
     setLastFetchTime('tencent', fetchedAt);
@@ -1097,7 +1148,7 @@ async function fetchBollFromSina(
 
     const cacheKey = getCacheKey(fullCode, period, adjust, 'sina');
     cache.set(cacheKey, { data: result_data, timestamp: fetchedAt });
-    saveCacheToStore();
+    persistCacheEntry(cacheKey);
 
     // 记录新浪数据源的拉取时间
     setLastFetchTime('sina', fetchedAt);
