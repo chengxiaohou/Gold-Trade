@@ -102,38 +102,40 @@ export function getNextTradingOpen(date: Date = new Date()): Date {
   }
 }
 
-// 获取最近一次"已落定的收盘时点"（交易日 15:00）。
+// 获取最近一次"已落定的收盘时点"（交易日 15:01）。
 // 作为 BOLL 缓存新鲜度的唯一基准：
 //   每个交易日收盘后允许全量拉取一次，成功后再到下一个交易日收盘前都复用这份数据；
-//   closed → 当天 15:00
-//   盘中 / 午休 / 盘前 / 全天休市 → 上一个交易日 15:00
-// 取 15:00（收盘瞬间）而非 15:01：收盘后才发起的一批请求耗时可能跨过 15:01，
-// 若基准取 15:01，批内前半段落盘的缓存会被永久判为"过期"，导致之后每次刷新都重复请求这些条目。
+//   closed 且已过 15:01 → 当天 15:01
+//   盘中 / 午休 / 盘前 / 全天休市 / 当天 15:00–15:01 → 上一个交易日 15:01
+// 为什么要卡 15:01：15:00 收盘后数据源需要几十秒才把收盘 bar 落定，
+// 15:00–15:01 之间拉取会拿到不完整的当日 K 线；这段时间视为"尚未落定"，
+// 一律以上一交易日收盘为基准（缓存命中即不发请求），到 15:01 后再统一全量拉取。
 export function getLastTradingClose(date: Date = new Date()): Date {
   const status = getMarketStatus(date);
   const d = new Date(date);
+  const settledToday = status === 'closed' && (d.getHours() > 15 || (d.getHours() === 15 && d.getMinutes() >= 1));
 
-  if (status === 'closed') {
-    d.setHours(15, 0, 0, 0);
+  if (settledToday) {
+    d.setHours(15, 1, 0, 0);
     return d;
   }
 
-  // 其余状态都以上一个交易日的收盘落定时点为基准
+  // 其余状态（含收盘后未到 15:01）都以上一个交易日的收盘落定时点为基准
   do {
     d.setDate(d.getDate() - 1);
   } while (!isTradingDay(d));
-  d.setHours(15, 0, 0, 0);
+  d.setHours(15, 1, 0, 0);
   return d;
 }
 
-// 缓存的失效时点：拉取时间之后（含当日）第一个交易日的 15:00，用于请求日志展示"缓存有效期至"。
-// 例：周五 15:10 拉取 → 下周一 15:00；周四 10:00 拉取 → 周四 15:00。
+// 缓存的失效时点：拉取时间之后（含当日）第一个交易日的 15:01，用于请求日志展示"缓存有效期至"。
+// 例：周五 15:10 拉取 → 下周一 15:01；周四 10:00 拉取 → 周四 15:01。
 export function getCacheExpiryPoint(cachedAt: number): Date {
   const d = new Date(cachedAt);
-  d.setHours(15, 0, 0, 0);
+  d.setHours(15, 1, 0, 0);
   while (d.getTime() <= cachedAt || !isTradingDay(d)) {
     d.setDate(d.getDate() + 1);
-    d.setHours(15, 0, 0, 0);
+    d.setHours(15, 1, 0, 0);
   }
   return d;
 }

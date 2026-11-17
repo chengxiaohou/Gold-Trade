@@ -14,7 +14,7 @@ const CLOSED_MS = D('2024-01-05T16:00').getTime(); // 盘后
 const PREOPEN_MS = D('2024-01-05T09:15').getTime(); // 盘前
 const FULL_DAY_CLOSED_MS = D('2024-01-06T10:00').getTime(); // 周六 全天休市
 
-// 新鲜度唯一口径：缓存时间 >= 最近一次"已落定收盘时点"（交易日 15:00）
+// 新鲜度唯一口径：缓存时间 >= 最近一次"已落定收盘时点"（交易日 15:01）
 function fresh(cachedAt: number | null, nowMs: number, hasCompleteData = true): boolean {
   return isBollFresh({
     cachedAt,
@@ -75,15 +75,15 @@ function runPlan({
 // ============================================================
 describe('isBollFresh：各市场状态下的新鲜度判定（唯一口径 = 最近已落定收盘时点）', () => {
   it('盘中(morning_session)：昨日收盘后拉的缓存即新鲜，昨日收盘前拉的过期', () => {
-    // 昨日 15:10 拉 → >= 昨日 15:00 → 新鲜，盘中不再因为缓存年龄重复全量拉取
+    // 昨日 15:10 拉 → >= 昨日 15:01 → 新鲜，盘中不再因为缓存年龄重复全量拉取
     expect(fresh(D('2024-01-04T15:10').getTime(), MORNING_OPEN_MS)).toBe(true);
-    // 昨日 15:00（收盘瞬间）→ 新鲜
-    expect(fresh(D('2024-01-04T15:00').getTime(), MORNING_OPEN_MS)).toBe(true);
-    // 昨日 14:59（早于落定时点）→ 过期
-    expect(fresh(D('2024-01-04T14:59').getTime(), MORNING_OPEN_MS)).toBe(false);
+    // 昨日 15:01（落定时点）→ 新鲜
+    expect(fresh(D('2024-01-04T15:01').getTime(), MORNING_OPEN_MS)).toBe(true);
+    // 昨日 15:00（收盘瞬间，数据尚未落定）→ 过期
+    expect(fresh(D('2024-01-04T15:00').getTime(), MORNING_OPEN_MS)).toBe(false);
     // 昨日 10:00 → 过期
     expect(fresh(D('2024-01-04T10:00').getTime(), MORNING_OPEN_MS)).toBe(false);
-    // 今日 9:40 盘中拉取的 → >= 昨日 15:00 → 新鲜（直到今日收盘后才会失效）
+    // 今日 9:40 盘中拉取的 → >= 昨日 15:01 → 新鲜（直到今日收盘后才会失效）
     expect(fresh(D('2024-01-05T09:40').getTime(), MORNING_OPEN_MS)).toBe(true);
   });
 
@@ -96,29 +96,38 @@ describe('isBollFresh：各市场状态下的新鲜度判定（唯一口径 = �
     expect(fresh(null, MORNING_OPEN_MS)).toBe(false);
   });
 
-  it('午休(midday_break)：基准是上一交易日 15:00，不再看当天 11:31', () => {
+  it('午休(midday_break)：基准是上一交易日 15:01，不再看当天 11:31', () => {
     expect(fresh(D('2024-01-04T15:10').getTime(), MIDDAY_MS)).toBe(true);
     expect(fresh(D('2024-01-05T11:20').getTime(), MIDDAY_MS)).toBe(true); // 当天上午拉的也算新鲜
     expect(fresh(D('2024-01-04T14:00').getTime(), MIDDAY_MS)).toBe(false);
   });
 
-  it('盘后(closed)：落定时点=当天 15:00，15:00 前拉的缓存判过期', () => {
+  it('盘后(closed)：落定时点=当天 15:01，15:01 前拉的缓存判过期', () => {
     expect(fresh(D('2024-01-05T10:00').getTime(), CLOSED_MS)).toBe(false);
     expect(fresh(D('2024-01-05T14:00').getTime(), CLOSED_MS)).toBe(false);
-    expect(fresh(D('2024-01-05T14:59').getTime(), CLOSED_MS)).toBe(false);
-    expect(fresh(D('2024-01-05T15:00').getTime(), CLOSED_MS)).toBe(true);
+    expect(fresh(D('2024-01-05T15:00').getTime(), CLOSED_MS)).toBe(false); // 收盘瞬间仍未落定
+    expect(fresh(D('2024-01-05T15:01').getTime(), CLOSED_MS)).toBe(true);
     expect(fresh(D('2024-01-05T15:10').getTime(), CLOSED_MS)).toBe(true);
-    // 前一交易日 15:30 → < 今天 15:00 → 过期
+    // 前一交易日 15:30 → < 今天 15:01 → 过期
     expect(fresh(D('2024-01-04T15:30').getTime(), CLOSED_MS)).toBe(false);
   });
 
-  it('盘前(pre_open)：落定时点=前一交易日 15:00', () => {
+  it('盘后 15:00–15:01：视为尚未落定，基准退回上一交易日 15:01（不发起拉取）', () => {
+    const WINDOW_MS = D('2024-01-05T15:00').getTime() + 30 * 1000; // 15:00:30
+    expect(getMarketStatus(new Date(WINDOW_MS))).toBe('closed');
+    // 当天上午拉的也算新鲜 → 命中缓存，不会在 15:01 前重复拉取
+    expect(fresh(D('2024-01-05T10:00').getTime(), WINDOW_MS)).toBe(true);
+    expect(fresh(D('2024-01-04T15:10').getTime(), WINDOW_MS)).toBe(true);
+    expect(fresh(D('2024-01-04T10:00').getTime(), WINDOW_MS)).toBe(false);
+  });
+
+  it('盘前(pre_open)：落定时点=前一交易日 15:01', () => {
     expect(fresh(D('2024-01-04T10:00').getTime(), PREOPEN_MS)).toBe(false);
     expect(fresh(D('2024-01-04T15:10').getTime(), PREOPEN_MS)).toBe(true);
     expect(fresh(D('2024-01-03T15:10').getTime(), PREOPEN_MS)).toBe(false);
   });
 
-  it('全天休市(full_day_closed，周六)：落定时点=周五 15:00，整周末复用', () => {
+  it('全天休市(full_day_closed，周六)：落定时点=周五 15:01，整周末复用', () => {
     expect(fresh(D('2024-01-05T10:00').getTime(), FULL_DAY_CLOSED_MS)).toBe(false);
     expect(fresh(D('2024-01-05T15:10').getTime(), FULL_DAY_CLOSED_MS)).toBe(true);
     expect(fresh(D('2024-01-04T15:30').getTime(), FULL_DAY_CLOSED_MS)).toBe(false);
@@ -168,7 +177,7 @@ describe('planBollCacheUse：请求决策', () => {
   });
 
   it('盘中：昨日收盘后拉的缓存 → 命中不重拉；昨日收盘前拉的缓存 → 过期需重拉', () => {
-    // 昨日 15:10 拉取 → 大于等于昨日 15:00 → 新鲜，盘中不再全量重拉
+    // 昨日 15:10 拉取 → 大于等于昨日 15:01 → 新鲜，盘中不再全量重拉
     const freshPlan = runPlan({
       codes: ['sh600000'],
       now: new Date(MORNING_OPEN_MS),
@@ -178,7 +187,7 @@ describe('planBollCacheUse：请求决策', () => {
     expect(freshPlan.allCached).toBe(true);
     expect(freshPlan.toFetch).toEqual([]);
 
-    // 昨日 10:00 拉取 → 早于昨日 15:00 → 过期，需重拉
+    // 昨日 10:00 拉取 → 早于昨日 15:01 → 过期，需重拉
     const stalePlan = runPlan({
       codes: ['sh600000'],
       now: new Date(MORNING_OPEN_MS),

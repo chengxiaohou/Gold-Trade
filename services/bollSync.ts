@@ -26,7 +26,7 @@ export interface BollStockInput {
 
 export interface BollFreshnessParams {
   cachedAt: number | null; // 缓存时间戳；null 视为无缓存
-  lastCloseMs: number; // 最近一次"已落定收盘时点"（交易日 15:00），由调用方从 getLastTradingClose 注入
+  lastCloseMs: number; // 最近一次"已落定收盘时点"（交易日 15:01），由调用方从 getLastTradingClose 注入
   hasCompleteData?: boolean; // 是否含完整字段（ma.ma30）；缺失视为过期
 }
 

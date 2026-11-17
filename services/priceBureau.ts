@@ -420,7 +420,7 @@ export const priceBureau = {
     }
     let cacheInfoStr = '';
     if (cacheTimestamps.length > 0) {
-      // 有效期 = 该缓存失效的时点：拉取之后第一个交易日的 15:00
+      // 有效期 = 该缓存失效的时点：拉取之后第一个交易日的 15:01
       const maxTs = Math.max(...cacheTimestamps);
       cacheInfoStr = `（缓存有效期至：${formatCacheTime(getCacheExpiryPoint(maxTs).getTime())}）`;
     }

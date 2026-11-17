@@ -266,7 +266,7 @@ function isBollCacheFresh(
   if (!cached) return false;
   if (!cached.data?.ma?.ma30) return false;
 
-  // 唯一口径：缓存是在最近一次已落定收盘时点（交易日 15:00）之后拉取的即视为新鲜。
+  // 唯一口径：缓存是在最近一次已落定收盘时点（交易日 15:01）之后拉取的即视为新鲜。
   // 即每个交易日收盘后允许全量拉取一次，到下一个交易日收盘前都复用这份数据。
   const lastClose = getLastTradingClose();
   const fresh = cached.timestamp >= lastClose.getTime();
@@ -836,7 +836,7 @@ export function setTencentDomain(domain: string): void {
 
 // 单条 BOLL 缓存新鲜度判定（统一数据部门）
 // 与全量加载 planBollCache → planBollCacheUse 同源，全部走 bollSync.isBollFresh：
-// 只要缓存是在"最近一次已落定收盘时点"（交易日 15:00）之后拉取的即为新鲜，
+// 只要缓存是在"最近一次已落定收盘时点"（交易日 15:01）之后拉取的即为新鲜，
 // 即每个交易日收盘后允许全量拉取一次，到下一个交易日收盘前都复用这份数据。
 function isBollEntryFresh(timestamp: number, data: BollData | undefined): boolean {
   return isBollFresh({
