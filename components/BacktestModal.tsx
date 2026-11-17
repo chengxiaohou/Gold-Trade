@@ -205,8 +205,13 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       return next;
     });
   };
-  // 图表高度：null = 未手动拖拽（打开时按交易记录内容量自动分配）；拖拽后取本次会话的手动高度
-  const [chartHeight, setChartHeight] = useState<number | null>(null);
+  // 图表高度：null = 未手动拖拽（打开时按交易记录内容量自动分配）；拖拽过的高度存本地，下次打开沿用
+  const [chartHeight, setChartHeight] = useState<number | null>(() => {
+    try {
+      const v = Number(localStorage.getItem('bt_chart_height'));
+      return Number.isFinite(v) && v >= 120 ? v : null;
+    } catch { return null; }
+  });
   const chartWrapRef = useRef<HTMLDivElement>(null);
   const splitDragRef = useRef<{ startY: number; startH: number; maxH: number; latestH: number } | null>(null);
   const handleSplitPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -241,8 +246,9 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     if (!drag) return;
     splitDragRef.current = null;
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* 忽略 */ }
-    // 松手后落到状态，高度值与拖拽末帧一致，无跳动
+    // 松手后落到状态，高度值与拖拽末帧一致，无跳动；同时写入本地，下次打开沿用
     setChartHeight(drag.latestH);
+    try { localStorage.setItem('bt_chart_height', String(Math.round(drag.latestH))); } catch { /* 忽略写入失败 */ }
   };
 
   const initialCapital = strategy.initialCapital;
@@ -662,6 +668,32 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   useEffect(() => {
     try { localStorage.setItem('bt_indicator_mode', indicatorMode); } catch { /* ignore */ }
   }, [indicatorMode]);
+  // 键盘快捷切换：Tab 切换均线/布林线，[ / ] 向左向右切换 日/周/月K
+  // （侧栏输入框等可编辑控件内不拦截，保留正常的 Tab 焦点跳转）
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        setIndicatorMode(m => (m === 'ma' ? 'boll' : 'ma'));
+        return;
+      }
+      if (e.key === '[' || e.key === ']') {
+        e.preventDefault();
+        const dir = e.key === ']' ? 1 : -1;
+        setKlinePeriod(prev => {
+          const i = KLINE_PERIODS.findIndex(p => p.key === prev);
+          const n = KLINE_PERIODS.length;
+          // 循环切换：月在 ] 时回到日，日在 [ 时跳到月
+          return KLINE_PERIODS[(((i < 0 ? 0 : i) + dir) % n + n) % n].key;
+        });
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
   // 各指标体系当前最新值：ma={5:x,...} boll={upper,mid,lower}
   const [latestInd, setLatestInd] = useState<{ ma: number[]; boll: { upper: number; mid: number; lower: number } | null }>({ ma: [], boll: null });
 
@@ -1764,11 +1796,12 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
               )}
             </div>
 
-            {/* K线图：默认 flex-grow 抢空间；拖拽下方分界线后使用固定高度 */}
+            {/* K线图：默认 flex-grow 抢空间；拖拽下方分界线后使用固定高度
+                （沿用本地记住的高度时按可用空间封顶，窗口变小也不挤掉下方记录表） */}
             <div
               ref={chartWrapRef}
               className={`relative min-h-[120px] ${effectiveChartHeight ? 'shrink-0' : 'flex-1'}`}
-              style={effectiveChartHeight ? { height: effectiveChartHeight } : undefined}
+              style={effectiveChartHeight ? { height: effectiveChartHeight, maxHeight: 'calc(100% - 200px)' } : undefined}
             >
               <div
                 ref={chartRef}
