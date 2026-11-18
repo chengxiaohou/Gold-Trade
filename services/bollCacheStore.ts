@@ -4,9 +4,14 @@
 // BOLL 数据重新拉取后统一写入 IndexedDB，便于确认新存储是否生效。
 
 const DB_NAME = 'gold_trade_boll_cache';
-const DB_VERSION = 1;
+// v2 曾短暂做过"摘要 / K线"双 store 拆分（已回退）。回退后版本号又回到 1，
+// 而线上浏览器已经打开过 v2 数据库 → 再用版本 1 打开会抛 VersionError，
+// 读写全部静默失败（表现为每次刷新页面都全量重拉、日志没有缓存有效期）。
+// 因此这里把版本升到 3：无论浏览器停在 v1 还是 v2，升级时都统一重建单键缓存。
+const DB_VERSION = 3;
 const STORE = 'cache';
 const ENTRY_KEY = 'boll_v1';
+const LEGACY_SPLIT_STORES = ['summary', 'klines']; // v2 遗留 store，升级时清理
 
 export interface BollCacheEntry {
   data: any;                 // BollData
@@ -22,12 +27,20 @@ function openDB(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
+      // 清理 v2 拆分存储遗留的 store
+      for (const stale of LEGACY_SPLIT_STORES) {
+        if (db.objectStoreNames.contains(stale)) db.deleteObjectStore(stale);
+      }
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE);
       }
     };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error || new Error('IndexedDB 打开失败'));
+    req.onerror = () => {
+      // 打开失败会让缓存既读不到也写不进，必须留痕，避免"每次刷新都全量重拉"无从排查
+      console.warn('[BOLL] 打开 IndexedDB 失败，BOLL 缓存将无法持久化:', req.error);
+      reject(req.error || new Error('IndexedDB 打开失败'));
+    };
   });
   return dbPromise;
 }
