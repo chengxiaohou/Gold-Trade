@@ -206,6 +206,23 @@ describe('planBollCacheUse：请求决策', () => {
     expect(plan.toFetch[0].periods).toEqual(BOLL_PERIODS);
   });
 
+  it('过期缓存：进入 staleData（供先展示后覆盖），不进 cachedData', () => {
+    // 昨日 10:00 拉的 → 过期
+    const cache = seedAll(['sh600000'], D('2024-01-04T10:00').getTime());
+    const plan = runPlan({ codes: ['sh600000'], now: new Date(MORNING_OPEN_MS), cache });
+    expect(plan.allCached).toBe(false);
+    // 旧数据被保留下来，UI 可以先展示（并标记为过期样式）
+    const stale = plan.staleData.get('sh600000')!;
+    expect(stale.daily).not.toBeNull();
+    expect(stale.weekly).not.toBeNull();
+    expect(stale.monthly).not.toBeNull();
+    // 新鲜命中集合里没有它
+    const fresh = plan.cachedData.get('sh600000')!;
+    expect(fresh.daily).toBeNull();
+    // 同时仍要请求这三个周期
+    expect(plan.toFetch[0].periods).toEqual(BOLL_PERIODS);
+  });
+
   it('隐藏布林线的股票不计入 visibleTotal/staleCount、不进 toFetch', () => {
     const cache = seedAll(['sh600000'], D('2024-01-05T15:10').getTime());
     const plan = runPlan({ codes: ['sh600000', 'sz000001'], now: new Date(CLOSED_MS), cache, hidden: new Set(['sh600000']) });

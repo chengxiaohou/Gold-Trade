@@ -142,7 +142,6 @@ export function getCacheExpiryPoint(cachedAt: number): Date {
 
 // 缓存管理
 const sourceLastFetch: Map<ApiSource, number> = new Map();
-const sourceCacheExpiry: Map<ApiSource, number> = new Map();
 
 // "全量刷新时间戳"：仅在全量（批量）BOLL 刷新结束时写入并持久化，
 // 单只/单周期请求不触碰——用于表头与设置面板展示"最后一次全量刷新时间"，
@@ -163,34 +162,11 @@ export function getBollFullFetchTime(source: ApiSource): number | null {
 // 设置上次拉取时间
 export function setLastFetchTime(source: ApiSource, timestamp: number = Date.now()): void {
   sourceLastFetch.set(source, timestamp);
-  updateCacheExpiry(source, timestamp);
 }
 
 // 获取上次拉取时间
 export function getLastFetchTime(source: ApiSource): number | null {
   return sourceLastFetch.get(source) || null;
-}
-
-// 更新缓存过期时间（用于BOLL数据缓存管理）
-function updateCacheExpiry(source: ApiSource, fromTime: number): void {
-  const ttlMinutes = getBollCacheTTLMinutes();
-  const expiry = calculateCacheExpiry(fromTime, ttlMinutes);
-  sourceCacheExpiry.set(source, expiry);
-}
-
-// 计算缓存过期时间
-function calculateCacheExpiry(fromTime: number, ttlMinutes: number): number {
-  const now = new Date(fromTime);
-  const isTrading = isTradingHours(now);
-
-  if (isTrading) {
-    // 交易时段：按设定的分钟数有效
-    return fromTime + ttlMinutes * 60 * 1000;
-  } else {
-    // 非交易时段：到下次开盘前一直有效
-    const nextOpen = getNextTradingOpen(now);
-    return nextOpen.getTime();
-  }
 }
 
 // 获取价格缓存TTL设置
@@ -207,28 +183,13 @@ function getCacheTTLMinutes(): number {
   return 10;
 }
 
-// 获取BOLL缓存TTL设置
-function getBollCacheTTLMinutes(): number {
-  const settings = localStorage.getItem('gold_app_settings');
-  if (settings) {
-    try {
-      const parsed = JSON.parse(settings);
-      return parsed.bollCacheTTLMinutes || 120;
-    } catch {
-      return 120;
-    }
-  }
-  return 120;
-}
-
 // 获取缓存过期时间（用于BOLL数据缓存管理）
+// 与缓存新鲜度同一口径：以「上次全量拉取时间」为基准，失效时点为其后第一个交易日 15:01。
+// 单只/单周期请求不刷新这个时间点；没有全量记录时退回最近一次拉取时间。
 export function getCacheExpiry(source: ApiSource): number | null {
-  const lastFetch = sourceLastFetch.get(source);
-  if (lastFetch) {
-    const ttlMinutes = getBollCacheTTLMinutes();
-    return calculateCacheExpiry(lastFetch, ttlMinutes);
-  }
-  return null;
+  const base = getBollFullFetchTime(source) ?? sourceLastFetch.get(source) ?? null;
+  if (!base) return null;
+  return getCacheExpiryPoint(base).getTime();
 }
 
 // 检查缓存是否有效
@@ -343,7 +304,6 @@ export function formatRelativeTime(timestamp: number | null): string {
 // 清除所有缓存记录（用户手动刷新时调用）
 export function clearCacheRecord(source: ApiSource): void {
   sourceLastFetch.delete(source);
-  sourceCacheExpiry.delete(source);
 }
 
 // 根据当前市场状态获取价格缓存TTL（毫秒）

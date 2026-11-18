@@ -22,7 +22,7 @@ import {
   type TodayBarInput,
   type BollResult,
 } from './bollService';
-import { getCacheExpiryPoint, formatCacheTime, getMarketStatus } from './cacheService';
+import { getCacheExpiryPoint, formatCacheTime, getMarketStatus, isTradingDay } from './cacheService';
 import { requestLogService, type LogBatchContext } from './requestLogService';
 import { fetchTencentRealtime } from './realtimeQuote';
 import { toTencentCode, type TencentQuote } from './tencentQuote';
@@ -80,12 +80,108 @@ function buildLiveDaily(data: BollData | null, rt: RealTimeQuote | null): BollDa
   return buildBollDataFromKlines(merged, data.fetchedAt ?? Date.now()) ?? data;
 }
 
+/** 某日所属周期的起点日（周=周一，月=当月 1 日），'YYYY-MM-DD'。 */
+function periodStartOf(dateStr: string, period: 'weekly' | 'monthly'): string {
+  if (period === 'monthly') return `${dateStr.slice(0, 7)}-01`;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7)); // 回退到周一
+  return todayStr(dt);
+}
+
+/** 用日线（含今日实时合成）拼出"本周/本月至今"的聚合 bar，替换或追加到周/月序列末根后重算三轨。
+ *  腾讯的周/月最后一根本身也是盘中聚合 bar，但我们盘中不重拉，这里在本地补齐当天这一段。 */
+function buildLiveAggregate(
+  data: BollData | null,
+  dailyKlines: BollKline[] | null,
+  period: 'weekly' | 'monthly',
+): BollData | null {
+  if (!data?.klines?.length || !dailyKlines?.length) return data;
+  const lastDate = dailyKlines[dailyKlines.length - 1].date;
+  const start = periodStartOf(lastDate, period);
+  const bars = dailyKlines.filter(k => k.date >= start && k.date <= lastDate);
+  if (bars.length === 0) return data;
+  const agg: BollKline = {
+    date: lastDate,
+    open: bars[0].open,
+    high: Math.max(...bars.map(b => b.high)),
+    low: Math.min(...bars.map(b => b.low)),
+    close: bars[bars.length - 1].close,
+    volume: bars.reduce((s, b) => s + b.volume, 0),
+  };
+  const series = data.klines.slice();
+  const last = series[series.length - 1];
+  if (periodStartOf(last.date, period) === start) {
+    series[series.length - 1] = agg; // 缓存里已有本周期未完成 bar → 用本地聚合覆盖
+  } else if (last.date < start) {
+    series.push(agg); // 缓存停在上一周期 → 追加本周期 bar
+  } else {
+    return data;
+  }
+  return buildBollDataFromKlines(series, data.fetchedAt ?? Date.now()) ?? data;
+}
+
+/** 统一写入形态：日线并入今日实时价，周/月用日线拼接当前周期后重算。 */
+function buildLiveEntry(entry: PriceEntry): PriceEntry {
+  if (asOfDate) return entry;
+  const daily = buildLiveDaily(entry.daily, entry.realtime);
+  return {
+    ...entry,
+    daily,
+    weekly: buildLiveAggregate(entry.weekly, daily?.klines ?? null, 'weekly'),
+    monthly: buildLiveAggregate(entry.monthly, daily?.klines ?? null, 'monthly'),
+  };
+}
+
+/** 缓存里的"昨收"（前复权口径）：日内已合成今日 bar 时取倒数第二根，否则取末根。 */
+function cachedPrevBar(entry: PriceEntry | null): BollKline | null {
+  const ks = entry?.daily?.klines;
+  if (!ks || ks.length === 0) return null;
+  const last = ks[ks.length - 1];
+  const bar = last.date === todayStr() ? ks[ks.length - 2] : last;
+  return bar ?? null;
+}
+
+/** 上一交易日（'YYYY-MM-DD'）。 */
+function prevTradingDayStr(): string {
+  const d = new Date();
+  do { d.setDate(d.getDate() - 1); } while (!isTradingDay(d));
+  return todayStr(d);
+}
+
+/** 除权除息检测结果：缓存"昨收"与行情昨收（除权后参考价）不一致。 */
+export interface BollDivergenceInfo {
+  code: string;
+  cachedPrevClose: number;
+  quotePrevClose: number;
+}
+
+// 同一只股票每次会话只提示一次；补拉成功后解除，避免反复弹窗
+const divergenceNotified = new Set<string>();
+let divergenceHandler: ((info: BollDivergenceInfo) => void) | null = null;
+
+/** 注册除权断层提示回调（UI 层弹窗询问是否强制刷新）。 */
+export function setBollDivergenceHandler(cb: ((info: BollDivergenceInfo) => void) | null): void {
+  divergenceHandler = cb;
+}
+
 /** 写入某只股票的实时行情并同步重算 store 日线（不 notify，批量场景由调用方统一通知）。 */
 function applyRealtimeQuote(code: string, q: TencentQuote): boolean {
   if (asOfDate) return false;
   const cur = store.get(code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
+  // 前复权缓存一致性校验：缓存"昨收"与行情昨收不一致 → 说明发生了除权除息，交给 UI 询问是否强制刷新。
+  // 只在缓存恰好覆盖到上一交易日时才比对，避免缓存本身落后多日时误报（那种情况由过期样式体现）
+  const prevBar = cachedPrevBar(cur);
+  if (prevBar && prevBar.date === prevTradingDayStr() && q.prevClose > 0 && Math.abs(prevBar.close - q.prevClose) > 0.005) {
+    if (!divergenceNotified.has(code)) {
+      divergenceNotified.add(code);
+      divergenceHandler?.({ code, cachedPrevClose: prevBar.close, quotePrevClose: q.prevClose });
+    }
+  } else {
+    divergenceNotified.delete(code);
+  }
   const realtime: RealTimeQuote = { ...q, updatedAt: Date.now() };
-  store.set(code, { ...cur, realtime, daily: buildLiveDaily(cur.daily, realtime) });
+  store.set(code, buildLiveEntry({ ...cur, realtime }));
   return true;
 }
 
@@ -107,6 +203,14 @@ export interface EnsureBatchOpts {
   onFailureAbort?: (info: { failures: number; remaining: number }) => void;
   /** 强制刷新：忽略缓存新鲜度，全部重新请求 */
   force?: boolean;
+}
+
+/** 批量加载结果：区分"是否发过请求"与"整批是否完整成功" */
+export interface EnsureBatchResult {
+  /** 本次是否真正发起过网络请求 */
+  madeRequest: boolean;
+  /** 整批是否完整跑完：未取消、未熔断、且没有任何股票请求失败 */
+  completed: boolean;
 }
 
 // code → 条目（code 沿用 stock.code 原始字符串，与 fetchBollData 同一口径）
@@ -281,14 +385,8 @@ export const priceBureau = {
     if (isEmpty(entry)) {
       store.delete(code);
     } else {
-      // 日线统一按"含今日实时价"形态落库，避免缓存里的仅收盘序列直接成为列表口径；
-      // 周/月没有实时合成，但同样按当前公式口径重算，保证口径变更后缓存立即生效
-      store.set(code, {
-        ...entry,
-        daily: buildLiveDaily(entry.daily, entry.realtime),
-        weekly: recomputeBoll(entry.weekly),
-        monthly: recomputeBoll(entry.monthly),
-      });
+      // 日线并入今日实时价；周/月用日线拼接当前周期后按当前公式口径重算
+      store.set(code, buildLiveEntry(entry));
     }
     notify();
   },
@@ -297,9 +395,12 @@ export const priceBureau = {
   absorb(code: string, period: BollPeriod, result: { data: BollData | null }): void {
     if (!result.data) return;
     const cur = store.get(code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
-    // 日线入 store 前统一按"含未收盘"形态重算（与缓存落地、实时刷新同一实现）
-    const stored = period === 'daily' ? buildLiveDaily(result.data, cur.realtime) ?? result.data : result.data;
-    store.set(code, { ...cur, [period]: stored });
+    // 日线入 store 前统一按"含未收盘"形态重算，并顺带刷新周/月的当前周期聚合；
+    // 周/月直接落地（接口自带盘中聚合），但按当前公式口径重算
+    const next: PriceEntry = period === 'daily'
+      ? buildLiveEntry({ ...cur, daily: result.data })
+      : { ...cur, [period]: recomputeBoll(result.data) };
+    store.set(code, next);
     notify();
   },
 
@@ -309,14 +410,8 @@ export const priceBureau = {
       if (isEmpty(entry)) {
         store.delete(code);
       } else {
-        // 批量落地同样统一按"含今日实时价"形态写入日线（缓存本身只有收盘序列），
-        // 周/月按当前公式口径重算
-        store.set(code, {
-          ...entry,
-          daily: buildLiveDaily(entry.daily, entry.realtime),
-          weekly: recomputeBoll(entry.weekly),
-          monthly: recomputeBoll(entry.monthly),
-        });
+        // 批量落地同样统一按"含今日实时价"形态写入日线，周/月拼接当前周期后重算
+        store.set(code, buildLiveEntry(entry));
       }
     }
     notify();
@@ -415,14 +510,16 @@ export const priceBureau = {
     apiSource: ApiSource,
     adjust: BollAdjust,
     opts: EnsureBatchOpts = {},
-  ): Promise<boolean> {
+  ): Promise<EnsureBatchResult> {
     // 历史展示模式：不发起任何批量拉取（照常读取截止日投影即可）
-    if (asOfDate) return false;
+    if (asOfDate) return { madeRequest: false, completed: false };
     await ensureBollCacheRestored();
     const trigger = opts.trigger ?? '自动刷新布林线';
     const batchTimestamp = Date.now();
     // 是否真正发起过网络请求（全部命中缓存时为 false，供调用方决定是否刷新"全量刷新时间戳"）
     let madeRequest = false;
+    // 本批是否出现过任何股票请求失败（失败批次不算"整批完整成功"）
+    let anyFailure = false;
 
     const nowDate = new Date();
     const plan = planBollCache(stocks, adjust, apiSource, nowDate, opts.force);
@@ -433,10 +530,23 @@ export const priceBureau = {
     const idToCode = new Map<string, string>();
     for (const s of stocks) idToCode.set(s.id, s.code);
     const cachedByCode = new Map<string, PriceEntry>();
+    const hiddenIds = new Set(stocks.filter(s => s.bollHidden).map(s => s.id));
+    // 先铺过期的旧数据（"边展示旧数据边刷新"），命中项随后覆盖
+    for (const [id, entry] of plan.staleData) {
+      const code = idToCode.get(id);
+      if (code) cachedByCode.set(code, { realtime: store.get(code)?.realtime ?? null, ...entry });
+    }
     for (const [id, entry] of cachedData) {
       const code = idToCode.get(id);
-      const prevRt = store.get(code)?.realtime ?? null;
-      if (code) cachedByCode.set(code, { realtime: prevRt, ...entry });
+      if (!code || hiddenIds.has(id)) continue;
+      const prev = cachedByCode.get(code);
+      cachedByCode.set(code, {
+        realtime: prev?.realtime ?? store.get(code)?.realtime ?? null,
+        // 周期级合并：命中项优先，其余保留旧数据，避免把刚铺上的旧值覆盖成 null
+        daily: entry.daily ?? prev?.daily ?? null,
+        weekly: entry.weekly ?? prev?.weekly ?? null,
+        monthly: entry.monthly ?? prev?.monthly ?? null,
+      });
     }
     let cacheInfoStr = '';
     if (cacheTimestamps.length > 0) {
@@ -453,10 +563,15 @@ export const priceBureau = {
           : `${trigger}：${staleCount}/${visibleTotal} 项已过期，重新请求 ${staleCount} 条请求${cacheInfoStr}`
     );
     emitBollCacheHits(plan.hitKeys, logCtx);
+    // 缓存计划诊断：区分"缓存里没有旧数据"与"展示逻辑没铺上"
+    requestLogService.note(
+      `缓存计划：新鲜命中 ${plan.hitKeys.length / 3} 只 · 有过期旧数据 ${plan.staleData.size} 只 · 需请求 ${plan.toFetch.length} 只`,
+      logCtx,
+    );
 
     if (allCached) {
       priceBureau.setEntries(cachedByCode);
-      return madeRequest;
+      return { madeRequest, completed: true };
     }
 
     // 先把已命中项一次性批量应用，再对缺失项顺序请求
@@ -466,7 +581,7 @@ export const priceBureau = {
     const targetIds = new Set(stocks.map(s => s.id));
     let consecutiveFailures = 0;
     for (let i = 0; i < order.length; i++) {
-      if (opts.cancelCheck?.()) return madeRequest;
+      if (opts.cancelCheck?.()) return { madeRequest, completed: false };
       const stock = order[i];
       if (!targetIds.has(stock.id)) continue;
       if (stock.bollHidden) continue;
@@ -482,23 +597,25 @@ export const priceBureau = {
         fetchBollData(stock.code, 'monthly', adjust, apiSource, batchTimestamp, logCtx, opts.force),
       ]);
       madeRequest = true; // 本次确实发起了网络请求
-      if (opts.cancelCheck?.()) return madeRequest;
+      if (opts.cancelCheck?.()) return { madeRequest, completed: false };
       const code = stock.code;
       const cur = store.get(code) ?? { daily: null, weekly: null, monthly: null, realtime: null };
-      store.set(code, {
-        // 日线统一按"含今日实时价"形态写入（与 absorb / 实时刷新同一实现）
-        daily: buildLiveDaily(dailyR.data ?? cur.daily, cur.realtime),
+      // 三个周期一次性写入后统一走 buildLiveEntry（日线含实时价、周/月拼接当前周期）
+      store.set(code, buildLiveEntry({
+        daily: dailyR.data ?? cur.daily,
         weekly: weeklyR.data ?? cur.weekly,
         monthly: monthlyR.data ?? cur.monthly,
         realtime: cur.realtime,
-      });
+      }));
       notify();
 
       // 连续失败计数（"数据源不支持该周期/复权"不算网络失败，跳过；
       // 返回过期缓存兜底的 degraded 结果本质仍是本次请求失败，计入失败）
       for (const r of [dailyR, weeklyR, monthlyR]) {
         if (r.unsupported) continue;
-        consecutiveFailures = r.data && !r.degraded ? 0 : consecutiveFailures + 1;
+        const ok = Boolean(r.data) && !r.degraded;
+        if (!ok) anyFailure = true;
+        consecutiveFailures = ok ? 0 : consecutiveFailures + 1;
       }
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         const remaining = order.length - i - 1;
@@ -506,7 +623,7 @@ export const priceBureau = {
           `[priceBureau] 连续 ${consecutiveFailures} 次 BOLL 请求失败，中止本批剩余 ${remaining} 只股票的请求`,
         );
         opts.onFailureAbort?.({ failures: consecutiveFailures, remaining });
-        break;
+        return { madeRequest, completed: false };
       }
 
       // 网络请求后按设置间隔（默认 1000ms）等待再请求下一只（其间仍可取消）
@@ -515,10 +632,10 @@ export const priceBureau = {
         const ticks = Math.ceil(waitMs / 10);
         for (let w = 0; w < ticks; w++) {
           await new Promise(resolve => setTimeout(resolve, 10));
-          if (opts.cancelCheck?.()) return madeRequest;
+          if (opts.cancelCheck?.()) return { madeRequest, completed: false };
         }
       }
     }
-    return madeRequest;
+    return { madeRequest, completed: !anyFailure };
   },
 };

@@ -50,6 +50,8 @@ export interface BollPeriodData {
 export interface BollCachePlan {
   allCached: boolean;
   cachedData: Map<string, BollPeriodData>;
+  /** 过期但仍存在的缓存数据：用于"边展示旧数据边刷新"（单元格会标记为过期样式） */
+  staleData: Map<string, BollPeriodData>;
   staleCount: number; // 过期(需请求)的 股票×周期 项数；隐藏股票不计
   visibleTotal: number; // 可见(未隐藏)股票的 股票×周期 总数
   toFetch: Array<{ id: string; code: string; periods: BollPeriod[] }>; // 缺失/过期的项
@@ -80,6 +82,7 @@ export function planBollCacheUse(input: PlanBollCacheInput): BollCachePlan {
   const hasComplete = input.hasComplete ?? ((e: BollCacheEntry) => Boolean(e.data?.ma?.ma30));
 
   const cachedData = new Map<string, BollPeriodData>();
+  const staleData = new Map<string, BollPeriodData>();
   const toFetch: Array<{ id: string; code: string; periods: BollPeriod[] }> = [];
   const hitKeys: string[] = [];
   let staleCount = 0;
@@ -94,6 +97,7 @@ export function planBollCacheUse(input: PlanBollCacheInput): BollCachePlan {
     visibleTotal += BOLL_PERIODS.length;
 
     const data = new Map<BollPeriod, BollData | null>();
+    const stale = new Map<BollPeriod, BollData | null>();
     const missing: BollPeriod[] = [];
     for (const period of BOLL_PERIODS) {
       const key = input.cacheKeyFor(stock, period);
@@ -106,9 +110,11 @@ export function planBollCacheUse(input: PlanBollCacheInput): BollCachePlan {
           })
         : false;
       if (fresh) {
-        data.set(period, entry.data);
+        data.set(period, entry!.data);
         hitKeys.push(key);
       } else {
+        // 过期但仍留有数据：单独收集，供"先展示旧数据再逐个覆盖"
+        if (entry?.data) stale.set(period, entry.data);
         allCached = false;
         staleCount++;
         missing.push(period);
@@ -120,10 +126,17 @@ export function planBollCacheUse(input: PlanBollCacheInput): BollCachePlan {
       weekly: data.get('weekly') ?? null,
       monthly: data.get('monthly') ?? null,
     });
+    if (stale.size > 0) {
+      staleData.set(stock.id, {
+        daily: stale.get('daily') ?? null,
+        weekly: stale.get('weekly') ?? null,
+        monthly: stale.get('monthly') ?? null,
+      });
+    }
     if (missing.length > 0) {
       toFetch.push({ id: stock.id, code: stock.code, periods: missing });
     }
   }
 
-  return { allCached, cachedData, staleCount, visibleTotal, toFetch, hitKeys };
+  return { allCached, cachedData, staleData, staleCount, visibleTotal, toFetch, hitKeys };
 }

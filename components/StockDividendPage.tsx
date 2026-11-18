@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen, AlertTriangle } from 'lucide-react';
 import { LineChart, ComposedChart, Line, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { StockEntry, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
 import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition, bollBandLabel, buildBollBandTextParts, getBollCacheTimestamps } from '../services/bollService';
 import type { BollData, BollPeriod, BollAdjust, BollKline, BollBandInfo, BollStreakExplain } from '../services/bollService';
-import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime, getCacheExpiryPoint } from '../services/cacheService';
-import { priceBureau } from '../services/priceBureau';
+import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime, getCacheExpiryPoint, getLastTradingClose } from '../services/cacheService';
+import { priceBureau, setBollDivergenceHandler } from '../services/priceBureau';
 import { requestLogService, RequestLogEntry, type LogBatchContext } from '../services/requestLogService';
 import type { TencentQuote } from '../services/tencentQuote';
 import { fetchYearlyDividends, fetchParentNetProfitBatch, fetchTotalSharesByPeriod, DividendRecord, type YearlyDividends } from '../services/dividendService';
@@ -2455,6 +2455,13 @@ const sortStocksByTag = (list: StockEntry[]): StockEntry[] =>
 // 请求日志快照读取器（模块级常量，保证引用稳定，供 useSyncExternalStore 使用）
 const getRequestLogSnapshot = () => requestLogService.getSnapshot();
 
+// 过期 BOLL 单元格样式：不另设底色，露出原始单元格颜色，只叠加深色斜纹（深/原色各 3.5px，等宽）。
+// backgroundAttachment: fixed 让纹理以视口为原点铺排，三个单元格横向拼接无接缝。
+const staleBollStyle: React.CSSProperties = {
+  backgroundImage: 'repeating-linear-gradient(45deg, rgba(2,6,23,0.5) 0px, rgba(2,6,23,0.5) 3.5px, transparent 3.5px, transparent 7px)',
+  backgroundAttachment: 'fixed',
+};
+
 export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, bollRequestInterval = 1000, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, stockTotalCapital = 0, onStockTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
   useEffect(() => {
@@ -3915,9 +3922,24 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
 
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
+  // BOLL 过期基准：数据拉取时间早于最近一次收盘落定时点 → 展示的是过期缓存（单元格加斜纹标记）
+  const bollStaleBeforeMs = getLastTradingClose().getTime();
+  const hasStaleBoll = useMemo(() => {
+    if (priceBureau.getAsOfDate()) return false; // 历史模式不做过期标记
+    for (const s of stocks) {
+      if (s.bollHidden) continue;
+      const d = stockBollMap.get(s.id)?.daily;
+      if (d && d.fetchedAt > 0 && d.fetchedAt < bollStaleBeforeMs) return true;
+    }
+    return false;
+  }, [stocks, stockBollMap, bollStaleBeforeMs]);
   const [isRefreshingBoll, setIsRefreshingBoll] = useState(false);
   // 手动刷新时判定"本交易日收盘后已拉取过、无需重复请求"的提示弹窗
-  const [bollRefreshNoop, setBollRefreshNoop] = useState<{ lastFetchAt: number; nextAt: number } | null>(null);
+  const [bollRefreshNoop, setBollRefreshNoop] = useState<
+    | { kind: 'noop'; lastFetchAt: number; nextAt: number }
+    | { kind: 'divergence'; code: string; stockName: string; cachedPrevClose: number; quotePrevClose: number }
+    | null
+  >(null);
 
   // 价格数据部订阅：权威数据只存于 priceBureau，本状态仅为渲染镜像。
   // 任何写入（缓存命中/逐只落地/清场）都会 notify，这里重建镜像触发重渲。
@@ -4493,10 +4515,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     if (sortMode !== 'tag') onSortModeChange?.('tag');
     const fetchOrder = sortStocksByTag(stocks);
 
-    // 清空旧数据，显示加载状态
-    priceBureau.clear();
+    // 不清空旧数据：过期缓存继续展示（单元格用深色斜纹标记），
+    // 每只股票拉到新数据后自然覆盖为正常样式，避免"刷新过程中整列空白"
 
-    const madeRequest = await priceBureau.ensureBatch(stocks, apiSource, bollAdjust, {
+    const { madeRequest, completed } = await priceBureau.ensureBatch(stocks, apiSource, bollAdjust, {
       trigger,
       order: fetchOrder,
       cancelCheck: () => fetchVersionRef.current !== currentVersion,
@@ -4519,15 +4541,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       const timestamps = getBollCacheTimestamps(stocks, bollAdjust, apiSource);
       const lastFetchAt = timestamps.length > 0 ? Math.max(...timestamps) : getBollFullFetchTime(apiSource);
       if (lastFetchAt) {
-        setBollRefreshNoop({ lastFetchAt, nextAt: getCacheExpiryPoint(lastFetchAt).getTime() });
+        setBollRefreshNoop({ kind: 'noop', lastFetchAt, nextAt: getCacheExpiryPoint(lastFetchAt).getTime() });
       }
       setIsRefreshingBoll(false);
       return;
     }
 
-    // 全量（批量）刷新完成：仅在本次确实发起了网络请求时，才更新"全量刷新时间戳"
-    // （表头与设置面板读取）。全部命中缓存、无需请求时保留旧时间，避免被缓存命中刷成"刚刚"。
-    if (madeRequest) {
+    // 全量（批量）刷新完成：仅在"整批完整成功"（未取消、未熔断、无失败）时更新"全量刷新时间戳"。
+    // 之前只要发过请求就落时间，导致中途被限流/取消时也显示"全量刷新成功"，与缓存实际情况不符。
+    if (madeRequest && completed) {
       setBollFullFetchTime(apiSource);
     }
 
@@ -4549,6 +4571,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     fetchAllBoll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 除权除息检测：缓存"昨收"与行情昨收不一致时弹窗询问是否强制刷新（复用「无需刷新」弹窗）
+  useEffect(() => {
+    setBollDivergenceHandler(info => {
+      const s = stocks.find(x => x.code === info.code);
+      setBollRefreshNoop({
+        kind: 'divergence',
+        code: info.code,
+        stockName: s?.name ?? info.code,
+        cachedPrevClose: info.cachedPrevClose,
+        quotePrevClose: info.quotePrevClose,
+      });
+    });
+    return () => setBollDivergenceHandler(null);
+  }, [stocks]);
 
   // 打开股息页时，自动刷新一次所有股价（组件每次挂载只执行一次）
   const didAutoRefreshPricesRef = useRef(false);
@@ -6491,9 +6528,25 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       else fetchAllBoll('点击「布林线」列头刷新按钮', { manual: true });
                     }}
                     className="p-0.5 hover:bg-app-card rounded transition-colors"
-                    title={isRefreshingBoll ? '取消刷新（停止后续请求）' : '刷新所有BOLL数据'}
+                    title={(() => {
+                      // 与设置页「全量刷新」同一取值来源（getBollFullFetchTime）
+                      const last = getBollFullFetchTime(apiSource);
+                      const lastText = last ? formatCacheTime(last) : '从未全量刷新';
+                      const base = isRefreshingBoll
+                        ? '取消刷新（停止后续请求）'
+                        : hasStaleBoll
+                          ? '当前展示的是过期的 BOLL 缓存（深色斜纹单元格），点击重新拉取'
+                          : '刷新所有BOLL数据';
+                      return `${base}\n上次全量刷新：${lastText}`;
+                    })()}
                   >
-                    <RefreshCw size={10} className={isRefreshingBoll ? 'animate-spin' : ''} />
+                    {isRefreshingBoll ? (
+                      <RefreshCw size={10} className="animate-spin" />
+                    ) : hasStaleBoll ? (
+                      <AlertTriangle size={10} />
+                    ) : (
+                      <RefreshCw size={10} />
+                    )}
                   </button>
                 </div>
               </th>
@@ -6991,6 +7044,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       { key: 'monthly', data: !stock.bollHidden ? (bollInfo?.monthly ?? null) : null },
                     ];
                     return periods.map(({ key, data }, idx) => {
+                      // 过期缓存的视觉标记：拉取时间早于最近收盘落定时点（或本次拉取失败沿用旧值）
+                      const isStaleBoll = !!data && data.fetchedAt > 0 && data.fetchedAt < bollStaleBeforeMs;
                       const pos = getBollPosition(data, price);
                       const bandColor = pos?.band === 'upper' ? 'text-brand-red' : pos?.band === 'lower' ? 'text-brand-green' : 'text-blue-500';
                       const percentStr = pos ? `${pos.percent >= 0 ? '+' : ''}${pos.percent.toFixed(2)}%` : '-';
@@ -7016,7 +7071,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         </div>
                       ) : null;
                       return (
-                        <td key={key} className={`px-1 py-1.5 text-center cursor-pointer ${draggedId ? '' : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
+                        <td key={key}
+                          title={isStaleBoll ? `过期的 BOLL 缓存（上次拉取 ${formatCacheTime(data?.fetchedAt ?? 0)}），点击刷新` : undefined}
+                          style={isStaleBoll ? staleBollStyle : undefined}
+                          className={`px-1 py-1.5 text-center cursor-pointer ${draggedId ? '' : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             const rect = e.currentTarget.getBoundingClientRect();
@@ -8013,17 +8071,36 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           />
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="bg-app-card border border-app-border rounded-xl shadow-xl p-5 w-80">
-              <div className="text-sm font-bold text-app-text mb-1">无需刷新</div>
-              <div className="text-xs text-app-subtext mb-4 space-y-1">
-                <div>
-                  当前 BOLL 数据已是本交易日收盘后的最新数据（上次拉取：
-                  <span className="text-app-text font-medium">{formatCacheTime(bollRefreshNoop.lastFetchAt)}</span>）。
-                </div>
-                <div>
-                  BOLL 每个交易日收盘后只需全量拉取一次，下次可拉取时间：{formatCacheTime(bollRefreshNoop.nextAt)}。
-                </div>
-                <div>如需立即重新拉取，可点「强制刷新」。</div>
-              </div>
+              {bollRefreshNoop.kind === 'noop' ? (
+                <>
+                  <div className="text-sm font-bold text-app-text mb-1">无需刷新</div>
+                  <div className="text-xs text-app-subtext mb-4 space-y-1">
+                    <div>
+                      当前 BOLL 数据已是本交易日收盘后的最新数据（上次拉取：
+                      <span className="text-app-text font-medium">{formatCacheTime(bollRefreshNoop.lastFetchAt)}</span>）。
+                    </div>
+                    <div>
+                      BOLL 每个交易日收盘后只需全量拉取一次，下次可拉取时间：{formatCacheTime(bollRefreshNoop.nextAt)}。
+                    </div>
+                    <div>如需立即重新拉取，可点「强制刷新」。</div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-sm font-bold text-app-text mb-1">检测到除权除息</div>
+                  <div className="text-xs text-app-subtext mb-4 space-y-1">
+                    <div>
+                      <span className="text-app-text font-medium">{bollRefreshNoop.stockName}</span>
+                      的 BOLL 缓存与行情昨收不一致（缓存
+                      <span className="text-app-text font-medium">{formatPrice(bollRefreshNoop.cachedPrevClose, bollRefreshNoop.stockName)}</span>
+                      ，行情昨收
+                      <span className="text-app-text font-medium">{formatPrice(bollRefreshNoop.quotePrevClose, bollRefreshNoop.stockName)}</span>
+                      ），通常是发生了除权除息，前复权历史需要整体重算。
+                    </div>
+                    <div>是否立即强制刷新该股票的 BOLL 数据？</div>
+                  </div>
+                </>
+              )}
               <div className="flex gap-2 justify-end">
                 <button
                   onClick={(e) => {
@@ -8037,12 +8114,24 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
+                    const target = bollRefreshNoop;
                     setBollRefreshNoop(null);
-                    fetchAllBoll('点击「布林线」列头刷新按钮（强制刷新）', { manual: true, force: true });
+                    if (target.kind === 'divergence') {
+                      const stock = stocks.find(s => s.code === target.code);
+                      if (stock) {
+                        void priceBureau.ensureBatch([stock], apiSource, bollAdjust, {
+                          trigger: `除权检测：强制刷新 ${stock.name}`,
+                          force: true,
+                          intervalMs: 0,
+                        });
+                      }
+                    } else {
+                      fetchAllBoll('点击「布林线」列头刷新按钮（强制刷新）', { manual: true, force: true });
+                    }
                   }}
                   className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-500/90 text-white hover:bg-indigo-500 transition-colors"
                 >
-                  强制刷新
+                  {bollRefreshNoop.kind === 'divergence' ? '强制刷新该股' : '强制刷新'}
                 </button>
               </div>
             </div>
@@ -9178,6 +9267,26 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             {bottomBarView === 'request' ? (<>
             <button
               onClick={() => {
+                const text = requestLogService.exportLogs();
+                const fallback = () => {
+                  const ta = document.createElement('textarea');
+                  ta.value = text;
+                  document.body.appendChild(ta);
+                  ta.select();
+                  document.execCommand('copy');
+                  document.body.removeChild(ta);
+                };
+                if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(fallback);
+                else fallback();
+              }}
+              disabled={requestLogs.length === 0}
+              className="flex items-center justify-center px-2 py-0.5 text-xs text-app-subtext hover:text-app-text border border-app-border rounded hover:border-app-text/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="复制全部日志"
+            >
+              <Copy size={12} />
+            </button>
+            <button
+              onClick={() => {
                 const csvContent = requestLogService.exportLogs();
                 const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
@@ -9293,9 +9402,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                                 log.status === 'success' ? 'bg-green-500/20 text-green-400' :
                                 log.status === 'failed' ? 'bg-red-500/20 text-red-400' :
                                 log.status === 'cached' ? 'bg-blue-500/20 text-blue-400' :
+                                log.status === 'info' ? 'bg-app-subtext/20 text-app-subtext' :
                                 'bg-yellow-500/20 text-yellow-400'
                               }`}>
-                                {log.status === 'success' ? '成功' : log.status === 'failed' ? '失败' : log.status === 'cached' ? '缓存' : '进行中'}
+                                {log.status === 'success' ? '成功' : log.status === 'failed' ? '失败' : log.status === 'cached' ? '缓存' : log.status === 'info' ? '信息' : '进行中'}
                               </span>
                               <span className="text-app-text truncate flex-1" title={log.url}>{log.url}</span>
                               {log.duration && <span className="text-app-subtext shrink-0">{log.duration}ms</span>}

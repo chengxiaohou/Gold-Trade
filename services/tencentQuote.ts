@@ -5,6 +5,8 @@ export interface TencentQuote {
   code: string; // 形如 sz000001 / sh600000
   name: string;
   price: number;
+  /** 昨收（除权日为除权后参考价）：用于校验前复权缓存是否与行情对齐 */
+  prevClose: number;
   changePercent: number;
   high: number;
   low: number;
@@ -61,6 +63,7 @@ export function parseTencentQuoteLine(line: string): TencentQuote | null {
     code: match[1],
     name: data[1].replace(/\s/g, ''),
     price,
+    prevClose: prevClose || price,
     changePercent,
     high: high || price,
     low: low || price,

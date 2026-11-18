@@ -35,7 +35,7 @@ describe('priceBureau 对外两形态（仅收盘 / 含未收盘）', () => {
     // 自持实时行情：较今日开盘下行，最高/最低均变化
     priceBureau.setRealtime('600000.SH', {
       code: 'sh600000', name: '浦发银行',
-      price: 99.5, changePercent: -2.45, high: 99.8, low: 99.2, open: 102, volume: 900,
+      price: 99.5, prevClose: 102, changePercent: -2.45, high: 99.8, low: 99.2, open: 102, volume: 900,
     });
   });
 
@@ -94,7 +94,7 @@ describe('priceBureau 对外两形态（仅收盘 / 含未收盘）', () => {
     vi.setSystemTime(new Date('2026-09-27T15:00:00+08:00')); // 周日 full_day_closed
     priceBureau.setRealtime('600000.SH', {
       code: 'sh600000', name: '浦发银行',
-      price: 95, changePercent: -5, high: 96, low: 94, open: 102, volume: 5000,
+      price: 95, prevClose: 103, changePercent: -5, high: 96, low: 94, open: 102, volume: 5000,
     });
     const boll = priceBureau.getTodayBoll('600000.SH', 'daily');
     expect(boll).not.toBeNull();
@@ -163,7 +163,7 @@ describe('priceBureau.getTodayBoll：absorb + setRealtime 后 BOLL 三轨跟随�
     // setRealtime → store daily 同步重算：klines 追加今日 bar，BOLL 三轨基于新序列
     priceBureau.setRealtime('600000.SH', {
       code: 'sh600000', name: '浦发银行',
-      price: 95, changePercent: -5, high: 96, low: 94, open: 102, volume: 5000,
+      price: 95, prevClose: 102, changePercent: -5, high: 96, low: 94, open: 102, volume: 5000,
     });
     const after = priceBureau.getTodayBoll('600000.SH', 'daily');
     expect(after).not.toBeNull();

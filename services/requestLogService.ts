@@ -5,7 +5,7 @@ export interface RequestLogEntry {
   timestamp: number;
   url: string;
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  status: 'pending' | 'success' | 'failed' | 'cached';
+  status: 'pending' | 'success' | 'failed' | 'cached' | 'info';
   duration?: number; // 毫秒
   error?: string;
   cached?: boolean;
@@ -204,6 +204,22 @@ class RequestLogService {
     }
   }
 
+  // 记录一条诊断信息（不产生网络请求，用于缓存恢复/缓存计划等排查）
+  note(text: string, ctx?: LogBatchContext, reason?: string): void {
+    const entry: RequestLogEntry = {
+      id: `note_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      timestamp: Date.now(),
+      url: text,
+      method: 'GET',
+      status: 'info',
+      reason: ctx?.reason ?? reason ?? this.batchReason ?? undefined,
+      batchKey: ctx?.batchKey ?? (this.batchReason && this.batchStartedAt ? `${this.batchStartedAt}_${this.batchReason}` : undefined),
+    };
+    this.logs.push(entry);
+    this.notifyListeners();
+    this.persist();
+  }
+
   // 缓存命中（不发网络请求）
   cacheHit(url: string, ctx?: LogBatchContext): void {
     const id = `cache_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -226,7 +242,8 @@ class RequestLogService {
   // 获取统计信息
   getStats(): RequestLogStats {
     return {
-      total: this.logs.length,
+      // 诊断信息（info）不计入请求总数，避免干扰请求统计
+      total: this.logs.filter(log => log.status !== 'info').length,
       success: this.logs.filter(log => log.status === 'success').length,
       failed: this.logs.filter(log => log.status === 'failed').length,
       cached: this.logs.filter(log => log.status === 'cached').length,
@@ -265,7 +282,8 @@ class RequestLogService {
         const time = new Date(log.timestamp).toLocaleString('zh-CN', { hour12: false });
         const status = log.status === 'success' ? '成功' : 
                        log.status === 'failed' ? '失败' : 
-                       log.status === 'cached' ? '缓存' : '进行中';
+                       log.status === 'cached' ? '缓存' : 
+                       log.status === 'info' ? '信息' : '进行中';
         return `${time},"${log.reason || ''}","${log.url}",${log.method},${status},${log.duration || ''},${log.error || ''}`;
       })
     ];

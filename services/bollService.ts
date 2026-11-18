@@ -1,5 +1,5 @@
 import { ApiSource } from '../types';
-import { getLastTradingClose, getMarketStatus, setLastFetchTime } from './cacheService';
+import { getLastTradingClose, getMarketStatus, setLastFetchTime, formatCacheTime } from './cacheService';
 import { requestLogService, type LogBatchContext } from './requestLogService';
 import { getBollCacheFromStore, saveBollCacheToStore, clearBollCacheFromStore } from './bollCacheStore';
 import { planBollCacheUse, isBollFresh, type BollCacheEntry, type BollStockInput } from './bollSync';
@@ -178,9 +178,11 @@ async function restoreCacheFromStore(): Promise<void> {
     // 各数据源最新的拉取时间
     let latestTencent = 0;
     let latestSina = 0;
+    let latestAny = 0;
 
     for (const [key, entry] of Object.entries(stored)) {
       // 不管缓存是否过期，都记录最新拉取时间（用于缓存管理显示和日志）
+      if (entry.timestamp > latestAny) latestAny = entry.timestamp;
       if (key.endsWith('_tencent') && entry.timestamp > latestTencent) {
         latestTencent = entry.timestamp;
       } else if (key.endsWith('_sina') && entry.timestamp > latestSina) {
@@ -196,7 +198,12 @@ async function restoreCacheFromStore(): Promise<void> {
     // 恢复缓存管理中的"上次拉取时间"
     if (latestTencent > 0) setLastFetchTime('tencent', latestTencent);
     if (latestSina > 0) setLastFetchTime('sina', latestSina);
-    console.log(`[BOLL] 从 IndexedDB 恢复缓存 ${cache.size} 条`);
+    // 写入请求日志面板，便于排查"刷新后旧数据是否真的从 IndexedDB 恢复了"
+    requestLogService.note(
+      `IndexedDB 恢复 BOLL 缓存 ${cache.size} 条（存储中 ${Object.keys(stored).length} 条，最新 ${latestAny ? formatCacheTime(latestAny) : '无'}）`,
+      undefined,
+      'BOLL 缓存恢复',
+    );
   } catch (e) {
     console.warn('Failed to restore BOLL cache from IndexedDB:', e);
   }
