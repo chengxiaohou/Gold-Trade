@@ -451,8 +451,10 @@ export function buildBollDataFromKlines(klines: BollKline[] | null | undefined, 
   const allCloses = klines.map(k => k.close);
   const ma = computeMAs(allCloses);
   const closes = allCloses.slice(-20);
-  const mid = closes.reduce((a, b) => a + b, 0) / 20;
-  const variance = closes.reduce((s, val) => s + Math.pow(val - mid, 2), 0) / 20;
+  const mid = closes.reduce((a, b) => a + b, 0) / closes.length;
+  // 样本标准差（除以 n-1）：与同花顺/通达信的 BOLL 口径一致。
+  // 用总体标准差（除以 n）会让上下轨相对同花顺各收窄约 0.026σ（20 根时约 2.6%）。
+  const variance = closes.reduce((s, val) => s + Math.pow(val - mid, 2), 0) / (closes.length - 1);
   const std = Math.sqrt(variance);
 
   let rangePriceHigh = -Infinity;

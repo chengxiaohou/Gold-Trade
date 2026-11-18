@@ -1359,7 +1359,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
         const m = sum / p;
         let dev = 0;
         for (let j = i - p + 1; j <= i; j++) { const d = closes[j] - m; dev += d * d; }
-        const sd = Math.sqrt(dev / p);
+        const sd = Math.sqrt(dev / (p - 1)); // 样本标准差，与 bollService/同花顺口径一致
         const t = klines[i].time;
         mid.push({ time: t, value: m });
         upper.push({ time: t, value: m + BOLL_MULT * sd });

@@ -63,10 +63,18 @@ function rtFromRealtime(q: RealTimeQuote): TodayBarInput {
 /** store 里 daily 的唯一写入形态：有有效实时行情时并入今日合成 bar 再重算三轨/均线/区间。
  *  所有写入（缓存批量落地、取数落地、实时行情刷新）都必须经过这里，
  *  否则同一时刻"列表读 store"与"浮窗自行合成"会算出不同数值（如日上 22.25 vs 22.50）。 */
+/** 用 K 线按"当前公式口径"重算三轨/均线/区间。
+ *  缓存里存的是拉取当时算好的 upper/mid/lower，公式口径变更（如标准差 n→n-1）后
+ *  旧数值不会自动变，这里统一重算，避免必须清缓存才生效。 */
+function recomputeBoll(data: BollData | null): BollData | null {
+  if (!data?.klines || data.klines.length === 0) return data;
+  return buildBollDataFromKlines(data.klines, data.fetchedAt ?? Date.now()) ?? data;
+}
+
 function buildLiveDaily(data: BollData | null, rt: RealTimeQuote | null): BollData | null {
   if (!data) return null;
   if (asOfDate) return data; // 历史模式不掺实时价
-  if (!rt || rt.price <= 0 || rt.open <= 0) return data;
+  if (!rt || rt.price <= 0 || rt.open <= 0) return recomputeBoll(data);
   const base = toClosedKlines(data.klines, getMarketStatus()) ?? [];
   const merged = mergeTodayBarToKlines(base, rtFromRealtime(rt), getMarketStatus());
   return buildBollDataFromKlines(merged, data.fetchedAt ?? Date.now()) ?? data;
@@ -273,8 +281,14 @@ export const priceBureau = {
     if (isEmpty(entry)) {
       store.delete(code);
     } else {
-      // 日线统一按"含今日实时价"形态落库，避免缓存里的仅收盘序列直接成为列表口径
-      store.set(code, { ...entry, daily: buildLiveDaily(entry.daily, entry.realtime) });
+      // 日线统一按"含今日实时价"形态落库，避免缓存里的仅收盘序列直接成为列表口径；
+      // 周/月没有实时合成，但同样按当前公式口径重算，保证口径变更后缓存立即生效
+      store.set(code, {
+        ...entry,
+        daily: buildLiveDaily(entry.daily, entry.realtime),
+        weekly: recomputeBoll(entry.weekly),
+        monthly: recomputeBoll(entry.monthly),
+      });
     }
     notify();
   },
@@ -295,8 +309,14 @@ export const priceBureau = {
       if (isEmpty(entry)) {
         store.delete(code);
       } else {
-        // 批量落地同样统一按"含今日实时价"形态写入日线（缓存本身只有收盘序列）
-        store.set(code, { ...entry, daily: buildLiveDaily(entry.daily, entry.realtime) });
+        // 批量落地同样统一按"含今日实时价"形态写入日线（缓存本身只有收盘序列），
+        // 周/月按当前公式口径重算
+        store.set(code, {
+          ...entry,
+          daily: buildLiveDaily(entry.daily, entry.realtime),
+          weekly: recomputeBoll(entry.weekly),
+          monthly: recomputeBoll(entry.monthly),
+        });
       }
     }
     notify();

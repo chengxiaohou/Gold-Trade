@@ -160,7 +160,15 @@ function mkStepKlines(
 ): BollKline[] {
   const arr: BollKline[] = [];
   for (let i = 0; i < n; i++) {
-    const close = i < n - highN ? lowClose : highClose;
+    let close: number;
+    if (i < n - highN) {
+      close = lowClose;
+    } else {
+      // 极值组做爬坡（末根 = highClose）：若整组取同一极值，20 根窗口下
+      // close 会恰好落在轨道上（临界值），标准差口径一变就会被判成中轨
+      const j = i - (n - highN);
+      close = highClose + (lowClose - highClose) * Math.max(0, highN - 1 - j) * 0.1;
+    }
     arr.push({ date: date(i), open: close, high: close, low: close, close, volume: 1_000_000 });
   }
   return arr;
@@ -262,7 +270,7 @@ describe('countBollBandStreak', () => {
     const last20closes = arr.slice(-20).map(k => k.close);
     const maLast = last20closes.reduce((a, b) => a + b, 0) / 20;
     const stdLast = Math.sqrt(
-      last20closes.reduce((s, c) => s + Math.pow(c - maLast, 2), 0) / 20,
+      last20closes.reduce((s, c) => s + Math.pow(c - maLast, 2), 0) / 19,
     );
     const upperToday = maLast + 2 * stdLast;
 
@@ -297,7 +305,7 @@ describe('countBollBandStreak', () => {
     const last20closes = arr.slice(-20).map(k => k.close);
     const maLast = last20closes.reduce((a, b) => a + b, 0) / 20;
     const stdLast = Math.sqrt(
-      last20closes.reduce((s, c) => s + Math.pow(c - maLast, 2), 0) / 20,
+      last20closes.reduce((s, c) => s + Math.pow(c - maLast, 2), 0) / 19,
     );
     const upperToday = maLast + 2 * stdLast;
 

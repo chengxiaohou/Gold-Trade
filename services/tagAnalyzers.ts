@@ -251,7 +251,7 @@ export function resolveTargetValue(klines: BollKline[], i: number, target: Signa
       if (mid === null) return null;
       let variance = 0;
       for (let j = i - 19; j <= i; j++) variance += Math.pow(klines[j].close - mid, 2);
-      const std = Math.sqrt(variance / 20);
+      const std = Math.sqrt(variance / 19); // 样本标准差，与 bollService/同花顺口径一致
       return target === 'bollUpper' ? mid + 2 * std : mid - 2 * std;
     }
   }
@@ -568,7 +568,7 @@ export function calcBollSeries(klines: BollKline[]): { mid: number | null; upper
     let sum = 0;
     for (let j = i - 19; j <= i; j++) sum += closes[j];
     const mid = sum / 20;
-    const variance = closes.slice(i - 19, i + 1).reduce((s, v) => s + Math.pow(v - mid, 2), 0) / 20;
+    const variance = closes.slice(i - 19, i + 1).reduce((s, v) => s + Math.pow(v - mid, 2), 0) / 19; // 样本标准差，与 bollService/同花顺口径一致
     const std = Math.sqrt(variance);
     res[i] = { mid, upper: mid + 2 * std, lower: mid - 2 * std };
   }
