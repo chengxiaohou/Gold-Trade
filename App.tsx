@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
-import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Plus, SquarePlus, Minus, X, Check, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Eye, EyeOff, Tags, FileText, Sheet, NotepadText } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Plus, SquarePlus, Minus, X, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Eye, EyeOff, Tags, FileText, Sheet, NotepadText } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
@@ -1310,9 +1310,12 @@ export default function App() {
     }
   }, [githubConfig, cloudDirtyByFile, currentPage, stockSettings, trades, appSettings, stocks, presetsFromStorage, goldFileFingerprint, stocksFileFingerprint, financialsFileFingerprint]);
 
+  // 两页共用的云端上传实际执行：由确认浮窗的"确定"触发（performStockCloudUpload 内部按当前页分流）
   const handleCloudUpload = async () => {
+    if (isSyncing) return;
     cloudConfirmPinnedRef.current = false;
     setCloudConfirm(null);
+    setCloudFileSizes(null);
     setIsSyncing(true);
     setUploadSuccess(false);
     const ok = await performStockCloudUpload();
@@ -1345,23 +1348,25 @@ export default function App() {
     };
   }, [trades, appSettings, stocks, stockSettings, presetsFromStorage]);
 
-  // 估算本次上传体积：按文件分别统计「本页（股票/分红）」的字节数，
-  // 供确认浮窗在各自的「待上传」标签左侧展示。
-  // 铁律：黄金文件绝不纳入本页体积——它从不会由本页上传。
-  const computeStockUploadSizes = useCallback((): Partial<Record<CloudFileName, number>> => {
+  // 估算本次上传体积：按「当前页归属文件」分别统计字节数，供确认浮窗在「待上传」标签左侧展示。
+  // 黄金页 → gold.json；股息（股票）页 → stocks.json + financials.json。
+  const computeUploadSizes = useCallback((): Partial<Record<CloudFileName, number>> => {
     const payloads = buildCloudFilePayloads();
+    const pageFiles: CloudFileName[] = currentPage === 'gold'
+      ? [CLOUD_GOLD_FILENAME]
+      : [CLOUD_STOCKS_FILENAME, CLOUD_FINANCIALS_FILENAME];
     const sizes: Partial<Record<CloudFileName, number>> = {};
-    for (const name of [CLOUD_STOCKS_FILENAME, CLOUD_FINANCIALS_FILENAME] as CloudFileName[]) {
+    for (const name of pageFiles) {
       if (cloudDirtyByFile[name]) sizes[name] = new Blob([payloads[name]]).size;
     }
     return sizes;
-  }, [buildCloudFilePayloads, cloudDirtyByFile]);
+  }, [buildCloudFilePayloads, cloudDirtyByFile, currentPage]);
 
   // 上传确认浮窗左右两侧各有一组隐藏下载按钮：
   //   左侧 → 美化后的 JSON（两空格缩进，便于人工阅读）；
   //   右侧 → 原始文件（与实际上传内容逐字节一致，紧凑 JSON、无换行）。
-  // 每次点击只下一个文件（浏览器会拦截一次点击触发的多文件下载）；黄金文件绝不导出（铁律）。
-  const downloadStockUploadFile = (name: CloudFileName, pretty: boolean) => {
+  // 每次点击只下一个文件（浏览器会拦截一次点击触发的多文件下载）；只导出当前页归属文件。
+  const downloadUploadFile = (name: CloudFileName, pretty: boolean) => {
     const payload = buildCloudFilePayloads()[name];
     const text = pretty ? JSON.stringify(JSON.parse(payload), null, 2) : payload;
     const blob = new Blob([text], { type: 'application/json' });
@@ -1375,14 +1380,19 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  // 股息页"上传到云端"：打开确认浮窗，展示各文件差异，确认后一键上传全部有差异文件
+  // 两页共用的"上传到云端"入口：打开确认浮窗，展示本页文件差异，确认后一键上传全部有差异文件
   const requestStockUpload = () => {
     if (isSyncing) return;
+    if (!githubConfig.token) {
+      cloudConfirmPinnedRef.current = false;
+      openSettings('cloud');
+      return;
+    }
     setCloudFileSizes(null);
     snapPopoverToAnchor(320, 460);
     setCloudConfirm('upload');
     // 体积统计需要完整序列化一次上传数据，放到空闲时算，优先保证弹窗即时出现
-    runWhenIdle(() => setCloudFileSizes(computeStockUploadSizes()));
+    runWhenIdle(() => setCloudFileSizes(computeUploadSizes()));
   };
 
   // ===== 确认浮窗的悬停触发（悬停意图 + 悬停宽限，见上方 HOVER_* 注释）=====
@@ -1392,20 +1402,15 @@ export default function App() {
     if (kind === 'download' && !githubConfig.gistId) return false;
     return true;
   };
-  // page: 股息页的"上传"要带差异列表与体积，走 requestStockUpload；黄金页/下载共用 requestCloudAction
-  const openConfirm = (kind: 'upload' | 'download', page: 'gold' | 'stocks') => {
-    if (page === 'stocks') {
-      if (kind === 'upload') { requestStockUpload(); return; }
-      snapPopoverToAnchor(200, 150);
-      requestCloudAction('download');
-      return;
-    }
-    requestCloudAction(kind);
+  // 两页共用："上传"走 requestStockUpload（带差异列表与体积）；"下载"走 requestCloudAction
+  const openConfirm = (kind: 'upload' | 'download') => {
+    if (kind === 'upload') { requestStockUpload(); return; }
+    snapPopoverToAnchor(200, 150);
+    requestCloudAction('download');
   };
   const hoverEnterConfirm = (
     e: React.MouseEvent<HTMLElement>,
     kind: 'upload' | 'download',
-    page: 'gold' | 'stocks',
   ) => {
     if (cloudConfirmPinnedRef.current) return; // 点击固定态下，悬停不再改弹窗
     if (!canHoverOpen(kind)) return;
@@ -1415,7 +1420,7 @@ export default function App() {
     hoverOpenTimerRef.current = window.setTimeout(() => {
       hoverOpenTimerRef.current = undefined;
       if (cloudConfirmPinnedRef.current) return;
-      openConfirm(kind, page);
+      openConfirm(kind);
     }, HOVER_OPEN_DELAY);
   };
   const hoverLeaveConfirm = (e: React.MouseEvent<HTMLElement>) => {
@@ -1435,26 +1440,6 @@ export default function App() {
   };
   // 卸载时清掉悬停定时器，避免对已卸载组件 setState
   useEffect(() => () => { cancelHoverOpen(); cancelHoverClose(); }, []);
-
-  // 股息页"上传到云端"实际执行：由确认浮窗的"确定"触发
-  const handleStockCloudUpload = async () => {
-    if (isSyncing) return;
-    cloudConfirmPinnedRef.current = false;
-    setCloudConfirm(null);
-    setCloudFileSizes(null);
-    setIsSyncing(true);
-    setUploadSuccess(false);
-    const ok = await performStockCloudUpload();
-    if (ok) {
-      setUploadSuccess(true);
-      setMemoBaseline(stockSettings?.memo || '');
-      setMemoUpdatedAtBaseline(stockSettings?.memoUpdatedAt ?? 0);
-      setTimeout(() => setUploadSuccess(false), 2000);
-    } else {
-      alert('云端上传失败，请检查网络或 Token 设置');
-    }
-    setIsSyncing(false);
-  };
 
   // 备忘录专用上传：与主上传按钮上传同一份数据，返回是否成功
   // 基线在 performStockCloudUpload 内部按实际写入文件更新，无需在此重置
@@ -1572,9 +1557,7 @@ export default function App() {
       } else if (e.key === 'Enter') {
         if (isSyncing || isDownloading) return; // 同步进行中不重复触发
         e.preventDefault();
-        const action = cloudConfirm === 'upload'
-          ? (currentPage === 'gold' ? handleCloudUpload : handleStockCloudUpload)
-          : handleCloudDownload;
+        const action = cloudConfirm === 'upload' ? handleCloudUpload : handleCloudDownload;
         action();
       }
     };
@@ -1990,52 +1973,131 @@ export default function App() {
     );
   };
 
+  // 云端上传/下载确认浮窗（黄金页与股息页完全共用同一套交互）：
+  // 跟随触发按钮定位、上传展示本页文件的差异与体积、标题两侧隐藏下载、Enter/ESC、点外部关闭。
+  const renderCloudConfirmPopover = () => cloudConfirm && (
+    <div
+      ref={stockActionPopRef}
+      className="fixed z-[100] pointer-events-none"
+      style={popoverLeft !== null
+        ? { left: popoverLeft, top: popoverTop, maxWidth: 'calc(100vw - 24px)' }
+        : { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', maxWidth: 'calc(100vw - 24px)' }}
+    >
+       <div
+          ref={cloudConfirmRef}
+          onMouseEnter={cancelHoverClose}
+          onMouseLeave={scheduleHoverClose}
+          className={`bg-app-card border border-app-border shadow-[0_8px_30px_rgba(0,0,0,0.5)] rounded-xl p-3 flex flex-col items-center text-center pointer-events-auto ${cloudConfirm === 'upload' ? 'w-[320px] max-w-full' : 'w-[200px] max-w-full'}`}>
+          {/* 标题行：警告图标 + 标题，同一行、同一字号 */}
+          <div className="relative w-full flex items-center justify-center gap-1.5 mb-2 whitespace-nowrap">
+            <AlertTriangle size={14} className="text-indigo-400 shrink-0" />
+            <span className="text-xs font-bold text-app-subtext">
+              {cloudConfirm === 'upload' ? '确认上传' : '确认下载'}
+            </span>
+            {/* 左侧隐藏下载：美化后的本页云端文件（便于人工阅读） */}
+            {cloudConfirm === 'upload' && (
+              <div className="absolute left-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                {cloudFileRows.map((row) => (
+                  <button
+                    key={row.file}
+                    type="button"
+                    onClick={() => downloadUploadFile(row.file, true)}
+                    className="text-[10px] font-mono text-white/[0.01] hover:text-app-text transition-colors cursor-pointer select-none"
+                    title={`下载美化后的 ${row.file}`}
+                  >
+                    {row.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* 右侧隐藏下载：原始本页云端文件（与上传内容逐字节一致） */}
+            {cloudConfirm === 'upload' && (
+              <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                {cloudFileRows.map((row) => (
+                  <button
+                    key={row.file}
+                    type="button"
+                    onClick={() => downloadUploadFile(row.file, false)}
+                    className="text-[10px] font-mono text-white/[0.01] hover:text-app-text transition-colors cursor-pointer select-none"
+                    title={`下载原始 ${row.file}`}
+                  >
+                    {row.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {cloudConfirm === 'download' && (
+            <p className="text-[10px] text-app-subtext mb-2 leading-tight whitespace-nowrap">将覆盖本地交易记录</p>
+          )}
+          {/* 上传前按文件展示与上次同步基线的差异；只展示有变更（含首次上传）的文件，无变更的文件不展示 */}
+          {cloudConfirm === 'upload' && (
+            <div className="w-full max-h-[240px] overflow-y-auto custom-scrollbar text-left mb-2 border border-app-border rounded-lg bg-app-input divide-y divide-app-border">
+              {cloudFileRows.filter((row) => row.dirty).map((row) => (
+                <div key={row.file} className="px-2 py-2">
+                  {/* 文件标题行：中文名 + 体积 + 状态（体积贴着状态左侧） */}
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className="w-[7px] h-[7px] rounded-full shrink-0 bg-indigo-400"></span>
+                    <span className="text-[11px] font-bold text-app-text">{row.label}</span>
+                    <span className="ml-auto flex items-center gap-1.5 whitespace-nowrap">
+                      <span className="text-[10px] text-app-subtext">
+                        {cloudFileSizes?.[row.file] !== undefined
+                          ? formatByteSize(cloudFileSizes[row.file]!)
+                          : '计算中…'}
+                      </span>
+                      <span className="text-[10px] text-indigo-400">
+                        {row.firstTime ? '首次上传' : '待上传'}
+                      </span>
+                    </span>
+                  </div>
+                  {/* 差异明细 */}
+                  {row.firstTime ? (
+                    <div className="text-[10px] text-app-subtext leading-relaxed pl-2.5">首次上传，暂无可对比的历史备份</div>
+                  ) : row.items && row.items.length > 0 ? (
+                    row.items.map((d, i) => (
+                      <div key={i} className="flex gap-2 items-start pl-2.5 py-1">
+                        <span className={`mt-[5px] w-[5px] h-[5px] rounded-full shrink-0 ${d.kind === 'add' ? 'bg-brand-green' : d.kind === 'remove' ? 'bg-brand-red' : 'bg-indigo-400'}`}></span>
+                        {/* 二级文字：新增/删除/更新统一字号字重与颜色（仅小圆点保留语义色） */}
+                        <div className="text-[10px] leading-relaxed break-words min-w-0">
+                          <div className="text-app-text font-semibold [overflow-wrap:anywhere]">{d.text.split('\n')[0]}</div>
+                          {d.text.split('\n').slice(1).map((line, j) => (
+                            <div key={j} className="text-app-rowtext whitespace-pre-wrap [overflow-wrap:anywhere]">{line.replace(/^ {2}/, '')}</div>
+                          ))}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-[10px] text-app-subtext leading-relaxed pl-2.5">内容有更新</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-1.5 w-full">
+             <button
+               onClick={closeCloudConfirm}
+               className="py-1.5 rounded-lg border border-app-border text-[11px] text-app-subtext hover:bg-app-input transition-colors font-medium"
+             >
+               取消
+             </button>
+             <button
+               onClick={cloudConfirm === 'upload' ? handleCloudUpload : handleCloudDownload}
+               className="py-1.5 rounded-lg text-[11px] text-white font-bold transition-opacity hover:opacity-90 bg-indigo-600"
+             >
+               确定
+             </button>
+          </div>
+          <div
+            className="absolute -top-1.5 w-3 h-3 bg-app-card border-l border-t border-app-border rotate-45"
+            style={arrowLeft !== null ? { left: arrowLeft - 6 } : { left: '50%', transform: 'translateX(-50%) rotate(45deg)' }}
+          ></div>
+       </div>
+    </div>
+  );
+
   const renderActionButtons = () => (
     <div className="relative">
-      {/* Cloud Confirmation Popover */}
-      {cloudConfirm && (
-        <div 
-          className="absolute top-full mt-3 z-[100] animate-in fade-in zoom-in slide-in-from-top-2 duration-200 pointer-events-none"
-          style={{ 
-            left: '50%',
-            transform: 'translateX(-50%)'
-          }}
-        >
-           <div
-              ref={cloudConfirmRef}
-              onMouseEnter={cancelHoverClose}
-              onMouseLeave={scheduleHoverClose}
-              className="bg-app-card border border-app-border shadow-[0_8px_30px_rgba(0,0,0,0.5)] rounded-xl p-3 flex flex-col items-center text-center w-max min-w-[160px] max-w-[200px] pointer-events-auto">
-              {/* 标题行：警告图标与标题同处一行、同一字号 */}
-              <div className="flex items-center justify-center gap-1.5 mb-0.5 whitespace-nowrap">
-                <AlertTriangle size={14} className="text-indigo-400 shrink-0" />
-                <span className="text-xs font-bold text-app-subtext">
-                  {cloudConfirm === 'upload' ? '确认上传' : '确认下载'}
-                </span>
-              </div>
-              {cloudConfirm === 'download' && (
-                <p className="text-[10px] text-app-subtext mb-3 leading-tight">将覆盖本地交易记录</p>
-              )}
-              <div className={`grid grid-cols-2 gap-1.5 w-full${cloudConfirm === 'upload' ? ' mt-3' : ''}`}>
-                 <button 
-                   onClick={closeCloudConfirm}
-                   className="py-1 rounded-lg border border-app-border text-[10px] text-app-subtext hover:bg-app-input transition-colors font-medium"
-                 >
-                   取消
-                 </button>
-                 <button 
-                   onClick={cloudConfirm === 'upload' ? handleCloudUpload : handleCloudDownload}
-                   className="py-1 rounded-lg text-[10px] text-white font-bold transition-opacity hover:opacity-90 bg-indigo-600"
-                 >
-                   确定
-                 </button>
-              </div>
-              <div 
-                className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-app-card border-l border-t border-app-border rotate-45"
-              ></div>
-           </div>
-        </div>
-      )}
+      {renderCloudConfirmPopover()}
 
       <div className="flex gap-1.5 lg:gap-2">
           <button 
@@ -2047,8 +2109,8 @@ export default function App() {
           </button>
           
           <button 
-              onClick={() => { cloudConfirmPinnedRef.current = true; if (cloudConfirm !== 'download') requestCloudAction('download'); }}
-              onMouseEnter={(e) => hoverEnterConfirm(e, 'download', 'gold')}
+              onClick={(e) => { cloudAnchorRef.current = e.currentTarget; cloudConfirmPinnedRef.current = true; if (cloudConfirm !== 'download') { snapPopoverToAnchor(200, 150); requestCloudAction('download'); } }}
+              onMouseEnter={(e) => hoverEnterConfirm(e, 'download')}
               onMouseLeave={hoverLeaveConfirm}
               disabled={isDownloading || downloadSuccess}
               className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-indigo-400 hover:text-indigo-400 hover:border-indigo-500'} disabled:opacity-30`}
@@ -2057,28 +2119,30 @@ export default function App() {
               {isDownloading ? (
                 <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
               ) : downloadSuccess ? (
-                <Check size={16} className="animate-in zoom-in duration-300" />
+                <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
               ) : (
                 <CloudDownload size={16} />
               )}
           </button>
 
-          <button 
-              onClick={() => { cloudConfirmPinnedRef.current = true; if (cloudConfirm !== 'upload') requestCloudAction('upload'); }}
-              onMouseEnter={(e) => hoverEnterConfirm(e, 'upload', 'gold')}
-              onMouseLeave={hoverLeaveConfirm}
-              disabled={isSyncing || uploadSuccess}
-              className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-brand-yellow hover:bg-brand-yellow/10 hover:border-brand-yellow'} disabled:opacity-30`}
-              aria-label="上传到云端"
-            >
-               {isSyncing ? (
-                 <div className="w-3.5 h-3.5 border-2 border-brand-yellow border-t-transparent rounded-full animate-spin"></div>
-               ) : uploadSuccess ? (
-                 <Check size={16} className="animate-in zoom-in duration-300" />
-               ) : (
-                 <CloudUpload size={16} />
-               )}
-          </button>
+          {goldFileDirty && (
+            <button 
+                onClick={(e) => { cloudAnchorRef.current = e.currentTarget; cloudConfirmPinnedRef.current = true; if (cloudConfirm !== 'upload') requestStockUpload(); }}
+                onMouseEnter={(e) => hoverEnterConfirm(e, 'upload')}
+                onMouseLeave={hoverLeaveConfirm}
+                disabled={isSyncing || uploadSuccess}
+                className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-app-subtext hover:text-app-text hover:border-app-border'} disabled:opacity-30`}
+                aria-label="上传到云端"
+              >
+                 {isSyncing ? (
+                   <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                 ) : uploadSuccess ? (
+                   <CheckCircle2 size={16} className="animate-in zoom-in duration-300" />
+                 ) : (
+                   <CloudUpload size={16} />
+                 )}
+            </button>
+          )}
 
           <button 
               onClick={handleExportClick}
@@ -2113,7 +2177,7 @@ export default function App() {
     stockCloudDirty ? (
       <button 
         onClick={(e) => { cloudAnchorRef.current = e.currentTarget; cloudConfirmPinnedRef.current = true; if (cloudConfirm !== 'upload') requestStockUpload(); }}
-        onMouseEnter={(e) => hoverEnterConfirm(e, 'upload', 'stocks')}
+        onMouseEnter={(e) => hoverEnterConfirm(e, 'upload')}
         onMouseLeave={hoverLeaveConfirm}
         disabled={isSyncing || uploadSuccess}
         className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${uploadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-app-subtext hover:text-app-text hover:border-app-border'} disabled:opacity-30`}
@@ -2143,135 +2207,7 @@ export default function App() {
 
   const renderStockActionButtons = () => (
     <div ref={stockActionWrapperRef} className="relative">
-      {cloudConfirm && (
-        <div
-          ref={stockActionPopRef}
-          className="fixed z-[100] pointer-events-none"
-          style={popoverLeft !== null
-            ? { left: popoverLeft, top: popoverTop, maxWidth: 'calc(100vw - 24px)' }
-            : { left: '50%', top: '50%', transform: 'translate(-50%, -50%)', maxWidth: 'calc(100vw - 24px)' }}
-        >
-           <div
-              ref={cloudConfirmRef}
-              onMouseEnter={cancelHoverClose}
-              onMouseLeave={scheduleHoverClose}
-              className={`bg-app-card border border-app-border shadow-[0_8px_30px_rgba(0,0,0,0.5)] rounded-xl p-3 flex flex-col items-center text-center pointer-events-auto ${cloudConfirm === 'upload' ? 'w-[320px] max-w-full' : 'w-[200px] max-w-full'}`}>
-              {/* 标题行：警告图标 + 标题，同一行、同一字号 */}
-              <div className="relative w-full flex items-center justify-center gap-1.5 mb-2 whitespace-nowrap">
-                <AlertTriangle size={14} className="text-indigo-400 shrink-0" />
-                <span className="text-xs font-bold text-app-subtext">
-                  {cloudConfirm === 'upload' ? '确认上传' : '确认下载'}
-                </span>
-                {/* 左侧隐藏下载：美化后的 stocks.json / financials.json（便于人工阅读） */}
-                {cloudConfirm === 'upload' && (
-                  <div className="absolute left-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => downloadStockUploadFile(CLOUD_STOCKS_FILENAME, true)}
-                      className="text-[10px] font-mono text-white/[0.01] hover:text-app-text transition-colors cursor-pointer select-none"
-                      title="下载美化后的 stocks.json"
-                    >
-                      股票
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => downloadStockUploadFile(CLOUD_FINANCIALS_FILENAME, true)}
-                      className="text-[10px] font-mono text-white/[0.01] hover:text-app-text transition-colors cursor-pointer select-none"
-                      title="下载美化后的 financials.json"
-                    >
-                      分红
-                    </button>
-                  </div>
-                )}
-                {/* 右侧隐藏下载：原始 stocks.json / financials.json（与上传内容逐字节一致） */}
-                {cloudConfirm === 'upload' && (
-                  <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => downloadStockUploadFile(CLOUD_STOCKS_FILENAME, false)}
-                      className="text-[10px] font-mono text-white/[0.01] hover:text-app-text transition-colors cursor-pointer select-none"
-                      title="下载原始 stocks.json"
-                    >
-                      股票
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => downloadStockUploadFile(CLOUD_FINANCIALS_FILENAME, false)}
-                      className="text-[10px] font-mono text-white/[0.01] hover:text-app-text transition-colors cursor-pointer select-none"
-                      title="下载原始 financials.json"
-                    >
-                      分红
-                    </button>
-                  </div>
-                )}
-              </div>
-              {cloudConfirm === 'download' && (
-                <p className="text-[10px] text-app-subtext mb-2 leading-tight whitespace-nowrap">将覆盖本地交易记录</p>
-              )}
-              {/* 上传前按文件展示与上次同步基线的差异；只展示有变更（含首次上传）的文件，无变更的文件不展示 */}
-              {cloudConfirm === 'upload' && (
-                <div className="w-full max-h-[240px] overflow-y-auto custom-scrollbar text-left mb-2 border border-app-border rounded-lg bg-app-input divide-y divide-app-border">
-                  {cloudFileRows.filter((row) => row.dirty).map((row) => (
-                    <div key={row.file} className="px-2 py-2">
-                      {/* 文件标题行：中文名 + 体积 + 状态（体积贴着状态左侧） */}
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <span className="w-[7px] h-[7px] rounded-full shrink-0 bg-indigo-400"></span>
-                        <span className="text-[11px] font-bold text-app-text">{row.label}</span>
-                        <span className="ml-auto flex items-center gap-1.5 whitespace-nowrap">
-                          <span className="text-[10px] text-app-subtext">
-                            {cloudFileSizes?.[row.file] !== undefined
-                              ? formatByteSize(cloudFileSizes[row.file]!)
-                              : '计算中…'}
-                          </span>
-                          <span className="text-[10px] text-indigo-400">
-                            {row.firstTime ? '首次上传' : '待上传'}
-                          </span>
-                        </span>
-                      </div>
-                      {/* 差异明细 */}
-                      {row.firstTime ? (
-                        <div className="text-[10px] text-app-subtext leading-relaxed pl-2.5">首次上传，暂无可对比的历史备份</div>
-                      ) : row.items && row.items.length > 0 ? (
-                        row.items.map((d, i) => (
-                          <div key={i} className="flex gap-2 items-start pl-2.5 py-1">
-                            <span className={`mt-[5px] w-[5px] h-[5px] rounded-full shrink-0 ${d.kind === 'add' ? 'bg-brand-green' : d.kind === 'remove' ? 'bg-brand-red' : 'bg-indigo-400'}`}></span>
-                            {/* 二级文字：新增/删除/更新统一字号字重与颜色（仅小圆点保留语义色） */}
-                            <div className="text-[10px] leading-relaxed break-words min-w-0">
-                              <div className="text-app-text font-semibold [overflow-wrap:anywhere]">{d.text.split('\n')[0]}</div>
-                              {d.text.split('\n').slice(1).map((line, j) => (
-                                <div key={j} className="text-app-rowtext whitespace-pre-wrap [overflow-wrap:anywhere]">{line.replace(/^ {2}/, '')}</div>
-                              ))}
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="text-[10px] text-app-subtext leading-relaxed pl-2.5">内容有更新</div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="grid grid-cols-2 gap-1.5 w-full">
-                 <button
-                   onClick={closeCloudConfirm}
-                   className="py-1.5 rounded-lg border border-app-border text-[11px] text-app-subtext hover:bg-app-input transition-colors font-medium"
-                 >
-                   取消
-                 </button>
-                 <button
-                   onClick={cloudConfirm === 'upload' ? handleStockCloudUpload : handleCloudDownload}
-                   className="py-1.5 rounded-lg text-[11px] text-white font-bold transition-opacity hover:opacity-90 bg-indigo-600"
-                 >
-                   确定
-                 </button>
-              </div>
-              <div
-                className="absolute -top-1.5 w-3 h-3 bg-app-card border-l border-t border-app-border rotate-45"
-                style={arrowLeft !== null ? { left: arrowLeft - 6 } : { left: '50%', transform: 'translateX(-50%) rotate(45deg)' }}
-              ></div>
-           </div>
-        </div>
-      )}
+      {renderCloudConfirmPopover()}
 
       <div className="flex justify-end gap-0.5 sm:gap-1.5 lg:gap-2 shrink-0">
           <button 
@@ -2283,7 +2219,7 @@ export default function App() {
           </button>
           <button 
               onClick={(e) => { cloudAnchorRef.current = e.currentTarget; cloudConfirmPinnedRef.current = true; if (cloudConfirm !== 'download') { snapPopoverToAnchor(200, 150); requestCloudAction('download'); } }}
-              onMouseEnter={(e) => hoverEnterConfirm(e, 'download', 'stocks')}
+              onMouseEnter={(e) => hoverEnterConfirm(e, 'download')}
               onMouseLeave={hoverLeaveConfirm}
               disabled={isDownloading || downloadSuccess}
               className={`flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 ${downloadSuccess ? 'text-brand-green border-brand-green bg-brand-green/10' : 'text-app-subtext hover:text-app-text hover:border-app-border'} disabled:opacity-30`}
