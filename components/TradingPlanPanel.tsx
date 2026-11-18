@@ -263,6 +263,7 @@ export function TradingPlanPanel({
               onChange={onMarketPriceChange} 
               placeholder="当前价格" 
               step={priceStep}
+              snapStep
               touchMode={touchMode}
             />
             <InputGroup 
@@ -271,6 +272,7 @@ export function TradingPlanPanel({
               onChange={(v) => handleParamChange('targetPrice', v)} 
               placeholder="400" 
               step={priceStep}
+              snapStep
               min={1}
               max={marketPrice ? parseFloat(marketPrice) - 0.01 : 1000}
               touchMode={touchMode}

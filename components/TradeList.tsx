@@ -212,6 +212,7 @@ const EditBubble: React.FC<EditBubbleProps> = ({
                     if (!isNaN(v)) onUpdate(trade.id, { price: v });
                   }} 
                   step={settings.priceStep}
+                  snapStep
                   touchMode={settings.touchMode} 
                 />
                 <InputGroup 

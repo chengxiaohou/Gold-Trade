@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 import { useStepWheel } from '../hooks/useStepWheel';
+import { snapToStep } from '../utils/stepSnap';
 
 interface InputGroupProps {
   label?: React.ReactNode;
@@ -22,6 +23,7 @@ interface InputGroupProps {
   onTypeSwitch?: (key: string) => boolean; // 新增：处理特殊按键（如[、]），返回 true 表示已处理，阻止默认输入
   onTab?: () => boolean; // 新增：处理 Tab 键（用于在两个输入框间循环切换），返回 true 表示已处理
   precision?: number; // 新增：数值保留小数位数（默认 2，ETF 价格传 3）
+  snapStep?: boolean; // 步长调节时对齐到整步长值（金价类输入框使用）
 }
 
 export const InputGroup: React.FC<InputGroupProps> = ({
@@ -44,13 +46,17 @@ export const InputGroup: React.FC<InputGroupProps> = ({
   onTypeSwitch,
   onTab,
   precision = 2,
+  snapStep = false,
 }) => {
   const internalInputRef = useRef<HTMLInputElement>(null);
   const inputRef = externalInputRef || internalInputRef;
   // 用 ref 存储最新的 value，供事件监听器使用，避免 stale closure
   const valueRef = useRef<number>(parseFloat(value.toString()) || 0);
+  // 步长对齐基准：保存上一次已对齐的值
+  const snapBaseRef = useRef<number>(parseFloat(value.toString()) || 0);
   useEffect(() => {
     valueRef.current = parseFloat(value.toString()) || 0;
+    snapBaseRef.current = parseFloat(value.toString()) || 0;
   }, [value]);
 
   // 检测是否为 iOS 设备
@@ -69,7 +75,18 @@ export const InputGroup: React.FC<InputGroupProps> = ({
     touch: touchMode,
     disabled: () => isIOS && !touchMode,
     onChange: (nextNum) => {
-      onChange(Number.isInteger(nextNum) ? nextNum.toString() : nextNum.toFixed(precision));
+      let result = nextNum;
+      if (snapStep && step > 0) {
+        const base = snapBaseRef.current;
+        const direction: 1 | -1 = nextNum >= base ? 1 : -1;
+        const steps = Math.max(1, Math.round(Math.abs(nextNum - base) / step));
+        result = snapToStep(base, direction, steps, step);
+        if (min !== undefined) result = Math.max(min, result);
+        if (max !== undefined) result = Math.min(max, result);
+        snapBaseRef.current = result;
+        valueRef.current = result;
+      }
+      onChange(Number.isInteger(result) ? result.toString() : result.toFixed(precision));
     },
   });
 

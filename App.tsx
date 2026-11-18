@@ -1,12 +1,13 @@
 
 import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
-import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronUp, ChevronDown, Plus, SquarePlus, Minus, X, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Eye, EyeOff, Tags, FileText, Sheet, NotepadText } from 'lucide-react';
+import { RefreshCcw, BrainCircuit, Wallet, History, TrendingUp, TrendingDown, CheckCircle2, Download, Upload, FileJson, CloudUpload, CloudDownload, Settings, ArrowRight, ChevronDown, Plus, SquarePlus, Minus, X, AlertTriangle, Zap, Activity, BarChart3, Receipt, Percent, LayoutGrid, RefreshCw, Eye, EyeOff, Tags, FileText, Sheet, NotepadText } from 'lucide-react';
 import { InputGroup } from './components/InputGroup';
 import { CostChart } from './components/CostChart';
 import { TradeList } from './components/TradeList';
 import { TradingPlanPanel } from './components/TradingPlanPanel';
 import { CloudSettingsModal } from './components/CloudSettingsModal';
 import { FxConverterCard } from './components/FxConverterCard';
+import { PriceQuoteBlock } from './components/PriceQuoteBlock';
 import { StockDividendPage } from './components/StockDividendPage';
 import { PRIMARY_BTN_CLS } from './components/uiStyles';
 import { analyzeTrade } from './services/geminiService';
@@ -831,7 +832,6 @@ export default function App() {
   const [activeSimPanel, setActiveSimPanel] = useState<'manual' | 'plan' | 'none'>('manual');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const marketPriceInputRef = useRef<HTMLInputElement>(null);
   const priceInputRef = useRef<HTMLInputElement>(null);
   const gramsInputRef = useRef<HTMLInputElement>(null);
 
@@ -849,6 +849,7 @@ export default function App() {
   useEffect(() => {
     marketPriceValueRef.current = marketPrice;
   }, [marketPrice]);
+
 
   // --- Effects: Auto-save locally ---
   
@@ -1104,13 +1105,6 @@ export default function App() {
     }
   }, [trades]);
 
-  const updateMarketPrice = (delta: number) => {
-    const currentVal = parseFloat(marketPrice) || 0;
-    const nextVal = Math.max(0, currentVal + delta);
-    const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(2);
-    handleMarketPriceChange(nextStr);
-  };
-
   // 拉取最新伦敦金价（美元/盎司），按现有换算规则转成人民币/克并填入参考市价
   const refreshLondonGoldPrice = async () => {
     if (goldPriceLoading) return;
@@ -1134,73 +1128,6 @@ export default function App() {
   const changeOrderType = (type: OrderType) => {
     setPreviewType(type);
   };
-
-  // Wheel listener for Market Price
-  useEffect(() => {
-    const el = marketPriceInputRef.current;
-    if (!el) return;
-
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const direction = e.deltaY > 0 ? -1 : 1;
-      updateMarketPrice(direction * appSettings.priceStep);
-    };
-
-    el.addEventListener('wheel', handleWheel, { passive: false });
-    return () => el.removeEventListener('wheel', handleWheel);
-  }, [marketPrice, appSettings.priceStep]);
-
-  // Touch listener for Market Price (Slide to adjust)
-  useEffect(() => {
-    if (!appSettings.touchMode || !marketPriceInputRef.current) return;
-    
-    const el = marketPriceInputRef.current;
-    let lastY = 0;
-    const threshold = 15;
-    let accumulator = 0;
-
-    const handleTouchStart = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      lastY = e.touches[0].clientY;
-      accumulator = 0;
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      
-      if (e.cancelable) e.preventDefault();
-      
-      const currentY = e.touches[0].clientY;
-      const deltaY = lastY - currentY; 
-      
-      accumulator += deltaY;
-      
-      const steps = Math.floor(Math.abs(accumulator) / threshold);
-      
-      if (steps > 0) {
-         const direction = accumulator > 0 ? 1 : -1;
-         
-         const currentVal = parseFloat(marketPriceValueRef.current) || 0;
-         const changeAmount = direction * appSettings.priceStep * steps;
-         const nextVal = Math.max(0, currentVal + changeAmount);
-         const nextStr = Number.isInteger(nextVal) ? nextVal.toString() : nextVal.toFixed(2);
-         
-         handleMarketPriceChangeRef.current(nextStr);
-         
-         accumulator -= (direction * steps * threshold);
-      }
-      
-      lastY = currentY;
-    };
-
-    el.addEventListener('touchstart', handleTouchStart, { passive: false });
-    el.addEventListener('touchmove', handleTouchMove, { passive: false });
-    
-    return () => {
-      el.removeEventListener('touchstart', handleTouchStart);
-      el.removeEventListener('touchmove', handleTouchMove);
-    };
-  }, [appSettings.touchMode, appSettings.priceStep]);
 
   // --- Cloud & Settings Handlers ---
   const handleSaveSettings = (newGithubConfig: GithubConfig, newAppSettings: AppSettings, newStockSettings?: StockSettings) => {
@@ -2459,31 +2386,26 @@ export default function App() {
                           </div>
                       </div>
                       <div className="bg-app-bg p-3 rounded-lg border border-app-border relative group hover:border-brand-yellow/50 focus-within:border-brand-yellow transition-colors">
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-xs text-app-subtext">参考市价 (元/克)</span>
-                            <button
-                              onClick={refreshLondonGoldPrice}
-                              disabled={goldPriceLoading}
-                              title="拉取最新伦敦金价，换算为人民币后填入"
-                              className="text-app-subtext hover:text-brand-yellow transition-colors disabled:opacity-60 cursor-pointer select-none p-0.5"
-                            >
-                              <RefreshCw size={14} className={goldPriceLoading ? 'animate-spin' : ''} />
-                            </button>
-                          </div>
-                          <div className="flex items-center">
-                              <input 
-                                  ref={marketPriceInputRef} 
-                                  type="number" 
-                                  value={marketPrice} 
-                                  onChange={(e) => handleMarketPriceChange(e.target.value)} 
-                                  placeholder="0.00" 
-                                  className={`no-spinners text-xl font-bold font-mono bg-transparent border-none p-0 w-full outline-none ${appSettings.touchMode ? 'cursor-ns-resize' : ''} text-app-text`} 
-                              />
-                              <div className="flex flex-col gap-0.5 ml-2">
-                                  <button onClick={() => updateMarketPrice(appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronUp size={10} strokeWidth={3} /></button>
-                                  <button onClick={() => updateMarketPrice(-appSettings.priceStep)} className="bg-app-text/5 hover:bg-brand-yellow/20 text-app-subtext hover:text-brand-yellow rounded-sm p-0.5"><ChevronDown size={10} strokeWidth={3} /></button>
-                              </div>
-                          </div>
+                          <PriceQuoteBlock
+                            bordered={false}
+                            marketPrice={marketPrice}
+                            onMarketPriceChange={handleMarketPriceChange}
+                            effectiveFxRate={effectiveFxRate}
+                            ozPerGram={OZ_PER_GRAM}
+                            touchMode={appSettings.touchMode}
+                            rmbStep={appSettings.priceStep}
+                            usdStep={50}
+                            headerAction={
+                              <button
+                                onClick={refreshLondonGoldPrice}
+                                disabled={goldPriceLoading}
+                                title="拉取最新伦敦金价，同时填入人民币与美元价"
+                                className="text-app-subtext hover:text-brand-yellow transition-colors disabled:opacity-60 cursor-pointer select-none p-0.5"
+                              >
+                                <RefreshCw size={14} className={goldPriceLoading ? 'animate-spin' : ''} />
+                              </button>
+                            }
+                          />
                           {goldPriceError && <div className="text-[11px] text-orange-400 mt-1">{goldPriceError}</div>}
                       </div>
                   </div>
@@ -2658,6 +2580,7 @@ export default function App() {
                           onChange={(v) => handleInputChange('price', v)} 
                           placeholder="0.00" 
                           step={appSettings.priceStep}
+                          snapStep
                           touchMode={appSettings.touchMode} 
                           onEnter={handlePriceEnter}
                           inputRef={priceInputRef}
