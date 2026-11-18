@@ -31,6 +31,14 @@ export interface LogBatchContext {
 
 type RequestLogListener = (logs: RequestLogEntry[], stats: RequestLogStats) => void;
 
+// 供 useSyncExternalStore 消费的不可变快照：只有发生变更时才整体替换引用
+export interface RequestLogSnapshot {
+  logs: RequestLogEntry[];
+  stats: RequestLogStats;
+}
+
+const EMPTY_STATS: RequestLogStats = { total: 0, success: 0, failed: 0, cached: 0, pending: 0 };
+
 const STORAGE_KEY = 'gold_request_logs';
 const SESSION_STORAGE_KEY = 'gold_request_logs_session';
 const MAX_LOGS = 500;
@@ -38,6 +46,8 @@ const MAX_LOGS = 500;
 class RequestLogService {
   private logs: RequestLogEntry[] = [];
   private listeners: Set<RequestLogListener> = new Set();
+  // 当前快照：每次变更重建一次，未变更时引用保持不变（useSyncExternalStore 要求）
+  private snapshot: RequestLogSnapshot = { logs: [], stats: EMPTY_STATS };
   private pendingRequests: Map<string, number> = new Map(); // id -> startTime
   private batchReason: string | null = null; // 当前批量请求的触发原因
   private batchStartedAt: number | null = null; // 当前批次的触发时间
@@ -131,8 +141,14 @@ class RequestLogService {
 
   // 通知所有监听器
   private notifyListeners(): void {
-    const stats = this.getStats();
-    this.listeners.forEach(listener => listener([...this.logs], stats));
+    this.snapshot = { logs: [...this.logs], stats: this.getStats() };
+    const current = this.snapshot;
+    this.listeners.forEach(listener => listener(current.logs, current.stats));
+  }
+
+  // 当前快照（useSyncExternalStore 的 getSnapshot）
+  getSnapshot(): RequestLogSnapshot {
+    return this.snapshot;
   }
 
   // 开始请求

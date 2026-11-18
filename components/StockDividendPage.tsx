@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen } from 'lucide-react';
 import { LineChart, ComposedChart, Line, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
@@ -7,7 +7,7 @@ import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition, bollBa
 import type { BollData, BollPeriod, BollAdjust, BollKline, BollBandInfo, BollStreakExplain } from '../services/bollService';
 import { isStockPriceFresh, isTradingHours, getDynamicCacheTTL, formatDuration, formatTimePart, formatCacheTime, setBollFullFetchTime, getBollFullFetchTime, getCacheExpiryPoint } from '../services/cacheService';
 import { priceBureau } from '../services/priceBureau';
-import { requestLogService, RequestLogEntry, RequestLogStats, type LogBatchContext } from '../services/requestLogService';
+import { requestLogService, RequestLogEntry, type LogBatchContext } from '../services/requestLogService';
 import type { TencentQuote } from '../services/tencentQuote';
 import { fetchYearlyDividends, fetchParentNetProfitBatch, fetchTotalSharesByPeriod, DividendRecord, type YearlyDividends } from '../services/dividendService';
 import { getNickname } from '../services/nicknameService';
@@ -2452,7 +2452,10 @@ const sortStocksByTag = (list: StockEntry[]): StockEntry[] =>
     return (a.tag || '').trim().localeCompare((b.tag || '').trim());
   });
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, bollRequestInterval = 250, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, stockTotalCapital = 0, onStockTotalCapitalChange }) => {
+// 请求日志快照读取器（模块级常量，保证引用稳定，供 useSyncExternalStore 使用）
+const getRequestLogSnapshot = () => requestLogService.getSnapshot();
+
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, bollRequestInterval = 1000, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, stockTotalCapital = 0, onStockTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
   useEffect(() => {
     const id = 'profit-month-scroller-style';
@@ -4152,9 +4155,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return displayStocks;
   }, [displayStocks, sortMode, stockBollMap, bollSortReverse, changePctSortReverse, divRateSortMode, divRatePeriod, dailyChartRange, tradePctSortState, positionAmountSortReverse]);
 
-  // 请求日志状态
-  const [requestLogs, setRequestLogs] = useState<RequestLogEntry[]>([]);
-  const [requestStats, setRequestStats] = useState<RequestLogStats>({ total: 0, success: 0, failed: 0, cached: 0, pending: 0 });
+  // 请求日志：直接订阅服务快照（useSyncExternalStore）。
+  // 不用「订阅回调里 setState」的双份状态：那样一旦订阅与组件实例错位，
+  // 面板就会停止更新且点重置也没反应，只能关掉面板再打开（重新渲染）才恢复。
+  const subscribeRequestLogs = useCallback(
+    (onStoreChange: () => void) => requestLogService.subscribe(onStoreChange),
+    []
+  );
+  const requestLogSnapshot = useSyncExternalStore(subscribeRequestLogs, getRequestLogSnapshot);
+  const requestLogs = requestLogSnapshot.logs;
+  const requestStats = requestLogSnapshot.stats;
   // 页面底部轻提示（自动消失）
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
@@ -4461,15 +4471,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       return next;
     });
   };
-
-  // 订阅请求日志更新
-  useEffect(() => {
-    const unsubscribe = requestLogService.subscribe((logs, stats) => {
-      setRequestLogs(logs);
-      setRequestStats(stats);
-    });
-    return unsubscribe;
-  }, []);
 
   // 请求版本号：每次切换数据源递增，用于取消旧请求
   const fetchVersionRef = useRef(0);
@@ -9240,10 +9241,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   const failed = group.logs.filter(l => l.status === 'failed').length;
                   const cached = group.logs.filter(l => l.status === 'cached').length;
                   return (
-                    <div key={group.reason} className="bg-app-input/50 rounded overflow-hidden">
-                      <button
+                    <div key={group.batchKey} className="bg-app-input/50 rounded overflow-hidden">
+                      <div
                         onClick={() => toggleLogReason(group.batchKey)}
-                        className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-app-input transition-colors"
+                        className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-app-input transition-colors cursor-pointer"
                         title={expanded ? '收起本条请求明细' : '展开本条请求明细'}
                       >
                         <ChevronDown size={12} className={`shrink-0 text-app-subtext transition-transform ${expanded ? '' : '-rotate-90'}`} />
@@ -9282,7 +9283,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           {failed > 0 && <span className="text-red-400"> · 失败 {failed}</span>}
                           {cached > 0 && <span className="text-blue-400"> · 缓存 {cached}</span>}
                         </span>
-                      </button>
+                      </div>
                       {expanded && (
                         <div className="space-y-1 px-2 pb-2">
                           {group.logs.map(log => (
