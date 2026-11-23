@@ -766,8 +766,12 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
                       </td>
                       {visibleCols.map(({ h, i: ci }) => {
                         const v = row[ci];
-                        // 「已持仓」视图下核对持有数量：与记账份额不一致时标黄，并附上记账数量
-                        const bookShares = h === '持有数量' && filterMode === 'held' ? bookSharesFor(row) : null;
+                        // 「已持仓 / 已添加」视图下核对持有数量：与记账份额不一致时标黄，并附上记账数量
+                        // 已添加但当前无持仓（已清仓）的股票，记账份额按 0 计，同样可与 Excel 对账
+                        const compareMode = filterMode === 'held' || filterMode === 'added';
+                        const bookShares = h === '持有数量' && compareMode
+                          ? (bookSharesFor(row) ?? (filterMode === 'added' ? 0 : null))
+                          : null;
                         const sheetQty = toNum(v);
                         const mismatch = bookShares != null && sheetQty != null && Math.abs(sheetQty - bookShares) > 1e-6 ? bookShares : null;
                         return (
