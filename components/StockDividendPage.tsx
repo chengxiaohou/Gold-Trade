@@ -5861,7 +5861,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const startEditTrade = (t: StockTrade) => {
     setEditingTradeId(t.id);
     setAddTradeSide(t.side);
-    setAddTradePrice(String(t.price));
+    // 回填价格必须按该股票的小数位格式化：ETF 为 3 位，直接用 String() 会把 1.530 显示成 1.53
+    setAddTradePrice(formatPrice(t.price, (tradeInfoStock && stocks.find(x => x.id === tradeInfoStock.id)?.name) || tradeInfoStock?.name));
     setAddTradeShares(String(t.shares));
     setAddTradeNote(t.note || '');
   };
