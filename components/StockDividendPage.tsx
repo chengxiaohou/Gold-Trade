@@ -6603,7 +6603,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         onClick={() => {
                           if (autoFired.current) { autoFired.current = false; return; } // 长按触发后吞掉这次 click
                           if (autoRefreshOn) { setAutoRefreshOn(false); return; }        // 自动模式下点击 = 取消自动刷新
-                          handleRefreshAll(false);
+                          // 刷新股价后顺带补拉已过期的 BOLL（缓存判定在 ensureBatch 内：全部新鲜则不产生任何请求）
+                          void handleRefreshAll(false).then(() => fetchAllBoll('点击「价格」列头刷新（补拉过期 BOLL）'));
                         }}
                         onPointerDown={startAutoHold}
                         onPointerUp={cancelAutoHold}
