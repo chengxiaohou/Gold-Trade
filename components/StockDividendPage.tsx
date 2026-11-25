@@ -5551,19 +5551,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return () => window.clearTimeout(timer);
   }, [tradeInfoAboveAccount, tradeInfoSettled]);
 
-  // 备注当前值（只读，不进依赖）：用于判断编辑既有交易时是否已有内容
-  const addTradeNoteValueRef = useRef('');
-  addTradeNoteValueRef.current = addTradeNote;
-
   // 交易弹窗内价格变化：实时重算「网格{股息率} {最近点位} {偏上/偏下}｜」，竖线之后的手写内容原样保留
-  // 只要有价格就一定写上备注；编辑既有交易时仅在备注为空时补
+  // 只要有价格就一定写上备注；编辑既有交易时，仅在用户改动价格后才重算（避免一打开就改写已保存的备注）
   useEffect(() => {
     if (!tradeInfoStock) return;
     // 用最新股票对象（分红数据可能晚到），保证股息率口径正确
     const s = stocks.find(x => x.id === tradeInfoStock.id) || tradeInfoStock;
-    if (editingTradeId && addTradeNoteValueRef.current) return;
     const priceNum = parseFloat(addTradePrice);
     if (!(priceNum > 0)) return;
+    // 编辑既有交易：沿用原备注，价格未变（首次打开/数据晚到）不重算；用户改了价格才联动
+    if (editingTradeId) {
+      const orig = getTrades(s).find(t => t.id === editingTradeId)?.price;
+      if (orig != null && Math.abs(priceNum - orig) < 1e-9) return;
+    }
     const levels = srLevelsMap[s.id] || [];
     // 点位还没算过：后台算一次（先用股息率生成备注，算完由 srLevelsMap 变化再补上点位与偏上/偏下）
     if (levels.length === 0 && !srLevelsLoadingRef.current.has(s.id)) {
@@ -5578,7 +5578,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     const generated = buildGridNoteText(dividend, priceNum, names || undefined, relation || undefined)
       || ([names, relation].filter(Boolean).join(' ') ? `${[names, relation].filter(Boolean).join(' ')}｜` : '');
     if (!generated) return;
-    setAddTradeNote(prev => mergeAutoGridNote(prev, generated));
+    // 整段都是手写内容（不以「网格」开头且没有分隔符）时不覆盖，避免丢失用户文字
+    setAddTradeNote(prev => (prev && !prev.includes('｜') && !isAutoGridNote(prev) ? prev : mergeAutoGridNote(prev, generated)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addTradePrice, tradeInfoStock?.id, stocks, editingTradeId, srLevelsMap]);
 
