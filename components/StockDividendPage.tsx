@@ -634,6 +634,8 @@ function StockLinkTitleBar({
 
 // ---- 挂单有效期判断：写死 5 个自然日 ----
 const PENDING_TTL_DAYS = 5;
+// 支撑/压力位浮窗：鼠标移开后的宽限毫秒数，便于移入浮窗内继续操作
+const LIST_SR_HIDE_DELAY_MS = 220;
 // 计算从起始日到今天经过了第几个自然日（首日计 1）。整天 24h 为一单位，跨零点即 +1。
 function dayIndex(baseTime: number, now: number): number {
   const start = new Date(baseTime); start.setHours(0, 0, 0, 0);
@@ -698,7 +700,15 @@ const pendingRemainingDays = (t: StockTrade, now: number): number => {
 // 架构对齐股息率曲线浮窗：骨架 DOM 一次性渲染 + transform 定位 + textContent 直接写，
 // 全程不触发 React 重渲染，鼠标再快也丝滑。仅做T模式有配对数据时展示。
 // 交互：hover 显示，离开隐藏；点击固定（触屏），点外部取消。
-const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; children: React.ReactNode }> = ({ pairs, fmtPrice, children }) => {
+const PairTip: React.FC<{
+  pairs: DtPair[];
+  fmtPrice: (v: number) => string;
+  children: React.ReactNode;
+  /** 自定义首行文案（默认做T「Txx% 日期」；对比上一笔成交时传「买入 11月20日」这类） */
+  headerLabel?: (p: DtPair) => string;
+  /** 公式方向（默认 buy，与做T配对口径一致）；对比卖出成交时传 sell */
+  side?: 'buy' | 'sell';
+}> = ({ pairs, fmtPrice, children, headerLabel, side: formulaSide = 'buy' }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rowsRef = useRef<HTMLSpanElement[]>([]);
   const headerDateRefs = useRef<HTMLSpanElement[]>([]);
@@ -724,7 +734,7 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
       const pct = p.shares > 0 ? (p.take / p.shares) * 100 : 0;
       const pctLabel = pct >= 100 ? '100%' : `${pct.toFixed(0)}%`;
       // 公式与成交记录同一口径（SSOT：tradeAmountFormula）：原价 × 股数 ± 税费 = 含税总额
-      const f = tradeAmountFormula(p.price, p.shares, p.feeTotal, 'buy');
+      const f = tradeAmountFormula(p.price, p.shares, p.feeTotal, formulaSide === 'sell' ? 'sell' : 'buy');
       row.textContent = f.feeTotal > 0
         ? `${fmtPrice(p.price)} × ${p.shares} ${f.sign} ${f.feeTotal.toFixed(2)} = ${fmtPrice(f.total)}`
         : `${fmtPrice(p.price)} × ${p.shares} = ${fmtPrice(f.total)}`;
@@ -734,7 +744,9 @@ const PairTip: React.FC<{ pairs: DtPair[]; fmtPrice: (v: number) => string; chil
       if (h) {
         const parts = p.date.split('-');
         const dateLabel = parts.length === 3 ? `${parseInt(parts[1], 10)}月${parseInt(parts[2], 10)}日` : p.date;
-        h.textContent = `T${pctLabel}  ${dateLabel}`;
+        h.textContent = headerLabel
+          ? headerLabel(p)
+          : `T${pctLabel}  ${dateLabel}`;
       }
     });
     // 强制 reflow，读取真实尺寸再定位
@@ -3016,6 +3028,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 列表页股票名称支撑/压力位弹窗（hover 或 click）
   const handleListSrClick = (e: React.MouseEvent, stock: StockEntry, pin = false, pricePickTo: 'trade' | 'openTrade' | null = null) => {
     e.stopPropagation();
+    // 取消可能待执行的延时关闭，避免刚落定的弹窗被上一轮的定时器收掉
+    if (listSrHideTimerRef.current !== undefined) {
+      clearTimeout(listSrHideTimerRef.current);
+      listSrHideTimerRef.current = undefined;
+    }
     // 点击固定且当前正是同一股票的固定弹窗 → 再次点击收起
     if (pin && listSrTooltipPinned && listSrStock?.id === stock.id) {
       listSrHoveredRef.current = false;
@@ -3106,18 +3123,33 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const handleListSrHoverEnter = (e: React.MouseEvent, stock: StockEntry, pricePickTo: 'trade' | 'openTrade' | null = null) => {
     // 已有任一弹窗被点击固定：悬停其他项目不触发新弹窗，保持固定弹窗
     if (listSrTooltipPinned || priceInfoPinned || positionInfoPinned || divRateInfoPinned || mktInfoPinned) return;
+    cancelListSrHoverLeave();
     handleListSrClick(e, stock, false, pricePickTo);
   };
 
-  // 移开触发点（名称/图标）：非固定时立即关闭，不做延时宽限。
+  // 移开触发点（名称/图标）后延时关闭：留出一小段时间让鼠标从触发点移进浮窗。
+  // 期间移到浮窗上（或移回触发点）会取消关闭；真正离开浮窗后同样延时关闭，方便来回切换。
   // 移动端"点按闪现"由触摸保护(listSrTouchGuardRef)处理；需要操作浮窗内容请点击固定。
   const handleListSrHoverLeave = () => {
     if (listSrTooltipPinned) return;
     if (listSrTouchGuardRef.current) return;
-    listSrHoveredRef.current = false; // 立刻标记移出，避免异步构建结果晚到又把浮窗打出来
-    listSrActiveIdRef.current = undefined;
-    setListSrPreviewText(null);
-    setListSrPreviewRows(null);
+    if (listSrHideTimerRef.current !== undefined) clearTimeout(listSrHideTimerRef.current);
+    listSrHideTimerRef.current = window.setTimeout(() => {
+      listSrHideTimerRef.current = undefined;
+      listSrHoveredRef.current = false; // 宽限期结束才标记移出，避免异步构建结果晚到又把浮窗打出来
+      listSrActiveIdRef.current = undefined;
+      setListSrPreviewText(null);
+      setListSrPreviewRows(null);
+    }, LIST_SR_HIDE_DELAY_MS);
+  };
+
+  // 移入浮窗/触发点：取消待执行的关闭
+  const cancelListSrHoverLeave = () => {
+    if (listSrHideTimerRef.current !== undefined) {
+      clearTimeout(listSrHideTimerRef.current);
+      listSrHideTimerRef.current = undefined;
+    }
+    listSrHoveredRef.current = true;
   };
 
   // 触摸开始：短时间内跳过合成 mouseleave，放大最后的 click 固定
@@ -3177,6 +3209,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   const listSrTooltipMeasuredSize = useRef({ w: 0, h: 0 });
   const listSrTouchGuardRef = useRef(false); // 触摸点按中保护：避免合成mouseleave在点击固定前关闭浮窗
   const listSrTouchTimerRef = useRef<number | undefined>(undefined);
+  const listSrHideTimerRef = useRef<number | undefined>(undefined); // 支撑/压力位浮窗延时关闭
   const [listSrTooltipHidden, setListSrTooltipHidden] = useState(false);
   const listCopyHoveredRef = useRef(false);
   const [listCopyPreviewText, setListCopyPreviewText] = useState<string | null>(null);
@@ -8483,13 +8516,37 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const orderDividend = getDividendForYear(s, getSelectedYear(s)) || 0;
         const priceGapValid = orderPriceNum > 0 && marketPrice > 0;
         const priceGapPct = priceGapValid ? ((orderPriceNum - marketPrice) / marketPrice) * 100 : 0;
-        // 与上一笔同向成交的价格对比：买入挂单比上一笔买入成交，卖出挂单比上一笔卖出成交（编辑该笔时排除自身）
-        const lastFilledTrade = [...trades]
+        // 对比基准（编辑该笔时排除自身）：
+        // - 卖出挂单：与上一笔卖出成交比；
+        // - 买入挂单：与做T配对同一口径，优先取「最近一笔尚未被配对」的买入成交；
+        //   若全部买入都已被配对（相当于已清仓），退回与时间最早的买入成交比。
+        const filledSideTrades = tradesOfS
           .filter(t => t.status === 'filled' && t.side === addTradeSide && t.id !== editingTradeId && t.price > 0)
-          .sort((a, b) => (b.filledAt ?? b.createdAt) - (a.filledAt ?? a.createdAt))[0];
+          .sort((a, b) => (a.filledAt ?? a.createdAt) - (b.filledAt ?? b.createdAt));
+        const lastFilledTrade = addTradeSide === 'sell'
+          ? filledSideTrades[filledSideTrades.length - 1]
+          : (() => {
+              const unmatched = filledSideTrades.filter(t => (dtPnL.buyMatchMap[t.id]?.matched ?? 0) < (t.shares ?? 0));
+              return unmatched.length > 0
+                ? unmatched[unmatched.length - 1]  // 最近未配对买入
+                : filledSideTrades[0];             // 全部已配对 → 最早的买入
+            })();
         const lastFilledPrice = lastFilledTrade?.price ?? 0;
         const lastGapValid = orderPriceNum > 0 && lastFilledPrice > 0;
         const lastGapPct = lastGapValid ? ((orderPriceNum - lastFilledPrice) / lastFilledPrice) * 100 : 0;
+        // 悬停第二个百分比时复用交易记录里的做T浮窗，展示作为基准的那笔同向成交（日期 / 价 × 量 = 含税总额 / 差价%）
+        const prevTradeTip: DtPair | null = lastFilledTrade ? (() => {
+          const d = new Date(lastFilledTrade.filledAt ?? lastFilledTrade.createdAt);
+          return {
+            buyId: lastFilledTrade.id,
+            date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+            price: lastFilledTrade.price,
+            shares: lastFilledTrade.shares,
+            take: lastFilledTrade.shares,
+            feeTotal: taxEnabled ? calcTradeFees(lastFilledTrade, s.name).total : 0,
+            diffPct: lastGapPct,
+          };
+        })() : null;
         const orderDivRate = orderPriceNum > 0 && orderDividend > 0 ? (orderDividend / orderPriceNum) * 100 : 0;
         const costDivRate = costBasis > 0 && orderDividend > 0 ? (orderDividend / costBasis) * 100 : 0;
         // 基于现价的股息率：与成本股息率比较决定红绿（成本更低 → 股息率更高 → 红色）
@@ -8631,7 +8688,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
               {/* 挂单价 + 数量（复用黄金项目 InputGroup 步进输入，支持鼠标滚轮与触屏手势调节） */}
               <div className="grid grid-cols-2 gap-3">
-                <InputGroup label={<span className="inline-flex items-baseline gap-1 translate-y-px"><button type="button" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={(e) => { e.stopPropagation(); handleListSrClick(e, s, true, 'trade'); }} onMouseEnter={(e) => handleListSrHoverEnter(e, s, 'trade')} onMouseLeave={() => handleListSrHoverLeave()} className="inline-flex items-center gap-0.5 px-0.5 rounded transition-colors hover:bg-app-input cursor-pointer select-none shrink-0" title="选择支撑/压力位作为挂单价格"><BarChart3 size={12} className="text-app-subtext shrink-0" />挂单价格</button>{priceGapValid && <span className="text-app-subtext/60 font-normal">({priceGapPct > 0 ? '+' : ''}{priceGapPct.toFixed(2)}%{lastGapValid ? `｜${lastGapPct > 0 ? '+' : ''}${lastGapPct.toFixed(2)}%` : ''})</span>}</span>} value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={isEtf(s.name) ? 0.001 : 0.01} min={0} precision={isEtf(s.name) ? 3 : 2} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
+                <InputGroup label={<span className="inline-flex items-center gap-1 translate-y-px"><span role="button" tabIndex={0} onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={(e) => { e.stopPropagation(); handleListSrClick(e, s, true, 'trade'); }} onMouseEnter={(e) => handleListSrHoverEnter(e, s, 'trade')} onMouseLeave={() => handleListSrHoverLeave()} className="group/srlabel inline-flex items-center gap-0.5 cursor-pointer select-none shrink-0"><BarChart3 size={12} className="text-app-subtext shrink-0" /><span className="underline-offset-2 group-hover/srlabel:underline decoration-app-subtext/60">挂单价格</span></span><span className="text-app-subtext/60 font-normal">{priceGapValid && <>（{priceGapPct > 0 ? '+' : ''}{priceGapPct.toFixed(2)}%</>}{priceGapValid && lastGapValid && <>｜{prevTradeTip ? <PairTip pairs={[prevTradeTip]} fmtPrice={fmtP} side={addTradeSide} headerLabel={(p) => `${addTradeSide === 'buy' ? '买入' : '卖出'} ${parseInt(p.date.slice(5, 7), 10)}月${parseInt(p.date.slice(8, 10), 10)}日`}>{`${lastGapPct > 0 ? '+' : ''}${lastGapPct.toFixed(2)}%`}</PairTip> : `${lastGapPct > 0 ? '+' : ''}${lastGapPct.toFixed(2)}%`}</>}{priceGapValid && <>）</>}</span></span>} value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={isEtf(s.name) ? 0.001 : 0.01} min={0} precision={isEtf(s.name) ? 3 : 2} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
                 {/* 数量：卖出时以当前持仓为上限（静默截断） */}
                 <InputGroup
                   label={<span className="translate-y-px">数量(股)</span>}
@@ -9144,8 +9201,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         <div
           ref={listSrTooltipRef}
           onMouseEnter={() => {
-            // 移进浮窗保持"仍在悬停"状态（异步构建/重渲染不会把浮窗收掉）
-            listSrHoveredRef.current = true;
+            // 移进浮窗保持"仍在悬停"状态（异步构建/重渲染不会把浮窗收掉），并取消待执行的关闭
+            cancelListSrHoverLeave();
           }}
           onMouseLeave={() => handleListSrHoverLeave()}
           className={`fixed z-[60] bg-app-card border border-slate-500/40 rounded-lg overflow-hidden text-[11px] shadow-[0_8px_30px_rgba(0,0,0,0.55)] text-left flex flex-col ${listSrTooltipHidden ? ' invisible' : ''}`}
