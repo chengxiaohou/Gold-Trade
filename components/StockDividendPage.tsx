@@ -8483,6 +8483,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
         const orderDividend = getDividendForYear(s, getSelectedYear(s)) || 0;
         const priceGapValid = orderPriceNum > 0 && marketPrice > 0;
         const priceGapPct = priceGapValid ? ((orderPriceNum - marketPrice) / marketPrice) * 100 : 0;
+        // 与上一笔同向成交的价格对比：买入挂单比上一笔买入成交，卖出挂单比上一笔卖出成交（编辑该笔时排除自身）
+        const lastFilledTrade = [...trades]
+          .filter(t => t.status === 'filled' && t.side === addTradeSide && t.id !== editingTradeId && t.price > 0)
+          .sort((a, b) => (b.filledAt ?? b.createdAt) - (a.filledAt ?? a.createdAt))[0];
+        const lastFilledPrice = lastFilledTrade?.price ?? 0;
+        const lastGapValid = orderPriceNum > 0 && lastFilledPrice > 0;
+        const lastGapPct = lastGapValid ? ((orderPriceNum - lastFilledPrice) / lastFilledPrice) * 100 : 0;
         const orderDivRate = orderPriceNum > 0 && orderDividend > 0 ? (orderDividend / orderPriceNum) * 100 : 0;
         const costDivRate = costBasis > 0 && orderDividend > 0 ? (orderDividend / costBasis) * 100 : 0;
         // 基于现价的股息率：与成本股息率比较决定红绿（成本更低 → 股息率更高 → 红色）
@@ -8624,7 +8631,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
               {/* 挂单价 + 数量（复用黄金项目 InputGroup 步进输入，支持鼠标滚轮与触屏手势调节） */}
               <div className="grid grid-cols-2 gap-3">
-                <InputGroup label={<span className="inline-flex items-baseline gap-1 translate-y-px">挂单价格{priceGapValid && <span className="text-app-subtext/60 font-normal">({priceGapPct > 0 ? '+' : ''}{priceGapPct.toFixed(2)}%)</span>}<button type="button" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={(e) => { e.stopPropagation(); handleListSrClick(e, s, true, 'trade'); }} onMouseEnter={(e) => handleListSrHoverEnter(e, s, 'trade')} onMouseLeave={() => handleListSrHoverLeave()} className="p-0.5 rounded transition-colors hover:bg-app-input cursor-pointer select-none shrink-0 self-center" title=""><BarChart3 size={12} className="text-app-subtext" /></button></span>} value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={isEtf(s.name) ? 0.001 : 0.01} min={0} precision={isEtf(s.name) ? 3 : 2} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
+                <InputGroup label={<span className="inline-flex items-baseline gap-1 translate-y-px"><button type="button" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={(e) => { e.stopPropagation(); handleListSrClick(e, s, true, 'trade'); }} onMouseEnter={(e) => handleListSrHoverEnter(e, s, 'trade')} onMouseLeave={() => handleListSrHoverLeave()} className="inline-flex items-center gap-0.5 px-0.5 rounded transition-colors hover:bg-app-input cursor-pointer select-none shrink-0" title="选择支撑/压力位作为挂单价格"><BarChart3 size={12} className="text-app-subtext shrink-0" />挂单价格</button>{priceGapValid && <span className="text-app-subtext/60 font-normal">({priceGapPct > 0 ? '+' : ''}{priceGapPct.toFixed(2)}%{lastGapValid ? `｜${lastGapPct > 0 ? '+' : ''}${lastGapPct.toFixed(2)}%` : ''})</span>}</span>} value={addTradePrice} onChange={setAddTradePrice} placeholder="0.00" step={isEtf(s.name) ? 0.001 : 0.01} min={0} precision={isEtf(s.name) ? 3 : 2} touchMode onEnter={() => editingTradeId ? handleSaveEditTrade(s.id, editingTradeId, 'pending') : handleAddTrade(s.id, 'pending')} className="text-sm" />
                 {/* 数量：卖出时以当前持仓为上限（静默截断） */}
                 <InputGroup
                   label={<span className="translate-y-px">数量(股)</span>}
