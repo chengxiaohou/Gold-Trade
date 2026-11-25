@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Upload, FileSpreadsheet, Sheet, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { X, Upload, RefreshCw, FileSpreadsheet, Sheet, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { parseXlsxFile } from '../services/xlsxLite';
 import type { ParsedSheet, SheetCell } from '../services/xlsxLite';
 import { calcPositionFromTrades } from '../services/realizedPnl';
@@ -616,9 +616,10 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={loading}
-            className="text-[11px] text-white/[0.01] hover:text-app-text transition-colors disabled:opacity-50"
+            className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-app-border bg-app-card text-[11px] text-app-subtext hover:text-indigo-400 transition-colors disabled:opacity-50"
             title="上传 xlsx（也会替换当前数据）"
           >
+            <Upload size={13} className="shrink-0" />
             {loading ? '解析中…' : '上传'}
           </button>
           <button
@@ -643,9 +644,10 @@ export const StockAccountPage: React.FC<StockAccountPageProps> = ({ onClose, sto
                 );
               }, 3000);
             }}
-            className="text-[11px] text-app-subtext hover:text-app-text transition-colors"
+            className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-app-border bg-app-card text-[11px] text-app-subtext hover:text-indigo-400 transition-colors"
             title="唤起 HXFinance 同步数据"
           >
+            <RefreshCw size={13} className="shrink-0" />
             同步
           </button>
           <button

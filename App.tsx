@@ -2161,17 +2161,6 @@ export default function App() {
               )}
           </button>
           <button 
-              onClick={() => setShowStockAccountPage(prev => !prev)}
-              className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-7 h-7 ${
-                showStockAccountPage 
-                  ? 'border-app-border text-indigo-400' 
-                  : 'border-app-border text-app-subtext hover:text-app-text hover:border-app-border'
-              }`}
-              title={showStockAccountPage ? '关闭对账单' : '对账单'}
-            >
-              <Sheet size={16} />
-          </button>
-          <button 
               onClick={() => setShowRequestStats(prev => !prev)}
               className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-7 h-7 ${
                 showRequestStats 
@@ -2181,6 +2170,17 @@ export default function App() {
               title={showRequestStats ? '隐藏请求统计' : '显示请求统计'}
             >
               <BarChart3 size={16} />
+          </button>
+          <button 
+              onClick={() => setShowStockAccountPage(prev => !prev)}
+              className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-7 h-7 ${
+                showStockAccountPage 
+                  ? 'border-app-border text-indigo-400' 
+                  : 'border-app-border text-app-subtext hover:text-app-text hover:border-app-border'
+              }`}
+              title={showStockAccountPage ? '关闭对账单' : '对账单'}
+            >
+              <Sheet size={16} />
           </button>
           <button 
               onClick={() => openSettings('general')}
