@@ -2467,12 +2467,10 @@ const sortStocksByTag = (list: StockEntry[]): StockEntry[] =>
 // 请求日志快照读取器（模块级常量，保证引用稳定，供 useSyncExternalStore 使用）
 const getRequestLogSnapshot = () => requestLogService.getSnapshot();
 
-// 过期 BOLL 单元格样式：不另设底色，露出原始单元格颜色，只叠加深色斜纹（深/原色各 3.5px，等宽）。
-// backgroundAttachment: fixed 让纹理以视口为原点铺排，三个单元格横向拼接无接缝。
-const staleBollStyle: React.CSSProperties = {
-  backgroundImage: 'repeating-linear-gradient(45deg, rgba(2,6,23,0.5) 0px, rgba(2,6,23,0.5) 3.5px, transparent 3.5px, transparent 7px)',
-  backgroundAttachment: 'fixed',
-};
+// 过期 BOLL 单元格标记：纯深色底（不再用斜纹）。
+// 斜纹需要 background-attachment: fixed，滚动时每个单元格都要重绘纹理，长列表滚动会掉帧，
+// 因此改为纯色背景类，交给合成层处理，滚动更顺滑。
+const STALE_BOLL_CLS = 'bg-slate-900/20 hover:bg-slate-900/30 dark:bg-black/40 dark:hover:bg-black/50';
 
 export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, bollRequestInterval = 1000, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, stockTotalCapital = 0, onStockTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
@@ -3955,7 +3953,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   };
 
   const [stockBollMap, setStockBollMap] = useState<Map<string, { daily: BollData | null; weekly: BollData | null; monthly: BollData | null }>>(new Map());
-  // BOLL 过期基准：数据拉取时间早于最近一次收盘落定时点 → 展示的是过期缓存（单元格加斜纹标记）
+  // BOLL 过期基准：数据拉取时间早于最近一次收盘落定时点 → 展示的是过期缓存（单元格加深色底标记）
   const bollStaleBeforeMs = getLastTradingClose().getTime();
   const hasStaleBoll = useMemo(() => {
     if (priceBureau.getAsOfDate()) return false; // 历史模式不做过期标记
@@ -4572,7 +4570,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     // 剩余待拉取的股票会立即按新顺序从最前面开始补拉。
     // 不在当前列表（被筛选/隐藏页签过滤掉）的股票排在已显示股票之后，保证不漏拉。
 
-    // 不清空旧数据：过期缓存继续展示（单元格用深色斜纹标记），
+    // 不清空旧数据：过期缓存继续展示（单元格用深色底标记），
     // 每只股票拉到新数据后自然覆盖为正常样式，避免"刷新过程中整列空白"
 
     const { madeRequest, completed } = await priceBureau.ensureBatch(stocks, apiSource, bollAdjust, {
@@ -6598,7 +6596,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       const base = isRefreshingBoll
                         ? '取消刷新（停止后续请求）'
                         : hasStaleBoll
-                          ? '当前展示的是过期的 BOLL 缓存（深色斜纹单元格），点击重新拉取'
+                          ? '当前展示的是过期的 BOLL 缓存（深色底单元格），点击重新拉取'
                           : '刷新所有BOLL数据';
                       return `${base}\n上次全量刷新：${lastText}`;
                     })()}
@@ -7137,8 +7135,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       return (
                         <td key={key}
                           title={isStaleBoll ? `过期的 BOLL 缓存（上次拉取 ${formatCacheTime(data?.fetchedAt ?? 0)}），点击刷新` : undefined}
-                          style={isStaleBoll ? staleBollStyle : undefined}
-                          className={`px-1 py-1.5 text-center cursor-pointer ${draggedId ? '' : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
+                          className={`px-1 py-1.5 text-center cursor-pointer ${isStaleBoll ? STALE_BOLL_CLS : draggedId ? '' : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             const rect = e.currentTarget.getBoundingClientRect();
@@ -7207,6 +7204,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                             step="0.01"
                             className="w-full bg-app-input border border-indigo-500 rounded px-0.5 py-0.5 text-[10px] leading-tight font-mono text-app-text outline-none text-center"
                           />
+                        ) : value === 0 ? (
+                          // 0 派息无展示意义，统一显示「-」（不再显示 0.000）
+                          <span className="font-mono text-xs font-normal text-app-subtext">-</span>
                         ) : (
                           <span className={`font-mono text-xs font-normal ${isSelected ? selectedColor : 'text-app-rowtext'}`}>{formatPrice(value, stock.name)}</span>
                         )}
