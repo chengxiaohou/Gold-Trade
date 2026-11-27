@@ -195,6 +195,10 @@ export interface EnsureBatchOpts {
   trigger?: string;
   /** 顺序请求列表（如页面 sortedStocks）；默认按传入 stocks 顺序 */
   order?: BureauStock[];
+  /** 动态顺序：每轮请求前调用，返回"当前应有的顺序"。
+   *  用于拉取过程中用户调整排序时，剩余待拉取的股票立即按新顺序优先。
+   *  未出现在返回值中的待拉取股票会被排到最后。 */
+  getOrder?: () => BureauStock[];
   /** 返回 true 时中止本轮（对应页面 fetchVersionRef 取消旧请求） */
   cancelCheck?: () => boolean;
   /** 相邻两只股票之间的等待毫秒数（设置页可调，默认 1000ms） */
@@ -580,11 +584,38 @@ export const priceBureau = {
     const order = opts.order ?? stocks;
     const targetIds = new Set(stocks.map(s => s.id));
     let consecutiveFailures = 0;
-    for (let i = 0; i < order.length; i++) {
+    // 待请求队列：按初始顺序排好，每轮请求前按 opts.getOrder() 的"实时顺序"重排。
+    // 这样拉取过程中用户调整了排序，剩余股票会立刻按新顺序从列表最前面开始补拉。
+    const fetchQueue: BureauStock[] = [];
+    const queuedIds = new Set<string>();
+    for (const s of order) {
+      if (!targetIds.has(s.id) || queuedIds.has(s.id)) continue;
+      queuedIds.add(s.id);
+      fetchQueue.push(s);
+    }
+    for (const s of stocks) {
+      if (!queuedIds.has(s.id)) { queuedIds.add(s.id); fetchQueue.push(s); }
+    }
+    const needsFetch = fetchQueue.filter((s) => {
+      if (s.bollHidden) return false;
+      const c = cachedData.get(s.id);
+      return !(c?.daily && c?.weekly && c?.monthly); // 已在循环前批量应用的不再请求
+    });
+    fetchQueue.length = 0;
+    fetchQueue.push(...needsFetch);
+
+    while (fetchQueue.length > 0) {
       if (opts.cancelCheck?.()) return { madeRequest, completed: false };
-      const stock = order[i];
-      if (!targetIds.has(stock.id)) continue;
-      if (stock.bollHidden) continue;
+      const live = opts.getOrder?.();
+      if (live) {
+        const rank = new Map<string, number>();
+        live.forEach((s, i) => rank.set(s.id, i));
+        fetchQueue.sort(
+          (a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+        );
+      }
+      const stock = fetchQueue.shift()!;
+      if (!targetIds.has(stock.id) || stock.bollHidden) continue;
 
       const cachedStockData = cachedData.get(stock.id);
       if (cachedStockData?.daily && cachedStockData?.weekly && cachedStockData?.monthly) {
@@ -618,7 +649,7 @@ export const priceBureau = {
         consecutiveFailures = ok ? 0 : consecutiveFailures + 1;
       }
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        const remaining = order.length - i - 1;
+        const remaining = fetchQueue.length;
         console.warn(
           `[priceBureau] 连续 ${consecutiveFailures} 次 BOLL 请求失败，中止本批剩余 ${remaining} 只股票的请求`,
         );
@@ -628,7 +659,7 @@ export const priceBureau = {
 
       // 网络请求后按设置间隔（默认 1000ms）等待再请求下一只（其间仍可取消）
       const waitMs = Math.max(0, opts.intervalMs ?? 1000);
-      if (i < order.length - 1 && waitMs > 0) {
+      if (fetchQueue.length > 0 && waitMs > 0) {
         const ticks = Math.ceil(waitMs / 10);
         for (let w = 0; w < ticks; w++) {
           await new Promise(resolve => setTimeout(resolve, 10));

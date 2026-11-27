@@ -4113,8 +4113,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     return buildShrinkTagsForModule('list', a.events, a.patterns, a.env, last.date, a.latestVol, volUp, a.standEvents, a.allowVol, a.klines);
   };
 
-  // 列表当前显示顺序（按排序规则重排；默认顺序即 stocks 原序）
-  const sortedStocks = useMemo(() => {
+  // 按当前排序规则算出的"应然顺序"
+  const computedSortedStocks = useMemo(() => {
     if (sortMode === 'dividendRate') {
       if (divRateSortMode === 'ratio') {
         // 两档切换第2档：按股息率列下方"右侧高百分比"(区间内当前位置股息率相对最高/次高的比例)从高到低
@@ -4209,6 +4209,32 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     }
     return displayStocks;
   }, [displayStocks, sortMode, stockBollMap, bollSortReverse, changePctSortReverse, divRateSortMode, divRatePeriod, dailyChartRange, tradePctSortState, positionAmountSortReverse]);
+
+  // 列表显示顺序：只在"用户改变排序 / 列表成员变化"时重排；
+  // 单价、涨跌幅、BOLL、交易等数据刷新不改变既有顺序（否则点一下刷新股价列表就跳序）。
+  const sortSignature = useMemo(
+    () => [
+      sortMode, bollSortReverse, changePctSortReverse, divRateSortMode, divRatePeriod,
+      dailyChartRange, tradePctSortState, positionAmountSortReverse,
+      displayStocks.map(s => s.id).sort().join(','),
+    ].join('|'),
+    [displayStocks, sortMode, bollSortReverse, changePctSortReverse, divRateSortMode, divRatePeriod, dailyChartRange, tradePctSortState, positionAmountSortReverse],
+  );
+  const frozenOrderRef = useRef<{ signature: string; ids: string[] }>({ signature: '', ids: [] });
+  const sortedStocks = useMemo(() => {
+    if (frozenOrderRef.current.signature !== sortSignature) {
+      frozenOrderRef.current = { signature: sortSignature, ids: computedSortedStocks.map(s => s.id) };
+      return computedSortedStocks;
+    }
+    const pos = new Map<string, number>(frozenOrderRef.current.ids.map((id, i) => [id, i] as [string, number]));
+    return [...computedSortedStocks].sort(
+      (a, b) => (pos.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (pos.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+    );
+  }, [computedSortedStocks, sortSignature]);
+
+  // 供批量拉取实时读取"当前列表顺序"（避免闭包拿到旧顺序）
+  const sortedStocksRef = useRef<StockEntry[]>([]);
+  sortedStocksRef.current = sortedStocks;
 
   // 请求日志：直接订阅服务快照（useSyncExternalStore）。
   // 不用「订阅回调里 setState」的双份状态：那样一旦订阅与组件实例错位，
@@ -4541,19 +4567,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
     setIsRefreshingBoll(true);
 
-    // 批量拉取前统一切换到「标签」排序，并按该顺序发请求：
-    // 其它排序（尤其日/周/月线、股息率区间比例）依赖尚未拉取的 K 线，数据未到时会退化成原序，
-    // 等数据陆续返回后列表又要重排，导致请求顺序与"从上到下"对不上；
-    // 标签排序只依赖本地已有字段，切过去后排序立即稳定，请求顺序即用户看到的行顺序。
-    if (sortMode !== 'tag') onSortModeChange?.('tag');
-    const fetchOrder = sortStocksByTag(stocks);
+    // 请求顺序严格跟随列表当前顺序（不再强制切「标签」排序）：
+    // 顺序由 getOrder 每轮实时读取，用户在拉取过程中改了排序，
+    // 剩余待拉取的股票会立即按新顺序从最前面开始补拉。
+    // 不在当前列表（被筛选/隐藏页签过滤掉）的股票排在已显示股票之后，保证不漏拉。
 
     // 不清空旧数据：过期缓存继续展示（单元格用深色斜纹标记），
     // 每只股票拉到新数据后自然覆盖为正常样式，避免"刷新过程中整列空白"
 
     const { madeRequest, completed } = await priceBureau.ensureBatch(stocks, apiSource, bollAdjust, {
       trigger,
-      order: fetchOrder,
+      getOrder: () => {
+        const visible = sortedStocksRef.current;
+        const seen = new Set(visible.map(s => s.id));
+        return [...visible, ...stocks.filter(s => !seen.has(s.id))];
+      },
       cancelCheck: () => fetchVersionRef.current !== currentVersion,
       intervalMs: bollRequestInterval,
       force: opts.force,
