@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen, AlertTriangle, Megaphone } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen, AlertTriangle, Megaphone, Lock } from 'lucide-react';
 import { LineChart, ComposedChart, Line, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { StockEntry, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
 import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition, bollBandLabel, buildBollBandTextParts, getBollCacheTimestamps } from '../services/bollService';
@@ -2524,8 +2524,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   });
   const [isRefreshing, setIsRefreshing] = useState<Set<string>>(new Set());
   const [refreshFailed, setRefreshFailed] = useState<Set<string>>(new Set());
-  const [draggedId, setDraggedId] = useState<string | null>(null);
-  const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [editTagState, setEditTagState] = useState<{ id: string, top: number, left: number } | null>(null);
   const [deletingStockId, setDeletingStockId] = useState<string | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -3380,7 +3378,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 悬停名称显示行情状态（临时，不固定）
   const handleMktInfoEnter = (e: React.MouseEvent, stock: StockEntry) => {
     // 编辑该行或处于拖拽中：不触发浮窗（热区已改为整格，需避免误触）
-    if (editingId === stock.id || draggedId) return;
+    if (editingId === stock.id) return;
     // 触屏没有悬停：合成 mouseenter 会在 click 前开窗，遮罩随即盖住手指，
     // 同一序列里的 mouseleave 又把它关掉，出现"闪现/消失再出现"。触屏一律走 click 开窗并固定。
     if (isCoarsePointer) return;
@@ -3557,7 +3555,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 精确单击股票名称文字 → 直接打开回测页面（不触发标签弹窗）
   const handleStockNameClick = (e: React.MouseEvent, stock: StockEntry) => {
-    if (editingId === stock.id || draggedId) return;
+    if (editingId === stock.id) return;
     e.stopPropagation();
     e.preventDefault();
     // 关闭当前 hover 暂留的行情浮窗，避免与回测整页叠加
@@ -4196,13 +4194,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
 
   // 列表显示顺序：只在"用户改变排序 / 列表成员变化"时重排；
   // 单价、涨跌幅、BOLL、交易等数据刷新不改变既有顺序（否则点一下刷新股价列表就跳序）。
+  // 标签值也纳入签名：按标签排序时改标签要重新排；sortNonce 用于「已在标签排序下再次长按」强制重排。
+  const [sortNonce, setSortNonce] = useState(0);
   const sortSignature = useMemo(
     () => [
       sortMode, bollSortReverse, changePctSortReverse, divRateSortMode, divRatePeriod,
-      dailyChartRange, tradePctSortState, positionAmountSortReverse,
-      displayStocks.map(s => s.id).sort().join(','),
+      dailyChartRange, tradePctSortState, positionAmountSortReverse, sortNonce,
+      displayStocks.map(s => `${s.id}:${s.tag ?? ''}`).sort().join(','),
     ].join('|'),
-    [displayStocks, sortMode, bollSortReverse, changePctSortReverse, divRateSortMode, divRatePeriod, dailyChartRange, tradePctSortState, positionAmountSortReverse],
+    [displayStocks, sortMode, bollSortReverse, changePctSortReverse, divRateSortMode, divRatePeriod, dailyChartRange, tradePctSortState, positionAmountSortReverse, sortNonce],
   );
   const frozenOrderRef = useRef<{ signature: string; ids: string[] }>({ signature: '', ids: [] });
   const sortedStocks = useMemo(() => {
@@ -4584,16 +4584,34 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 请求版本号：每次切换数据源递增，用于取消旧请求
   const fetchVersionRef = useRef(0);
 
+  // BOLL 自动刷新锁：用户主动「取消刷新」后上锁（本地记忆），
+  // 之后无论是刷新页面、价格刷新联动还是打开页面自动触发，都不再自动拉 BOLL；
+  // 只有用户再次手动点击刷新按钮才解锁并立即刷新。
+  const [bollAutoFetchLocked, setBollAutoFetchLocked] = useState<boolean>(() => {
+    try { return localStorage.getItem('stock_boll_autofetch_locked') === '1'; } catch { return false; }
+  });
+  const updateBollLock = useCallback((next: boolean) => {
+    setBollAutoFetchLocked(next);
+    try { localStorage.setItem('stock_boll_autofetch_locked', next ? '1' : '0'); } catch { /* ignore */ }
+  }, []);
+
   const fetchAllBoll = useCallback(async (
     trigger = '打开股息页自动刷新布林线',
     opts: { manual?: boolean; force?: boolean } = {},
   ) => {
     if (histDate) { showNotice('历史展示模式下不刷新布林线数据'); return; }
+    // 手动刷新 = 解锁；自动触发在锁定状态下静默跳过（不打扰用户）
+    // 手动刷新 = 解锁；自动触发在锁定状态下降级为「只读缓存」：
+    // 仍然把本地缓存（含过期旧数据）铺到列表上，只是不发任何网络请求。
+    const cacheOnly = !opts.manual && bollAutoFetchLocked;
+    if (opts.manual) {
+      if (bollAutoFetchLocked) updateBollLock(false);
+    }
     // 价格数据部持权威数据与订阅；这里只做：源切换清场 + 委托批量加载 + 维护刷新态信号。
     // 请求取消/缓存判定/逐个落地/250ms 节流/日志全在 priceBureau.ensureBatch 内完成。
     const currentVersion = ++fetchVersionRef.current;
 
-    setIsRefreshingBoll(true);
+    if (!cacheOnly) setIsRefreshingBoll(true);
 
     // 请求顺序严格跟随列表当前顺序（不再强制切「标签」排序）：
     // 顺序由 getOrder 每轮实时读取，用户在拉取过程中改了排序，
@@ -4613,6 +4631,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       cancelCheck: () => fetchVersionRef.current !== currentVersion,
       intervalMs: bollRequestInterval,
       force: opts.force,
+      cacheOnly,
       onFailureAbort: ({ failures, remaining }) => {
         showNotice(
           remaining > 0
@@ -4643,14 +4662,16 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
     }
 
     setIsRefreshingBoll(false);
-  }, [stocks, bollAdjust, apiSource, sortMode, onSortModeChange, histDate, bollRequestInterval, showNotice]);
+  }, [stocks, bollAdjust, apiSource, sortMode, onSortModeChange, histDate, bollRequestInterval, showNotice, bollAutoFetchLocked, updateBollLock]);
 
   // 取消当前批量刷新：递增版本号后，ensureBatch 在下一个检查点起不再发出任何后续请求
+  // 同时上「自动刷新锁」，此后自动/联动触发的 BOLL 拉取都会被跳过，直到手动再点刷新
   const cancelBollRefresh = useCallback(() => {
     fetchVersionRef.current += 1;
     setIsRefreshingBoll(false);
-    showNotice('已取消后续 BOLL 请求');
-  }, [showNotice]);
+    updateBollLock(true);
+    showNotice('已取消后续 BOLL 请求，自动刷新已锁定；再次点击刷新按钮可解锁');
+  }, [showNotice, updateBollLock]);
 
   // 防止 StrictMode 双重调用：标志在 effect 层设置，与 fetchAllBoll 内部守卫无关
   const didAutoRefreshBollRef = useRef(false);
@@ -4882,25 +4903,37 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       tagLongPressTimerRef.current = null;
       tagLongPressedRef.current = true;
       if (sortMode !== 'tag') onSortModeChange?.('tag');
-      // 排序切换后等列表重排完成，再把该行滚到「一屏偏上」的位置（约可视高度的 1/3 处）
+      // 无论是否已在标签排序，都强制刷新冻结签名，确保真的按标签重排一次
+      setSortNonce(n => n + 1);
+      // 排序切换后等列表重排完成，再把「该标签组的第一只股票」贴到内容区首行
       window.setTimeout(() => {
         const row = document.querySelector<HTMLElement>(`[data-stock-row="${stock.id}"]`);
         if (!row) return;
-        // 找到最近的可滚动容器，按 1/3 高度偏移计算目标 scrollTop
-        let scroller = row.parentElement;
+        const tagKey = stock.tag || '';
+        // 同标签分组的第一行：长按组内任意一只都定位到组首
+        const groupHead = Array.from(row.parentElement?.children ?? []).find(
+          el => (el as HTMLElement).dataset?.stockTag === tagKey,
+        ) as HTMLElement | undefined;
+        const target = groupHead ?? row;
+        // 找到最近的可滚动容器，按容器顶部对齐计算目标 scrollTop
+        let scroller = target.parentElement;
         while (scroller && scroller !== document.body) {
           const oy = getComputedStyle(scroller).overflowY;
           if ((oy === 'auto' || oy === 'scroll') && scroller.scrollHeight > scroller.clientHeight) break;
           scroller = scroller.parentElement;
         }
         if (scroller && scroller !== document.body) {
-          const top = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
-          scroller.scrollTo({ top: Math.max(0, top - scroller.clientHeight / 3), behavior: 'smooth' });
+          const top = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+          // 顶部有 sticky 表头，对齐时要让出表头高度，否则组首会被表头盖住
+          const headH = scroller.querySelector<HTMLElement>('thead')?.offsetHeight ?? 0;
+          const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+          // 优先把组首顶到内容区首行；下方剩余空间不足时会被 clamp 到最底部（即例外情形）
+          scroller.scrollTo({ top: Math.min(Math.max(0, top - headH), maxScroll), behavior: 'smooth' });
         } else {
-          row.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          target.scrollIntoView({ block: 'start', behavior: 'smooth' });
         }
       }, 80);
-    }, 600);
+    }, 350);
   };
 
   // 长按触发后吞掉随后的 click，避免同时弹出标签编辑浮窗
@@ -4938,59 +4971,6 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     safeSetItem('stock_dividend_stocks', JSON.stringify(stocks));
   }, [stocks]);
-
-  const handleDragStart = (e: React.DragEvent, id: string) => {
-    setDraggedId(id);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', id);
-    // 排序模式下拖拽无意义：切回手动顺序，保证拖拽对可见列表立即生效
-    if (sortMode !== 'default' && onSortModeChange) onSortModeChange('default');
-  };
-
-  // 拖拽结束（成功放置或中途放弃）统一清理，确保没有任何行残留高亮
-  const handleDragEnd = () => {
-    setDraggedId(null);
-    setDragOverId(null);
-  };
-
-  const handleDragOver = (e: React.DragEvent, id: string) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    if (draggedId && draggedId !== id) {
-      setDragOverId(id);
-    }
-  };
-
-  const handleDragLeave = () => {
-    setDragOverId(null);
-  };
-
-  const handleDrop = (e: React.DragEvent, targetId: string) => {
-    e.preventDefault();
-    if (!draggedId || draggedId === targetId) {
-      setDraggedId(null);
-      setDragOverId(null);
-      return;
-    }
-    // 基于当前可见顺序（sortedStocks）移动，再把 stocks 底层顺序对齐成新顺序，
-    // 保证拖拽在任意排序方式下都按用户"所见"的顺序生效
-    const order = sortedStocks.map(s => s.id);
-    const fromIdx = order.indexOf(draggedId);
-    const toIdx = order.indexOf(targetId);
-    if (fromIdx === -1 || toIdx === -1) {
-      setDraggedId(null);
-      setDragOverId(null);
-      return;
-    }
-    const newOrder = [...order];
-    const [movedId] = newOrder.splice(fromIdx, 1);
-    newOrder.splice(toIdx, 0, movedId);
-    const byId = new Map(stocks.map(s => [s.id, s]));
-    const newStocks = newOrder.map(id => byId.get(id)).filter((s): s is StockEntry => !!s);
-    if (newStocks.length === stocks.length) onStocksChange(newStocks);
-    setDraggedId(null);
-    setDragOverId(null);
-  };
 
   const getFullCode = (inputCode: string): string => {
     const code = inputCode.trim().toUpperCase();
@@ -5216,16 +5196,27 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   }, [histDate]);
 
   // 长按进入自动刷新的手势状态：按下后 600ms 未抬起/未移出则触发
+  // 热区是整个「价格/涨跌幅」表头单元格（含时间文字与刷新按钮），不再局限于小按钮
   const startAutoHold = () => {
     if (autoRefreshOn) return; // 自动模式下左键为取消，不进长按
+    if (autoHoldTimer.current !== null) return; // 已有计时（指针在单元格内移动不重复起表）
     autoFired.current = false;
     autoHoldTimer.current = window.setTimeout(() => {
+      autoHoldTimer.current = null;
       autoFired.current = true;
       setAutoRefreshOn(true);
     }, 600);
   };
   const cancelAutoHold = () => {
     if (autoHoldTimer.current) { clearTimeout(autoHoldTimer.current); autoHoldTimer.current = null; }
+  };
+  // 长按已触发时，吞掉松手后的这次 click，避免误触发单元格内的点击（切历史日/取消自动刷新）
+  const guardAutoHoldClick = (e: React.MouseEvent) => {
+    if (!autoFired.current) return false;
+    autoFired.current = false;
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
   };
 
   // 批量获取所有股票的年度分红（逐只走同花顺 F10，含中期分红，数据完整）
@@ -6676,11 +6667,17 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         : hasStaleBoll
                           ? '当前展示的是过期的 BOLL 缓存（深色底单元格），点击重新拉取'
                           : '刷新所有BOLL数据';
-                      return `${base}\n上次全量刷新：${lastText}`;
+                      const lockTip = !isRefreshingBoll && bollAutoFetchLocked
+                        ? '自动刷新已锁定（刷新页面 / 刷新股价都不会自动拉取），点击刷新可解锁'
+                        : '';
+                      return `${base}${lockTip ? `\n${lockTip}` : ''}\n上次全量刷新：${lastText}`;
                     })()}
                   >
                     {isRefreshingBoll ? (
                       <RefreshCw size={10} className="animate-spin" />
+                    ) : bollAutoFetchLocked ? (
+                      // 已锁定自动刷新：用锁图标替换刷新图标，颜色提示「已上锁」
+                      <Lock size={10} />
                     ) : hasStaleBoll ? (
                       <AlertTriangle size={10} />
                     ) : (
@@ -6723,32 +6720,37 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   >
                     <span>{dailyChartRange}{divRatePeriod === 'daily' ? '日' : divRatePeriod === 'weekly' ? '周' : '月'}</span>
                   </th>}
-                {(cols.includes('price') || cols.includes('changePercent')) && <th colSpan={(cols.includes('price') ? 1 : 0) + (cols.includes('changePercent') ? 1 : 0)} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap">
+                {(cols.includes('price') || cols.includes('changePercent')) && <th colSpan={(cols.includes('price') ? 1 : 0) + (cols.includes('changePercent') ? 1 : 0)} className="px-1 py-1 text-center text-[10px] font-bold text-app-subtext bg-app-input border-b border-app-border border-r border-app-border whitespace-nowrap select-none"
+                    // 长按热区扩大到整个单元格：在时间文字或按钮上按下都能进入自动刷新
+                    onPointerDown={startAutoHold}
+                    onPointerUp={cancelAutoHold}
+                    onPointerLeave={cancelAutoHold}
+                    onPointerCancel={cancelAutoHold}
+                    onClick={guardAutoHoldClick}
+                    onContextMenu={(e) => e.preventDefault()}
+                    style={{ WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}
+                  >
                     <div className="flex items-center justify-center gap-1 translate-x-[10px]">
                       {histDate ? (
                         <span
-                          onClick={openHistPicker}
+                          onClick={(e) => { if (guardAutoHoldClick(e)) return; openHistPicker(e); }}
                           className="font-mono text-indigo-400 cursor-pointer select-none hover:opacity-80"
                           title={`历史数据截止日：${histDate}（点击切换/退出历史模式）`}
                         >{histDate}</span>
                       ) : (
                         <span
-                          onClick={openHistPicker}
+                          onClick={(e) => { if (guardAutoHoldClick(e)) return; openHistPicker(e); }}
                           className="cursor-pointer select-none hover:text-app-text"
                           title="点击选择历史日期，以该日收盘价作为实时限价数据展示"
                         >{latestUpdateTime > 0 ? formatRelativeTime(latestUpdateTime) : '--'}</span>
                       )}
                       <button
-                        onClick={() => {
-                          if (autoFired.current) { autoFired.current = false; return; } // 长按触发后吞掉这次 click
+                        onClick={(e) => {
+                          if (guardAutoHoldClick(e)) return;                             // 长按触发后吞掉这次 click
                           if (autoRefreshOn) { setAutoRefreshOn(false); return; }        // 自动模式下点击 = 取消自动刷新
                           // 刷新股价后顺带补拉已过期的 BOLL（缓存判定在 ensureBatch 内：全部新鲜则不产生任何请求）
                           void handleRefreshAll(false).then(() => fetchAllBoll('点击「价格」列头刷新（补拉过期 BOLL）'));
                         }}
-                        onPointerDown={startAutoHold}
-                        onPointerUp={cancelAutoHold}
-                        onPointerLeave={cancelAutoHold}
-                        onContextMenu={(e) => e.preventDefault()}
                         disabled={!autoRefreshOn && isRefreshing.size > 0}
                         className="p-0.5 hover:bg-app-card rounded transition-colors disabled:opacity-50"
                         title={autoRefreshOn
@@ -6810,23 +6812,21 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 <tr 
                     key={stock.id} 
                     data-stock-row={stock.id}
-                    onDragOver={(e) => handleDragOver(e, stock.id)}
-                    onDragLeave={handleDragLeave}
-                    onDrop={(e) => handleDrop(e, stock.id)}
-                    className={`group border-t border-app-border ${draggedId ? '' : 'hover:bg-app-hover'} transition-colors ${dragOverId === stock.id ? 'bg-brand-yellow/10' : ''} ${hasOpenPopup(stock.id) ? 'bg-app-hover' : ''}`}
+                    data-stock-tag={stock.tag || ''}
+                    className={`group border-t border-app-border hover:bg-app-hover transition-colors ${hasOpenPopup(stock.id) ? 'bg-app-hover' : ''}`}
                   >
                   <td 
-                    className={`px-1 py-1.5 align-middle sticky left-0 z-20 ${hasOpenPopup(stock.id) ? 'bg-app-hover' : 'bg-app-card'} ${draggedId ? '' : 'group-hover:bg-app-hover'} cursor-move touch-none border-r border-app-border transition-colors ${draggedId === stock.id ? 'opacity-50' : ''}`}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, stock.id)}
-                    onDragEnd={handleDragEnd}
+                    className={`px-1 py-1.5 align-middle sticky left-0 z-20 ${hasOpenPopup(stock.id) ? 'bg-app-hover' : 'bg-app-card'} group-hover:bg-app-hover cursor-pointer touch-none select-none border-r border-app-border transition-colors`}
+                    // 长按热区扩大到整个单元格；同时禁用长按选中文字/系统菜单（移动端与长按事件冲突）
+                    style={{ WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}
+                    onContextMenu={(e) => e.preventDefault()}
+                    onPointerDown={() => startTagLongPress(stock)}
+                    onPointerUp={cancelTagLongPress}
+                    onPointerLeave={cancelTagLongPress}
+                    onPointerCancel={cancelTagLongPress}
+                    onClick={(e) => handleTagClick(e, stock.id)}
                   >
                     <div 
-                      onPointerDown={() => startTagLongPress(stock)}
-                      onPointerUp={cancelTagLongPress}
-                      onPointerLeave={cancelTagLongPress}
-                      onPointerCancel={cancelTagLongPress}
-                      onClick={(e) => handleTagClick(e, stock.id)}
                       className="cursor-pointer group/tag flex justify-center"
                       title="点击编辑标签，长按按标签排序并定位"
                     >
@@ -6846,7 +6846,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     </div>
                   </td>
                   {(cols.includes('code') || cols.includes('name')) && <td 
-                    className={`px-1 py-1.5 align-middle sticky left-[36px] z-10 ${hasOpenPopup(stock.id) ? 'bg-app-hover' : 'bg-app-card'} ${draggedId ? '' : 'group-hover:bg-app-hover'} cursor-pointer border-r border-app-border transition-colors ${draggedId ? '' : 'hover:bg-app-input/50'} ${draggedId === stock.id ? 'opacity-50' : ''}`}
+                    className={`px-1 py-1.5 align-middle sticky left-[36px] z-10 ${hasOpenPopup(stock.id) ? 'bg-app-hover' : 'bg-app-card'} group-hover:bg-app-hover cursor-pointer border-r border-app-border transition-colors hover:bg-app-input/50`}
                     onClick={(e) => handleStockNameClick(e, stock)}
                   >
                     <div className="flex items-center justify-center gap-1 w-full">
@@ -6931,7 +6931,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onClick={(e) => handleDivRateInfoClick(e, stock)}
                     onMouseEnter={(e) => handleDivRateInfoEnter(e, stock)}
                     onMouseLeave={handleDivRateInfoLeave}
-                    className={`w-[70px] min-w-[70px] max-w-[70px] overflow-hidden px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
+                    className={`w-[70px] min-w-[70px] max-w-[70px] overflow-hidden px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors hover:bg-app-input/50`}
                     title=""
                   >
                     <div className="flex flex-col items-center leading-tight gap-px w-full overflow-hidden">
@@ -6970,7 +6970,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onMouseLeave={handleMktInfoLeave}
                     onTouchStart={handleMktInfoTouchStart}
                     onClick={(e) => handleMktInfoClick(e, stock)}
-                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
+                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors hover:bg-app-input/50`}
                     title=""
                   >
                     {(() => {
@@ -7011,7 +7011,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                     onMouseLeave={() => handleListSrHoverLeave()}
                     onTouchStart={handleListSrTouchStart}
                     onClick={(e) => handleListSrClick(e, stock, true, 'openTrade')}
-                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors${draggedId ? '' : ' hover:bg-app-input/50'}`}
+                    className={`px-1 py-1.5 text-center border-r border-app-border cursor-pointer transition-colors hover:bg-app-input/50`}
                     title=""
                   >
                     {(() => {
@@ -7214,7 +7214,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       return (
                         <td key={key}
                           title={isStaleBoll ? `过期的 BOLL 缓存（上次拉取 ${formatCacheTime(data?.fetchedAt ?? 0)}），点击刷新` : undefined}
-                          className={`px-1 py-1.5 text-center cursor-pointer ${isStaleBoll ? STALE_BOLL_CLS : draggedId ? '' : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
+                          className={`px-1 py-1.5 text-center cursor-pointer ${isStaleBoll ? STALE_BOLL_CLS : 'hover:bg-app-input/50'} ${idx < 2 ? 'border-r border-app-border' : 'border-r border-app-border'}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             const rect = e.currentTarget.getBoundingClientRect();

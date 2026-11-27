@@ -207,6 +207,8 @@ export interface EnsureBatchOpts {
   onFailureAbort?: (info: { failures: number; remaining: number }) => void;
   /** 强制刷新：忽略缓存新鲜度，全部重新请求 */
   force?: boolean;
+  /** 只读取并铺上本地缓存，不发起任何网络请求（BOLL 自动刷新锁定时的降级路径） */
+  cacheOnly?: boolean;
 }
 
 /** 批量加载结果：区分"是否发过请求"与"整批是否完整成功" */
@@ -580,6 +582,9 @@ export const priceBureau = {
 
     // 先把已命中项一次性批量应用，再对缺失项顺序请求
     priceBureau.setEntries(cachedByCode);
+
+    // 锁定模式的降级路径：只铺缓存（含过期旧数据），一律不发网络请求
+    if (opts.cacheOnly) return { madeRequest, completed: false };
 
     const order = opts.order ?? stocks;
     const targetIds = new Set(stocks.map(s => s.id));
