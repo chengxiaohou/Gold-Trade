@@ -266,6 +266,9 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(stockSettings?.autoRefreshInterval ?? 60);
   // 布林线批量请求间隔（毫秒）；设备本地设置不与云端同步
   const [bollRequestInterval, setBollRequestInterval] = useState<number>(stockSettings?.bollRequestInterval ?? 1000);
+  // 滚动播报：触发阈值（%）与每股每个方向最多几单；设备本地设置
+  const [tickerThreshold, setTickerThreshold] = useState<number>(stockSettings?.tickerThreshold ?? 3);
+  const [tickerMaxPerStock, setTickerMaxPerStock] = useState<number>(stockSettings?.tickerMaxPerStock ?? 3);
 
   // 标签判定参数操作辅助
   const updateTagParam = (group: 'feng' | 'classic', key: string, patch: Partial<TagParamEntry>) => {
@@ -437,6 +440,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       memoUpdatedAt: stockSettings?.memoUpdatedAt ?? 0,
       autoRefreshInterval,
       bollRequestInterval,
+      tickerThreshold,
+      tickerMaxPerStock,
       buyOrderPlaceholder: currentPage === 'stock' ? buyOrderPlaceholder : stockSettings?.buyOrderPlaceholder,
       sellOrderPlaceholder: currentPage === 'stock' ? sellOrderPlaceholder : stockSettings?.sellOrderPlaceholder,
       tagParams,
@@ -547,6 +552,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       sellOrderPlaceholder: currentPage === 'stock' ? sellOrderPlaceholder : stockSettings?.sellOrderPlaceholder,
       autoRefreshInterval: currentPage === 'stock' ? autoRefreshInterval : stockSettings?.autoRefreshInterval,
       bollRequestInterval: currentPage === 'stock' ? bollRequestInterval : stockSettings?.bollRequestInterval,
+      tickerThreshold: currentPage === 'stock' ? tickerThreshold : stockSettings?.tickerThreshold,
+      tickerMaxPerStock: currentPage === 'stock' ? tickerMaxPerStock : stockSettings?.tickerMaxPerStock,
       tagParams,
       customTags,
     };
@@ -865,6 +872,50 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                               step={50}
                               precision={0}
                               min={0}
+                              touchMode
+                              hideControls
+                              className="!py-1.5 !pl-2 !pr-2 !text-xs text-center"
+                            />
+                          </div>
+                        </div>
+
+                        {/* 滚动播报：触发阈值与每股上限（仅本地记忆） */}
+                        <div className="flex items-center justify-between gap-3 pt-2">
+                          <div className="min-w-0">
+                            <div className="text-sm text-app-text">滚动播报阈值（%）</div>
+                            <div className="text-xs text-app-subtext">持仓买入单涨跌幅超过该值时才会进入播报条</div>
+                          </div>
+                          <div className="w-[71px] shrink-0">
+                            <InputGroup
+                              value={tickerThreshold}
+                              onChange={(v) => {
+                                const val = parseFloat(v) || 0;
+                                if (val >= 0) setTickerThreshold(val);
+                              }}
+                              step={0.5}
+                              precision={1}
+                              min={0}
+                              touchMode
+                              hideControls
+                              className="!py-1.5 !pl-2 !pr-2 !text-xs text-center"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 pt-2">
+                          <div className="min-w-0">
+                            <div className="text-sm text-app-text">每股播报上限（单）</div>
+                            <div className="text-xs text-app-subtext">同一只股票、同一方向最多播报几笔买入单</div>
+                          </div>
+                          <div className="w-[71px] shrink-0">
+                            <InputGroup
+                              value={tickerMaxPerStock}
+                              onChange={(v) => {
+                                const val = parseInt(v) || 0;
+                                if (val >= 1) setTickerMaxPerStock(val);
+                              }}
+                              step={1}
+                              precision={0}
+                              min={1}
                               touchMode
                               hideControls
                               className="!py-1.5 !pl-2 !pr-2 !text-xs text-center"

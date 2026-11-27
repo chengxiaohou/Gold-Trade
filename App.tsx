@@ -603,6 +603,8 @@ export default function App() {
         stockTotalCapital: parsed.stockTotalCapital ?? parsed.dividendTotalCapital,
         autoRefreshInterval: parsed.autoRefreshInterval ?? 60,
         bollRequestInterval: parsed.bollRequestInterval ?? 1000,
+        tickerThreshold: parsed.tickerThreshold ?? 3,
+        tickerMaxPerStock: parsed.tickerMaxPerStock ?? 3,
         tagParams: parsed.tagParams || DEFAULT_TAG_PARAMS,
         customTags: parsed.customTags || []
       };
@@ -622,6 +624,8 @@ export default function App() {
         memoUpdatedAt: 0,
         autoRefreshInterval: 60,
         bollRequestInterval: 1000,
+        tickerThreshold: 3,
+        tickerMaxPerStock: 3,
         tagParams: DEFAULT_TAG_PARAMS,
         customTags: []
       };
@@ -2755,6 +2759,8 @@ export default function App() {
             onMaxWidthChange={(width) => setStockSettings(prev => ({ ...prev, maxWidth: width }))}
             autoRefreshInterval={stockSettings.autoRefreshInterval ?? 60}
             bollRequestInterval={stockSettings.bollRequestInterval ?? 1000}
+            tickerThreshold={stockSettings.tickerThreshold ?? 3}
+            tickerMaxPerStock={stockSettings.tickerMaxPerStock ?? 3}
             divRateHoverEnabled={divRateHoverEnabled}
             popupBackdropEnabled={popupBackdropEnabled}
             actionButtons={renderStockActionButtons()}

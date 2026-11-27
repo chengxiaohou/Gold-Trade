@@ -276,4 +276,6 @@ export interface StockSettings {
   sellOrderPlaceholder?: string; // 卖出挂单备注占位文字（随云端同步）
   autoRefreshInterval?: number; // 股价自动刷新间隔（秒），0=关闭；设备本地设置，不随云端同步
   bollRequestInterval?: number; // 布林线批量请求间隔（毫秒）；设备本地设置，不随云端同步
+  tickerThreshold?: number; // 滚动播报触发阈值（%）；设备本地设置，不随云端同步
+  tickerMaxPerStock?: number; // 滚动播报每股每个方向最多几单；设备本地设置，不随云端同步
 }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen, AlertTriangle } from 'lucide-react';
+import { Plus, X, RefreshCw, Edit2, Check, TrendingUp, TrendingDown, Settings, CloudDownload, CloudUpload, Moon, Sun, Trash2, GripVertical, GripHorizontal, RotateCcw, Eye, EyeOff, Download, Upload, BarChart3, ChevronDown, UnfoldVertical, FoldVertical, Copy, ArrowLeftRight, Link, SquarePen, AlertTriangle, Megaphone } from 'lucide-react';
 import { LineChart, ComposedChart, Line, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { StockEntry, DividendRateColorRange, StockSettings, StockTrade, ApiSource, TagParams, DEFAULT_TAG_PARAMS, UserTagRule } from '../types';
 import { classifyBollBandDisplay, explainBollBandStreak, getBollPosition, bollBandLabel, buildBollBandTextParts, getBollCacheTimestamps } from '../services/bollService';
@@ -19,6 +19,8 @@ import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, anal
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PatternCombo } from '../services/tagAnalyzers';
 import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
 import { InputGroup } from './InputGroup';
+import TickerBanner from './TickerBanner';
+import { buildTickerItems, tradeVolumeLabel, TICKER_DEFAULT_MAX_PER_STOCK, TICKER_DEFAULT_THRESHOLD } from '../services/tradeTicker';
 import BollStreakTip from './BollStreakTip';
 import { useStepWheel } from '../hooks/useStepWheel';
 import { BacktestModal } from './BacktestModal';
@@ -293,6 +295,8 @@ interface StockDividendPageProps {
   onMaxWidthChange?: (width: number) => void; // 拖拽列表右边缘时回写"列表最大宽度"设置
   autoRefreshInterval?: number; // 股价自动刷新间隔（秒），0=关闭；设备本地设置
   bollRequestInterval?: number; // 布林线批量请求间隔（毫秒）；设备本地设置
+  tickerThreshold?: number; // 滚动播报触发阈值（%），设备本地设置
+  tickerMaxPerStock?: number; // 滚动播报每股每个方向最多几单，设备本地设置
   divRateHoverEnabled?: boolean; // 股息率弹窗是否支持鼠标悬浮显示；设备本地设置，不上传云端
   popupBackdropEnabled?: boolean; // 移动端弹窗背景遮罩开关；设备本地设置，不上传云端
   actionButtons?: React.ReactNode;
@@ -653,33 +657,12 @@ function pendingExpirySuffix(t: StockTrade, now: number): string {
   if (idx === ttl) return '!';     // 最后一个有效日
   return '';
 }
-// 交易体量罗马数字：按成交金额每 2500 元一档并取最接近的档位，但第一档（2500 元）不写罗马数字，
-// 从 5000 元起为 I：2500→无、5000→I、7500→II、10000→III（2000 / 3000 仍属第一档，不写）。
-// 汇总记录优先用其记录的成交总金额，普通记录用 价格 × 股数。
-const TRADE_VOLUME_STEP = 2500;
-const toRomanNumeral = (n: number): string => {
-  if (!Number.isFinite(n) || n <= 0) return '';
-  const table: Array<[number, string]> = [
-    [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'],
-    [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I'],
-  ];
-  let rest = Math.floor(n);
-  let out = '';
-  for (const [value, symbol] of table) {
-    while (rest >= value) { out += symbol; rest -= value; }
-  }
-  return out;
-};
-const tradeVolumeTier = (t: StockTrade): string => {
-  const amount = Math.abs(t.amount ?? t.price * t.shares);
-  // 档位从 1 起算；第一档不显示，故减 1 后再转罗马数字（0 → 空串）
-  return toRomanNumeral(Math.round(amount / TRADE_VOLUME_STEP) - 1);
-};
+// 交易体量罗马数字：统一由 services/tradeTicker 提供（滚动播报与状态标签共用同一档位口径）
 // 生成挂单/成交的状态文字：方向 + 体量罗马数字，挂单天数（或 ! / ? 标记）用「-」接在最后，
 // 如 挂卖Ⅲ-3、挂买-!（第一档无罗马数字时省略方向与天数间的空档）；成交为 买入Ⅱ 这类「方向 + 体量」顺序
 const tradeStatusLabel = (t: StockTrade): string => {
   const base = TRADE_STATUS_LABEL[`${t.side}-${t.status}`];
-  const vol = tradeVolumeTier(t);
+  const vol = tradeVolumeLabel(t);
   if (t.status !== 'pending') return `${base}${vol}`;
   const suffix = pendingExpirySuffix(t, Date.now());
   const days = suffix || pendingRemainingDays(t, Date.now());
@@ -2472,7 +2455,7 @@ const getRequestLogSnapshot = () => requestLogService.getSnapshot();
 // 因此改为纯色背景类，交给合成层处理，滚动更顺滑。
 const STALE_BOLL_CLS = 'bg-slate-900/20 hover:bg-slate-900/30 dark:bg-black/40 dark:hover:bg-black/50';
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, bollRequestInterval = 1000, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, stockTotalCapital = 0, onStockTotalCapitalChange }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, bollRequestInterval = 1000, tickerThreshold = TICKER_DEFAULT_THRESHOLD, tickerMaxPerStock = TICKER_DEFAULT_MAX_PER_STOCK, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, stockTotalCapital = 0, onStockTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
   useEffect(() => {
     const id = 'profit-month-scroller-style';
@@ -4294,6 +4277,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     try { localStorage.setItem('stock_capital_stats_visible', showCapitalStats ? '1' : '0'); } catch { /* ignore */ }
   }, [showCapitalStats]);
+  // 滚动播报显隐（与资金概况互斥：同一块空间，二者只能显示其一），存 localStorage
+  const [showTicker, setShowTicker] = useState(() => {
+    try { return localStorage.getItem('stock_ticker_visible') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('stock_ticker_visible', showTicker ? '1' : '0'); } catch { /* ignore */ }
+  }, [showTicker]);
   // 资金概况的展示档位：按标题行剩余空间动态决定，优先级「仓位 → 剩余 → 已投入 → 总资金」
   // 0=只有仓位，1=+剩余，2=+已投入，3=全部
   const [capitalStatsTier, setCapitalStatsTier] = useState(0);
@@ -4341,6 +4331,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   useEffect(() => {
     try { localStorage.setItem('stock_tax_enabled', taxEnabled ? '1' : '0'); } catch {}
   }, [taxEnabled]);
+
+  // 滚动播报条目：持仓买入单相对现价的涨跌提醒。
+  // 口径固定为做T配对（avg 口径没有单笔概念），「可领取」跟随页面含税开关；
+  // 价格取自 displayStocks（与「价格」列完全同源，历史模式下也随列一致）。
+  const tickerItems = useMemo(
+    () => buildTickerItems(displayStocks, { threshold: tickerThreshold, maxPerStock: tickerMaxPerStock, withTax: taxEnabled }),
+    [displayStocks, tickerThreshold, tickerMaxPerStock, taxEnabled],
+  );
 
   // 盈利统计面板 wheel 接管：阻止滚轮在面板内滚动时串扰带动背后的股票大列表/页面。
   // 不用 React onWheel（被动监听 preventDefault 不可靠），改用原生 passive:false 监听，
@@ -6390,7 +6388,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <span>仓位: {accountSummary.ratio.toFixed(1)}%</span>
         </div>
         <div ref={capitalHeaderRowRef} className="w-full flex items-end gap-2 md:gap-3" style={{ maxWidth: effectiveMaxWidth }}>
-          <div className="flex items-baseline gap-3 pb-2 shrink-0">
+          <div className={`flex items-baseline gap-3 pb-2 ${showTicker ? 'flex-1 min-w-0' : 'shrink-0'}`}>
             <h1
               ref={capitalHeaderTitleRef}
               onPointerDown={startTitleLongPress}
@@ -6400,8 +6398,15 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               onContextMenu={(e) => e.preventDefault()}
               className={`text-2xl md:text-3xl font-bold tracking-wide whitespace-nowrap select-none ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}
             >股息率{import.meta.env.DEV ? ' debug' : ''}</h1>
-            {/* 资金概况：位于标题右侧，可用右侧圆环按钮显隐 */}
-            {showCapitalStats && (
+            {/* 滚动播报条：与资金概况互斥，占用同一块空间 */}
+            {showTicker ? (
+              <div className="flex-1 min-w-0 pb-0.5">
+                <TickerBanner
+                  items={tickerItems}
+                  emptyText={`暂无涨跌超过 ${tickerThreshold}% 的持仓买入`}
+                />
+              </div>
+            ) : showCapitalStats && (
               <div className="flex items-center gap-3 text-[10px] whitespace-nowrap min-w-0">
                 <span className={`${capitalStatsTier >= 3 ? 'inline' : 'hidden'} text-app-subtext`}>总资金:
                   {editingCapital ? (
@@ -6434,7 +6439,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
           <div ref={capitalHeaderButtonsRef} className="ml-auto pb-1.5 shrink-0 flex justify-end items-center gap-0.5 sm:gap-1.5 lg:gap-2">{uploadButton}{/* 资金概况显隐开关：圆环进度 = 仓位占用（配色与同排按钮图标一致） */}
             <button
               type="button"
-              onClick={() => setShowCapitalStats(v => !v)}
+              onClick={() => setShowCapitalStats(v => {
+                const next = !v;
+                if (next) setShowTicker(false); // 与播报互斥，共用标题右侧空间
+                return next;
+              })}
               className="flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 shrink-0 text-app-subtext hover:text-app-text hover:border-app-border"
               title={`${showCapitalStats ? '隐藏' : '显示'}资金概况（仓位 ${accountSummary.ratio.toFixed(1)}%）`}
             >
@@ -6446,6 +6455,19 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   transform="rotate(-90 10 10)"
                 />
               </svg>
+            </button>
+            {/* 滚动播报开关：与资金概况互斥，展开时替换标题右侧的资金概况文字 */}
+            <button
+              type="button"
+              onClick={() => setShowTicker(v => {
+                const next = !v;
+                if (next) setShowCapitalStats(false);
+                return next;
+              })}
+              className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-7 h-7 shrink-0 ${showTicker ? 'text-indigo-400 border-indigo-500/50' : 'text-app-subtext border-app-border hover:text-app-text'}`}
+              title={`${showTicker ? '关闭' : '开启'}滚动播报（持仓买入单涨跌 ≥${tickerThreshold}% 提醒）`}
+            >
+              <Megaphone size={15} />
             </button>
             {memoButton}
             {actionButtons}
