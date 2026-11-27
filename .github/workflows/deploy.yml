@@ -18,6 +18,8 @@ jobs:
       contents: read
       pages: write
       id-token: write
+      # 用于清理本 run 内重复的 github-pages artifact（重跑时会产生同名副本）
+      actions: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,6 +47,21 @@ jobs:
           # 尝试自动启用 Pages（当仓库未启用 Pages 时有用）
           enablement: true
 
+      - name: Clean stale pages artifacts
+        # 重跑（gh run rerun）会让同一个 run 里出现多份同名 artifact，
+        # deploy-pages@v4 会直接报 "Multiple artifacts named \"github-pages\" were unexpectedly found" 失败。
+        # 上传前先删掉本 run 里已存在的同名 artifact，保证始终只有一份，重跑即安全。
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
+            --paginate --jq '.artifacts[] | select(.name=="github-pages") | .id' \
+          | while read -r id; do
+              if [ -n "$id" ]; then
+                gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/$id"
+              fi
+            done
+
       - name: Upload artifact
         # 使用 v4 以避免依赖已弃用的 artifact actions v3
         uses: actions/upload-pages-artifact@v4
@@ -52,5 +69,16 @@ jobs:
           path: ./dist
 
       - name: Deploy to GitHub Pages
+        id: deploy
         # 使用最新稳定的 v4 版 deploy-pages
+        uses: actions/deploy-pages@v4
+        # 刚上传完 artifact 时偶发查不到（Found 0 artifact(s)），失败后等几秒重试一次
+        continue-on-error: true
+
+      - name: Wait before deploy retry
+        if: steps.deploy.outcome == 'failure'
+        run: sleep 10
+
+      - name: Deploy to GitHub Pages (retry)
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@v4
