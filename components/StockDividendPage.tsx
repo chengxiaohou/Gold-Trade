@@ -2456,7 +2456,7 @@ const getRequestLogSnapshot = () => requestLogService.getSnapshot();
 // 过期 BOLL 单元格标记：纯深色底（不再用斜纹）。
 // 斜纹需要 background-attachment: fixed，滚动时每个单元格都要重绘纹理，长列表滚动会掉帧，
 // 因此改为纯色背景类，交给合成层处理，滚动更顺滑。
-const STALE_BOLL_CLS = 'bg-slate-900/20 hover:bg-slate-900/30 dark:bg-black/40 dark:hover:bg-black/50';
+const STALE_BOLL_CLS = 'bg-app-input hover:bg-app-input/70';
 
 export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, bollRequestInterval = 1000, tickerUpThreshold = TICKER_DEFAULT_THRESHOLD, tickerDownThreshold = TICKER_DEFAULT_THRESHOLD, tickerMaxPerStock = TICKER_DEFAULT_MAX_PER_STOCK, pendingNearPct = PENDING_NEAR_MATCH_PCT, tickerMinProfit = TICKER_DEFAULT_MIN_PROFIT, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, stockTotalCapital = 0, onStockTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
@@ -4290,6 +4290,28 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 资金概况的展示档位：按标题行剩余空间动态决定，优先级「仓位 → 剩余 → 已投入 → 总资金」
   // 0=只有仓位，1=+剩余，2=+已投入，3=全部
   const [capitalStatsTier, setCapitalStatsTier] = useState(0);
+  // 顶部操作按钮排：向右滑动收起成单个设置按钮，向左滑动重新展开（设备本地记忆）
+  const [headerActionsCollapsed, setHeaderActionsCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem('stock_header_actions_collapsed') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('stock_header_actions_collapsed', headerActionsCollapsed ? '1' : '0'); } catch { /* ignore */ }
+  }, [headerActionsCollapsed]);
+  const headerSwipeRef = useRef<{ x: number; y: number } | null>(null);
+  const onHeaderActionsPointerDown = (e: React.PointerEvent) => {
+    headerSwipeRef.current = { x: e.clientX, y: e.clientY };
+  };
+  // 手势判定：水平位移 ≥40px 且明显大于垂直位移才生效，避免与滚动/点击冲突
+  const onHeaderActionsPointerUp = (e: React.PointerEvent) => {
+    const start = headerSwipeRef.current;
+    headerSwipeRef.current = null;
+    if (!start) return;
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (!headerActionsCollapsed && dx > 0) setHeaderActionsCollapsed(true); // 右滑：收起
+    else if (headerActionsCollapsed && dx < 0) setHeaderActionsCollapsed(false); // 左滑：展开
+  };
   const capitalHeaderRowRef = useRef<HTMLDivElement>(null);
   const capitalHeaderTitleRef = useRef<HTMLHeadingElement>(null);
   const capitalHeaderButtonsRef = useRef<HTMLDivElement>(null);
@@ -6406,7 +6428,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               onPointerLeave={cancelTitleLongPress}
               onPointerCancel={cancelTitleLongPress}
               onContextMenu={(e) => e.preventDefault()}
-              className={`text-2xl md:text-3xl font-bold tracking-wide whitespace-nowrap select-none ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}
+              className={`text-2xl md:text-3xl font-bold tracking-wide whitespace-nowrap select-none ${showTicker ? 'hidden sm:block' : ''} ${import.meta.env.DEV ? 'text-orange-400' : 'text-app-subtext'}`}
             >股息率{import.meta.env.DEV ? ' debug' : ''}</h1>
             {/* 滚动播报条：与资金概况互斥，占用同一块空间 */}
             {showTicker ? (
@@ -6450,7 +6472,39 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               </div>
             )}
           </div>
-          <div ref={capitalHeaderButtonsRef} className="ml-auto pb-1.5 shrink-0 flex justify-end items-center gap-0.5 sm:gap-1.5 lg:gap-2">{uploadButton}{/* 资金概况显隐开关：圆环进度 = 仓位占用（配色与同排按钮图标一致） */}
+          <div
+            ref={capitalHeaderButtonsRef}
+            onPointerDown={onHeaderActionsPointerDown}
+            onPointerUp={onHeaderActionsPointerUp}
+            onPointerCancel={() => { headerSwipeRef.current = null; }}
+            className="ml-auto pb-1.5 shrink-0 flex justify-end items-center gap-0.5 sm:gap-1.5 lg:gap-2"
+          >
+            {headerActionsCollapsed ? (<>
+              {/* 收起态：保留「上传」与「设置」两个按钮，其余隐藏；向左滑动或点设置按钮重新展开整排 */}
+              {uploadButton}
+              <button
+                type="button"
+                onClick={() => setHeaderActionsCollapsed(false)}
+                className="flex items-center justify-center bg-app-card border border-app-border rounded-md transition-all w-7 h-7 shrink-0 text-app-subtext hover:text-app-text"
+                title="展开操作按钮（向左滑动或点击）"
+              >
+                <Settings size={15} />
+              </button>
+            </>) : (<>
+            {uploadButton}{/* 滚动播报开关：与资金概况互斥，展开时替换标题右侧的资金概况文字 */}
+            <button
+              type="button"
+              onClick={() => setShowTicker(v => {
+                const next = !v;
+                if (next) setShowCapitalStats(false);
+                return next;
+              })}
+              className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-7 h-7 shrink-0 ${showTicker ? 'text-indigo-400 border-indigo-500/50' : 'text-app-subtext border-app-border hover:text-app-text'}`}
+              title={`${showTicker ? '关闭' : '开启'}滚动播报（持仓买入单上涨 ≥${tickerUpThreshold}%、下跌 ≥${tickerDownThreshold}% 提醒）`}
+            >
+              <Megaphone size={15} />
+            </button>
+            {/* 资金概况显隐开关：圆环进度 = 仓位占用（配色与同排按钮图标一致） */}
             <button
               type="button"
               onClick={() => setShowCapitalStats(v => {
@@ -6470,21 +6524,9 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 />
               </svg>
             </button>
-            {/* 滚动播报开关：与资金概况互斥，展开时替换标题右侧的资金概况文字 */}
-            <button
-              type="button"
-              onClick={() => setShowTicker(v => {
-                const next = !v;
-                if (next) setShowCapitalStats(false);
-                return next;
-              })}
-              className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-7 h-7 shrink-0 ${showTicker ? 'text-indigo-400 border-indigo-500/50' : 'text-app-subtext border-app-border hover:text-app-text'}`}
-              title={`${showTicker ? '关闭' : '开启'}滚动播报（持仓买入单上涨 ≥${tickerUpThreshold}%、下跌 ≥${tickerDownThreshold}% 提醒）`}
-            >
-              <Megaphone size={15} />
-            </button>
             {memoButton}
             {actionButtons}
+            </>)}
           </div>
         </div>
       </div>
@@ -6938,7 +6980,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                         <div className="flex flex-col items-center leading-tight gap-px">
                           {/* 第一行：现价/收盘价（字号最大，带涨跌色与刷新失败图标） */}
                           <div className="flex items-center justify-center gap-0.5">
-                            <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
+                            <span className={`font-mono text-xs font-bold ${priceVsPrevCloseBrandCls(stock.price, prevClose)}`}>
                               {formatPrice(stock.price, stock.name)}
                             </span>
                             {refreshFailed.has(stock.id) && (
@@ -6978,12 +7020,12 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                       // 最高价涨幅 / 最低价跌幅：派生百分比统一走 indicators 的共享计算（SSOT），不在此另写算式
                       const highPct = changePctVsPrevClose(stock.high, prevClose);
                       const lowPct = changePctVsPrevClose(stock.low, prevClose);
-                      const pctText = (p: number | null) => p == null ? '-' : `${p >= 0 ? '+' : ''}${formatPercent(p)}`;
+                      const pctText = (p: number | null) => p == null ? '-' : `${p > 0 ? '+' : ''}${formatPercent(p)}`;
                       return (
                         <div className="flex flex-col items-center leading-tight gap-px">
-                          {/* 第一行：现价/收盘价涨跌幅（字号最大） */}
-                          <span className={`font-mono text-xs font-bold ${stock.changePercent >= 0 ? 'text-brand-red' : 'text-brand-green'}`}>
-                            {stock.changePercent >= 0 ? '+' : ''}{formatPercent(stock.changePercent)}
+                          {/* 第一行：现价/收盘价涨跌幅（字号最大）；平盘走共享判定的中性色，不再当作上涨标红 */}
+                          <span className={`font-mono text-xs font-bold ${priceVsPrevCloseBrandCls(stock.price, prevClose)}`}>
+                            {stock.changePercent > 0 ? '+' : ''}{formatPercent(stock.changePercent)}
                           </span>
                           {/* 第二行：当日最高价的涨幅（着色判定与价格列第二行同源，字重 800 → Roboto Mono 回落至 700） */}
                           <span className={`font-mono font-extrabold text-[9px] ${priceVsPrevCloseBrandCls(stock.high, prevClose)}`}>

@@ -2216,7 +2216,7 @@ export default function App() {
 
   return (
     <div 
-      className={`${currentPage === 'gold' ? 'min-h-screen pb-4 md:pb-8' : 'h-screen overflow-hidden pb-0'} bg-app-bg text-app-text font-sans pt-1 md:pt-2 px-4 md:px-8 flex justify-center relative transition-colors duration-300`}
+      className={`${currentPage === 'gold' ? 'min-h-screen pb-4 md:pb-8' : 'h-[calc(100dvh+6px)] overflow-hidden pb-0'} bg-app-bg text-app-text font-sans pt-1 md:pt-2 px-4 md:px-8 flex justify-center relative transition-colors duration-300`}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
