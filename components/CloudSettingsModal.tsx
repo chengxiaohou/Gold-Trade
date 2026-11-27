@@ -267,7 +267,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
   // 布林线批量请求间隔（毫秒）；设备本地设置不与云端同步
   const [bollRequestInterval, setBollRequestInterval] = useState<number>(stockSettings?.bollRequestInterval ?? 1000);
   // 滚动播报：触发阈值（%）与每股每个方向最多几单；设备本地设置
-  const [tickerThreshold, setTickerThreshold] = useState<number>(stockSettings?.tickerThreshold ?? 3);
+  const [tickerUpThreshold, setTickerUpThreshold] = useState<number>(stockSettings?.tickerUpThreshold ?? 3);
+  const [tickerDownThreshold, setTickerDownThreshold] = useState<number>(stockSettings?.tickerDownThreshold ?? 3);
   const [tickerMaxPerStock, setTickerMaxPerStock] = useState<number>(stockSettings?.tickerMaxPerStock ?? 3);
   // 挂单「即将成交」价差阈值（%）；设备本地设置
   const [pendingNearMatchPct, setPendingNearMatchPct] = useState<number>(stockSettings?.pendingNearMatchPct ?? 0.3);
@@ -444,7 +445,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       memoUpdatedAt: stockSettings?.memoUpdatedAt ?? 0,
       autoRefreshInterval,
       bollRequestInterval,
-      tickerThreshold,
+      tickerUpThreshold,
+      tickerDownThreshold,
       tickerMaxPerStock,
       pendingNearMatchPct,
       tickerMinProfit,
@@ -558,7 +560,8 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
       sellOrderPlaceholder: currentPage === 'stock' ? sellOrderPlaceholder : stockSettings?.sellOrderPlaceholder,
       autoRefreshInterval: currentPage === 'stock' ? autoRefreshInterval : stockSettings?.autoRefreshInterval,
       bollRequestInterval: currentPage === 'stock' ? bollRequestInterval : stockSettings?.bollRequestInterval,
-      tickerThreshold: currentPage === 'stock' ? tickerThreshold : stockSettings?.tickerThreshold,
+      tickerUpThreshold: currentPage === 'stock' ? tickerUpThreshold : stockSettings?.tickerUpThreshold,
+      tickerDownThreshold: currentPage === 'stock' ? tickerDownThreshold : stockSettings?.tickerDownThreshold,
       tickerMaxPerStock: currentPage === 'stock' ? tickerMaxPerStock : stockSettings?.tickerMaxPerStock,
       pendingNearMatchPct: currentPage === 'stock' ? pendingNearMatchPct : stockSettings?.pendingNearMatchPct,
       tickerMinProfit: currentPage === 'stock' ? tickerMinProfit : stockSettings?.tickerMinProfit,
@@ -1061,15 +1064,36 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                         </p>
                         <div className="flex items-center justify-between gap-3 pt-2">
                           <div className="min-w-0">
-                            <div className="text-sm text-app-text">涨跌播报阈值（%）</div>
-                            <div className="text-xs text-app-subtext">持仓买入单涨跌幅超过该值时才会进入播报条</div>
+                            <div className="text-sm text-app-text">上涨播报阈值（%）</div>
+                            <div className="text-xs text-app-subtext">持仓买入单涨幅超过该值时进入播报条</div>
                           </div>
                           <div className="w-[71px] shrink-0">
                             <InputGroup
-                              value={tickerThreshold}
+                              value={tickerUpThreshold}
                               onChange={(v) => {
                                 const val = parseFloat(v) || 0;
-                                if (val >= 0) setTickerThreshold(val);
+                                if (val >= 0) setTickerUpThreshold(val);
+                              }}
+                              step={0.5}
+                              precision={1}
+                              min={0}
+                              touchMode
+                              hideControls
+                              className="!py-1.5 !pl-2 !pr-2 !text-xs text-center"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 pt-2">
+                          <div className="min-w-0">
+                            <div className="text-sm text-app-text">下跌播报阈值（%）</div>
+                            <div className="text-xs text-app-subtext">持仓买入单跌幅超过该值时进入播报条</div>
+                          </div>
+                          <div className="w-[71px] shrink-0">
+                            <InputGroup
+                              value={tickerDownThreshold}
+                              onChange={(v) => {
+                                const val = parseFloat(v) || 0;
+                                if (val >= 0) setTickerDownThreshold(val);
                               }}
                               step={0.5}
                               precision={1}

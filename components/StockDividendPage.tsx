@@ -295,7 +295,8 @@ interface StockDividendPageProps {
   onMaxWidthChange?: (width: number) => void; // 拖拽列表右边缘时回写"列表最大宽度"设置
   autoRefreshInterval?: number; // 股价自动刷新间隔（秒），0=关闭；设备本地设置
   bollRequestInterval?: number; // 布林线批量请求间隔（毫秒）；设备本地设置
-  tickerThreshold?: number; // 滚动播报触发阈值（%），设备本地设置
+  tickerUpThreshold?: number; // 滚动播报上涨阈值（%），设备本地设置
+  tickerDownThreshold?: number; // 滚动播报下跌阈值（%），设备本地设置
   tickerMaxPerStock?: number; // 滚动播报每股每个方向最多几单，设备本地设置
   pendingNearPct?: number; // 挂单「即将成交」价差阈值（%），设备本地设置
   tickerMinProfit?: number; // 上涨播报的最小可获利金额（元），设备本地设置
@@ -2457,7 +2458,7 @@ const getRequestLogSnapshot = () => requestLogService.getSnapshot();
 // 因此改为纯色背景类，交给合成层处理，滚动更顺滑。
 const STALE_BOLL_CLS = 'bg-slate-900/20 hover:bg-slate-900/30 dark:bg-black/40 dark:hover:bg-black/50';
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, bollRequestInterval = 1000, tickerThreshold = TICKER_DEFAULT_THRESHOLD, tickerMaxPerStock = TICKER_DEFAULT_MAX_PER_STOCK, pendingNearPct = PENDING_NEAR_MATCH_PCT, tickerMinProfit = TICKER_DEFAULT_MIN_PROFIT, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, stockTotalCapital = 0, onStockTotalCapitalChange }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, bollRequestInterval = 1000, tickerUpThreshold = TICKER_DEFAULT_THRESHOLD, tickerDownThreshold = TICKER_DEFAULT_THRESHOLD, tickerMaxPerStock = TICKER_DEFAULT_MAX_PER_STOCK, pendingNearPct = PENDING_NEAR_MATCH_PCT, tickerMinProfit = TICKER_DEFAULT_MIN_PROFIT, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, stockTotalCapital = 0, onStockTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
   useEffect(() => {
     const id = 'profit-month-scroller-style';
@@ -4339,13 +4340,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 价格取自 displayStocks（与「价格」列完全同源，历史模式下也随列一致）。
   const tickerItems = useMemo(
     () => buildTickerItems(displayStocks, {
-      threshold: tickerThreshold,
+      upThreshold: tickerUpThreshold,
+      downThreshold: tickerDownThreshold,
       maxPerStock: tickerMaxPerStock,
       nearMatchPct: pendingNearPct,
       minProfit: tickerMinProfit,
       withTax: taxEnabled,
     }),
-    [displayStocks, tickerThreshold, tickerMaxPerStock, pendingNearPct, tickerMinProfit, taxEnabled],
+    [displayStocks, tickerUpThreshold, tickerDownThreshold, tickerMaxPerStock, pendingNearPct, tickerMinProfit, taxEnabled],
   );
 
   // 盈利统计面板 wheel 接管：阻止滚轮在面板内滚动时串扰带动背后的股票大列表/页面。
@@ -6411,7 +6413,11 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
               <div className="flex-1 min-w-0 pb-0.5">
                 <TickerBanner
                   items={tickerItems}
-                  emptyText={`暂无涨跌超过 ${tickerThreshold}% 的持仓买入`}
+                  emptyText={`暂无涨跌超过 ${tickerUpThreshold}% / ${tickerDownThreshold}% 的持仓买入`}
+                  onLotClick={(stockId, anchor) => {
+                    const s = stocks.find(x => x.id === stockId);
+                    if (s) openTradeInfo(anchor, s);
+                  }}
                 />
               </div>
             ) : showCapitalStats && (
@@ -6473,7 +6479,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                 return next;
               })}
               className={`flex items-center justify-center bg-app-card border rounded-md transition-all w-7 h-7 shrink-0 ${showTicker ? 'text-indigo-400 border-indigo-500/50' : 'text-app-subtext border-app-border hover:text-app-text'}`}
-              title={`${showTicker ? '关闭' : '开启'}滚动播报（持仓买入单涨跌 ≥${tickerThreshold}% 提醒）`}
+              title={`${showTicker ? '关闭' : '开启'}滚动播报（持仓买入单上涨 ≥${tickerUpThreshold}%、下跌 ≥${tickerDownThreshold}% 提醒）`}
             >
               <Megaphone size={15} />
             </button>

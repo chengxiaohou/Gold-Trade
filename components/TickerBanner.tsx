@@ -18,7 +18,18 @@ const fmtAmount = (v: number): string => `¥${Math.abs(v).toLocaleString('zh-CN'
 // 涨跌幅展示与列表「涨跌幅」列同口径：带正负号，如 +5.23% / -3.10%
 const formatPct = (v: number): string => `${v >= 0 ? '+' : '-'}${Math.abs(v).toFixed(2)}%`;
 
-function TickerGroup({ items, groupKey, trailingSeparator }: { items: TickerItem[]; groupKey?: string; trailingSeparator?: boolean }) {
+function TickerGroup({ items, groupKey, trailingSeparator, onLotClick }: {
+  items: TickerItem[];
+  groupKey?: string;
+  trailingSeparator?: boolean;
+  onLotClick?: (stockId: string, anchor: HTMLElement) => void;
+}) {
+  // 悬停某一笔播报时，只给该笔里的着色文字加下划线（颜色随自身文字色）
+  const U = 'group-hover/lot:underline decoration-1 underline-offset-2';
+  const clickable = !!onLotClick && !groupKey;
+  const open = (stockId: string, e: React.MouseEvent<HTMLElement>) => {
+    if (clickable) onLotClick?.(stockId, e.currentTarget as HTMLElement);
+  };
   return (
     <div className="flex items-center shrink-0" aria-hidden={groupKey ? true : undefined}>
       {items.map((item, i) => {
@@ -27,44 +38,59 @@ function TickerGroup({ items, groupKey, trailingSeparator }: { items: TickerItem
         const color = isPending ? 'text-orange-400' : item.dir === 'up' ? 'text-brand-red' : 'text-brand-green';
         return (
           <span key={`${groupKey ?? ''}${item.stockId}-${item.dir}-${item.kind}`} className="flex items-baseline whitespace-nowrap text-[11px] font-semibold leading-none">
-            {i > 0 && <span className="text-app-border mx-3">｜</span>}
-            <span className={color}>【{item.stockName}】</span>
+            {i > 0 && <span className="text-app-border mx-2">｜</span>}
+            {/* 股票名可点但不加下划线 */}
+            <span
+              onClick={(e) => open(item.stockId, e)}
+              className={`${color}${clickable ? ' cursor-pointer' : ''}`}
+            >【{item.stockName}】</span>
             {item.lots.map((lot, j) => (
-              <span key={j} className="flex items-baseline">
-                {/* 同一只股票不同单子之间用 & 分隔（股票之间仍用 ｜） */}
-                {j > 0 && <span className="text-app-subtext mx-1.5">{'&'}</span>}
+              // 按交易单区分点击区域：整笔（含灰色文字）可点，下划线只出现在该笔的着色文字上
+              <button
+                key={j}
+                type="button"
+                disabled={!clickable}
+                onClick={(e) => { if (clickable) onLotClick?.(item.stockId, e.currentTarget); }}
+                className={`inline-flex items-baseline bg-transparent border-0 p-0 m-0 text-left font-semibold group/lot${clickable ? ' cursor-pointer' : ''}`}
+              >
+                {/* 同一只股票不同单子之间用 - 分隔（股票之间仍用 ｜） */}
+                {j > 0 && <span className="text-app-subtext mx-1.5">{'-'}</span>}
                 <span className="text-app-subtext font-mono">{formatDay(lot.date)}</span>
                 {/* 整行统一字号/字重，只用颜色区分主次与涨跌 */}
-                <span className={`${color} mx-1`}>{lot.statusLabel}</span>
+                <span className={`${color} mx-1 ${U}`}>{lot.statusLabel}</span>
                 {lot.pct != null && (
                   // 涨跌幅与列表涨跌幅列一致：正负号 + 数字整体着色（红涨绿跌）
-                  <span className={`font-mono ${color}`}>{formatPct(lot.pct)}</span>
+                  <span className={`font-mono ${color} ${U}`}>{formatPct(lot.pct)}</span>
                 )}
                 {lot.amount != null && (
                   <>
                     <span className="text-app-subtext ml-1">可获利</span>
-                    <span className="font-mono text-brand-red ml-1">{fmtAmount(lot.amount)}</span>
+                    <span className={`font-mono text-brand-red ml-1 ${U}`}>{fmtAmount(lot.amount)}</span>
                   </>
                 )}
                 {/* 挂单价差：着色规则与列表「交易」列一致 —— 只有已到价（可能已成交）才橙，
                     未到价保持普通行文字灰；「即将成交 / 当日过期」等说明文字一律中性灰 */}
                 {lot.gapPct != null && (
-                  <span className={`font-mono ml-1 ${lot.likelyFill ? 'text-orange-400' : 'text-app-subtext'}`}>{formatPct(lot.gapPct)}</span>
+                  <span className={`font-mono ml-1 ${lot.likelyFill ? `text-orange-400 ${U}` : 'text-app-subtext'}`}>{formatPct(lot.gapPct)}</span>
                 )}
                 {lot.note && <span className="text-app-subtext ml-1">{lot.note}</span>}
-              </span>
+              </button>
             ))}
             {item.hiddenCount > 0 && <span className="text-app-subtext ml-1">等 {item.hiddenCount} 单</span>}
           </span>
         );
       })}
       {/* 两份内容首尾相接时，用统一的尾部分隔符保证两组宽度完全一致（循环位移无接缝） */}
-      {trailingSeparator && <span className="text-app-border mx-3">｜</span>}
+      {trailingSeparator && <span className="text-app-border mx-2">｜</span>}
     </div>
   );
 }
 
-export default function TickerBanner({ items, emptyText }: { items: TickerItem[]; emptyText?: string }) {
+export default function TickerBanner({ items, emptyText, onLotClick }: {
+  items: TickerItem[];
+  emptyText?: string;
+  onLotClick?: (stockId: string, anchor: HTMLElement) => void;
+}) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const groupRef = useRef<HTMLDivElement>(null);
@@ -174,7 +200,7 @@ export default function TickerBanner({ items, emptyText }: { items: TickerItem[]
     >
       <div ref={trackRef} className="flex w-max items-center will-change-transform">
         <div ref={groupRef} className="shrink-0">
-          <TickerGroup items={items} trailingSeparator={animate} />
+          <TickerGroup items={items} trailingSeparator={animate} onLotClick={onLotClick} />
         </div>
         {animate && <TickerGroup items={items} groupKey="dup-" trailingSeparator />}
       </div>

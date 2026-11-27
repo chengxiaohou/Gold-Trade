@@ -81,8 +81,8 @@ describe('buildTickerItems', () => {
 
   it('含税开关打开时成本抬高、涨幅变小', () => {
     const stock = mk([mkTrade({ price: 10, shares: 10000, createdAt: 1 })], 10.5);
-    const noTax = buildTickerItems([stock], { threshold: 0, withTax: false })[0];
-    const withTax = buildTickerItems([stock], { threshold: 0, withTax: true })[0];
+    const noTax = buildTickerItems([stock], { upThreshold: 0, withTax: false })[0];
+    const withTax = buildTickerItems([stock], { upThreshold: 0, withTax: true })[0];
     expect(withTax.lots[0].pct).toBeLessThan(noTax.lots[0].pct ?? NaN);
   });
 

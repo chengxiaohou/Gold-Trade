@@ -32,7 +32,7 @@ export const tradeVolumeLabel = (t: StockTrade): string => {
 // 「可领取」= (现价 − 每股成本) × 剩余未卖出份额，仅上涨条目展示。
 // 下跌条目只提示「最近连续几笔买入都跌破阈值」的情况：只要最近一笔买入没跌破阈值
 // （说明近期已在该价位附近补过仓），更早的下跌一律不再播报。
-export const TICKER_DEFAULT_THRESHOLD = 3; // 默认触发阈值（%）
+export const TICKER_DEFAULT_THRESHOLD = 3; // 默认触发阈值（%）：上涨、下跌各自独立，默认都是 3
 export const TICKER_DEFAULT_MAX_PER_STOCK = 3; // 每只股票每个方向最多播报几单
 export const TICKER_DEFAULT_MIN_PROFIT = 150; // 上涨条目最小可获利金额（元）：不足则忽略，避免小额噪音
 // 挂单播报阈值：挂单价差 ≤0.3% 视为「即将成交」；剩余有效期 ≤1 天视为「即将过期」
@@ -65,7 +65,10 @@ export interface TickerItem {
 }
 
 export interface TickerOptions {
-  threshold?: number;
+  /** 上涨播报阈值（%），默认 TICKER_DEFAULT_THRESHOLD */
+  upThreshold?: number;
+  /** 下跌播报阈值（%），默认 TICKER_DEFAULT_THRESHOLD */
+  downThreshold?: number;
   maxPerStock?: number;
   withTax?: boolean;
   /** 挂单「即将成交」价差阈值（%），默认 PENDING_NEAR_MATCH_PCT */
@@ -83,7 +86,8 @@ const pendingRemainingDays = (t: StockTrade, now: number): number => {
 const pendingSideLabel = (t: StockTrade): string => `挂${t.side === 'sell' ? '卖' : '买'}${tradeVolumeLabel(t)}`;
 
 export function buildTickerItems(stocks: StockEntry[], opts: TickerOptions = {}): TickerItem[] {
-  const threshold = Math.max(0, opts.threshold ?? TICKER_DEFAULT_THRESHOLD);
+  const upThreshold = Math.max(0, opts.upThreshold ?? TICKER_DEFAULT_THRESHOLD);
+  const downThreshold = Math.max(0, opts.downThreshold ?? TICKER_DEFAULT_THRESHOLD);
   const maxPerStock = Math.max(1, Math.round(opts.maxPerStock ?? TICKER_DEFAULT_MAX_PER_STOCK));
   const nearMatchPct = Math.max(0, opts.nearMatchPct ?? PENDING_NEAR_MATCH_PCT);
   const minProfit = Math.max(0, opts.minProfit ?? TICKER_DEFAULT_MIN_PROFIT);
@@ -159,7 +163,7 @@ export function buildTickerItems(stocks: StockEntry[], opts: TickerOptions = {})
 
     // 上涨条目：涨幅达标且「可获利金额」也达到下限的买入单（仍持有），按涨幅从大到小
     const ups = cand
-      .filter(c => c.pct >= threshold && (curPrice - c.cost) * c.rest >= minProfit)
+      .filter(c => c.pct >= upThreshold && (curPrice - c.cost) * c.rest >= minProfit)
       .sort((a, b) => b.pct - a.pct);
     if (ups.length > 0) {
       const lots = ups.slice(0, maxPerStock).map(c => {
@@ -181,7 +185,7 @@ export function buildTickerItems(stocks: StockEntry[], opts: TickerOptions = {})
     // 一旦遇到一笔跌幅未达阈值的买单，说明近期已在这个价位附近补过仓，更早的下跌不再提示。
     const downs: typeof cand = [];
     for (const c of [...cand].sort((a, b) => b.date - a.date)) {
-      if (c.pct <= -threshold) downs.push(c);
+      if (c.pct <= -downThreshold) downs.push(c);
       else break;
     }
     if (downs.length > 0) {

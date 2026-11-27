@@ -224,7 +224,8 @@ export function buildStocksFileFingerprint(input: StocksFileFingerprintInput): s
         autoRefreshInterval: undefined,
         bollRequestInterval: undefined,
         // 滚动播报阈值仅本地记忆，不参与云端差异对比
-        tickerThreshold: undefined,
+        tickerUpThreshold: undefined,
+        tickerDownThreshold: undefined,
         tickerMaxPerStock: undefined,
         pendingNearMatchPct: undefined,
         tickerMinProfit: undefined,

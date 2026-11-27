@@ -603,7 +603,8 @@ export default function App() {
         stockTotalCapital: parsed.stockTotalCapital ?? parsed.dividendTotalCapital,
         autoRefreshInterval: parsed.autoRefreshInterval ?? 60,
         bollRequestInterval: parsed.bollRequestInterval ?? 1000,
-        tickerThreshold: parsed.tickerThreshold ?? 3,
+        tickerUpThreshold: parsed.tickerUpThreshold ?? 3,
+        tickerDownThreshold: parsed.tickerDownThreshold ?? 3,
         tickerMaxPerStock: parsed.tickerMaxPerStock ?? 3,
         pendingNearMatchPct: parsed.pendingNearMatchPct ?? 0.3,
         tickerMinProfit: parsed.tickerMinProfit ?? 150,
@@ -626,7 +627,8 @@ export default function App() {
         memoUpdatedAt: 0,
         autoRefreshInterval: 60,
         bollRequestInterval: 1000,
-        tickerThreshold: 3,
+        tickerUpThreshold: 3,
+        tickerDownThreshold: 3,
         tickerMaxPerStock: 3,
         pendingNearMatchPct: 0.3,
         tickerMinProfit: 150,
@@ -1212,7 +1214,8 @@ export default function App() {
         autoRefreshInterval: undefined,
         bollRequestInterval: undefined,
         // 滚动播报相关阈值：仅本地记忆，不上云
-        tickerThreshold: undefined,
+        tickerUpThreshold: undefined,
+        tickerDownThreshold: undefined,
         tickerMaxPerStock: undefined,
         pendingNearMatchPct: undefined,
         tickerMinProfit: undefined,
@@ -1279,7 +1282,8 @@ export default function App() {
       sortMode: undefined,
       autoRefreshInterval: undefined,
       bollRequestInterval: undefined,
-      tickerThreshold: undefined,
+      tickerUpThreshold: undefined,
+      tickerDownThreshold: undefined,
       tickerMaxPerStock: undefined,
       pendingNearMatchPct: undefined,
       tickerMinProfit: undefined,
@@ -2772,7 +2776,8 @@ export default function App() {
             onMaxWidthChange={(width) => setStockSettings(prev => ({ ...prev, maxWidth: width }))}
             autoRefreshInterval={stockSettings.autoRefreshInterval ?? 60}
             bollRequestInterval={stockSettings.bollRequestInterval ?? 1000}
-            tickerThreshold={stockSettings.tickerThreshold ?? 3}
+            tickerUpThreshold={stockSettings.tickerUpThreshold ?? 3}
+            tickerDownThreshold={stockSettings.tickerDownThreshold ?? 3}
             tickerMaxPerStock={stockSettings.tickerMaxPerStock ?? 3}
             pendingNearPct={stockSettings.pendingNearMatchPct ?? 0.3}
             tickerMinProfit={stockSettings.tickerMinProfit ?? 150}
