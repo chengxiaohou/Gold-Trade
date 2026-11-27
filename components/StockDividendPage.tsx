@@ -17,7 +17,7 @@ import type { StockLedgerMap } from '../services/stockLedgerStore';
 import { calcRealizedPnlForRange, calcPositionFromTrades, calcPositionView, calcDtPnlForTrades, calcAvgPnlForTrades, calcTradeFees, tradeAmountFormula, estimatePendingSell, isEtf, roundCost, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
 import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, volBucket, buildLatestShrinkTags, buildShrinkTagsForModule, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, analyzeStandEvents, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5, type StandEvent } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PatternCombo } from '../services/tagAnalyzers';
-import { toggleTradeStatus, removeTrade, tradePriceGapPct } from '../services/stockTradeOps';
+import { toggleTradeStatus, removeTrade, tradePriceGapPct, dividendRateAtPrice, formatDividendRatePair } from '../services/stockTradeOps';
 import { InputGroup } from './InputGroup';
 import TickerBanner from './TickerBanner';
 import { buildTickerItems, tradeVolumeLabel, TICKER_DEFAULT_MAX_PER_STOCK, TICKER_DEFAULT_MIN_PROFIT, TICKER_DEFAULT_THRESHOLD, PENDING_NEAR_MATCH_PCT } from '../services/tradeTicker';
@@ -4368,8 +4368,10 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
       nearMatchPct: pendingNearPct,
       minProfit: tickerMinProfit,
       withTax: taxEnabled,
+      // 股息率网格差距的分子：与该股列表/交易弹窗同一口径（选中年份的分红金额）
+      dividendOf: (s) => getDividendForYear(s, getSelectedYear(s)) || 0,
     }),
-    [displayStocks, tickerUpThreshold, tickerDownThreshold, tickerMaxPerStock, pendingNearPct, tickerMinProfit, taxEnabled],
+    [displayStocks, tickerUpThreshold, tickerDownThreshold, tickerMaxPerStock, pendingNearPct, tickerMinProfit, taxEnabled, dividendYearRight],
   );
 
   // 盈利统计面板 wheel 接管：阻止滚轮在面板内滚动时串扰带动背后的股票大列表/页面。
@@ -8655,13 +8657,13 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
             diffPct: lastGapPct,
           };
         })() : null;
-        const orderDivRate = orderPriceNum > 0 && orderDividend > 0 ? (orderDividend / orderPriceNum) * 100 : 0;
-        const costDivRate = costBasis > 0 && orderDividend > 0 ? (orderDividend / costBasis) * 100 : 0;
+        // 股息率口径统一走 stockTradeOps 的共享实现（与滚动播报 SSOT）
+        const orderDivRate = dividendRateAtPrice(orderDividend, orderPriceNum);
+        const costDivRate = dividendRateAtPrice(orderDividend, costBasis);
         // 基于现价的股息率：与成本股息率比较决定红绿（成本更低 → 股息率更高 → 红色）
-        const priceDivRate = marketPrice > 0 && orderDividend > 0 ? (orderDividend / marketPrice) * 100 : 0;
-        const divDiffValid = orderPriceNum > 0 && costDivRate > 0;
-        // 差值 = 当前股息率 − 成本股息率（百分点），如 8.17% − 7.56% ≈ +0.61%
-        const divDiffPct = divDiffValid ? (orderDivRate - costDivRate) : 0;
+        const priceDivRate = dividendRateAtPrice(orderDividend, marketPrice);
+        // 「股息率%｜与成本股息率之差%」文案：与滚动播报同一格式
+        const orderDivText = formatDividendRatePair(orderDivRate, costDivRate);
         // 卖出挂单收益预估：与历史记录里「挂卖」条目的预估同一口径（做T匹配 / 移动加权 + 含税开关），
         // 复用共享函数 estimatePendingSell，不另写近似算法；买入方向不展示。
         // pairs 为做T口径的配对明细，供这个数字悬停时复用同一套 T 操作浮窗。
@@ -8822,7 +8824,7 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                   <span className="text-[10px] font-medium text-app-subtext translate-y-px">股息率</span>
                   {/* 数据一侧同样下移 1px：label 已有 translate-y-px，原先数据未加导致数值相对 label 偏上 */}
                   <span className="font-mono font-bold text-[10px] text-app-subtext translate-y-px">
-                    {orderDivRate > 0 ? orderDivRate.toFixed(2) : '-'}%{divDiffValid ? `｜${divDiffPct > 0 ? '+' : ''}${divDiffPct.toFixed(2)}%` : ''}
+                    {orderDivText || '-%'}
                   </span>
                 </div>
                 <div className="flex items-center justify-start gap-1">

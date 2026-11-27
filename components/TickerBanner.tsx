@@ -54,8 +54,8 @@ function TickerGroup({ items, groupKey, trailingSeparator, onLotClick }: {
                 onClick={(e) => { if (clickable) onLotClick?.(item.stockId, e.currentTarget); }}
                 className={`inline-flex items-baseline bg-transparent border-0 p-0 m-0 text-left font-semibold group/lot${clickable ? ' cursor-pointer' : ''}`}
               >
-                {/* 同一只股票不同单子之间用 - 分隔（股票之间仍用 ｜） */}
-                {j > 0 && <span className="text-app-subtext mx-1.5">{'-'}</span>}
+                {/* 同一只股票不同单子之间用 + 分隔（股票之间仍用 ｜） */}
+                {j > 0 && <span className="text-app-subtext mx-1.5">+</span>}
                 <span className="text-app-subtext font-mono">{formatDay(lot.date)}</span>
                 {/* 整行统一字号/字重，只用颜色区分主次与涨跌 */}
                 <span className={`${color} mx-1 ${U}`}>{lot.statusLabel}</span>
@@ -65,10 +65,24 @@ function TickerGroup({ items, groupKey, trailingSeparator, onLotClick }: {
                 )}
                 {lot.amount != null && (
                   <>
-                    <span className="text-app-subtext ml-1">可获利</span>
+                    <span className="text-app-subtext ml-1">获利</span>
                     <span className={`font-mono text-brand-red ml-1 ${U}`}>{fmtAmount(lot.amount)}</span>
                   </>
                 )}
+                {/* 下跌条目：股息网格差距（该笔买入价股息率 与 现价股息率之差），与交易弹窗同一套计算。
+                    股息率本身中性灰，后面的差值随该笔涨跌着色 */}
+                {lot.divText && (() => {
+                  const bar = lot.divText.indexOf('｜');
+                  const rate = bar >= 0 ? lot.divText.slice(0, bar) : lot.divText;
+                  const gap = bar >= 0 ? lot.divText.slice(bar + 1) : '';
+                  return (
+                    <>
+                      <span className="text-app-subtext ml-1">股息</span>
+                      <span className="font-mono text-app-subtext ml-1">{rate}</span>
+                      {gap && <span className={`font-mono ${color} ml-1 ${U}`}>{gap}</span>}
+                    </>
+                  );
+                })()}
                 {/* 挂单价差：着色规则与列表「交易」列一致 —— 只有已到价（可能已成交）才橙，
                     未到价保持普通行文字灰；「即将成交 / 当日过期」等说明文字一律中性灰 */}
                 {lot.gapPct != null && (

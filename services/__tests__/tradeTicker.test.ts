@@ -131,6 +131,19 @@ describe('buildTickerItems', () => {
     expect(expiring?.lots[0].note).toBe('当日过期');
   });
 
+  it('下跌条目附带股息率网格差距：买入价股息率 ｜ 与现价股息率之差', () => {
+    const stock = mkStock('000858', '五粮液', {
+      price: 9,
+      stockTrades: [mkTrade({ price: 10, shares: 100, createdAt: 1 })],
+    });
+    // 年分红 0.9：买入价股息率 9.00%，现价股息率 10.00% → 差 -1.00 个百分点
+    const withDiv = buildTickerItems([stock], { dividendOf: () => 0.9 }).find(i => i.dir === 'down');
+    expect(withDiv?.lots[0].divText).toBe('9.00%｜-1.00%');
+    // 没有分红数据时不展示
+    const noDiv = buildTickerItems([stock]).find(i => i.dir === 'down');
+    expect(noDiv?.lots[0].divText).toBeNull();
+  });
+
   it('已过期或已删除的挂单不播报', () => {
     const now = Date.now();
     const stock = mkStock('600096', '云天化', {

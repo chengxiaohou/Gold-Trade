@@ -1,6 +1,6 @@
 import type { StockEntry, StockTrade } from '../types';
 import { calcDtPnlForTrades, calcTradeFees } from './realizedPnl';
-import { PENDING_TTL_DAYS, pendingDayIndex, isPendingTradeActive, tradePriceGapPct } from './stockTradeOps';
+import { PENDING_TTL_DAYS, pendingDayIndex, isPendingTradeActive, tradePriceGapPct, dividendRateAtPrice, formatDividendRatePair } from './stockTradeOps';
 
 // ── 交易体量罗马数字（列表状态标签与滚动播报共用，SSOT）──
 // 按成交金额每 2500 元一档并取最接近的档位，但第一档（2500 元）不写罗马数字，
@@ -52,6 +52,8 @@ export interface TickerLot {
   likelyFill?: boolean;
   /** 挂单补充说明（中性文字），如「即将成交」「当日过期」 */
   note?: string | null;
+  /** 下跌条目的股息率网格差距文案（如「6.84%｜+0.26%」）：该笔买入价股息率 ｜ 与现价股息率之差 */
+  divText?: string | null;
 }
 
 export interface TickerItem {
@@ -75,6 +77,8 @@ export interface TickerOptions {
   nearMatchPct?: number;
   /** 上涨播报的最小可获利金额（元），默认 TICKER_DEFAULT_MIN_PROFIT */
   minProfit?: number;
+  /** 取某只股票的年分红（元/股）：下跌条目据此算股息率网格差距，口径与交易弹窗一致 */
+  dividendOf?: (stock: StockEntry) => number;
 }
 
 const buyDateOf = (t: StockTrade): number => t.filledAt ?? t.originalCreatedAt ?? t.createdAt ?? 0;
@@ -101,11 +105,14 @@ export function buildTickerItems(stocks: StockEntry[], opts: TickerOptions = {})
     const trades = s.stockTrades;
     const curPrice = s.price;
     if (!trades || trades.length === 0 || !(curPrice > 0)) continue;
+    // 该股年分红：只用于下跌条目的股息率网格差距（口径 = 选中年份分红 ÷ 价格，与交易弹窗同源）
+    const dividend = opts.dividendOf?.(s) ?? 0;
+    const curDivRate = dividendRateAtPrice(dividend, curPrice);
     // 做T口径配对：判断每笔买入还剩多少份额没被卖出
     const dt = calcDtPnlForTrades(trades, withTax, s.name);
 
     // 候选买入单（仍有剩余份额）：先统一收集，再分别按「涨」「跌」规则筛选
-    const cand: Array<{ lot: TickerLot; pct: number; date: number; cost: number; rest: number }> = [];
+    const cand: Array<{ lot: TickerLot; pct: number; date: number; cost: number; rest: number; divText: string | null }> = [];
     // 挂单（即将成交 / 即将过期）：按方向分开收集，颜色与买红卖…保持一致
     const nearSell: Array<{ lot: TickerLot; gap: number }> = [];
     const nearBuy: Array<{ lot: TickerLot; gap: number }> = [];
@@ -123,7 +130,9 @@ export function buildTickerItems(stocks: StockEntry[], opts: TickerOptions = {})
         if (!(cost > 0)) continue;
         const pct = ((curPrice - cost) / cost) * 100;
         const date = buyDateOf(t);
-        cand.push({ lot: { date, statusLabel: `买入${tradeVolumeLabel(t)}`, pct, amount: null }, pct, date, cost, rest });
+        // 股息率网格差距：该笔买入价对应股息率 ｜ 与现价股息率之差（与交易弹窗同一套计算）
+        const divText = formatDividendRatePair(dividendRateAtPrice(dividend, t.price ?? 0), curDivRate) || null;
+        cand.push({ lot: { date, statusLabel: `买入${tradeVolumeLabel(t)}`, pct, amount: null }, pct, date, cost, rest, divText });
         continue;
       }
       // 挂单：已过期（超出有效期）的不播报
@@ -194,7 +203,7 @@ export function buildTickerItems(stocks: StockEntry[], opts: TickerOptions = {})
         stockName: s.name,
         dir: 'down',
         kind: 'position',
-        lots: downs.slice(0, maxPerStock).map(c => c.lot),
+        lots: downs.slice(0, maxPerStock).map(c => ({ ...c.lot, divText: c.divText })),
         hiddenCount: Math.max(0, downs.length - maxPerStock),
         leadPct: downs.reduce((min, c) => Math.min(min, c.pct), 0),
       });

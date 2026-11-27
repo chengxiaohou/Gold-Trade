@@ -23,6 +23,22 @@ export function tradePriceGapPct(tradePrice: number, curPrice: number): number |
   return ((curPrice - tradePrice) / tradePrice) * 100;
 }
 
+// 某价格对应的股息率（%，SSOT）：交易弹窗「股息率」行与滚动播报的股息率网格差距共用。
+// 口径 = 年分红 ÷ 价格 × 100；分红或价格无效时返回 0（调用方按 0 判无效）。
+export function dividendRateAtPrice(dividend: number, price: number): number {
+  return dividend > 0 && price > 0 ? (dividend / price) * 100 : 0;
+}
+
+// 「股息率%｜与基准股息率之差%」文案（SSOT）：交易弹窗股息率行与滚动播报共用。
+// 基准为 0（无有效基准）时只输出股息率本身；差值按百分点取两位，正数带 +。
+export function formatDividendRatePair(rate: number, baseRate: number): string {
+  if (!(rate > 0)) return '';
+  const text = `${rate.toFixed(2)}%`;
+  if (!(baseRate > 0)) return text;
+  const diff = Math.round((rate - baseRate) * 100) / 100;
+  return `${text}｜${diff > 0 ? '+' : ''}${diff.toFixed(2)}%`;
+}
+
 // 从起始日到 now 经过了第几个自然日（整天 24h 为一单位，跨零点即 +1）
 export function pendingDayIndex(baseTime: number, now: number): number {
   const start = new Date(baseTime); start.setHours(0, 0, 0, 0);
