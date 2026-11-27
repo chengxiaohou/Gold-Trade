@@ -16,6 +16,11 @@ export interface SignalTagsFooterProps {
   fmt?: (v: number) => string;
   onPin?: () => void;    // 点击 chip 将详情固定时通知宿主（如让父弹窗保持展开）
   envChips?: EnvChip[];  // 环境标签（渲染在"当日信号"上方）；chip 已带完整样式
+  /** 内联模式：去掉上边框与"当日信号"块标题，把 chip 行直接铺在一行里，
+   *  供回测页"悬停行情信息栏"复用（浮窗纵向堆叠仍用默认模式）。 */
+  inline?: boolean;
+  /** 内联模式下把判定依据渲染成浮层（绝对定位），避免撑高宿主信息栏的行高。 */
+  detailOverlay?: boolean;
 }
 
 // 环境 chip 描述（label + 完整 className，配色由宿主用共享 ENV_CHIP_CLS 生成）
@@ -24,7 +29,7 @@ export interface EnvChip { key: string; label: string; cls: string; }
 // chip 底座样式与标签弹窗一致（chipBase）
 const CHIP_BASE = 'inline-flex items-center justify-center rounded text-[9px] font-medium border px-1 py-px cursor-pointer transition-colors';
 
-export default function SignalTagsFooter({ win, i, cfg, customTags, dividendByYear, fmt, onPin, envChips }: SignalTagsFooterProps) {
+export default function SignalTagsFooter({ win, i, cfg, customTags, dividendByYear, fmt, onPin, envChips, inline = false, detailOverlay = false }: SignalTagsFooterProps) {
   // 权威接口：与标签弹窗"当日行"同一套；i 恒与 win 末根一致
   const tags: DayTag[] = useMemo(
     () => getDayTagSet(win, cfg, fmt, { customTags, dividendByYear, liveMode: true }),
@@ -40,40 +45,51 @@ export default function SignalTagsFooter({ win, i, cfg, customTags, dividendByYe
   const displayTag = displayKey ? tags.find(t => t.key === displayKey) : undefined;
 
   return (
-    <div className="border-t border-app-border mt-1 pt-1.5">
+    <div className={inline ? '' : 'border-t border-app-border mt-1 pt-1.5'}>
       {envChips && envChips.length > 0 && (
-        <div className="mb-1.5">
-          <div className="text-[9px] text-app-subtext mb-1">环境</div>
+        <div className={inline ? 'flex items-center gap-1 flex-wrap mb-0.5' : 'mb-1.5'}>
+          {!inline && <div className="text-[9px] text-app-subtext mb-1">环境</div>}
+          {inline && <span className="text-[9px] text-app-subtext shrink-0">环境</span>}
           <div className="flex items-center gap-1 flex-wrap">
             {envChips.map(c => <span key={c.key} className={c.cls}>{c.label}</span>)}
           </div>
         </div>
       )}
-      <div className="text-[9px] text-app-subtext mb-1">当日信号</div>
-      <div className="flex items-center gap-1 flex-wrap">
-        {tags.map(t => {
-          const active = displayKey === t.key;
-          return (
-            <button
-              key={t.key}
-              type="button"
-              className={`${CHIP_BASE} ${t.cls}${active ? t.sel : ''}`}
-              onMouseEnter={() => setHoverKey(t.key)}
-              onMouseLeave={() => setHoverKey(null)}
-              onClick={(e) => {
-                e.stopPropagation();
-                const next = pinnedKey === t.key ? null : t.key;
-                if (next && onPin) onPin();
-                setPinnedKey(next);
-              }}
-            >
-              {t.label}
-            </button>
-          );
-        })}
+      <div className={inline ? 'flex items-baseline gap-1.5 whitespace-nowrap' : ''}>
+        {!inline && <div className="text-[9px] text-app-subtext mb-1">当日信号</div>}
+        <div className={inline ? 'flex items-center gap-1' : 'flex items-center gap-1 flex-wrap'}>
+          {tags.map(t => {
+            const active = displayKey === t.key;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                className={`${CHIP_BASE} ${t.cls}${active ? t.sel : ''}`}
+                onMouseEnter={() => setHoverKey(t.key)}
+                onMouseLeave={() => setHoverKey(null)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const next = pinnedKey === t.key ? null : t.key;
+                  if (next && onPin) onPin();
+                  setPinnedKey(next);
+                }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+        {/* 内联模式：文字说明放在标签右侧 */}
+        {inline && <span className="text-[9px] text-app-subtext shrink-0">当日信号</span>}
       </div>
       {displayTag && (
-        <div className="mt-1 text-[9px] leading-relaxed">
+        // 内联模式（回测信息栏）：可渲染为浮层，避免撑高行情行（固定行高、不跳动）；
+        // 浮层内限高滚动，移动端也不会顶出屏幕。
+        <div className={detailOverlay
+          ? 'absolute right-3 top-full mt-1 z-40 w-[280px] max-w-[calc(100vw-2rem)] max-h-40 overflow-y-auto rounded-lg border border-app-border bg-app-card shadow-[0_8px_30px_rgba(0,0,0,0.55)] px-2 py-1.5 text-[9px] leading-relaxed'
+          : inline
+            ? 'text-[9px] leading-relaxed w-[240px] max-h-12 overflow-y-auto custom-scrollbar border-l border-app-border pl-2 ml-1'
+            : 'mt-1 text-[9px] leading-relaxed'}>
           <div className="text-app-subtext mb-0.5">判定依据</div>
           {displayTag.detail.length > 0 ? (
             <div className="text-app-rowtext break-all">{displayTag.detail.map((l, j) => <div key={j}>{l}</div>)}</div>

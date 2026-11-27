@@ -12,7 +12,7 @@ import { ENV_TAG_CATALOG, dividendRateForDay } from '../services/tagAnalyzers';
 import { calcIndicators, formatPrice, type IndicatorResult } from '../services/indicators';
 import { calcTradeStats, isEtf } from '../services/realizedPnl';
 import { isPendingTradeActive } from '../services/stockTradeOps';
-import PriceInfoPopover from './PriceInfoPopover';
+import PriceInfoPopover, { PriceIndicatorCells, PriceIndicatorGroups } from './PriceInfoPopover';
 import SignalTagsFooter from './SignalTagsFooter';
 import { TAG_COLOR_HEX, TAG_PALETTE } from './CloudSettingsModal';
 import { InputGroup } from './InputGroup';
@@ -95,7 +95,7 @@ const MA_SPECS: Array<{ period: number; color: string; label: string }> = [
 // 布林线规格（BOLL 20,2）：上轨/中轨/下轨
 const BOLL_SPECS: Array<{ key: 'upper' | 'mid' | 'lower'; color: string; label: string }> = [
   { key: 'upper', color: '#ef4444', label: '上轨' },
-  { key: 'mid', color: '#3b82f6', label: 'MID' },
+  { key: 'mid', color: '#3b82f6', label: '中轨' },
   { key: 'lower', color: '#10b981', label: '下轨' },
 ];
 // 布林计算参数
@@ -265,6 +265,9 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   const [pinnedQuote, setPinnedQuote] = useState<{ name: string; price: number; changePercent: number | null; data: IndicatorResult; left: number; top: number; win: BollKline[]; idx: number } | null>(null);
   const pinnedRef = useRef<{ name: string; price: number; changePercent: number | null; data: IndicatorResult; left: number; top: number; win: BollKline[]; idx: number } | null>(null);
   const displayQuote = pinnedQuote ?? hoverQuote;
+  // 十字线价格浮窗：内容已平铺到图表上方的「悬停行情信息栏」，这里先关闭显示。
+  // 实现保留（含固定/拖动/方向键换方位），需要回退时把该开关改回 true 即可。
+  const SHOW_HOVER_POPOVER = false;
   // —— 浮窗相对鼠标的方位（方向键切换，设备本地记忆）——
   // bottom=光标正下方（默认）/ top=上方 / left=左侧 / right=右侧
   type PopoverSide = 'bottom' | 'top' | 'left' | 'right';
@@ -341,9 +344,13 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   }, []);
   const togglePin = () => {
     if (pinnedRef.current) {
+      // 取消固定：回到"跟随鼠标"的展示，信息栏先保留刚才钉住那天，移动鼠标后再更新
+      const last = pinnedRef.current;
       pinnedRef.current = null;
       setPinnedQuote(null);
-      setHoverQuote(null); // 取消固定后隐藏弹窗（否者停留在旧位置，鼠标需重移到图上才恢复跟随）
+      setHoverQuote(last);
+      try { chartInstance.current?.clearCrosshairPosition(); } catch { /* 忽略 */ } // 恢复跟随鼠标
+      pinnedCrosshairRef.current?.(); // 移除固定的价格线
       // 主动取消固定 = 不再记忆位置，下次打开不再自动钉住
       if (pinPosSaveTimerRef.current) window.clearTimeout(pinPosSaveTimerRef.current);
       try { localStorage.removeItem('bt_pinned_pos'); } catch { /* 忽略 */ }
@@ -394,6 +401,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   const pinPosSaveTimerRef = useRef<number | null>(null);
   // 关闭弹窗时立即落盘（避免 300ms 防抖窗口内关闭导致最后位置丢失）
   useEffect(() => () => {
+    if (!SHOW_HOVER_POPOVER) return;
     if (pinPosSaveTimerRef.current) window.clearTimeout(pinPosSaveTimerRef.current);
     const p = pinnedRef.current;
     if (!p) return;
@@ -401,6 +409,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   }, []);
   // 位置变化频繁（拖动/十字线跟随时内容刷新），延迟落盘避免每帧写 localStorage
   useEffect(() => {
+    if (!SHOW_HOVER_POPOVER) return;
     if (!pinnedQuote) return;
     const left = Math.round(pinnedQuote.left);
     const top = Math.round(pinnedQuote.top);
@@ -410,6 +419,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     }, 300);
   }, [pinnedQuote]);
   useEffect(() => {
+    if (!SHOW_HOVER_POPOVER) return; // 浮窗不再显示：无需恢复"固定位置"，首次打开不应自动进入固定态
     if (pinRestoredRef.current || pinnedRef.current) return;
     const data = rawKlines;
     if (!data || data.length < 2) return;
@@ -556,6 +566,9 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ReturnType<IChartApi['addSeries']> | null>(null);
+  // 固定态下竖向虚线的像素位置（相对图表容器左边缘）；null = 不显示
+  const pinnedCrosshairRef = useRef<(() => void) | null>(null);
+  const [pinnedX, setPinnedX] = useState<number | null>(null);
   // 缓存最新 computeTickPositions，供图表内部事件/ResizeObserver 回调调用，避免闭包陈旧
   const computeTicksRef = useRef<(() => void) | null>(null);
   const maSeriesRef = useRef<ISeriesApi<'Line'>[] | null>(null);
@@ -702,6 +715,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
     const el = chartRef.current;
     if (!el) return;
     if (chartInstance.current) { chartInstance.current.remove(); chartInstance.current = null; }
+    setPinnedX(null); // 图表重建：固定竖线位置作废，待重新计算
     const chart = createChart(el, {
       autoSize: true,   // 自动跟随容器尺寸，避免 flex 布局下高度塌陷
       layout: {
@@ -903,6 +917,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
         const w = el.clientWidth, h = el.clientHeight;
         if (w > 0 && h > 50) { try { chart.resize(w, h); } catch { /* ignore */ } }
         computeTicksRef.current?.();
+        pinnedCrosshairRef.current?.(); // 缩放/平移后固定竖线跟着 K 线走
       });
       ro.observe(el);
     }
@@ -921,9 +936,10 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       lastSpan = span;
       if (!isZoom) {
         computeTicksRef.current?.(); // 平移：同步，保持完全贴合
+        pinnedCrosshairRef.current?.();
       } else {
         cancelAnimationFrame(rafId);
-        rafId = requestAnimationFrame(() => computeTicksRef.current?.()); // 缩放：等 y 轴稳定
+        rafId = requestAnimationFrame(() => { computeTicksRef.current?.(); pinnedCrosshairRef.current?.(); }); // 缩放：等 y 轴稳定
       }
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(onTimeScaleChange);
@@ -960,17 +976,25 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       const { left, top } = computePopoverPos(px, py);
       return { name: stock.name, price: data[idx].close, changePercent: cachedChange, data: cachedInd, left, top, win: prefix, idx };
     };
+    // 固定态：在固定那一天画一条竖向虚线（叠加层，见 pinnedX）。
+    // 不用价格线（那是横向线），也不用 setCrosshairPosition（会被鼠标移动覆盖、复位时来回跳）。
+    const updatePinnedX = () => {
+      const p = pinnedRef.current;
+      const c = chartInstance.current;
+      if (!p || !c) { setPinnedX(null); return; }
+      const bar = p.win[p.idx];
+      if (!bar) { setPinnedX(null); return; }
+      let x: number | null = null;
+      try { x = c.timeScale().timeToCoordinate(bar.date as Time); } catch { x = null; }
+      setPinnedX(x == null ? null : Math.round(x));
+    };
+    pinnedCrosshairRef.current = updatePinnedX;
     const onCrosshairMove = (param: MouseEventParams) => {
       const q = tryBuildQuote(param);
       const pinned = pinnedRef.current;
       if (pinned) {
-        // 固定态：位置保持钉住时的坐标不动，内容跟随鼠标所在的那根 K 线实时更新
-        if (q) {
-          const next = { ...q, left: pinned.left, top: pinned.top };
-          pinnedRef.current = next;
-          setPinnedQuote(next);
-        }
-        return; // 鼠标移出图表（q 为 null）时保留固定弹窗
+        // 固定态：上方信息栏内容冻结在点击的那一天，不再随鼠标所在 K 线变化
+        return;
       }
       // 边界处浮窗被夹取后可能压在光标上：此时图表收不到移动 → q 为 null，
       // 若立即隐藏，浮窗消失后光标又回到图表 → 反复显隐（闪烁）。光标仍落在浮窗内则保持显示。
@@ -983,7 +1007,9 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
         }
         if (box?.matches(':hover')) return;
       }
-      setHoverQuote(q); // null 即隐藏
+      // 移出图表/移到空白处（q 为 null）：不移除最后一次悬停的行情。
+      // 信息栏在图表上方，鼠标离开图表去点信号标签时若清空，标签行会立刻消失 → 无法交互。
+      if (q) setHoverQuote(q);
     };
     // 点击图表 → 钉住当前悬停那根 K 线的弹窗（进入固定模式）。
     // 固定模式下弹窗不再跟随鼠标移动，方便用户点击弹窗内标签查看「判定依据」「参考价值」。
@@ -995,6 +1021,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
       pinnedRef.current = q;
       setPinnedQuote(q);
       setHoverQuote(q); // 同时写 hover 保证 render 时 pinned 未及时同步也能显示
+      requestAnimationFrame(updatePinnedX); // 固定后在图表上画出该日的竖向虚线
     };
     chart.subscribeCrosshairMove(onCrosshairMove);
     chart.subscribeClick(onChartClick);
@@ -1507,8 +1534,8 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] bg-app-bg">
-      {/* 十字线悬浮：复用列表页"当日行情"浮窗，底部叠加当日命中信号 */}
-      {displayQuote && (
+      {/* 十字线悬浮浮窗：暂不显示（数据已由图表上方的「悬停行情信息栏」承载） */}
+      {SHOW_HOVER_POPOVER && displayQuote && (
         <PriceInfoPopover
           innerRef={popoverRef}
           interactive={!!pinnedQuote} // 未固定时鼠标穿透，保证浮窗不吞掉图表的悬停跟随
@@ -1772,28 +1799,54 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                   </React.Fragment>
                 ))}
               </div>
-              {indicatorMode === 'boll' && (
-                <span className="shrink-0 bg-app-text/5 rounded-md px-2 py-1 text-app-text font-mono">BOLL (20, 2)</span>
-              )}
               {indicatorMode === 'ma' ? (
-                <div className="flex items-center gap-3 overflow-x-auto custom-scrollbar">
+                <div className="flex items-center gap-3 overflow-x-auto custom-scrollbar shrink-0">
                   {MA_SPECS.map((spec, i) => (
-                    <span key={spec.label} className="shrink-0 font-mono whitespace-nowrap">
+                    <span key={spec.label} className="shrink-0 inline-flex items-baseline gap-1 font-mono whitespace-nowrap">
                       <span style={{ color: spec.color }}>{spec.label}</span>
-                      <span style={{ color: spec.color }}>:{latestInd.ma[i] != null ? latestInd.ma[i].toFixed(2) : '—'}</span>
+                      <span style={{ color: spec.color }}>{latestInd.ma[i] != null ? latestInd.ma[i].toFixed(2) : '—'}</span>
                     </span>
                   ))}
                 </div>
               ) : (
-                <div className="flex items-center gap-3 overflow-x-auto custom-scrollbar">
+                <div className="flex items-center gap-3 overflow-x-auto custom-scrollbar shrink-0">
                   {BOLL_SPECS.map(spec => (
-                    <span key={spec.key} className="shrink-0 font-mono whitespace-nowrap">
+                    <span key={spec.key} className="shrink-0 inline-flex items-baseline gap-1 font-mono whitespace-nowrap">
                       <span style={{ color: spec.color }}>{spec.label}</span>
-                      <span style={{ color: spec.color }}>:{latestInd.boll ? (spec.key === 'upper' ? latestInd.boll.upper : spec.key === 'mid' ? latestInd.boll.mid : latestInd.boll.lower).toFixed(2) : '—'}</span>
+                      <span style={{ color: spec.color }}>{latestInd.boll ? (spec.key === 'upper' ? latestInd.boll.upper : spec.key === 'mid' ? latestInd.boll.mid : latestInd.boll.lower).toFixed(2) : '—'}</span>
                     </span>
                   ))}
                 </div>
               )}
+              {/* 悬停行情：日期 + 现/高/开/低/额/幅/量/量比 + 股息率，接在指标数值右侧 */}
+              <PriceIndicatorCells
+                name={displayQuote?.name ?? stock.name}
+                price={displayQuote?.price ?? null}
+                data={displayQuote?.data ?? null}
+                dividendRate={displayQuote ? dayDividendRate : null}
+              />
+            </div>
+
+            {/* 悬停行情信息：KDJ / RSI / MACD + 当日信号（同一行）。 */}
+            <div className="border-b border-app-border shrink-0">
+              <PriceIndicatorGroups
+                name={displayQuote?.name ?? stock.name}
+                price={displayQuote?.price ?? null}
+                data={displayQuote?.data ?? null}
+                date={displayQuote ? displayQuote.win?.[displayQuote.idx]?.date : null}
+                pinned={!!pinnedQuote}
+                signal={displayQuote ? (
+                  <SignalTagsFooter
+                    inline
+                    detailOverlay
+                    win={displayQuote.win}
+                    i={displayQuote.idx}
+                    cfg={tagParamsRef.current}
+                    customTags={customTags}
+                    dividendByYear={dividendByYear}
+                  />
+                ) : null}
+              />
             </div>
 
             {/* K线图：默认 flex-grow 抢空间；拖拽下方分界线后使用固定高度
@@ -1807,6 +1860,13 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                 ref={chartRef}
                 className="absolute inset-0"
               />
+              {/* 固定态竖向虚线：钉在固定那一天的 K 线位置（随缩放/平移重算 x） */}
+              {pinnedX != null && (
+                <div
+                  className="absolute inset-y-0 z-[9] border-l border-dashed border-indigo-400/80 pointer-events-none"
+                  style={{ left: pinnedX }}
+                />
+              )}
               {/* 覆盖层：B/S 买卖点标签（红=买/蓝=卖 + 点划线 + 圆点，无文字），锚定并跟随 K 线
                   svg 容器 inline pointer-events:none 不拦截图表滑/捏手势；热区自身 inline all 恢复点击 */}
               <svg
@@ -2056,7 +2116,7 @@ export function BacktestModal({ stock, onClose, onPresetsDirty, tagParams, custo
                     >
                       <td className="px-2 py-1.5 whitespace-nowrap">{r.time}</td>
                       <td className="px-2 py-1.5 text-right" style={{ color: r.action === 'buy' ? BUY_BG : SELL_BG }}>{r.action === 'buy' ? '买入' : '卖出'}</td>
-                      <td className="px-2 py-1.5 text-right">{r.price.toFixed(2)}</td>
+                      <td className="px-2 py-1.5 text-right">{formatPrice(r.price, stock.name)}</td>
                       <td className="px-2 py-1.5 text-right">{r.shares}</td>
                       <td className="px-2 py-1.5 text-right">{r.amount.toFixed(2)}</td>
                       <td className="px-2 py-1.5 text-right">—</td>

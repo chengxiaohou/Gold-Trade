@@ -11,7 +11,16 @@ import { formatPrice, formatVolume, prevCloseFromChange, priceVsPrevCloseBrandCl
 //   第一组：开/现/低/高/额/幅/量/量比（8 项）
 //   第二组：KDJ (9,3,3) / RSI (6,12,24) / MACD (12,26,9)
 // 标签弹窗把它放到「环境」区上方；价格浮窗用它作为主体。单一实现、共用同一份代码。
-export function PriceIndicatorSection({ name, price, data }: { name: string; price: number | null; data: IndicatorResult }) {
+// 回测页的"悬停行情信息栏"（PriceIndicatorBar）也复用同一份取值/配色模型，
+// 保证浮窗与信息栏的数值与颜色口径完全一致。
+export interface PriceIndicatorCell { key: string; label: string; text: string; cls: string }
+export interface PriceIndicatorGroup { key: string; label: string; items: Array<{ key: string; label: string; text: string; cls?: string }> }
+export interface PriceIndicatorModel {
+  cells: PriceIndicatorCell[];
+  groups: PriceIndicatorGroup[];
+}
+
+export function buildPriceIndicatorModel(name: string, price: number | null, data: IndicatorResult): PriceIndicatorModel {
   const d = data;
   const fmt = (v: number | null) => v == null ? '-' : formatPrice(v, name);
   const pctColor = d.changePct == null ? 'text-app-subtext' : d.changePct >= 0 ? 'text-brand-red' : 'text-brand-green';
@@ -21,12 +30,6 @@ export function PriceIndicatorSection({ name, price, data }: { name: string; pri
   const priceColor = (v: number | null) => priceVsPrevCloseBrandCls(v, prevClose);
   const fmtPct = (v: number | null) => v == null ? '-' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
   const numFmt = (v: number | null, dec = 2) => v == null ? '-' : v.toFixed(dec);
-  const cell2 = (label: string, val: React.ReactNode, colorClass = 'text-app-rowtext') => (
-    <div className="flex items-baseline justify-between gap-2">
-      <span className="text-[10px] text-app-subtext whitespace-nowrap">{label}</span>
-      <span className={`font-mono text-[11px] ${colorClass}`}>{val}</span>
-    </div>
-  );
   const volumeRatioText = (() => {
     if (d.volume == null || d.volumeMa5 == null || d.volumeMa5 === 0) return '-';
     return (d.volume / d.volumeMa5).toFixed(2);
@@ -38,19 +41,6 @@ export function PriceIndicatorSection({ name, price, data }: { name: string; pri
     if (d.changePct == null || price == null || price <= 0) return '-';
     return formatPrice(price - price / (1 + d.changePct / 100), name);
   })();
-  const subRows = (label: string, vals: [string, string | null, string?][]) => (
-    <div className="py-[3px]">
-      <div className="text-[10px] text-app-subtext mb-0.5">{label}</div>
-      <div className="flex gap-2">
-        {vals.map(([k, v, c]) => (
-          <span key={k} className="flex-1 text-center font-mono text-[10px] text-app-rowtext">
-            <span>{k}<span>:</span></span>
-            <span className={c ?? ''}>{v ?? '-'}</span>
-          </span>
-        ))}
-      </div>
-    </div>
-  );
   // 超买(数值偏高)用红色，超卖(数值偏低)用绿色；阈值与超买/超卖标签共用 EXTREME_LEVELS
   const extremeCls = (v: number | null, high: number, low: number) => {
     const side = extremeOf(v, high, low);
@@ -58,19 +48,166 @@ export function PriceIndicatorSection({ name, price, data }: { name: string; pri
   };
   const rsiColor = (v: number | null) => extremeCls(v, EXTREME_LEVELS.rsiHigh, EXTREME_LEVELS.rsiLow);
   const kdjColor = (v: number | null, high: number, low: number) => extremeCls(v, high, low);
+  return {
+    cells: [
+      { key: 'price', label: '现', text: price != null ? formatPrice(price, name) : '-', cls: priceColor(price) },
+      { key: 'high', label: '高', text: fmt(d.high), cls: priceColor(d.high) },
+      { key: 'open', label: '开', text: fmt(d.open), cls: priceColor(d.open) },
+      { key: 'low', label: '低', text: fmt(d.low), cls: priceColor(d.low) },
+      { key: 'amount', label: '额', text: changeAmount, cls: pctColor },
+      { key: 'pct', label: '幅', text: fmtPct(d.changePct), cls: pctColor },
+      { key: 'volume', label: '量', text: formatVolume(d.volume).replace(/手$/, ''), cls: volumeColor },
+      { key: 'volumeRatio', label: '量比', text: volumeRatioText, cls: volumeColor },
+    ],
+    groups: [
+      {
+        key: 'kdj',
+        label: 'KDJ (9, 3, 3)',
+        items: [
+          { key: 'k', label: 'K', text: numFmt(d.kdj.k), cls: kdjColor(d.kdj.k, 80, 20) },
+          { key: 'd', label: 'D', text: numFmt(d.kdj.d), cls: kdjColor(d.kdj.d, 80, 20) },
+          { key: 'j', label: 'J', text: numFmt(d.kdj.j), cls: kdjColor(d.kdj.j, 100, 0) },
+        ],
+      },
+      {
+        key: 'rsi',
+        label: 'RSI (6, 12, 24)',
+        items: [
+          { key: '6', label: '6', text: numFmt(d.rsi.rsi6), cls: rsiColor(d.rsi.rsi6) },
+          { key: '12', label: '12', text: numFmt(d.rsi.rsi12), cls: rsiColor(d.rsi.rsi12) },
+          { key: '24', label: '24', text: numFmt(d.rsi.rsi24), cls: rsiColor(d.rsi.rsi24) },
+        ],
+      },
+      {
+        key: 'macd',
+        label: 'MACD (12, 26, 9)',
+        items: [
+          { key: 'dif', label: 'DIF', text: numFmt(d.macd.dif, 3), cls: '' },
+          { key: 'dea', label: 'DEA', text: numFmt(d.macd.dea, 3), cls: '' },
+          { key: 'macd', label: 'MACD', text: numFmt(d.macd.macd, 3), cls: '' },
+        ],
+      },
+    ],
+  };
+}
+
+export function PriceIndicatorSection({ name, price, data }: { name: string; price: number | null; data: IndicatorResult }) {
+  const { cells, groups } = buildPriceIndicatorModel(name, price, data);
+  const cell2 = (label: string, val: React.ReactNode, colorClass = 'text-app-rowtext') => (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="text-[10px] text-app-subtext whitespace-nowrap">{label}</span>
+      <span className={`font-mono text-[11px] ${colorClass}`}>{val}</span>
+    </div>
+  );
+  const subRows = (label: string, vals: Array<[string, string, string?]>) => (
+    <div className="py-[3px]">
+      <div className="text-[10px] text-app-subtext mb-0.5">{label}</div>
+      <div className="flex gap-2">
+        {vals.map(([k, v, c]) => (
+          <span key={k} className="flex-1 text-center font-mono text-[10px] text-app-rowtext">
+            <span>{k}<span>:</span></span>
+            <span className={c ?? ''}>{v}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
   return (
     <>
       <div className="mb-1 space-y-1">
-        <div className="grid grid-cols-2 gap-x-4">{cell2('现', price != null ? formatPrice(price, name) : '-', priceColor(price))}{cell2('高', fmt(d.high), priceColor(d.high))}</div>
-        <div className="grid grid-cols-2 gap-x-4">{cell2('开', fmt(d.open), priceColor(d.open))}{cell2('低', fmt(d.low), priceColor(d.low))}</div>
-        <div className="grid grid-cols-2 gap-x-4">{cell2('额', changeAmount, pctColor)}{cell2('幅', fmtPct(d.changePct), pctColor)}</div>
-        <div className="grid grid-cols-2 gap-x-4">{cell2('量', formatVolume(d.volume).replace(/手$/, ''), volumeColor)}{cell2('量比', volumeRatioText, volumeColor)}</div>
+        {[0, 2, 4, 6].map(i => (
+          <div key={i} className="grid grid-cols-2 gap-x-4">
+            {cell2(cells[i].label, cells[i].text, cells[i].cls)}
+            {cell2(cells[i + 1].label, cells[i + 1].text, cells[i + 1].cls)}
+          </div>
+        ))}
       </div>
       <div className="border-t border-app-border my-1" />
-      {subRows('KDJ (9, 3, 3)', [['K', numFmt(d.kdj.k), kdjColor(d.kdj.k, 80, 20)], ['D', numFmt(d.kdj.d), kdjColor(d.kdj.d, 80, 20)], ['J', numFmt(d.kdj.j), kdjColor(d.kdj.j, 100, 0)]])}
-      {subRows('RSI (6, 12, 24)', [['6', numFmt(d.rsi.rsi6), rsiColor(d.rsi.rsi6)], ['12', numFmt(d.rsi.rsi12), rsiColor(d.rsi.rsi12)], ['24', numFmt(d.rsi.rsi24), rsiColor(d.rsi.rsi24)]])}
-      {subRows('MACD (12, 26, 9)', [['DIF', numFmt(d.macd.dif, 3)], ['DEA', numFmt(d.macd.dea, 3)], ['MACD', numFmt(d.macd.macd, 3)]])}
+      {groups.map(g => subRows(g.label, g.items.map(it => [it.label, it.text, it.cls] as [string, string, string?])))}
     </>
+  );
+}
+
+// 回测页「悬停行情信息」：把价格浮窗里的数据区拆成两块，供页面上不同位置复用。
+// 与浮窗共用 buildPriceIndicatorModel，数值/配色口径一致。
+//   PriceIndicatorCells —— 日期 + 现/高/开/低/额/幅/量/量比 + 股息率（接在指标控件条 BOLL/MA 数值右侧）
+//   PriceIndicatorGroups —— KDJ / RSI / MACD（单独一行，右侧可挂当日信号）
+function cellItem(label: string, text: string, cls?: string) {
+  return (
+    <span key={label} className="shrink-0 inline-flex items-baseline gap-1.5 font-mono text-xs whitespace-nowrap">
+      <span className="text-app-subtext">{label}</span>
+      <span className={cls ?? 'text-app-rowtext'}>{text}</span>
+    </span>
+  );
+}
+
+export function PriceIndicatorCells({
+  name, price, data, dividendRate,
+}: {
+  name: string;
+  price: number | null;
+  data: IndicatorResult | null;
+  dividendRate?: number | null;
+}) {
+  if (!data) return null;
+  const { cells } = buildPriceIndicatorModel(name, price, data);
+  return (
+    <div className="flex items-center gap-3 shrink-0 ml-auto">
+      {[...cells].reverse().map(c => cellItem(c.label, c.text, c.cls))}
+      {dividendRate != null && cellItem('股息率', `${dividendRate.toFixed(2)}%`)}
+    </div>
+  );
+}
+
+export function PriceIndicatorGroups({
+  name, price, data, date, signal, pinned,
+}: {
+  name: string;
+  price: number | null;
+  data: IndicatorResult | null;
+  date?: string | null;
+  /** 同行左侧：当日信号（chip 行 + 浮层详情）。 */
+  signal?: React.ReactNode;
+  /** 已固定：日期用主题色标出，提示当前数据已钉住不再跟随鼠标。 */
+  pinned?: boolean;
+}) {
+  // 固定行高 + 隐藏滚动条：避免不同交易日的数字宽度/信号数量变化触发横向滚动条显隐，
+  // 导致信息栏高度抖动（连带 K 线图上下跳）。
+  const ROW = 'flex-1 min-w-0 overflow-x-auto flex items-center gap-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden';
+  if (!data) {
+    return (
+      <div className="px-3 h-6 flex items-center text-[10px] text-app-subtext select-none">
+        将鼠标移到 K 线上查看该交易日的行情与指标
+      </div>
+    );
+  }
+  const { groups } = buildPriceIndicatorModel(name, price, data);
+  return (
+    <div className="relative px-3 h-6 flex items-center gap-3 select-none">
+      <div className={ROW}>
+        {groups.map(g => (
+          <span key={g.key} className="shrink-0 inline-flex items-baseline gap-2 whitespace-nowrap">
+            <span className="text-[10px] text-app-subtext">{g.label}</span>
+            {g.items.map(it => (
+              <span key={it.key} className="inline-flex items-baseline gap-1 font-mono text-[10px]">
+                <span className="text-app-subtext">{it.label}</span>
+                <span className={it.cls || 'text-app-rowtext'}>{it.text}</span>
+              </span>
+            ))}
+          </span>
+        ))}
+      </div>
+      {/* 当日信号紧挨日期左侧，两者一起贴最右 */}
+      {signal && <div className="shrink-0 flex items-center">{signal}</div>}
+      {date && (
+        <span
+          className={`shrink-0 ml-auto font-mono text-[10px] ${pinned ? 'text-indigo-400 font-semibold' : 'text-app-subtext'}`}
+          title={pinned ? '已固定：再次点击图表取消固定' : '点击图表固定当日数据'}
+        >
+          {date}
+        </span>
+      )}
+    </div>
   );
 }
 
