@@ -39,7 +39,8 @@ function TickerGroup({ items, groupKey, trailingSeparator, onLotClick }: {
         const color = isPending ? 'text-orange-400' : item.dir === 'up' ? 'text-brand-red' : 'text-brand-green';
         return (
           <span key={`${groupKey ?? ''}${item.stockId}-${item.dir}-${item.kind}`} className="flex items-baseline whitespace-nowrap text-[11px] font-semibold leading-none">
-            {i > 0 && <span className="text-app-border mx-2">｜</span>}
+            {/* 股票之间只留间距，不再画分隔符 */}
+            {i > 0 && <span className="mx-2" />}
             {/* 股票名可点但不加下划线 */}
             <span
               onClick={(e) => open(item.stockId, e)}
@@ -54,8 +55,8 @@ function TickerGroup({ items, groupKey, trailingSeparator, onLotClick }: {
                 onClick={(e) => { if (clickable) onLotClick?.(item.stockId, e.currentTarget); }}
                 className={`inline-flex items-baseline bg-transparent border-0 p-0 m-0 text-left font-semibold group/lot${clickable ? ' cursor-pointer' : ''}`}
               >
-                {/* 同一只股票不同单子之间用 + 分隔（股票之间仍用 ｜） */}
-                {j > 0 && <span className="text-app-subtext mx-1.5">+</span>}
+                {/* 同一只股票不同单子之间保留分隔符，间距收紧到最小 */}
+                {j > 0 && <span className="text-app-border mx-0.5">｜</span>}
                 <span className="text-app-subtext font-mono">{formatDay(lot.date)}</span>
                 {/* 整行统一字号/字重，只用颜色区分主次与涨跌 */}
                 <span className={`${color} mx-1 ${U}`}>{lot.statusLabel}</span>
@@ -95,8 +96,8 @@ function TickerGroup({ items, groupKey, trailingSeparator, onLotClick }: {
           </span>
         );
       })}
-      {/* 两份内容首尾相接时，用统一的尾部分隔符保证两组宽度完全一致（循环位移无接缝） */}
-      {trailingSeparator && <span className="text-app-border mx-2">｜</span>}
+      {/* 两份内容首尾相接时，用与股票间相同的间距保证两组宽度完全一致（循环位移无接缝） */}
+      {trailingSeparator && <span className="mx-2" />}
     </div>
   );
 }
