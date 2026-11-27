@@ -8,6 +8,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { TickerItem } from '../services/tradeTicker';
 
 const SCROLL_SPEED = 55; // 像素/秒
+const RESUME_DELAY_MS = 500; // 暂停解除后等待多久才继续滚动（毫秒）
 
 const formatDay = (ts: number): string => {
   if (!ts) return '-';
@@ -100,6 +101,13 @@ export default function TickerBanner({ items, emptyText, onLotClick }: {
   const offsetRef = useRef(0);
   const contentWidthRef = useRef(0);
   const pausedRef = useRef(false);
+  // 恢复滚动的等待截止时间（performance.now 口径）：暂停解除后需等待 RESUME_DELAY_MS 才继续滚动
+  const resumeAtRef = useRef(0);
+  const pauseAuto = () => { pausedRef.current = true; };
+  const resumeAuto = () => {
+    pausedRef.current = false;
+    resumeAtRef.current = performance.now() + RESUME_DELAY_MS;
+  };
 
   const applyTransform = () => {
     const el = trackRef.current;
@@ -148,6 +156,7 @@ export default function TickerBanner({ items, emptyText, onLotClick }: {
   const animate = scrollable && !reduceMotion;
 
   // rAF 推进：暂停时只保留当前位移，不前进（滚轮仍可改 offset）
+  // 恢复滚动统一走 resumeAuto()：解除暂停后再等 0.5 秒才继续，避免刚松手/刚移出就突然动起来
   useEffect(() => {
     if (!animate) return;
     let raf = 0;
@@ -155,7 +164,7 @@ export default function TickerBanner({ items, emptyText, onLotClick }: {
     const tick = (now: number) => {
       const dt = Math.min(64, now - last);
       last = now;
-      if (!pausedRef.current) {
+      if (!pausedRef.current && now >= resumeAtRef.current) {
         offsetRef.current -= (SCROLL_SPEED * dt) / 1000;
         normalize();
       }
@@ -183,58 +192,74 @@ export default function TickerBanner({ items, emptyText, onLotClick }: {
     return () => wrap.removeEventListener('wheel', onWheel);
   }, [scrollable]);
 
-  // 触屏 / 指针拖动：手指按下即暂停滚动，横向拖动直接跟手移动内容；纵向滑动则让给页面滚动
-  const dragRef = useRef<{ x: number; y: number; lastX: number; moved: number; locked: boolean } | null>(null);
+  // 触屏 / 指针拖动：手指按下即暂停滚动，横向拖动直接跟手移动内容；纵向滑动则让给页面滚动。
+  // 用原生 pointer 事件（而非 React 合成事件）直接写 transform，减少一层事件派发与批处理延迟。
   const suppressClickRef = useRef(false);
   // 指针（手指/笔）是否仍按在屏幕上：用于屏蔽 iOS 在触摸期间合成的 mouseleave，
   // 避免手指滑出热区就被误判为「悬停结束」而恢复自动滚动。
   const pointerActiveRef = useRef(false);
-  const endDrag = () => {
-    const d = dragRef.current;
-    dragRef.current = null;
-    pointerActiveRef.current = false;
-    if (d && d.moved > 8) {
-      // 拖动后抬手不应触发播报条的点击（打开交易弹窗）
-      suppressClickRef.current = true;
-      window.setTimeout(() => { suppressClickRef.current = false; }, 0);
-    }
-    pausedRef.current = false;
-  };
-  const onPointerDown = (e: React.PointerEvent) => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    dragRef.current = { x: e.clientX, y: e.clientY, lastX: e.clientX, moved: 0, locked: false };
-    pointerActiveRef.current = true;
-    pausedRef.current = true;
-    // 立即捕获指针：手指滑出热区后仍能持续收到 move 事件（与原生可滚动控件一致）
-    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* 忽略 */ }
-  };
-  const onPointerMove = (e: React.PointerEvent) => {
-    const d = dragRef.current;
-    if (!d) return;
-    if (!d.locked) {
-      const dx = e.clientX - d.x;
-      const dy = e.clientY - d.y;
-      // 纵向意图更明显（且超过阈值）时放弃横向拖动，交给页面纵向滚动
-      if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
-        dragRef.current = null;
-        pausedRef.current = false;
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    let drag: { x: number; y: number; lastX: number; moved: number; locked: boolean } | null = null;
+    const onDown = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      drag = { x: e.clientX, y: e.clientY, lastX: e.clientX, moved: 0, locked: false };
+      pointerActiveRef.current = true;
+      pauseAuto();
+      // 立即捕获指针：手指滑出热区后仍能持续收到 move 事件（与原生可滚动控件一致）
+      try { wrap.setPointerCapture(e.pointerId); } catch { /* 忽略 */ }
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!drag) return;
+      if (!drag.locked) {
+        const dx = e.clientX - drag.x;
+        const dy = e.clientY - drag.y;
+        // 纵向意图更明显（且超过阈值）时放弃横向拖动，交给页面纵向滚动
+        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
+          drag = null;
+          pointerActiveRef.current = false;
+          resumeAuto();
+          return;
+        }
+        if (Math.abs(dx) < 4) return;
+        drag.locked = true;
+        drag.lastX = e.clientX;
         return;
       }
-      if (Math.abs(dx) < 4) return;
-      d.locked = true;
-      d.lastX = e.clientX;
-      return;
-    }
-    const step = e.clientX - d.lastX;
-    d.lastX = e.clientX;
-    d.moved += Math.abs(step);
-    if (!(contentWidthRef.current > 0)) return;
-    offsetRef.current += step; // 1:1 跟手，不取反
-    normalize();
-    applyTransform();
-  };
+      const step = e.clientX - drag.lastX;
+      drag.lastX = e.clientX;
+      drag.moved += Math.abs(step);
+      if (!(contentWidthRef.current > 0)) return;
+      offsetRef.current += step; // 1:1 跟手，不取反
+      normalize();
+      applyTransform();
+    };
+    const onUp = () => {
+      const d = drag;
+      drag = null;
+      pointerActiveRef.current = false;
+      if (d && d.moved > 8) {
+        // 拖动后抬手不应触发播报条的点击（打开交易弹窗）
+        suppressClickRef.current = true;
+        window.setTimeout(() => { suppressClickRef.current = false; }, 0);
+      }
+      resumeAuto();
+    };
+    wrap.addEventListener('pointerdown', onDown);
+    wrap.addEventListener('pointermove', onMove);
+    wrap.addEventListener('pointerup', onUp);
+    wrap.addEventListener('pointercancel', onUp);
+    return () => {
+      wrap.removeEventListener('pointerdown', onDown);
+      wrap.removeEventListener('pointermove', onMove);
+      wrap.removeEventListener('pointerup', onUp);
+      wrap.removeEventListener('pointercancel', onUp);
+    };
+  }, []);
 
-  if (items.length === 0) {    return (
+  if (items.length === 0) {
+    return (
       <div className="flex-1 min-w-0 h-5 flex items-center text-[11px] font-semibold text-app-subtext whitespace-nowrap truncate">
         {emptyText ?? '暂无触发播报的持仓'}
       </div>
@@ -247,12 +272,8 @@ export default function TickerBanner({ items, emptyText, onLotClick }: {
       className="flex-1 min-w-0 h-5 flex items-center overflow-hidden select-none"
       // 横向手势由本组件接管，纵向仍交给页面滚动
       style={{ touchAction: 'pan-y' }}
-      onMouseEnter={() => { pausedRef.current = true; }}
-      onMouseLeave={() => { if (!pointerActiveRef.current) pausedRef.current = false; }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
+      onMouseEnter={() => { pauseAuto(); }}
+      onMouseLeave={() => { if (!pointerActiveRef.current) resumeAuto(); }}
       onClickCapture={(e) => {
         if (suppressClickRef.current) {
           suppressClickRef.current = false;
