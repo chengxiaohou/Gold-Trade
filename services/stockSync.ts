@@ -223,6 +223,11 @@ export function buildStocksFileFingerprint(input: StocksFileFingerprintInput): s
         sortMode: undefined,
         autoRefreshInterval: undefined,
         bollRequestInterval: undefined,
+        // 滚动播报阈值仅本地记忆，不参与云端差异对比
+        tickerThreshold: undefined,
+        tickerMaxPerStock: undefined,
+        pendingNearMatchPct: undefined,
+        tickerMinProfit: undefined,
       }
     : undefined;
   const { core } = splitFinancialsFromStocks(stripStockPriceCache(buildUploadStocks(stocks)));

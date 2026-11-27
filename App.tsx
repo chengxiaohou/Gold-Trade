@@ -605,6 +605,8 @@ export default function App() {
         bollRequestInterval: parsed.bollRequestInterval ?? 1000,
         tickerThreshold: parsed.tickerThreshold ?? 3,
         tickerMaxPerStock: parsed.tickerMaxPerStock ?? 3,
+        pendingNearMatchPct: parsed.pendingNearMatchPct ?? 0.3,
+        tickerMinProfit: parsed.tickerMinProfit ?? 150,
         tagParams: parsed.tagParams || DEFAULT_TAG_PARAMS,
         customTags: parsed.customTags || []
       };
@@ -626,6 +628,8 @@ export default function App() {
         bollRequestInterval: 1000,
         tickerThreshold: 3,
         tickerMaxPerStock: 3,
+        pendingNearMatchPct: 0.3,
+        tickerMinProfit: 150,
         tagParams: DEFAULT_TAG_PARAMS,
         customTags: []
       };
@@ -1207,6 +1211,11 @@ export default function App() {
         sortMode: undefined,
         autoRefreshInterval: undefined,
         bollRequestInterval: undefined,
+        // 滚动播报相关阈值：仅本地记忆，不上云
+        tickerThreshold: undefined,
+        tickerMaxPerStock: undefined,
+        pendingNearMatchPct: undefined,
+        tickerMinProfit: undefined,
       } : undefined;
       const dataToUpload = {
         trades,
@@ -1270,6 +1279,10 @@ export default function App() {
       sortMode: undefined,
       autoRefreshInterval: undefined,
       bollRequestInterval: undefined,
+      tickerThreshold: undefined,
+      tickerMaxPerStock: undefined,
+      pendingNearMatchPct: undefined,
+      tickerMinProfit: undefined,
     } : undefined;
     const { core, financials } = splitFinancialsFromStocks(stripStockPriceCache(buildUploadStocks(stocks)));
     return {
@@ -2761,6 +2774,8 @@ export default function App() {
             bollRequestInterval={stockSettings.bollRequestInterval ?? 1000}
             tickerThreshold={stockSettings.tickerThreshold ?? 3}
             tickerMaxPerStock={stockSettings.tickerMaxPerStock ?? 3}
+            pendingNearPct={stockSettings.pendingNearMatchPct ?? 0.3}
+            tickerMinProfit={stockSettings.tickerMinProfit ?? 150}
             divRateHoverEnabled={divRateHoverEnabled}
             popupBackdropEnabled={popupBackdropEnabled}
             actionButtons={renderStockActionButtons()}

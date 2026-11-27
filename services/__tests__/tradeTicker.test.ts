@@ -14,8 +14,8 @@ describe('tradeVolumeLabel', () => {
 });
 
 describe('buildTickerItems', () => {
-  it('上涨超过阈值 → up 条目带可领取金额', () => {
-    const items = buildTickerItems([mk([mkTrade({ price: 15.54, shares: 100, createdAt: 1 })], 16.35)]);
+  it('上涨超过阈值 → up 条目带可获利金额', () => {
+    const items = buildTickerItems([mk([mkTrade({ price: 15.54, shares: 100, createdAt: 1 })], 16.35)], { minProfit: 0 });
     expect(items).toHaveLength(1);
     expect(items[0].dir).toBe('up');
     expect(items[0].lots[0].pct).toBeCloseTo(5.2123, 3);
@@ -44,7 +44,7 @@ describe('buildTickerItems', () => {
         mkTrade({ id: 's1', side: 'sell', price: 11, shares: 60, createdAt: 2 }),
       ],
     });
-    const items = buildTickerItems([partial]);
+    const items = buildTickerItems([partial], { minProfit: 0 });
     expect(items[0].lots[0].amount).toBeCloseTo(2 * 40, 5);
 
     const closed = mkStock('600096', '云天化', {
@@ -64,10 +64,19 @@ describe('buildTickerItems', () => {
       mkTrade({ id: 'b3', price: 11, shares: 100, createdAt: 3 }), // +9.1%
       mkTrade({ id: 'b4', price: 11.5, shares: 100, createdAt: 4 }), // +4.3%
     ];
-    const items = buildTickerItems([mk(trades, 12)], { maxPerStock: 2 });
+    const items = buildTickerItems([mk(trades, 12)], { maxPerStock: 2, minProfit: 0 });
     expect(items[0].lots).toHaveLength(2);
     expect(items[0].lots[0].pct).toBeCloseTo(20, 5);
     expect(items[0].hiddenCount).toBe(2);
+  });
+
+  it('涨幅达标但可获利不足最小金额 → 不播报', () => {
+    // +5.2%，但 10 股 × 0.81 ≈ 8.1 元 < 150 元
+    const small = mk([mkTrade({ price: 15.54, shares: 10, createdAt: 1 })], 16.35);
+    expect(buildTickerItems([small])).toHaveLength(0);
+    // 同一笔放大到 200 股（约 162 元）→ 正常播报
+    const big = mk([mkTrade({ price: 15.54, shares: 200, createdAt: 1 })], 16.35);
+    expect(buildTickerItems([big])[0].lots[0].amount).toBeCloseTo(162, 0);
   });
 
   it('含税开关打开时成本抬高、涨幅变小', () => {
@@ -104,9 +113,9 @@ describe('buildTickerItems', () => {
   it('即将成交 / 即将过期的挂单也会播报', () => {
     const now = Date.now();
     const stock = mkStock('600096', '云天化', {
-      price: 10.45,
+      price: 10.48,
       stockTrades: [
-        // 挂卖 10.5，现价 10.45 → 差 0.48% 成交
+        // 挂卖 10.5，现价 10.48 → 差 0.19%（阈值 0.3%）
         mkTrade({ id: 's1', side: 'sell', price: 10.5, shares: 100, status: 'pending', createdAt: now - 1000 }),
         // 挂买 9.5，第 5 个自然日（最后一天）→ 剩 1 天过期
         mkTrade({ id: 'b1', side: 'buy', price: 9.5, shares: 100, status: 'pending', createdAt: now - 4 * 86_400_000 }),
@@ -115,7 +124,9 @@ describe('buildTickerItems', () => {
     const items = buildTickerItems([stock]);
     const near = items.find(i => i.kind === 'nearFill');
     expect(near?.lots[0].statusLabel).toBe('挂卖');
-    expect(near?.lots[0].note).toBe('+0.48%成交');
+    expect(near?.lots[0].gapPct).toBeCloseTo(-0.1905, 3);
+    expect(near?.lots[0].likelyFill).toBe(false); // 现价未到挂卖价 → 价差不着色
+    expect(near?.lots[0].note).toBe('即将成交');
     const expiring = items.find(i => i.kind === 'expiring');
     expect(expiring?.lots[0].note).toBe('当日过期');
   });

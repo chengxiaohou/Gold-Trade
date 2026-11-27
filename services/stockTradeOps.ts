@@ -16,6 +16,13 @@ export interface StockTradePatch {
 // 挂单默认有效天数（自然日，首日计 1）
 export const PENDING_TTL_DAYS = 5;
 
+// 交易价相对现价的涨跌幅（SSOT）：列表「交易」列挂单/成交下方的百分比、滚动播报的挂单价差共用。
+// 以交易价为基准：正数=现价高于该价格，负数=现价低于该价格（挂卖价在上方时为负，挂买价在下方时为正）。
+export function tradePriceGapPct(tradePrice: number, curPrice: number): number | null {
+  if (!(tradePrice > 0) || !(curPrice > 0)) return null;
+  return ((curPrice - tradePrice) / tradePrice) * 100;
+}
+
 // 从起始日到 now 经过了第几个自然日（整天 24h 为一单位，跨零点即 +1）
 export function pendingDayIndex(baseTime: number, now: number): number {
   const start = new Date(baseTime); start.setHours(0, 0, 0, 0);

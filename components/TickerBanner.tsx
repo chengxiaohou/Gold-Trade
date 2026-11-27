@@ -22,7 +22,9 @@ function TickerGroup({ items, groupKey, trailingSeparator }: { items: TickerItem
   return (
     <div className="flex items-center shrink-0" aria-hidden={groupKey ? true : undefined}>
       {items.map((item, i) => {
-        const color = item.dir === 'up' ? 'text-brand-red' : 'text-brand-green';
+        // 挂单条目统一用交易列的「挂单橙」（text-orange-400）；持仓买入仍按涨红跌绿
+        const isPending = item.kind !== 'position';
+        const color = isPending ? 'text-orange-400' : item.dir === 'up' ? 'text-brand-red' : 'text-brand-green';
         return (
           <span key={`${groupKey ?? ''}${item.stockId}-${item.dir}-${item.kind}`} className="flex items-baseline whitespace-nowrap text-[11px] font-semibold leading-none">
             {i > 0 && <span className="text-app-border mx-3">｜</span>}
@@ -44,10 +46,12 @@ function TickerGroup({ items, groupKey, trailingSeparator }: { items: TickerItem
                     <span className="font-mono text-brand-red ml-1">{fmtAmount(lot.amount)}</span>
                   </>
                 )}
-                {/* 挂单补充说明：即将成交用中性色，即将过期用橙色提醒 */}
-                {lot.note && (
-                  <span className={`ml-1 ${item.kind === 'expiring' ? 'text-orange-400' : 'text-app-subtext'}`}>{lot.note}</span>
+                {/* 挂单价差：着色规则与列表「交易」列一致 —— 只有已到价（可能已成交）才橙，
+                    未到价保持普通行文字灰；「即将成交 / 当日过期」等说明文字一律中性灰 */}
+                {lot.gapPct != null && (
+                  <span className={`font-mono ml-1 ${lot.likelyFill ? 'text-orange-400' : 'text-app-subtext'}`}>{formatPct(lot.gapPct)}</span>
                 )}
+                {lot.note && <span className="text-app-subtext ml-1">{lot.note}</span>}
               </span>
             ))}
             {item.hiddenCount > 0 && <span className="text-app-subtext ml-1">等 {item.hiddenCount} 单</span>}

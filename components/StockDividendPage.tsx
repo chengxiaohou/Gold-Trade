@@ -17,10 +17,10 @@ import type { StockLedgerMap } from '../services/stockLedgerStore';
 import { calcRealizedPnlForRange, calcPositionFromTrades, calcPositionView, calcDtPnlForTrades, calcAvgPnlForTrades, calcTradeFees, tradeAmountFormula, estimatePendingSell, isEtf, roundCost, type PnlCalcMode, type DtPair } from '../services/realizedPnl';
 import { analyzeKlinePatterns, analyzeKlinePatternsAt, analyzeDailySignals, analyzeFengSignals, isTodayVolumeEligible, analyzeMarketConditions, analyzeEnvironment, volBucket, buildLatestShrinkTags, buildShrinkTagsForModule, selectEnvDisplayTags, buildBreakExplainLines, latestBarFingerprint, analyzeKlineCombo, classifyVolumeAt, analyzeStandEvents, dividendRateForDay, PATTERN_CHIP_CLS as patChipCls, VOLUME5_CHIP_CLS as VOLDAY_CLS, CHIP_CLS_GREEN as greenCls, CHIP_SEL_GREEN as greenSelCls, type KlineVolume5, type StandEvent } from '../services/tagAnalyzers';
 import type { KlinePattern, DailySignal, FengDaySignal, MarketEvent, EnvTag, EnvResult, PatternCombo } from '../services/tagAnalyzers';
-import { toggleTradeStatus, removeTrade } from '../services/stockTradeOps';
+import { toggleTradeStatus, removeTrade, tradePriceGapPct } from '../services/stockTradeOps';
 import { InputGroup } from './InputGroup';
 import TickerBanner from './TickerBanner';
-import { buildTickerItems, tradeVolumeLabel, TICKER_DEFAULT_MAX_PER_STOCK, TICKER_DEFAULT_THRESHOLD } from '../services/tradeTicker';
+import { buildTickerItems, tradeVolumeLabel, TICKER_DEFAULT_MAX_PER_STOCK, TICKER_DEFAULT_MIN_PROFIT, TICKER_DEFAULT_THRESHOLD, PENDING_NEAR_MATCH_PCT } from '../services/tradeTicker';
 import BollStreakTip from './BollStreakTip';
 import { useStepWheel } from '../hooks/useStepWheel';
 import { BacktestModal } from './BacktestModal';
@@ -297,6 +297,8 @@ interface StockDividendPageProps {
   bollRequestInterval?: number; // 布林线批量请求间隔（毫秒）；设备本地设置
   tickerThreshold?: number; // 滚动播报触发阈值（%），设备本地设置
   tickerMaxPerStock?: number; // 滚动播报每股每个方向最多几单，设备本地设置
+  pendingNearPct?: number; // 挂单「即将成交」价差阈值（%），设备本地设置
+  tickerMinProfit?: number; // 上涨播报的最小可获利金额（元），设备本地设置
   divRateHoverEnabled?: boolean; // 股息率弹窗是否支持鼠标悬浮显示；设备本地设置，不上传云端
   popupBackdropEnabled?: boolean; // 移动端弹窗背景遮罩开关；设备本地设置，不上传云端
   actionButtons?: React.ReactNode;
@@ -2455,7 +2457,7 @@ const getRequestLogSnapshot = () => requestLogService.getSnapshot();
 // 因此改为纯色背景类，交给合成层处理，滚动更顺滑。
 const STALE_BOLL_CLS = 'bg-slate-900/20 hover:bg-slate-900/30 dark:bg-black/40 dark:hover:bg-black/50';
 
-export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, bollRequestInterval = 1000, tickerThreshold = TICKER_DEFAULT_THRESHOLD, tickerMaxPerStock = TICKER_DEFAULT_MAX_PER_STOCK, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, stockTotalCapital = 0, onStockTotalCapitalChange }) => {
+export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, onStocksChange, isAdding, onCloseAdding, visibleColumns, dividendRateColumns, colorRanges, tagColors = {}, onTagColorsChange, maxWidth = 942, onMaxWidthChange, autoRefreshInterval = 60, bollRequestInterval = 1000, tickerThreshold = TICKER_DEFAULT_THRESHOLD, tickerMaxPerStock = TICKER_DEFAULT_MAX_PER_STOCK, pendingNearPct = PENDING_NEAR_MATCH_PCT, tickerMinProfit = TICKER_DEFAULT_MIN_PROFIT, divRateHoverEnabled = false, popupBackdropEnabled = false, actionButtons, uploadButton, memoButton, appVersion, onTogglePage, apiSource = 'tencent' as ApiSource, tagParams = DEFAULT_TAG_PARAMS, customTags = [], onResetStocks, resetSignal, dividendYearLeft = 2024, dividendYearRight = 2025, sortMode = 'default', onSortModeChange, memo, memoUpdatedAt, memoBaseline, memoOpen, onMemoClose, onMemoChange, onMemoUpload, buyOrderPlaceholder = '记录本次挂单的思路策略', sellOrderPlaceholder = '记录本次挂单的思路策略', showRequestStats = true, showAccountPage = false, onCloseAccountPage, ledgerMap, onLedgerMapChange, onExportFullBackup, onImportFullBackup, onBacktestPresetsDirty, stockTotalCapital = 0, onStockTotalCapitalChange }) => {
   // 注入月份滚动条隐藏样式
   useEffect(() => {
     const id = 'profit-month-scroller-style';
@@ -4336,8 +4338,14 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
   // 口径固定为做T配对（avg 口径没有单笔概念），「可领取」跟随页面含税开关；
   // 价格取自 displayStocks（与「价格」列完全同源，历史模式下也随列一致）。
   const tickerItems = useMemo(
-    () => buildTickerItems(displayStocks, { threshold: tickerThreshold, maxPerStock: tickerMaxPerStock, withTax: taxEnabled }),
-    [displayStocks, tickerThreshold, tickerMaxPerStock, taxEnabled],
+    () => buildTickerItems(displayStocks, {
+      threshold: tickerThreshold,
+      maxPerStock: tickerMaxPerStock,
+      nearMatchPct: pendingNearPct,
+      minProfit: tickerMinProfit,
+      withTax: taxEnabled,
+    }),
+    [displayStocks, tickerThreshold, tickerMaxPerStock, pendingNearPct, tickerMinProfit, taxEnabled],
   );
 
   // 盈利统计面板 wheel 接管：阻止滚轮在面板内滚动时串扰带动背后的股票大列表/页面。
@@ -7085,7 +7093,8 @@ export const StockDividendPage: React.FC<StockDividendPageProps> = ({ stocks, on
                           );
                           const tradePrice = latest.price;
                           const diffValid = (stock.price || 0) > 0 && tradePrice > 0;
-                          const diffNum = diffValid ? ((stock.price - tradePrice) / tradePrice) * 100 : null;
+                          // 口径统一由 services/stockTradeOps.tradePriceGapPct 提供（滚动播报共用）
+                          const diffNum = tradePriceGapPct(tradePrice, stock.price || 0);
                           const priceDiffPct = diffNum != null ? `${diffNum >= 0 ? '+' : ''}${diffNum.toFixed(2)}%` : '';
                           const isSellFilled = latest.side === 'sell' && latest.status === 'filled';
                           const isBuyFilled = latest.side === 'buy' && latest.status === 'filled';

@@ -1,6 +1,6 @@
 import type { StockEntry, StockTrade } from '../types';
 import { calcDtPnlForTrades, calcTradeFees } from './realizedPnl';
-import { PENDING_TTL_DAYS, pendingDayIndex, isPendingTradeActive } from './stockTradeOps';
+import { PENDING_TTL_DAYS, pendingDayIndex, isPendingTradeActive, tradePriceGapPct } from './stockTradeOps';
 
 // ── 交易体量罗马数字（列表状态标签与滚动播报共用，SSOT）──
 // 按成交金额每 2500 元一档并取最接近的档位，但第一档（2500 元）不写罗马数字，
@@ -34,8 +34,9 @@ export const tradeVolumeLabel = (t: StockTrade): string => {
 // （说明近期已在该价位附近补过仓），更早的下跌一律不再播报。
 export const TICKER_DEFAULT_THRESHOLD = 3; // 默认触发阈值（%）
 export const TICKER_DEFAULT_MAX_PER_STOCK = 3; // 每只股票每个方向最多播报几单
-// 挂单播报阈值：挂单价差 ≤1% 视为「即将成交」；剩余有效期 ≤1 天视为「即将过期」
-export const PENDING_NEAR_MATCH_PCT = 1;
+export const TICKER_DEFAULT_MIN_PROFIT = 150; // 上涨条目最小可获利金额（元）：不足则忽略，避免小额噪音
+// 挂单播报阈值：挂单价差 ≤0.3% 视为「即将成交」；剩余有效期 ≤1 天视为「即将过期」
+export const PENDING_NEAR_MATCH_PCT = 0.3;
 export const PENDING_EXPIRING_DAYS = 1;
 
 export type TickerKind = 'position' | 'nearFill' | 'expiring';
@@ -43,9 +44,14 @@ export type TickerKind = 'position' | 'nearFill' | 'expiring';
 export interface TickerLot {
   date: number;        // 买入时间戳（成交时间优先）
   statusLabel: string; // 如「买入III」「挂卖II」
-  pct: number | null;  // 涨跌幅（%）；挂单条目为 null（改用 note 表达）
-  amount: number | null; // 可领取金额（仅上涨条目；其余为 null）
-  note?: string | null;  // 挂单条目的补充说明，如「差0.42%成交」「剩1天过期」
+  pct: number | null;  // 涨跌幅（%）；挂单条目为 null（改用 gapPct + note 表达）
+  amount: number | null; // 可获利金额（仅上涨条目；其余为 null）
+  /** 挂单价差（%，与列表「交易」列同口径：以交易价为基准，现价高于交易价为正） */
+  gapPct?: number | null;
+  /** 挂单是否已到价（可能已成交）：与列表「交易」列 likelyFill 同判定，决定价差是否着色 */
+  likelyFill?: boolean;
+  /** 挂单补充说明（中性文字），如「即将成交」「当日过期」 */
+  note?: string | null;
 }
 
 export interface TickerItem {
@@ -62,6 +68,10 @@ export interface TickerOptions {
   threshold?: number;
   maxPerStock?: number;
   withTax?: boolean;
+  /** 挂单「即将成交」价差阈值（%），默认 PENDING_NEAR_MATCH_PCT */
+  nearMatchPct?: number;
+  /** 上涨播报的最小可获利金额（元），默认 TICKER_DEFAULT_MIN_PROFIT */
+  minProfit?: number;
 }
 
 const buyDateOf = (t: StockTrade): number => t.filledAt ?? t.originalCreatedAt ?? t.createdAt ?? 0;
@@ -75,6 +85,8 @@ const pendingSideLabel = (t: StockTrade): string => `挂${t.side === 'sell' ? '�
 export function buildTickerItems(stocks: StockEntry[], opts: TickerOptions = {}): TickerItem[] {
   const threshold = Math.max(0, opts.threshold ?? TICKER_DEFAULT_THRESHOLD);
   const maxPerStock = Math.max(1, Math.round(opts.maxPerStock ?? TICKER_DEFAULT_MAX_PER_STOCK));
+  const nearMatchPct = Math.max(0, opts.nearMatchPct ?? PENDING_NEAR_MATCH_PCT);
+  const minProfit = Math.max(0, opts.minProfit ?? TICKER_DEFAULT_MIN_PROFIT);
   const withTax = !!opts.withTax;
   const items: TickerItem[] = [];
   const nearFillItems: TickerItem[] = [];
@@ -115,17 +127,20 @@ export function buildTickerItems(stocks: StockEntry[], opts: TickerOptions = {})
       if (!isPendingTradeActive(t, now)) continue;
       const orderPrice = t.price ?? 0;
       if (!(orderPrice > 0)) continue;
-      // 价差：卖出挂单看现价还差多少涨到挂单价；买入挂单看现价还差多少跌到挂单价
-      // 有符号价差（与交易弹窗「挂单价格」括号里的口径一致）：挂卖价在现价之上为正，挂买价在现价之下为负
-      const signedGap = ((orderPrice - curPrice) / curPrice) * 100;
+      // 价差口径与列表「交易」列完全一致（tradePriceGapPct：以交易价为基准，现价高于交易价为正）
+      const signedGap = tradePriceGapPct(orderPrice, curPrice) ?? 0;
       const gap = Math.abs(signedGap);
-      if (gap <= PENDING_NEAR_MATCH_PCT) {
+      if (gap <= nearMatchPct) {
+        // 与交易列「可能已成交」同判定：挂买现价≤挂单价、挂卖现价≥挂单价 → 已到价
+        const likelyFill = t.side === 'buy' ? signedGap <= 0 : signedGap >= 0;
         const lot: TickerLot = {
           date: t.createdAt,
           statusLabel: pendingSideLabel(t),
           pct: null,
           amount: null,
-          note: `${signedGap > 0 ? '+' : ''}${signedGap.toFixed(2)}%成交`,
+          gapPct: signedGap,
+          likelyFill,
+          note: '即将成交',
         };
         (t.side === 'sell' ? nearSell : nearBuy).push({ lot, gap });
       }
@@ -142,9 +157,9 @@ export function buildTickerItems(stocks: StockEntry[], opts: TickerOptions = {})
       }
     }
 
-    // 上涨条目：全部达到阈值的买入单（仍持有），按涨幅从大到小
+    // 上涨条目：涨幅达标且「可获利金额」也达到下限的买入单（仍持有），按涨幅从大到小
     const ups = cand
-      .filter(c => c.pct >= threshold)
+      .filter(c => c.pct >= threshold && (curPrice - c.cost) * c.rest >= minProfit)
       .sort((a, b) => b.pct - a.pct);
     if (ups.length > 0) {
       const lots = ups.slice(0, maxPerStock).map(c => {

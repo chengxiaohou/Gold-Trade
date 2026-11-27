@@ -278,4 +278,6 @@ export interface StockSettings {
   bollRequestInterval?: number; // 布林线批量请求间隔（毫秒）；设备本地设置，不随云端同步
   tickerThreshold?: number; // 滚动播报触发阈值（%）；设备本地设置，不随云端同步
   tickerMaxPerStock?: number; // 滚动播报每股每个方向最多几单；设备本地设置，不随云端同步
+  pendingNearMatchPct?: number; // 挂单「即将成交」价差阈值（%）；设备本地设置，不随云端同步
+  tickerMinProfit?: number; // 上涨播报的最小可获利金额（元）；设备本地设置，不随云端同步
 }
